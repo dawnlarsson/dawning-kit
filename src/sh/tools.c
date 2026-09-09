@@ -7342,6 +7342,19 @@ static b32 tools_dd(void)
                 }
                 else
                 {
+                        //      dd takes operands, not options, but a word
+                        //      beginning with two dashes is still answered
+                        //      as the option it is not.
+                        if (string_is(argument, '-') && string_is(argument + 1, '-') &&
+                            string_get(argument + 2))
+                        {
+                                string_format(log_error,
+                                    "dd: unrecognized option '%s'\n"
+                                    "Try 'dd --help' for more information.\n",
+                                    argument);
+                                return 1;
+                        }
+
                         return string_diagnostic(&text_diagnostic, 1, argument, "unrecognized operand");
                 }
         }

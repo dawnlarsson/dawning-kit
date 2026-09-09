@@ -2511,6 +2511,17 @@ static bool file_take_from(file_taking address_to taking, positive index)
                         else
                                 string_format(log_error, "%s: invalid option -- '%s'\n",
                                               taking->program, named + 1);
+                        /*
+                                Both families say where to look next, in the
+                                same words: coreutils out of usage() and
+                                util-linux out of errtryhelp(). Twenty-one of
+                                twenty-one programs were a line short of the
+                                reference here, and nothing noticed because
+                                no grammar fed a letter that is not there.
+                        */
+                        string_format(log_error,
+                                      "Try '%s --help' for more information.\n",
+                                      taking->program);
                         return false;
                 }
                 positive bit = file_letter_bit(letter);
@@ -5699,9 +5710,26 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         else if (ls_time_option == 'u')
                 ls_time_key = 'a';
 
-        // How a time is written.
+        /*
+                -u and -c say which time is meant, and where no long listing
+                and no sort was asked for they say the order as well: the
+                reference puts the newest of that time first. With -l the
+                order stays by name and the time is only shown, and with -lt
+                it is -t that orders it. So this is the case where neither
+                was named.
+        */
+        if (ls_time_key != 'm' && !ls_sort_option && ls_format != 'l')
+                ls_sorting = 't';
+
+        /*
+                How a time is written. The reference reads the style only
+                where it is going to write one, so a listing that shows no
+                time takes a style it would otherwise refuse -- `ls
+                --time-style=bogus` is a plain listing and says nothing,
+                while `ls -l --time-style=bogus` is the error.
+        */
         ls_time_style = 'd';
-        if (flags & FILE_FLAG('5'))
+        if ((flags & FILE_FLAG('5')) && ls_format == 'l')
         {
                 string_address style = file_option_value(address_of taking, '5');
 
@@ -6395,9 +6423,23 @@ static b32 file_nice()
 
                 if (string_is(word, '-') && !string_is(word + 1, end))
                 {
-                        p8 named[2] = {string_get(word + 1), end};
+                        //      A word beginning with two dashes is a long
+                        //      option the program does not have, and is said
+                        //      whole; one dash is a letter, and is said as
+                        //      the letter.
+                        if (string_is(word + 1, '-'))
+                                string_format(log_error,
+                                    "nice: unrecognized option '%s'\n", word);
+                        else
+                        {
+                                p8 named[2] = {string_get(word + 1), end};
 
-                        string_format(log_error, "nice: invalid option -- '%s'\n", named);
+                                string_format(log_error,
+                                    "nice: invalid option -- '%s'\n", named);
+                        }
+
+                        string_format(log_error,
+                            "Try 'nice --help' for more information.\n");
                         return 125;
                 }
 
@@ -7023,7 +7065,10 @@ static b32 find_parse_primary()
             array_count(find_predicates));
         if (selected == array_count(find_predicates))
         {
-                string_format(log_error, "find: unknown predicate: %s\n", word);
+                //      findutils quotes the predicate the way it quotes
+                //      everything else, with a backquote in front and an
+                //      apostrophe behind.
+                string_format(log_error, "find: unknown predicate `%s'\n", word);
                 find_bad = true;
                 return -1;
         }
@@ -11459,8 +11504,11 @@ static b32 file_whereis()
                                 {
                                         // util-linux answers every option
                                         // it does not know with the same two
-                                        // words, whichever letter it was.
+                                        // words, whichever letter it was,
+                                        // and then says where to look next.
                                         log_error("whereis: bad usage\n", 0);
+                                        log_error("Try 'whereis --help' for "
+                                                  "more information.\n", 0);
                                         return 1;
                                 }
                         }
@@ -18775,9 +18823,22 @@ static b32 file_sleep()
                 if (string_is(word, '-') && string_get(word + 1) &&
                     !string_equals(word, "--"))
                 {
-                        p8 named[2] = {string_get(word + 1), end};
+                        //      Two dashes name the whole word, one names
+                        //      the letter, and either way the reference says
+                        //      where to look next.
+                        if (string_is(word + 1, '-'))
+                                string_format(log_error,
+                                    "sleep: unrecognized option '%s'\n", word);
+                        else
+                        {
+                                p8 named[2] = {string_get(word + 1), end};
 
-                        string_format(log_error, "sleep: invalid option -- '%s'\n", named);
+                                string_format(log_error,
+                                    "sleep: invalid option -- '%s'\n", named);
+                        }
+
+                        string_format(log_error,
+                            "Try 'sleep --help' for more information.\n");
                         return 1;
                 }
 

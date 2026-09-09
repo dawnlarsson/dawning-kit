@@ -102,11 +102,11 @@ DOMAIN_FLOOR = {
               "job notices a terminal interleaves by timing, and bash writes its "
               "history on exit, so the answers need a normaliser before their "
               "divergences mean anything"),
-    "util_linux": (16535, 17539, 8,
+    "util_linux": (16737, 17775, 8,
                    "the column families of lsfd, findmnt and lsblk: 2.42 lists "
                    "ASSOC, XMODE, SOURCE and MNTID by default where these list "
                    "FD and MODE, so a default listing differs in every row"),
-    "misc": (18064, 19901, 8,
+    "misc": (18223, 20044, 8,
              "script's transcript timing, cksum --check combinations, and od "
              "and numfmt corners"),
 }
@@ -404,6 +404,13 @@ def grammar_cases(domain, utility, budget, rng):
     for index in range(count):
         for form in parameters[index][1:]:
             yield from emit(list(form) + list(utility.operands[0]), utility.stdin[0], "singles")
+    #       A letter and a word the program does not have, asked of every
+    #       program rather than of the few whose grammar happens to spell
+    #       one. Twenty-one of twenty-one were a line short of the reference
+    #       here -- none of them said where to look next -- and no grammar
+    #       had ever handed any of them an option that is not there.
+    for absent in (["--bogus-option"], ["-\u00f8"], ["--"], ["-"]):
+        yield from emit(absent + list(utility.operands[0]), utility.stdin[0], "singles")
     for argv in utility.extra:
         yield from emit(list(argv), utility.stdin[0], "extra")
     if budget == "singles":
@@ -1571,7 +1578,12 @@ def self_test():
                 globals()["SPECS"] = saved
             report = written.getvalue()
             self.assertIn("INVALID ORACLE", report)
-            self.assertIn("invalid oracles=1", report)
+            #       However many cases the walk makes of this one program --
+            #       the options it does not have are asked of every program
+            #       -- every one of them has an oracle that never answered,
+            #       so the denominator is empty and the count is them all.
+            made = int(re.search(r"cases=(\d+)", report).group(1))
+            self.assertIn(f"invalid oracles={made}", report)
             self.assertIn("differential 0 of 0", report)
 
         def test_missing_reference_is_reported_not_passed(self):
@@ -5700,22 +5712,15 @@ FILES_UTILITIES = (
                    ("-n", "-l"), ("--dired",), ("-I", "*.txt", "-a"), ("--hide=*.txt", "-A"), ("-B",),
                    ("--hyperlink=always", "-1"), ("-Z", "-l"), ("--author", "-l"), ("--full-time",),
                    ("-l", "--time-style=+%b %e\n%H:%M"), ("-l", "-T", "1", "-x"), ("-l", "unreadable", "shut"))),
-    Utility("dir", options=(Option("-l"), Option("-1"), Option("-a"), Option("-A"), Option("-R"), Option("-d"),
-                            Option("-n"), Option("-b"), Option("-Q"), Option("-N"), Option("-C"), Option("-x"),
-                            Option("-m"), Option("-F"), Option("-i"), Option("-s"), Option("-t"), Option("-S"),
-                            Option("-r"), Option("--color", ("never", "always"), True),
-                            Option("-w", ("0", "40", "80"), None)),
-            operands=((), ("a.txt",), ("dir",), ("missing",), ("new\nline",), ("esc\x1bape",), ("--", "-dash"),
-                      ("dir", "a.txt"), ("unreadable",), ("dangling",)),
-            stdin=("empty",), fixture="files", stderr="exact", normalize=files_listing,
+    #       dir and vdir are ls with a different default format, so they
+    #       answer for the same surface and are walked over it. A shorter
+    #       list of their own left sixty-nine of ls's options untouched in
+    #       these two spellings.
+    Utility("dir", options=files_LS_OPTIONS, operands=files_LS_OPERANDS, stdin=("empty",),
+            fixture="files", stderr="exact", normalize=files_listing, max_flags=5,
             valid=files_ls_valid, env=(("LS_COLORS", files_LS_COLORS),)),
-    Utility("vdir", options=(Option("-l"), Option("-1"), Option("-a"), Option("-A"), Option("-R"), Option("-d"),
-                             Option("-n"), Option("-b"), Option("-Q"), Option("-N"), Option("-C"), Option("-x"),
-                             Option("-m"), Option("-F"), Option("-i"), Option("-s"), Option("-t"), Option("-S"),
-                             Option("-r"), Option("-h"), Option("--color", ("never", "always"), True)),
-            operands=((), ("a.txt",), ("dir",), ("missing",), ("new\nline",), ("esc\x1bape",), ("--", "-dash"),
-                      ("dir", "a.txt"), ("unreadable",), ("dangling",), ("link", "dirlink")),
-            stdin=("empty",), fixture="files", stderr="exact", normalize=files_listing,
+    Utility("vdir", options=files_LS_OPTIONS, operands=files_LS_OPERANDS, stdin=("empty",),
+            fixture="files", stderr="exact", normalize=files_listing, max_flags=5,
             valid=files_ls_valid, env=(("LS_COLORS", files_LS_COLORS),)),
     Utility("dircolors", options=(Option("-b"), Option("-c"), Option("-p"), Option("--sh"), Option("--bourne-shell"),
                                   Option("--csh"), Option("--c-shell"), Option("--print-database"),
@@ -20344,6 +20349,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "bind '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "622579a4c57990f3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "bind -l\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -20500,6 +20537,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "bind --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "8defa8e4945f4a6d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "bind -q abort\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -20578,6 +20647,134 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "bind -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "be9070a019d1f88d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "bind --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c7e5559ba105e1ec",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "bind --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "cd850717f655c0a0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "bind --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "dbb69bb778522df5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "bind -p\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -20619,6 +20816,70 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r53",
+  "utility": "bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "bind '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "ec73d9b27e1efb49",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "bind -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "ed60fc192c74a1a0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
   "utility": "bind"
  },
  {
@@ -20737,6 +20998,134 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\n[ '-ø' a == a ']'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bracket_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "348a1a5051e1a20f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bracket_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\n[ '-ø' a == a ']'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bracket_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4c6229c21f8b7354",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bracket_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\n[ --bogus-option a == a ']'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bracket_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "65149e19c33d651e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bracket_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\n[ - a == a ']'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bracket_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "6581364e581d5374",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bracket_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\n[ -N missing ']'\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -20753,6 +21142,102 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r54",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "utility": "bracket_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\n[ --bogus-option a == a ']'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bracket_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "adf5fe87f9757a45",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bracket_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\n[ -- a == a ']'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bracket_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "d38e7c8b57605a66",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bracket_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\n[ - a == a ']'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bracket_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "dba616f32a0c0f1a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
   "utility": "bracket_ext"
  },
  {
@@ -20784,6 +21269,134 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\n[ -- a == a ']'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "bracket_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "ee8400de55c0ab2a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "bracket_ext"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "builtin --bogus-option echo x\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "builtin",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "06f1c7d0d03d9398",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "builtin"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "builtin '-ø' echo x\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "builtin",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "400c003b68422a29",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "builtin"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "builtin '-ø' echo x\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "builtin",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "7bd760891afb77df",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "builtin"
+ },
+ {
+  "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "4aae2e71030658fb500f5e05f56885e70e75eaec5a466092d62778566d553e65"
@@ -20812,6 +21425,70 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "builtin --bogus-option echo x\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "builtin",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "8752c187a34f7953",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "builtin"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "builtin -- echo x\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "builtin",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a0856f5afc41e270",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "020050dfdde95b5ffb8f9d317e62a6a13d5bc060bac94b72faa4d04608ba2c18"
+  },
+  "utility": "builtin"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "4aae2e71030658fb500f5e05f56885e70e75eaec5a466092d62778566d553e65"
   },
   "case": {
@@ -20832,6 +21509,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "builtin"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "builtin -- echo x\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "builtin",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "bd453565a205799a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "020050dfdde95b5ffb8f9d317e62a6a13d5bc060bac94b72faa4d04608ba2c18"
+  },
   "utility": "builtin"
  },
  {
@@ -21363,6 +22072,198 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "caller --bogus-option 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "caller",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "41a614fa5abc7605",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cf550902930cf335dcec01af91ad1c9a0d8ba650ee27060a8e272665213fb800"
+  },
+  "utility": "caller"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cd79215058795beb4ec8e7f46fc40965c09366e1f66da984d90dd5ea142b31d0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "caller -- 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "caller",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "43f1f6b71e363bfa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cf550902930cf335dcec01af91ad1c9a0d8ba650ee27060a8e272665213fb800"
+  },
+  "utility": "caller"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cd79215058795beb4ec8e7f46fc40965c09366e1f66da984d90dd5ea142b31d0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "caller - 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "caller",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "51cd79e947d91994",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cf550902930cf335dcec01af91ad1c9a0d8ba650ee27060a8e272665213fb800"
+  },
+  "utility": "caller"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cd79215058795beb4ec8e7f46fc40965c09366e1f66da984d90dd5ea142b31d0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "caller --bogus-option 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "caller",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "56f86f9cf37583c8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cf550902930cf335dcec01af91ad1c9a0d8ba650ee27060a8e272665213fb800"
+  },
+  "utility": "caller"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cd79215058795beb4ec8e7f46fc40965c09366e1f66da984d90dd5ea142b31d0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "caller '-ø' 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "caller",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "5867072c520ab634",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cf550902930cf335dcec01af91ad1c9a0d8ba650ee27060a8e272665213fb800"
+  },
+  "utility": "caller"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cd79215058795beb4ec8e7f46fc40965c09366e1f66da984d90dd5ea142b31d0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "caller '-ø' 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "caller",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "61d1b0bc05381ab6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cf550902930cf335dcec01af91ad1c9a0d8ba650ee27060a8e272665213fb800"
+  },
+  "utility": "caller"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cd79215058795beb4ec8e7f46fc40965c09366e1f66da984d90dd5ea142b31d0"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "caller x 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -21389,6 +22290,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "caller -- 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "caller",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "98d84f8bd2c74b87",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cf550902930cf335dcec01af91ad1c9a0d8ba650ee27060a8e272665213fb800"
+  },
+  "utility": "caller"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cd79215058795beb4ec8e7f46fc40965c09366e1f66da984d90dd5ea142b31d0"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "caller x 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -21404,6 +22337,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "caller"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cd79215058795beb4ec8e7f46fc40965c09366e1f66da984d90dd5ea142b31d0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "caller - 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "caller",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "d699cf1a3d0a2eb3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cf550902930cf335dcec01af91ad1c9a0d8ba650ee27060a8e272665213fb800"
+  },
   "utility": "caller"
  },
  {
@@ -21665,6 +22630,38 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r62",
   "utility": "cd"
+ },
+ {
+  "candidate": {
+   "effects": "f73a0c50ea1030aa50f217f7a131894afa2903dbac51d2dcaa1d3d4a5d35a356",
+   "status": 0,
+   "stdout": "e1839d46c4ab5df9867c2e6342c56ba38b828472f7175bd591a75272eeda3531"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p one/two two\nCDPATH='$PWD/nowhere:$PWD/one'\ncd - two >/dev/null 2>/dev/null\nprintf \"[%s]\\n\" \"$?\"\nprintf \"in:%s\\n\" \"${PWD##*/}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "cd_cdpath",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "04577dfd579a7175",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f73a0c50ea1030aa50f217f7a131894afa2903dbac51d2dcaa1d3d4a5d35a356",
+   "status": 0,
+   "stdout": "7e2cff22a40cf59ed695214ff571cc6225ff6f504c67ca26e7cdc0e5077fbf50"
+  },
+  "utility": "cd_cdpath"
  },
  {
   "candidate": {
@@ -22190,6 +23187,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f_one() { :; }\ncompgen --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compgen",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "07f9ad99fa904e40",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "compgen"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "e868e476698b70498066141412a47d3dfa878bf302f0dcc72b1feeb500ba8aee"
   },
   "case": {
@@ -22476,6 +23505,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f_one() { :; }\ncompgen --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compgen",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "41cf6e82d5b96545",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "compgen"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "67f7ca8b2cbdcc2ed8bb6c9a38089d0027cdef069187eb4b83186a14088f5e88"
   },
   "case": {
@@ -22496,6 +23557,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
+  "utility": "compgen"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f_one() { :; }\ncompgen -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compgen",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "516caeb782717b9b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
   "utility": "compgen"
  },
  {
@@ -22611,6 +23704,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "f_one() { :; }\ncompgen --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compgen",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "7aac6dee80578bbb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "compgen"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "f_one() { :; }\ncompgen -Akeyword\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -22637,6 +23762,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "f_one() { :; }\ncompgen --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compgen",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "7e3d8066e01dde6b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "compgen"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "f_one() { :; }\ncompgen -Akeyword '-P<' -S '>' '-Xt*'\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -22652,6 +23809,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
+  "utility": "compgen"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f_one() { :; }\ncompgen '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compgen",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "8cc469bcafe50cea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
   "utility": "compgen"
  },
  {
@@ -23100,6 +24289,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f_one() { :; }\ncompgen '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compgen",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e7772c7bdf7c2a1b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "compgen"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "288f14d0989a9b8a75184d16e4865e7a7491c4bdf8aba74a386d14a6af4ad806"
   },
   "case": {
@@ -23146,6 +24367,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
+  "utility": "compgen"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f_one() { :; }\ncompgen -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compgen",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f242cc7da79990f8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
   "utility": "compgen"
  },
  {
@@ -23365,6 +24618,102 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "f() { :; }\ncomplete --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "complete",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "3c0c11f5a6be3920",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "complete"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { :; }\ncomplete '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "complete",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "441bfb58413a3372",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "complete"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { :; }\ncomplete --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "complete",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "5cb1064372a83169",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "complete"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "f() { :; }\ncomplete -r -p -W 'x y' cmd\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -23380,6 +24729,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r64",
+  "utility": "complete"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { :; }\ncomplete '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "complete",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "9183026f245a3147",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
   "utility": "complete"
  },
  {
@@ -23755,6 +25136,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "compopt --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compopt",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "813796c2da7c8d66",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "compopt"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "compopt cmd\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -23807,6 +25220,166 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "compopt '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compopt",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a7271ff4cbc049e5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "compopt"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "compopt --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compopt",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "aee2645c8f8f1551",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "compopt"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "compopt --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compopt",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c18e915e33c89e65",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "compopt"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "compopt -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compopt",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "dc08d3228eff0573",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "compopt"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "compopt -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compopt",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e0a7847bda0e565b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "compopt"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "compopt\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -23822,6 +25395,70 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r64",
+  "utility": "compopt"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "compopt --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compopt",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "ec72b094017150f1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "compopt"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "compopt '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "compopt",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f879edf05e7f9666",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
   "utility": "compopt"
  },
  {
@@ -25570,6 +27207,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
+   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "w=seed\ndeclare - v=1\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
+   ],
+   "domain": "builtins",
+   "family": "declare",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "b4f2279f6ec022e1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "58eafa21a102b38f289818b1b1621f6cd293b6620136e0a974d4096c123088c8"
+  },
+  "utility": "declare"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -25590,6 +27259,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "utility": "declare"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "w=seed\ndeclare - v=1\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
+   ],
+   "domain": "builtins",
+   "family": "declare",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "b60371f1a9e8800e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "58eafa21a102b38f289818b1b1621f6cd293b6620136e0a974d4096c123088c8"
+  },
   "utility": "declare"
  },
  {
@@ -26748,6 +28449,38 @@ PINNED = r"""
   "candidate": {
    "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\ndirs -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dirs",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "05ef277998bf17dc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "dirs"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
    "stdout": "ea03dced087a5a1c8f3be1d626ec64d33930eb749db6af82c7b0de7e7a7f4b9a"
   },
   "case": {
@@ -26982,6 +28715,38 @@ PINNED = r"""
   "candidate": {
    "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
    "status": 0,
+   "stdout": "98a2b29290def969d283a0b2c8c237afe854ad39e29ab87c74b4efdfbcfdbf1c"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\ndirs --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dirs",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "77a3706bb6fb67c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "33f050905c662b01c81273a1d1e3857c7a14254fe3461252fc67e4552f325aa8"
+  },
+  "utility": "dirs"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
    "stdout": "ea03dced087a5a1c8f3be1d626ec64d33930eb749db6af82c7b0de7e7a7f4b9a"
   },
   "case": {
@@ -27028,6 +28793,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r67",
+  "utility": "dirs"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "98a2b29290def969d283a0b2c8c237afe854ad39e29ab87c74b4efdfbcfdbf1c"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\ndirs --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dirs",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c4887297f1d24bb7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "33f050905c662b01c81273a1d1e3857c7a14254fe3461252fc67e4552f325aa8"
+  },
   "utility": "dirs"
  },
  {
@@ -27190,6 +28987,38 @@ PINNED = r"""
   "candidate": {
    "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\ndirs -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dirs",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f4f679fbe353a56d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "dirs"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
    "stdout": "ea03dced087a5a1c8f3be1d626ec64d33930eb749db6af82c7b0de7e7a7f4b9a"
   },
   "case": {
@@ -27247,6 +29076,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "disown --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "disown",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "cf60486f6f46dd9d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "disown"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "disown\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -27263,6 +29124,294 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r55",
   "utility": "disown"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "disown --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "disown",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "ed15aee970309c92",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "disown"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\n. '-ø' ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4824463e4d7011ec",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dot"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\n. --bogus-option ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "8089280487367f06",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dot"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\n. --bogus-option ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a665d9e927711fa5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "dot"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\n. '-ø' ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "fb00a7ef71f2a54b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "dot"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\n. '-ø' ./mw_src a b\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dot_args",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "af66b95c9f373d4f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dot_args"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\n. --bogus-option ./mw_src a b\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dot_args",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "d81c56b9a78b05e7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "dot_args"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\n. '-ø' ./mw_src a b\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dot_args",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "dfa451cc71792906",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "dot_args"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\n. --bogus-option ./mw_src a b\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "dot_args",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "fb6c51b3b2108bce",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dot_args"
  },
  {
   "candidate": {
@@ -27398,6 +29547,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "12d24b58fe9cf8aa4a8c77c1abc2324551584976120d7463c7e37fd08c2ebacc"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "enable --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "enable_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4fe411f05fd0550e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "248b30aea7b7651d52b9658427884692bab832a2dab40e2e7469a786e3c5598a"
+  },
+  "utility": "enable_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
   },
   "case": {
@@ -27507,6 +29688,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "enable --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "enable_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c4046eae9cf45787",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "248b30aea7b7651d52b9658427884692bab832a2dab40e2e7469a786e3c5598a"
+  },
+  "utility": "enable_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "12d24b58fe9cf8aa4a8c77c1abc2324551584976120d7463c7e37fd08c2ebacc"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "enable\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -27599,6 +29812,198 @@ PINNED = r"""
   "option": "-s",
   "reason_id": "r68",
   "utility": "enable_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d6093fca347b7fe6ae6216b4be3d962af5d1f4230dfaf15f908f7a1ba5cdb713"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "eval --bogus-option\nprintf \"[%s]\\n\" \"$?\"\nprintf \"args:%s\\n\" \"$#\"\n"
+   ],
+   "domain": "builtins",
+   "family": "eval",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "2399e2fbd9fb1d6f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "0af70581805aa694a128c2cc91ba45f759b456cce03f01ccf0cb85b97d31ef1a"
+  },
+  "utility": "eval"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d6093fca347b7fe6ae6216b4be3d962af5d1f4230dfaf15f908f7a1ba5cdb713"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "eval --\nprintf \"[%s]\\n\" \"$?\"\nprintf \"args:%s\\n\" \"$#\"\n"
+   ],
+   "domain": "builtins",
+   "family": "eval",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "59aa0b40d3d310e9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "bd021cbf349796f42752b75ea91e80d2df6929b02bdf947e3a67f05f01c40ce8"
+  },
+  "utility": "eval"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d6093fca347b7fe6ae6216b4be3d962af5d1f4230dfaf15f908f7a1ba5cdb713"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "eval '-ø'\nprintf \"[%s]\\n\" \"$?\"\nprintf \"args:%s\\n\" \"$#\"\n"
+   ],
+   "domain": "builtins",
+   "family": "eval",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "658eddbd830f0fbb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "0af70581805aa694a128c2cc91ba45f759b456cce03f01ccf0cb85b97d31ef1a"
+  },
+  "utility": "eval"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d6093fca347b7fe6ae6216b4be3d962af5d1f4230dfaf15f908f7a1ba5cdb713"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "eval --bogus-option\nprintf \"[%s]\\n\" \"$?\"\nprintf \"args:%s\\n\" \"$#\"\n"
+   ],
+   "domain": "builtins",
+   "family": "eval",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e6de17fdddff7911",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "eval"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d6093fca347b7fe6ae6216b4be3d962af5d1f4230dfaf15f908f7a1ba5cdb713"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "eval '-ø'\nprintf \"[%s]\\n\" \"$?\"\nprintf \"args:%s\\n\" \"$#\"\n"
+   ],
+   "domain": "builtins",
+   "family": "eval",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "eff9bba9c3e29b76",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "eval"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d6093fca347b7fe6ae6216b4be3d962af5d1f4230dfaf15f908f7a1ba5cdb713"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "eval --\nprintf \"[%s]\\n\" \"$?\"\nprintf \"args:%s\\n\" \"$#\"\n"
+   ],
+   "domain": "builtins",
+   "family": "eval",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f19fa542fbfce168",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "bd021cbf349796f42752b75ea91e80d2df6929b02bdf947e3a67f05f01c40ce8"
+  },
+  "utility": "eval"
  },
  {
   "candidate": {
@@ -27736,6 +30141,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "d872fd32ddee10a4382ff6ce4daa8fcd46a9e3903185f83e5af7c1bc111b4049"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nexport '-ø' v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nexport -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "export",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "803b3ffb8b9926a8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "export"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "fbea7276915d6a3f0345adfcd27a61ef2c1cce6fb75d38ac4f39c9211eed6d22"
   },
   "case": {
@@ -27788,6 +30225,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "d872fd32ddee10a4382ff6ce4daa8fcd46a9e3903185f83e5af7c1bc111b4049"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nexport --bogus-option v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nexport -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "export",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "9c46925da52a8213",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "export"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "4e18b518e2fae370e669973b0396edb7ec42b8fb3a9273c38d2aeefbbd4c4995"
   },
   "case": {
@@ -27809,6 +30278,38 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r55",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "utility": "export"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "040721b55f30dfb5d4698a2460cbcc4439d382922b932ecdfe0a6076abccd52a"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nexport - v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nexport -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "export",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c7157a2f54835f88",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "aee392c73a85a962f73e467ff2aa2971ed463325bd859e1101fd64abf319aeb6"
+  },
   "utility": "export"
  },
  {
@@ -27896,6 +30397,70 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "d872fd32ddee10a4382ff6ce4daa8fcd46a9e3903185f83e5af7c1bc111b4049"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nexport --bogus-option v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nexport -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "export",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f2937cb1ad1fb188",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "export"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d872fd32ddee10a4382ff6ce4daa8fcd46a9e3903185f83e5af7c1bc111b4049"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nexport '-ø' v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nexport -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "export",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f9c967af3c3bf749",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "export"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "35c11e19233deca5671fb98298e629821f8bb916c2bb21b13a6837315bc47725"
   },
   "case": {
@@ -27968,6 +30533,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "export_flags"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "44f6d061c6ed0acf3bcb90eeb4aa2d1a2ce7a06de0fde1d882a026ea35e117fc"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=1; export v; f_func() { :; }; export -f f_func\nexport '-ø' v\nprintf \"[%s]\\n\" \"$?\"\nprintf \"<%s>\\n\" \"${v-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "export_flags",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4ab92fb9bd2bba7f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "export_flags"
  },
  {
@@ -28098,6 +30695,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "export_flags"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "44f6d061c6ed0acf3bcb90eeb4aa2d1a2ce7a06de0fde1d882a026ea35e117fc"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=1; export v; f_func() { :; }; export -f f_func\nexport --bogus-option v\nprintf \"[%s]\\n\" \"$?\"\nprintf \"<%s>\\n\" \"${v-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "export_flags",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "9879c564c2fd25d9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "export_flags"
  },
  {
@@ -28286,6 +30915,38 @@ PINNED = r"""
   "candidate": {
    "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
    "status": 0,
+   "stdout": "d8c1faf1927892e3484e4b21f7c96898f31137f1d00156fbf6c4f70370052437"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "history -c 2>/dev/null; printf 'echo one\\necho two\\n' > hf; history -r hf 2>/dev/null\nfc -- -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "fc",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "24906bf0265f6153",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "fc"
+ },
+ {
+  "candidate": {
+   "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
+   "status": 0,
    "stdout": "1ea5bb02aabaf8fb9c2a77e4dbaad21a8afd7cc682a874d02e04c2d837618400"
   },
   "case": {
@@ -28442,6 +31103,38 @@ PINNED = r"""
   "candidate": {
    "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
    "status": 0,
+   "stdout": "d8c1faf1927892e3484e4b21f7c96898f31137f1d00156fbf6c4f70370052437"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "history -c 2>/dev/null; printf 'echo one\\necho two\\n' > hf; history -r hf 2>/dev/null\nfc -- -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "fc",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "90276aa5e20c1643",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "fc"
+ },
+ {
+  "candidate": {
+   "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
+   "status": 0,
    "stdout": "1ea5bb02aabaf8fb9c2a77e4dbaad21a8afd7cc682a874d02e04c2d837618400"
   },
   "case": {
@@ -28515,6 +31208,358 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r69",
   "utility": "fc"
+ },
+ {
+  "candidate": {
+   "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
+   "status": 0,
+   "stdout": "d8c1faf1927892e3484e4b21f7c96898f31137f1d00156fbf6c4f70370052437"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "history -c 2>/dev/null; printf 'echo one\\necho two\\n' > hf; history -r hf 2>/dev/null\nfc - -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "fc",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "af5082a1c926ef81",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "fc"
+ },
+ {
+  "candidate": {
+   "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
+   "status": 0,
+   "stdout": "d8c1faf1927892e3484e4b21f7c96898f31137f1d00156fbf6c4f70370052437"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "history -c 2>/dev/null; printf 'echo one\\necho two\\n' > hf; history -r hf 2>/dev/null\nfc - -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "fc",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "fe50444d4cc060ad",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0c1e089748c3953667109ae61e5f952a5632a88b0e5eb18b7d40f796a3ac0aca",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "fc"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9ecaabc6feadc1335a6edd3efde79f4261e2a2582a73ab1b602ce0666096a547"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "set -- ab -a -b c\nOPTIND=1; n=0\nwhile getopts '-ø' opt; do\nprintf \"<%s>:<%s>:%s\\n\" \"$opt\" \"${OPTARG-unset}\" \"$OPTIND\"\nn=$((n+1)); [ \"$n\" -lt 8 ] || break\ndone\nprintf \"end:%s:<%s>:<%s>\\n\" \"$OPTIND\" \"$opt\" \"${OPTARG-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "getopts",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "15a79ce4702c95f3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "61e720fa78d7de17a25253f82a9b22b66f6a83bf6868247c25ebceb77665fb8f"
+  },
+  "utility": "getopts"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9ecaabc6feadc1335a6edd3efde79f4261e2a2582a73ab1b602ce0666096a547"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "set -- ab -a -b c\nOPTIND=1; n=0\nwhile getopts '-ø' opt; do\nprintf \"<%s>:<%s>:%s\\n\" \"$opt\" \"${OPTARG-unset}\" \"$OPTIND\"\nn=$((n+1)); [ \"$n\" -lt 8 ] || break\ndone\nprintf \"end:%s:<%s>:<%s>\\n\" \"$OPTIND\" \"$opt\" \"${OPTARG-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "getopts",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "2403879ff106b59b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "61e720fa78d7de17a25253f82a9b22b66f6a83bf6868247c25ebceb77665fb8f"
+  },
+  "utility": "getopts"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9ecaabc6feadc1335a6edd3efde79f4261e2a2582a73ab1b602ce0666096a547"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "set -- ab -a -b c\nOPTIND=1; n=0\nwhile getopts -- opt; do\nprintf \"<%s>:<%s>:%s\\n\" \"$opt\" \"${OPTARG-unset}\" \"$OPTIND\"\nn=$((n+1)); [ \"$n\" -lt 8 ] || break\ndone\nprintf \"end:%s:<%s>:<%s>\\n\" \"$OPTIND\" \"$opt\" \"${OPTARG-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "getopts",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "2a598940eaa0bc8f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "61e720fa78d7de17a25253f82a9b22b66f6a83bf6868247c25ebceb77665fb8f"
+  },
+  "utility": "getopts"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9ecaabc6feadc1335a6edd3efde79f4261e2a2582a73ab1b602ce0666096a547"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "set -- ab -a -b c\nOPTIND=1; n=0\nwhile getopts '-ø' opt; do\nprintf \"<%s>:<%s>:%s\\n\" \"$opt\" \"${OPTARG-unset}\" \"$OPTIND\"\nn=$((n+1)); [ \"$n\" -lt 8 ] || break\ndone\nprintf \"end:%s:<%s>:<%s>\\n\" \"$OPTIND\" \"$opt\" \"${OPTARG-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "getopts",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4624169997fa4bcf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "61e720fa78d7de17a25253f82a9b22b66f6a83bf6868247c25ebceb77665fb8f"
+  },
+  "utility": "getopts"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9ecaabc6feadc1335a6edd3efde79f4261e2a2582a73ab1b602ce0666096a547"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "set -- ab -a -b c\nOPTIND=1; n=0\nwhile getopts -- opt; do\nprintf \"<%s>:<%s>:%s\\n\" \"$opt\" \"${OPTARG-unset}\" \"$OPTIND\"\nn=$((n+1)); [ \"$n\" -lt 8 ] || break\ndone\nprintf \"end:%s:<%s>:<%s>\\n\" \"$OPTIND\" \"$opt\" \"${OPTARG-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "getopts",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "52858c2fbffeb2fc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "61e720fa78d7de17a25253f82a9b22b66f6a83bf6868247c25ebceb77665fb8f"
+  },
+  "utility": "getopts"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9ecaabc6feadc1335a6edd3efde79f4261e2a2582a73ab1b602ce0666096a547"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "set -- ab -a -b c\nOPTIND=1; n=0\nwhile getopts --bogus-option opt; do\nprintf \"<%s>:<%s>:%s\\n\" \"$opt\" \"${OPTARG-unset}\" \"$OPTIND\"\nn=$((n+1)); [ \"$n\" -lt 8 ] || break\ndone\nprintf \"end:%s:<%s>:<%s>\\n\" \"$OPTIND\" \"$opt\" \"${OPTARG-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "getopts",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a7511380308b4964",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "61e720fa78d7de17a25253f82a9b22b66f6a83bf6868247c25ebceb77665fb8f"
+  },
+  "utility": "getopts"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9ecaabc6feadc1335a6edd3efde79f4261e2a2582a73ab1b602ce0666096a547"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "set -- ab -a -b c\nOPTIND=1; n=0\nwhile getopts --bogus-option opt; do\nprintf \"<%s>:<%s>:%s\\n\" \"$opt\" \"${OPTARG-unset}\" \"$OPTIND\"\nn=$((n+1)); [ \"$n\" -lt 8 ] || break\ndone\nprintf \"end:%s:<%s>:<%s>\\n\" \"$OPTIND\" \"$opt\" \"${OPTARG-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "getopts",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a80d12fb993bf0ad",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "61e720fa78d7de17a25253f82a9b22b66f6a83bf6868247c25ebceb77665fb8f"
+  },
+  "utility": "getopts"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9ecaabc6feadc1335a6edd3efde79f4261e2a2582a73ab1b602ce0666096a547"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "set -- ab -a -b c\nOPTIND=1; n=0\nwhile getopts --bogus-option opt; do\nprintf \"<%s>:<%s>:%s\\n\" \"$opt\" \"${OPTARG-unset}\" \"$OPTIND\"\nn=$((n+1)); [ \"$n\" -lt 8 ] || break\ndone\nprintf \"end:%s:<%s>:<%s>\\n\" \"$OPTIND\" \"$opt\" \"${OPTARG-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "getopts",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c041c744e2cc9cf7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "61e720fa78d7de17a25253f82a9b22b66f6a83bf6868247c25ebceb77665fb8f"
+  },
+  "utility": "getopts"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9ecaabc6feadc1335a6edd3efde79f4261e2a2582a73ab1b602ce0666096a547"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "set -- ab -a -b c\nOPTIND=1; n=0\nwhile getopts -- opt; do\nprintf \"<%s>:<%s>:%s\\n\" \"$opt\" \"${OPTARG-unset}\" \"$OPTIND\"\nn=$((n+1)); [ \"$n\" -lt 8 ] || break\ndone\nprintf \"end:%s:<%s>:<%s>\\n\" \"$OPTIND\" \"$opt\" \"${OPTARG-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "getopts",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "eceb172f82c21bc8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "61e720fa78d7de17a25253f82a9b22b66f6a83bf6868247c25ebceb77665fb8f"
+  },
+  "utility": "getopts"
  },
  {
   "candidate": {
@@ -29253,6 +32298,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/bin/mkdir -p hbin\nprintf '#!/bin/sh\\nexit 0\\n' > hbin/mw_prog\n/bin/chmod 755 hbin/mw_prog\nPATH=\"$PWD/hbin:/usr/bin:/bin\"\nhash mw_prog sh 2>/dev/null\nhash --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "hash_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "075deb01dcd512ad",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "fe019f3a8f7f7e30ed550e3c3f3c15689b1cc40403a652bc4b4b88833c1db267",
+   "status": 0,
+   "stdout": "fbbfd822bb74023ef04b52a3091e900359e7107d0e036617f4f82bea74bfbf7b"
+  },
+  "utility": "hash_list"
+ },
+ {
+  "candidate": {
+   "effects": "fe019f3a8f7f7e30ed550e3c3f3c15689b1cc40403a652bc4b4b88833c1db267",
+   "status": 0,
+   "stdout": "3ccceb26a079b7e35e3bef926e53ddba47f61a933f1176306e8ef1d8c0bf4b09"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/bin/mkdir -p hbin\nprintf '#!/bin/sh\\nexit 0\\n' > hbin/mw_prog\n/bin/chmod 755 hbin/mw_prog\nPATH=\"$PWD/hbin:/usr/bin:/bin\"\nhash mw_prog sh 2>/dev/null\nhash\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -29294,6 +32371,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r70",
+  "utility": "hash_list"
+ },
+ {
+  "candidate": {
+   "effects": "fe019f3a8f7f7e30ed550e3c3f3c15689b1cc40403a652bc4b4b88833c1db267",
+   "status": 0,
+   "stdout": "3ccceb26a079b7e35e3bef926e53ddba47f61a933f1176306e8ef1d8c0bf4b09"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p hbin\nprintf '#!/bin/sh\\nexit 0\\n' > hbin/mw_prog\n/bin/chmod 755 hbin/mw_prog\nPATH=\"$PWD/hbin:/usr/bin:/bin\"\nhash mw_prog sh 2>/dev/null\nhash --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "hash_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "d286597e8ce81fb7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "fe019f3a8f7f7e30ed550e3c3f3c15689b1cc40403a652bc4b4b88833c1db267",
+   "status": 0,
+   "stdout": "fbbfd822bb74023ef04b52a3091e900359e7107d0e036617f4f82bea74bfbf7b"
+  },
   "utility": "hash_list"
  },
  {
@@ -29347,6 +32456,38 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r70",
   "utility": "hash_list"
+ },
+ {
+  "candidate": {
+   "effects": "fe019f3a8f7f7e30ed550e3c3f3c15689b1cc40403a652bc4b4b88833c1db267",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p hbin\nprintf '#!/bin/sh\\nexit 0\\n' > hbin/mw_prog\n/bin/chmod 755 hbin/mw_prog\nPATH=\"$PWD/hbin:/usr/bin:/bin\"\nhash --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "hash_posix",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "855bbfee55b0be26",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "fe019f3a8f7f7e30ed550e3c3f3c15689b1cc40403a652bc4b4b88833c1db267",
+   "status": 0,
+   "stdout": "b8582e1f6d1bab950d61ee214881b5df800b5d98886e340d1a2e8175be6b40df"
+  },
+  "utility": "hash_posix"
  },
  {
   "candidate": {
@@ -29409,6 +32550,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "history -c 2>/dev/null\nhistory --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "history",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "09aa6936645bf28f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "history"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "history -c 2>/dev/null\nhistory -p text\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -29450,6 +32623,102 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r69",
+  "utility": "history"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "history -c 2>/dev/null\nhistory -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "history",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "34cb7f3c45fbcb84",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "history"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "history -c 2>/dev/null\nhistory -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "history",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "58a815f4a151c931",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "history"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "history -c 2>/dev/null\nhistory --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "history",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "73038240250247d8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
   "utility": "history"
  },
  {
@@ -29543,6 +32812,70 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "kill '-ø' -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "kill_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "253aa2d3a5b30076",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "529a848fe913d3b5122b88b59d1981f8689cc6319b8ee6d07786cf8b3c3cb5e3"
+  },
+  "utility": "kill_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "kill - -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "kill_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "288bf0568c2b5d80",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "529a848fe913d3b5122b88b59d1981f8689cc6319b8ee6d07786cf8b3c3cb5e3"
+  },
+  "utility": "kill_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "97d8e7009a38f5ca703bf874ee1326777c6b3f4f8f8e44c5998b326876ffb21e"
   },
   "case": {
@@ -29597,6 +32930,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "kill -- -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "kill_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "6999fc66cb6ca2ea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "kill_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "97d8e7009a38f5ca703bf874ee1326777c6b3f4f8f8e44c5998b326876ffb21e"
   },
   "case": {
@@ -29618,6 +32983,38 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r72",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "utility": "kill_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "kill --bogus-option -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "kill_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "6ff94c6debc9ade6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "529a848fe913d3b5122b88b59d1981f8689cc6319b8ee6d07786cf8b3c3cb5e3"
+  },
   "utility": "kill_list"
  },
  {
@@ -29651,6 +33048,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "kill - -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "kill_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "75cb72d759a7bce4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "2b048bbc68eca2572ea69bea2ef2ece1f9b75520c94da150f646cafb0467e3c4"
+  },
+  "utility": "kill_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "eb3642defad203f47c8b1c594417c65516c5af7b6c34a91ff81cd5489b79bcc0"
   },
   "case": {
@@ -29672,6 +33101,38 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r72",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "utility": "kill_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "kill '-ø' -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "kill_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a155b7215bb89040",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "2b048bbc68eca2572ea69bea2ef2ece1f9b75520c94da150f646cafb0467e3c4"
+  },
   "utility": "kill_list"
  },
  {
@@ -29759,6 +33220,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "kill --bogus-option -l\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "kill_list",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e09d6bb5cf1ede0c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "2b048bbc68eca2572ea69bea2ef2ece1f9b75520c94da150f646cafb0467e3c4"
+  },
+  "utility": "kill_list"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "50d1796df7515d8b02e13f64404e64b9d562825d594cf999b1c16620d679df61"
   },
   "case": {
@@ -29815,6 +33308,38 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r72",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "utility": "kill_send"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": -15,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "kill - -0 $$ 2>/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "kill_send",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "18eb3e4acc6b65d2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
   "utility": "kill_send"
  },
  {
@@ -29899,6 +33424,38 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": -15,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "kill - -0 $$ 2>/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "kill_send",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "df62823236007086",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "kill_send"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "c12828ec2aa6dbf9783a510cf8194c30db1da5a9cb154dd99b6361ada403a720"
   },
@@ -29920,6 +33477,70 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "let"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "470dbcd57715e97490bdcfe819250f0b071dcc344dfddc5a294227dda48a5e15"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "x=1; y=1\nlet -- x=3+4 2>/dev/null\nprintf \"[%s] x=%s y=%s\\n\" \"$?\" \"$x\" \"$y\"\n"
+   ],
+   "domain": "builtins",
+   "family": "let",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "3aa2caaa8f4746d0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "fc36c6728e79ebd25e993783fb02c6b8001dd416bdd7972b8e17a7b65d0f86c2"
+  },
+  "utility": "let"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "470dbcd57715e97490bdcfe819250f0b071dcc344dfddc5a294227dda48a5e15"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "x=1; y=1\nlet -- x=3+4 2>/dev/null\nprintf \"[%s] x=%s y=%s\\n\" \"$?\" \"$x\" \"$y\"\n"
+   ],
+   "domain": "builtins",
+   "family": "let",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "6336fcdce83cd0f3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "fc36c6728e79ebd25e993783fb02c6b8001dd416bdd7972b8e17a7b65d0f86c2"
+  },
   "utility": "let"
  },
  {
@@ -30258,6 +33879,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "utility": "local"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "b7d2a1b62072f9882a5c4b24c86a6f9ef7d3a374dea24fc9aa567fc97490e668"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=global; w=global2\nf() {\nlocal - v=1\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
+   ],
+   "domain": "builtins",
+   "family": "local",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4375b7ad3de7c495",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "73ee630b9841c196cdba0bfd51818f5400589c824bcca493ede1beb5b3c2f3e9"
+  },
   "utility": "local"
  },
  {
@@ -31038,6 +34691,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "utility": "local"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "b7d2a1b62072f9882a5c4b24c86a6f9ef7d3a374dea24fc9aa567fc97490e668"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=global; w=global2\nf() {\nlocal - v=1\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
+   ],
+   "domain": "builtins",
+   "family": "local",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "dce4122826c5676c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "73ee630b9841c196cdba0bfd51818f5400589c824bcca493ede1beb5b3c2f3e9"
+  },
   "utility": "local"
  },
  {
@@ -32513,6 +36198,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "printf 'r0\\nr1\\nr2\\nr3\\nr4\\n' > recs\narr=(old old old old)\nmapfile - arr < recs\nprintf \"[%s] n:%s\\n\" \"$?\" \"${#arr[@]}\"\nprintf \"<%s>\\n\" \"${arr[@]}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "mapfile",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "7e5e1aa7b3481725",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "4c96388f3192857fbbd7e9e0e7f5bb7ac219f516441b1dc9a31aa0e295a70615",
+   "status": 0,
+   "stdout": "b8a00147e76240426b6fd1dfa3396f21f994be857c9340676b2fb499e7322b98"
+  },
+  "utility": "mapfile"
+ },
+ {
+  "candidate": {
+   "effects": "4c96388f3192857fbbd7e9e0e7f5bb7ac219f516441b1dc9a31aa0e295a70615",
+   "status": 0,
+   "stdout": "6fbd5a3486ccb8fe9f49d8985eb2a2473497f7345de16231fa7064bc4742fa23"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "printf 'r0\\nr1\\nr2\\nr3\\nr4\\n' > recs\narr=(old old old old)\nmapfile -n 0 -O 0 -c2 arr < recs\nprintf \"[%s] n:%s\\n\" \"$?\" \"${#arr[@]}\"\nprintf \"<%s>\\n\" \"${arr[@]}\"\n"
    ],
    "domain": "builtins",
@@ -33334,6 +37051,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "mapfile"
+ },
+ {
+  "candidate": {
+   "effects": "4c96388f3192857fbbd7e9e0e7f5bb7ac219f516441b1dc9a31aa0e295a70615",
+   "status": 0,
+   "stdout": "6fbd5a3486ccb8fe9f49d8985eb2a2473497f7345de16231fa7064bc4742fa23"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf 'r0\\nr1\\nr2\\nr3\\nr4\\n' > recs\narr=(old old old old)\nmapfile - arr < recs\nprintf \"[%s] n:%s\\n\" \"$?\" \"${#arr[@]}\"\nprintf \"<%s>\\n\" \"${arr[@]}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "mapfile",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c82d2784597fbd6f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "4c96388f3192857fbbd7e9e0e7f5bb7ac219f516441b1dc9a31aa0e295a70615",
+   "status": 0,
+   "stdout": "b8a00147e76240426b6fd1dfa3396f21f994be857c9340676b2fb499e7322b98"
+  },
   "utility": "mapfile"
  },
  {
@@ -34167,6 +37916,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd - +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "popd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "20eb924aef55a1f3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "57ee36ffb87fc76a20aebe94aa5b14407b97a9dea54f3609dcbb435deb1fc24b"
+  },
+  "utility": "popd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "d641028b9091bc70b0d8d9ccf90183fc505f3a24dfa00cd416fb45ac48ee81b5"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd -n +9\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
    ],
    "domain": "builtins",
@@ -34401,6 +38182,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd -- +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "popd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "7959a81d03097090",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "4709277a9102b6a53adcfefcacbf0094b3189aba49bbbd3964be0606f36da432"
+  },
+  "utility": "popd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "d641028b9091bc70b0d8d9ccf90183fc505f3a24dfa00cd416fb45ac48ee81b5"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd -n +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
    ],
    "domain": "builtins",
@@ -34531,6 +38344,70 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd - +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "popd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "b0d7cb956feda191",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "57ee36ffb87fc76a20aebe94aa5b14407b97a9dea54f3609dcbb435deb1fc24b"
+  },
+  "utility": "popd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "d641028b9091bc70b0d8d9ccf90183fc505f3a24dfa00cd416fb45ac48ee81b5"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd -- +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "popd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c080d952c7f37927",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "4709277a9102b6a53adcfefcacbf0094b3189aba49bbbd3964be0606f36da432"
+  },
+  "utility": "popd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "d641028b9091bc70b0d8d9ccf90183fc505f3a24dfa00cd416fb45ac48ee81b5"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd extra\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
    ],
    "domain": "builtins",
@@ -34583,6 +38460,134 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd --bogus-option +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "popd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "cb75fb8bf94043f9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "57ee36ffb87fc76a20aebe94aa5b14407b97a9dea54f3609dcbb435deb1fc24b"
+  },
+  "utility": "popd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "d641028b9091bc70b0d8d9ccf90183fc505f3a24dfa00cd416fb45ac48ee81b5"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd '-ø' +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "popd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "cfb09ca057fb81b6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "57ee36ffb87fc76a20aebe94aa5b14407b97a9dea54f3609dcbb435deb1fc24b"
+  },
+  "utility": "popd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "d641028b9091bc70b0d8d9ccf90183fc505f3a24dfa00cd416fb45ac48ee81b5"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd '-ø' +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "popd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "d20034e49a30c3cd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "57ee36ffb87fc76a20aebe94aa5b14407b97a9dea54f3609dcbb435deb1fc24b"
+  },
+  "utility": "popd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "d641028b9091bc70b0d8d9ccf90183fc505f3a24dfa00cd416fb45ac48ee81b5"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd --bogus-option +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "popd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f14a8f0ab287aeaa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "57ee36ffb87fc76a20aebe94aa5b14407b97a9dea54f3609dcbb435deb1fc24b"
+  },
+  "utility": "popd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "d641028b9091bc70b0d8d9ccf90183fc505f3a24dfa00cd416fb45ac48ee81b5"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd da >/dev/null; pushd db >/dev/null\npopd -n extra\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
    ],
    "domain": "builtins",
@@ -34599,6 +38604,38 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r67",
   "utility": "popd"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "poweroff '-ø' -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "poweroff",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "23ef873a30068d81",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "poweroff"
  },
  {
   "candidate": {
@@ -34635,6 +38672,198 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "poweroff '-ø' -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "poweroff",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "50c1ce0962cbe4b5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "poweroff"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "poweroff - -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "poweroff",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "bf65289edeefcbbe",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "poweroff"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "poweroff -- -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "poweroff",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c65bc0db6ed77143",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "poweroff"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "poweroff - -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "poweroff",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "cc3aba22006c798b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "poweroff"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "poweroff -- -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "poweroff",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "db390212e122d401",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "poweroff"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "poweroff --bogus-option -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "poweroff",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e47d625156014b24",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "poweroff"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "poweroff -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -34650,6 +38879,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r76",
+  "utility": "poweroff"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "poweroff --bogus-option -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "poweroff",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "ffabe8f970724265",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
   "utility": "poweroff"
  },
  {
@@ -35181,6 +39442,70 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd '-ø' da\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "pushd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "0417d7e9bb9d0fa7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "5f07c53afd19055596e09fe870a05a551b1737534966e5a86bd4d46b0e85ecd5"
+  },
+  "utility": "pushd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "e673579e74e394e9190f8003becf02da251589010719290cc464d8ab2c3657b3"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd - da\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "pushd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "0706e0309b24e889",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "cf935e22030d3df66e79c75e8efaaf1a10d669891f57c1a1023658aba23682e6"
+  },
+  "utility": "pushd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "e673579e74e394e9190f8003becf02da251589010719290cc464d8ab2c3657b3"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd -n +9\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
    ],
    "domain": "builtins",
@@ -35222,6 +39547,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r67",
+  "utility": "pushd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "e673579e74e394e9190f8003becf02da251589010719290cc464d8ab2c3657b3"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd -- da\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "pushd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "342eed265d16c680",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "cf935e22030d3df66e79c75e8efaaf1a10d669891f57c1a1023658aba23682e6"
+  },
   "utility": "pushd"
  },
  {
@@ -35415,6 +39772,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd --bogus-option da\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "pushd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "734e0f9a9b0ac951",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "5f07c53afd19055596e09fe870a05a551b1737534966e5a86bd4d46b0e85ecd5"
+  },
+  "utility": "pushd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "e673579e74e394e9190f8003becf02da251589010719290cc464d8ab2c3657b3"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd +9\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
    ],
    "domain": "builtins",
@@ -35597,6 +39986,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd '-ø' da\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "pushd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "b0c8f36af345ce81",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "5f07c53afd19055596e09fe870a05a551b1737534966e5a86bd4d46b0e85ecd5"
+  },
+  "utility": "pushd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "e673579e74e394e9190f8003becf02da251589010719290cc464d8ab2c3657b3"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd -n +0\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
    ],
    "domain": "builtins",
@@ -35753,6 +40174,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd --bogus-option da\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "pushd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c6d5634945270cc8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "5f07c53afd19055596e09fe870a05a551b1737534966e5a86bd4d46b0e85ecd5"
+  },
+  "utility": "pushd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "e673579e74e394e9190f8003becf02da251589010719290cc464d8ab2c3657b3"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd +9\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
    ],
    "domain": "builtins",
@@ -35794,6 +40247,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r67",
+  "utility": "pushd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "e673579e74e394e9190f8003becf02da251589010719290cc464d8ab2c3657b3"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd - da\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "pushd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "d23984996f9003e7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "cf935e22030d3df66e79c75e8efaaf1a10d669891f57c1a1023658aba23682e6"
+  },
   "utility": "pushd"
  },
  {
@@ -36002,6 +40487,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r67",
+  "utility": "pushd"
+ },
+ {
+  "candidate": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "e673579e74e394e9190f8003becf02da251589010719290cc464d8ab2c3657b3"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/bin/mkdir -p da db dc\ncd \"$PWD\" >/dev/null 2>&1\npushd db >/dev/null 2>&1\npushd -- da\nprintf \"[%s]\\n\" \"$?\"\ndirs\n"
+   ],
+   "domain": "builtins",
+   "family": "pushd",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f89df792bbc813a1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "07e77c318bab71611acdda0acb991d6ce1e355f058fbdeb126bdbe474654877b",
+   "status": 0,
+   "stdout": "cf935e22030d3df66e79c75e8efaaf1a10d669891f57c1a1023658aba23682e6"
+  },
   "utility": "pushd"
  },
  {
@@ -37105,6 +41622,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "printf 'r0\\nr1\\nr2\\nr3\\nr4\\n' > recs\narr=(old old old old)\nreadarray - arr < recs\nprintf \"[%s] n:%s\\n\" \"$?\" \"${#arr[@]}\"\nprintf \"<%s>\\n\" \"${arr[@]}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "readarray",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "6a2202ade35ccedd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "4c96388f3192857fbbd7e9e0e7f5bb7ac219f516441b1dc9a31aa0e295a70615",
+   "status": 0,
+   "stdout": "b8a00147e76240426b6fd1dfa3396f21f994be857c9340676b2fb499e7322b98"
+  },
+  "utility": "readarray"
+ },
+ {
+  "candidate": {
+   "effects": "4c96388f3192857fbbd7e9e0e7f5bb7ac219f516441b1dc9a31aa0e295a70615",
+   "status": 0,
+   "stdout": "6fbd5a3486ccb8fe9f49d8985eb2a2473497f7345de16231fa7064bc4742fa23"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "printf 'r0\\nr1\\nr2\\nr3\\nr4\\n' > recs\narr=(old old old old)\nreadarray -t -s1 -c2 -d : arr < recs\nprintf \"[%s] n:%s\\n\" \"$?\" \"${#arr[@]}\"\nprintf \"<%s>\\n\" \"${arr[@]}\"\n"
    ],
    "domain": "builtins",
@@ -37328,6 +41877,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "readarray"
+ },
+ {
+  "candidate": {
+   "effects": "4c96388f3192857fbbd7e9e0e7f5bb7ac219f516441b1dc9a31aa0e295a70615",
+   "status": 0,
+   "stdout": "6fbd5a3486ccb8fe9f49d8985eb2a2473497f7345de16231fa7064bc4742fa23"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf 'r0\\nr1\\nr2\\nr3\\nr4\\n' > recs\narr=(old old old old)\nreadarray - arr < recs\nprintf \"[%s] n:%s\\n\" \"$?\" \"${#arr[@]}\"\nprintf \"<%s>\\n\" \"${arr[@]}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "readarray",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "8226722dcaf05601",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "4c96388f3192857fbbd7e9e0e7f5bb7ac219f516441b1dc9a31aa0e295a70615",
+   "status": 0,
+   "stdout": "b8a00147e76240426b6fd1dfa3396f21f994be857c9340676b2fb499e7322b98"
+  },
   "utility": "readarray"
  },
  {
@@ -38728,6 +43309,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "d872fd32ddee10a4382ff6ce4daa8fcd46a9e3903185f83e5af7c1bc111b4049"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nreadonly --bogus-option v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nreadonly -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "readonly",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "25309eb42fa62bf1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "readonly"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "3410d2ce8c599927821b0503be30a558c5e629846f7ca2f46be566db77f099e5"
   },
   "case": {
@@ -38748,6 +43361,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "readonly"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "040721b55f30dfb5d4698a2460cbcc4439d382922b932ecdfe0a6076abccd52a"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nreadonly - v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nreadonly -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "readonly",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "5e47a423ec019523",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "aee392c73a85a962f73e467ff2aa2971ed463325bd859e1101fd64abf319aeb6"
+  },
   "utility": "readonly"
  },
  {
@@ -38884,6 +43529,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "d872fd32ddee10a4382ff6ce4daa8fcd46a9e3903185f83e5af7c1bc111b4049"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nreadonly '-ø' v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nreadonly -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "readonly",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "dd0ee9a08a347c04",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "readonly"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "fbea7276915d6a3f0345adfcd27a61ef2c1cce6fb75d38ac4f39c9211eed6d22"
   },
   "case": {
@@ -38905,6 +43582,198 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r55",
   "utility": "readonly"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d872fd32ddee10a4382ff6ce4daa8fcd46a9e3903185f83e5af7c1bc111b4049"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nreadonly --bogus-option v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nreadonly -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "readonly",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e19b27a740ebee8e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "readonly"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d872fd32ddee10a4382ff6ce4daa8fcd46a9e3903185f83e5af7c1bc111b4049"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=old\nreadonly '-ø' v=1\nprintf \"[%s]\\n\" \"$?\"\nprintf \"v=<%s>|w=<%s>\\n\" \"${v-unset}\" \"${w-unset}\"\nreadonly -p 2>/dev/null | /bin/grep -Eo \"(v|w)=[^ ]*\" | /bin/sort | /bin/tr \"\\n\" \"|\"; echo\n"
+   ],
+   "domain": "builtins",
+   "family": "readonly",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f49b3b892e9359ef",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "readonly"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "reboot -- -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "reboot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "15ff0ab818be29d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "reboot"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "reboot '-ø' -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "reboot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "1f03c65cca8fb3c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "reboot"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "reboot -- -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "reboot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "5d96c43787ba4948",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "reboot"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "reboot '-ø' -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "reboot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "633d38cef0c1422e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "reboot"
  },
  {
   "candidate": {
@@ -38962,6 +43831,134 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "reboot --bogus-option -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "reboot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a9b0adb11401309a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "reboot"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "reboot - -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "reboot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "b2f69087c5b705b8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "reboot"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "reboot - -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "reboot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "d21ce28d86e39cec",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "reboot"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "reboot --bogus-option -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "reboot",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "edd6aed53779b436",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "reboot"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "c21a05d2303b7e89bd6bcd8333c45820c6adec3678777820848eb6a259b5f5ac"
   },
   "case": {
@@ -38982,6 +43979,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "return"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c21a05d2303b7e89bd6bcd8333c45820c6adec3678777820848eb6a259b5f5ac"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { return -; }\nf\nprintf \"infn:[%s]\\n\" \"$?\"\n(return -) 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "return",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "1c78335da50c4c6b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "return"
  },
  {
@@ -39019,6 +44048,102 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "f() { return --bogus-option; }\nf\nprintf \"infn:[%s]\\n\" \"$?\"\n(return --bogus-option) 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "return",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "246405ae053cb4d0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "return"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c21a05d2303b7e89bd6bcd8333c45820c6adec3678777820848eb6a259b5f5ac"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { return '-ø'; }\nf\nprintf \"infn:[%s]\\n\" \"$?\"\n(return '-ø') 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "return",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "3b92cf5f40d685b6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "return"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c21a05d2303b7e89bd6bcd8333c45820c6adec3678777820848eb6a259b5f5ac"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { return --; }\nf\nprintf \"infn:[%s]\\n\" \"$?\"\n(return --) 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "return",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a01c500cd224a995",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "return"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c21a05d2303b7e89bd6bcd8333c45820c6adec3678777820848eb6a259b5f5ac"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "f() { return -1; }\nf\nprintf \"infn:[%s]\\n\" \"$?\"\n(return -1) 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -39034,6 +44159,102 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "return"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c21a05d2303b7e89bd6bcd8333c45820c6adec3678777820848eb6a259b5f5ac"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { return '-ø'; }\nf\nprintf \"infn:[%s]\\n\" \"$?\"\n(return '-ø') 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "return",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "ce422495e125967d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "return"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c21a05d2303b7e89bd6bcd8333c45820c6adec3678777820848eb6a259b5f5ac"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { return -; }\nf\nprintf \"infn:[%s]\\n\" \"$?\"\n(return -) 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "return",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e3482cb4e50fd538",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "return"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c21a05d2303b7e89bd6bcd8333c45820c6adec3678777820848eb6a259b5f5ac"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { return --bogus-option; }\nf\nprintf \"infn:[%s]\\n\" \"$?\"\n(return --bogus-option) 2>/dev/null\nprintf \"top:[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "return",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "efee646f558d8362",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "return"
  },
  {
@@ -39352,6 +44573,38 @@ PINNED = r"""
   "candidate": {
    "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
    "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource '-ø' ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "0983448c22b7414b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "a8e679960a382a56f5107d345c5a67ae30306ad031219d1920cd42f1c4b08d33"
+  },
+  "utility": "source"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
    "stdout": "fb6ff9be62223432856c17921734b67b27027dd3d193a0a47d5d4e044d4a4711"
   },
   "case": {
@@ -39372,6 +44625,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "source"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource --bogus-option ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4341618834cef120",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "source"
  },
  {
@@ -39409,6 +44694,70 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource - ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "72b4d5b769cd90bc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "a8e679960a382a56f5107d345c5a67ae30306ad031219d1920cd42f1c4b08d33"
+  },
+  "utility": "source"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "3ea418e6f090de072146734996d1b188946d04522740a20a81040cdb48e41a21"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource -- ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "80acc210f29f34cb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "a8e679960a382a56f5107d345c5a67ae30306ad031219d1920cd42f1c4b08d33"
+  },
+  "utility": "source"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource ./missing12345\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -39424,6 +44773,70 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "source"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource --bogus-option ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "968b31ae67186760",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "source"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource '-ø' ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "be60e3461b4895a5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
   "utility": "source"
  },
  {
@@ -39454,6 +44867,294 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource --bogus-option ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e85642828ca1bb5a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "a8e679960a382a56f5107d345c5a67ae30306ad031219d1920cd42f1c4b08d33"
+  },
+  "utility": "source"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource '-ø' ./mw_src\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f287d6920727146b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "source"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource --bogus-option ./mw_src a b\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source_args",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "322d0557d55e026c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "source_args"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource --bogus-option ./mw_src a b\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source_args",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4344b419fe2f24f6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "source_args"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource '-ø' ./mw_src a b\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source_args",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "470a6b22a8e03028",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "source_args"
+ },
+ {
+  "candidate": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf \"echo \\\"<\\$0> \\$# <\\$1>\\\"\\n\" > mw_src\n/bin/mkdir -p sbin; printf 'echo found-on-path\\n' > sbin/mw_onpath\nPATH=\"$PWD/sbin:/usr/bin:/bin\"\nsource '-ø' ./mw_src a b\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "source_args",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "7d3df57ef05dd035",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "17171e354ca76e14bd7422df27855d9d3f49eb46d3629f07f192a47fba48264c",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "source_args"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "suspend --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "suspend",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "05ca6a71eae7abdb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "suspend"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "suspend -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "suspend",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "18547a0c9557df33",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "suspend"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "suspend '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "suspend",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "456fc47d252793fc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "suspend"
+ },
+ {
+  "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
@@ -39476,6 +45177,70 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "suspend"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "suspend -\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "suspend",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "7a5b5e9cdddb46b2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "suspend"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "suspend '-ø'\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "suspend",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "7e820f339e445d2a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
   "utility": "suspend"
  },
  {
@@ -39528,6 +45293,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "suspend"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "suspend --bogus-option\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "suspend",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c937744f975118b2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
   "utility": "suspend"
  },
  {
@@ -39646,6 +45443,134 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\ntest - a == a\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "test_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "0ab8a07c28d9118e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "test_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\ntest --bogus-option a == a\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "test_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "110397a8d55f93a4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "test_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\ntest '-ø' a == a\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "test_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "37c83925a19d6945",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "test_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\ntest -- a == a\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "test_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "39ec5e6908442d74",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "test_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\ntest -N missing\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
@@ -39689,6 +45614,134 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r54",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "utility": "test_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\ntest '-ø' a == a\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "test_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4c83577e099ba4da",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "test_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\ntest -- a == a\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "test_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "8ddc0eeb48c9d650",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "test_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\ntest - a == a\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "test_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "b8f7415569e809cd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "utility": "test_ext"
+ },
+ {
+  "candidate": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "/usr/bin/touch -d @1000000000 older\n/usr/bin/touch -d @1000000001 newer\n/usr/bin/touch -d @1000000001 same\n/bin/ln newer link 2>/dev/null || /bin/cp newer link\n/bin/ln -s newer soft\n/bin/ln -s nowhere dangling\n/bin/mkdir -p adir\n/bin/chmod 1755 adir\n: > suid; /bin/chmod 4644 suid\n: > sgid; /bin/chmod 2644 sgid\n: > none; /bin/chmod 0 none\n/usr/bin/mkfifo afifo 2>/dev/null || :\nprintf '#!/bin/sh\\nexit 0\\n' > anexe; /bin/chmod 755 anexe\n/usr/bin/touch -d @1000000000.100000000 nsa\n/usr/bin/touch -d @1000000000.100000001 nsb\ntest --bogus-option a == a\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "test_ext",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "bc4e2121ff00c575",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "f130b245e58793eebff1e49b1d35c5fe6b120764755d961876078e2a2f033c5d",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
   "utility": "test_ext"
  },
  {
@@ -39923,6 +45976,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r79",
+  "utility": "type"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "7632974fb399ad2d575a34aece6aab017c4ef0314206e97686ef646c2fef82d8"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f_func() { :; }\nalias mw_al='echo x' 2>/dev/null\nPATH=/usr/bin:/bin\ntype - cd\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "type",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "6fefad3cc97e743d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "fca2817dd2708344fbdbd0166aeb0f2036c5f49bf26a57748f1bb19128b1b8d4"
+  },
   "utility": "type"
  },
  {
@@ -40189,6 +46274,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "7632974fb399ad2d575a34aece6aab017c4ef0314206e97686ef646c2fef82d8"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f_func() { :; }\nalias mw_al='echo x' 2>/dev/null\nPATH=/usr/bin:/bin\ntype - cd\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "type",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "c98564d73271de4b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "fca2817dd2708344fbdbd0166aeb0f2036c5f49bf26a57748f1bb19128b1b8d4"
+  },
+  "utility": "type"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
   },
   "case": {
@@ -40371,6 +46488,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "7632974fb399ad2d575a34aece6aab017c4ef0314206e97686ef646c2fef82d8"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\ntype - cd\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "type_posix",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "4a11cfe4ed2697cd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "fca2817dd2708344fbdbd0166aeb0f2036c5f49bf26a57748f1bb19128b1b8d4"
+  },
+  "utility": "type_posix"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "58be5ca8354c0d8ddf19dadbea74e08e9d280d8c6cacfd5528b6281750ded229"
   },
   "case": {
@@ -40391,6 +46540,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r79",
+  "utility": "type_posix"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "7632974fb399ad2d575a34aece6aab017c4ef0314206e97686ef646c2fef82d8"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\ntype - cd\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "type_posix",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "ac83b298e3c53e2b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "fca2817dd2708344fbdbd0166aeb0f2036c5f49bf26a57748f1bb19128b1b8d4"
+  },
   "utility": "type_posix"
  },
  {
@@ -41171,6 +47352,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "utility": "typeset"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "w=seed\ntypeset - v=1\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
+   ],
+   "domain": "builtins",
+   "family": "typeset",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "6008d83f31d63279",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "58eafa21a102b38f289818b1b1621f6cd293b6620136e0a974d4096c123088c8"
+  },
   "utility": "typeset"
  },
  {
@@ -42222,6 +48435,38 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "w=seed\ntypeset - v=1\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
+   ],
+   "domain": "builtins",
+   "family": "typeset",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "ce3b56d993488eba",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "58eafa21a102b38f289818b1b1621f6cd293b6620136e0a974d4096c123088c8"
+  },
+  "utility": "typeset"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "w=seed\ntypeset -A -l -u -r -p v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
    ],
    "domain": "builtins",
@@ -42849,6 +49094,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "ulimit --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "ulimit",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "07449252b55f88b1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "5f29589325a71db8e276c7cb9bc601c1fde0e1609d90fe2b7736d0bcec2f43f6"
+  },
+  "utility": "ulimit"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "9f8e284ff336af311eed29c5d5d261c82ff422b20cae2d14f3cbec4d2e906c6e"
   },
   "case": {
@@ -42901,6 +49178,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "ulimit --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "ulimit",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "db9b37788d4aa70c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "dbd6e19ed0b6a5935466af997c9e23e4a3732e3f0bcc7682c977bc487c5b7740"
+  },
+  "utility": "ulimit"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "4543b81827f9ac19a74641339361120be413799403bec7c94fa6071328bc86f8"
   },
   "case": {
@@ -42947,6 +49256,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r80",
+  "utility": "ulimit_posix"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "ulimit --\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "ulimit_posix",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "43a105c9893ce3d2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "dbd6e19ed0b6a5935466af997c9e23e4a3732e3f0bcc7682c977bc487c5b7740"
+  },
   "utility": "ulimit_posix"
  },
  {
@@ -43545,6 +49886,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r81",
+  "utility": "umask"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "8e6898e025154119ad3fd41656726edc7459dc697bfcde9f8272dcaaf2f0f47a"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "umask 022\numask --\nprintf \"[%s]\\n\" \"$?\"\numask\numask -S\n"
+   ],
+   "domain": "builtins",
+   "family": "umask",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "2dc7bfb6ebae61c1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9292a6a0696952ae8b42d73a07359498db562e985f488d5d516d83cd8b44331d"
+  },
   "utility": "umask"
  },
  {
@@ -45111,6 +51484,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "8e6898e025154119ad3fd41656726edc7459dc697bfcde9f8272dcaaf2f0f47a"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "umask 022\numask --\nprintf \"[%s]\\n\" \"$?\"\numask\numask -S\n"
+   ],
+   "domain": "builtins",
+   "family": "umask",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "d795bbfb2c5e08bd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9292a6a0696952ae8b42d73a07359498db562e985f488d5d516d83cd8b44331d"
+  },
+  "utility": "umask"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "f9ee6f565b4efa8ecc7a43709257e4830a68f5168d733a5b453106a16f0f0ab3"
   },
   "case": {
@@ -45449,6 +51854,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "8e6898e025154119ad3fd41656726edc7459dc697bfcde9f8272dcaaf2f0f47a"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "umask 022\numask --\nprintf \"[%s]\\n\" \"$?\"\numask\numask -S\n"
+   ],
+   "domain": "builtins",
+   "family": "umask",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "eeec3e92b60e7d73",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9292a6a0696952ae8b42d73a07359498db562e985f488d5d516d83cd8b44331d"
+  },
+  "utility": "umask"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "f9ee6f565b4efa8ecc7a43709257e4830a68f5168d733a5b453106a16f0f0ab3"
   },
   "case": {
@@ -45638,6 +52075,102 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "71535ad03a05434bc8a4a07d74c175e948939262921ba7b391e834fdbdbe327f"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "alias mw_a='echo one'; alias mw_b='echo two'\nunalias '-ø'\nprintf \"[%s]\\n\" \"$?\"\nalias 2>&1 | /bin/grep mw_ \n"
+   ],
+   "domain": "builtins",
+   "family": "unalias",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "1412d3a3d7aa4c8a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "58d66a4c5dc1cddbf5ef4d9e3549ef58da4bda1b147c7010f91afb135a0014c6"
+  },
+  "utility": "unalias"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "a3384f2a4846378724db40221e33c7d3d0f249f8903440239b6076e7f9b458bf"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "alias mw_a='echo one'; alias mw_b='echo two'\nunalias '-ø'\nprintf \"[%s]\\n\" \"$?\"\nalias 2>&1 | /bin/grep mw_ \n"
+   ],
+   "domain": "builtins",
+   "family": "unalias",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "23fe708d688f4338",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "69f37e4db3a387a29d2195f4aded811b38676ea9b98f4874afd1cdc7ea11d417"
+  },
+  "utility": "unalias"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "a3384f2a4846378724db40221e33c7d3d0f249f8903440239b6076e7f9b458bf"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "alias mw_a='echo one'; alias mw_b='echo two'\nunalias --\nprintf \"[%s]\\n\" \"$?\"\nalias 2>&1 | /bin/grep mw_ \n"
+   ],
+   "domain": "builtins",
+   "family": "unalias",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "31abd55655e202c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "3c27d0a0a990fc9da7bc8a0cc845d8572b1bf77437ccf6324b6faa12243623bd"
+  },
+  "utility": "unalias"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
   },
@@ -45664,6 +52197,38 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "71535ad03a05434bc8a4a07d74c175e948939262921ba7b391e834fdbdbe327f"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "alias mw_a='echo one'; alias mw_b='echo two'\nunalias --bogus-option\nprintf \"[%s]\\n\" \"$?\"\nalias 2>&1 | /bin/grep mw_ \n"
+   ],
+   "domain": "builtins",
+   "family": "unalias",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "51f001b2bc1bf880",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "58d66a4c5dc1cddbf5ef4d9e3549ef58da4bda1b147c7010f91afb135a0014c6"
+  },
+  "utility": "unalias"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
   },
@@ -45685,6 +52250,102 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "unalias"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "ea3c954f719d40751f0b2fd59aecaf07af8bdcbd8b98d9cc576eb2520138ab76"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "alias mw_a='echo one'; alias mw_b='echo two'\nunalias --bogus-option\nprintf \"[%s]\\n\" \"$?\"\nalias 2>&1 | /bin/grep mw_ \n"
+   ],
+   "domain": "builtins",
+   "family": "unalias",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "92a003c5594b118e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c26c0117859e06637f672e2768fb0fcebfeeb6681b256ade1abe518a944fc121"
+  },
+  "utility": "unalias"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "ea3c954f719d40751f0b2fd59aecaf07af8bdcbd8b98d9cc576eb2520138ab76"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "alias mw_a='echo one'; alias mw_b='echo two'\nunalias '-ø'\nprintf \"[%s]\\n\" \"$?\"\nalias 2>&1 | /bin/grep mw_ \n"
+   ],
+   "domain": "builtins",
+   "family": "unalias",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a42c8cd7ec187010",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c26c0117859e06637f672e2768fb0fcebfeeb6681b256ade1abe518a944fc121"
+  },
+  "utility": "unalias"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "71535ad03a05434bc8a4a07d74c175e948939262921ba7b391e834fdbdbe327f"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "alias mw_a='echo one'; alias mw_b='echo two'\nunalias --\nprintf \"[%s]\\n\" \"$?\"\nalias 2>&1 | /bin/grep mw_ \n"
+   ],
+   "domain": "builtins",
+   "family": "unalias",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "a7af562b8572ced9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "58d66a4c5dc1cddbf5ef4d9e3549ef58da4bda1b147c7010f91afb135a0014c6"
+  },
   "utility": "unalias"
  },
  {
@@ -45873,6 +52534,70 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "ea3c954f719d40751f0b2fd59aecaf07af8bdcbd8b98d9cc576eb2520138ab76"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "alias mw_a='echo one'; alias mw_b='echo two'\nunalias --\nprintf \"[%s]\\n\" \"$?\"\nalias 2>&1 | /bin/grep mw_ \n"
+   ],
+   "domain": "builtins",
+   "family": "unalias",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f660b6553e154b73",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c26c0117859e06637f672e2768fb0fcebfeeb6681b256ade1abe518a944fc121"
+  },
+  "utility": "unalias"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "a3384f2a4846378724db40221e33c7d3d0f249f8903440239b6076e7f9b458bf"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "alias mw_a='echo one'; alias mw_b='echo two'\nunalias --bogus-option\nprintf \"[%s]\\n\" \"$?\"\nalias 2>&1 | /bin/grep mw_ \n"
+   ],
+   "domain": "builtins",
+   "family": "unalias",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f6e0c82828b20835",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "69f37e4db3a387a29d2195f4aded811b38676ea9b98f4874afd1cdc7ea11d417"
+  },
+  "utility": "unalias"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "b74a076ec9eed7a3356b9eb6d5042765f928dc15534ad4256d5dca4cf6c63d6f"
   },
   "case": {
@@ -45893,6 +52618,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "unset"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "57d56f77f85aa334b7cf46bb8491a69fcc7388096699c39ef7a6940657014d50"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=1; w=2; arr=(x y z); f_func() { :; }\nunset - v\nprintf \"[%s]\\n\" \"$?\"\nprintf \"<%s><%s>\\n\" \"${v-unset}\" \"${w-unset}\"\ntype f_func 2>&1 | /bin/grep -c function\n"
+   ],
+   "domain": "builtins",
+   "family": "unset",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "cc726ed1fc60e31e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c21411732a6078715809f73df1a2190a2b9d11dc189d97d48885aa45321a0924"
+  },
   "utility": "unset"
  },
  {
@@ -45920,6 +52677,102 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r55",
   "utility": "unset"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=1; w=2; arr=(x y z); f_func() { :; }\nunset - v\nprintf \"[%s]\\n\" \"$?\"\nprintf \"<%s><%s>\\n\" \"${v-unset}\" \"${w-unset}\"\ntype f_func 2>&1 | /bin/grep -c function\n"
+   ],
+   "domain": "builtins",
+   "family": "unset",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "fe02401210c495d9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c21411732a6078715809f73df1a2190a2b9d11dc189d97d48885aa45321a0924"
+  },
+  "utility": "unset"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "7fb7e6169f6885b482ab0fae23af0213a25059ef7f6bd62bf472a65697f14add"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=1; w=2; f_func() { :; }\nunset - v\nprintf \"[%s]\\n\" \"$?\"\nprintf \"<%s><%s>\\n\" \"${v-unset}\" \"${w-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "unset_posix",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "29538272679e1136",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "e8a8868e2cc74e75ae1d70ab2bae8a476c0eb941e6446c91ec80a23cf7cdee6a"
+  },
+  "utility": "unset_posix"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "v=1; w=2; f_func() { :; }\nunset - v\nprintf \"[%s]\\n\" \"$?\"\nprintf \"<%s><%s>\\n\" \"${v-unset}\" \"${w-unset}\"\n"
+   ],
+   "domain": "builtins",
+   "family": "unset_posix",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "b77030da6a526ec0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "e8a8868e2cc74e75ae1d70ab2bae8a476c0eb941e6446c91ec80a23cf7cdee6a"
+  },
+  "utility": "unset_posix"
  },
  {
   "candidate": {
@@ -45971,6 +52824,70 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r55",
+  "utility": "wait"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "(exit 7) &\nwait - 2>/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "wait",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "855f09e75483e82b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
+  "utility": "wait"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "844e4038ed5999677dba42a4e2ecdf77861755ad3e266836906963960bfe1b75"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "(exit 7) &\nwait - 2>/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "wait",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "cd4ef224fe3c7276",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
+  },
   "utility": "wait"
  },
  {
@@ -46107,6 +53024,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "5dc33f3fb5a4f1a6f51883bac226d96cfe086c25d2bba5b14c2d2824e44d19c5"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\nwhich --bogus-option sh\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "which",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "10d7ebf9523600e2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "99f7e18f8167b2a319721cb539029cfbe8e3d0c581a47682bebd7415d5638781"
+  },
+  "utility": "which"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "58be5ca8354c0d8ddf19dadbea74e08e9d280d8c6cacfd5528b6281750ded229"
   },
   "case": {
@@ -46211,6 +53160,70 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "130787671e19843df15998ea3216b0acac1c3f2abe12bf895862e5ef4cbf57e0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\nwhich -- sh\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "which",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "37249b91a194c842",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "99f7e18f8167b2a319721cb539029cfbe8e3d0c581a47682bebd7415d5638781"
+  },
+  "utility": "which"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "2e3ce3da3c08b11f87773c719383dc19ec70e3d04eadece6f6a149255645e541"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\nwhich '-ø' sh\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "which",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "3908464f72c1fb01",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "99f7e18f8167b2a319721cb539029cfbe8e3d0c581a47682bebd7415d5638781"
+  },
+  "utility": "which"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "4d474b8e493d6048df24fc9b19ac019f8ab639b3abb66aa517244668a8b48b32"
   },
   "case": {
@@ -46289,6 +53302,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "2e3ce3da3c08b11f87773c719383dc19ec70e3d04eadece6f6a149255645e541"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\nwhich '-ø' sh\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "which",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "685b130d1650cda5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "99f7e18f8167b2a319721cb539029cfbe8e3d0c581a47682bebd7415d5638781"
+  },
+  "utility": "which"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "6c481e6deb18847286746406cf644669f99a3bc5411c8806a5d5ce60e39151b6"
   },
   "case": {
@@ -46309,6 +53354,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r83",
+  "utility": "which"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "130787671e19843df15998ea3216b0acac1c3f2abe12bf895862e5ef4cbf57e0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\nwhich -- sh\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "which",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "8d0e529afec6d9c1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "99f7e18f8167b2a319721cb539029cfbe8e3d0c581a47682bebd7415d5638781"
+  },
   "utility": "which"
  },
  {
@@ -46497,6 +53574,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "5dc33f3fb5a4f1a6f51883bac226d96cfe086c25d2bba5b14c2d2824e44d19c5"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\nwhich --bogus-option sh\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "which",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "bda29205351656bf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "99f7e18f8167b2a319721cb539029cfbe8e3d0c581a47682bebd7415d5638781"
+  },
+  "utility": "which"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "5b16023785a713b20ea66d49c77a033bbe28516d8d75c9f7f12db0a082915a34"
   },
   "case": {
@@ -46601,6 +53710,38 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "fbf23afc35feb28ea85e1d2b4419117dbe0fb030701b617638352bbc06aeda04"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\nwhich - sh\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "which",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "f8e7bb7d5c6ef505",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "ad5ea378628b0587dfbd6199aaaf5ed22f6a958a6ea989b748346a18ed0d172f"
+  },
+  "utility": "which"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "94a3c9d3812cb9e5933732ac00123f522081c89d4338fb17356b3d8fe30216f9"
   },
   "case": {
@@ -46673,6 +53814,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r83",
+  "utility": "which"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "fbf23afc35feb28ea85e1d2b4419117dbe0fb030701b617638352bbc06aeda04"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "PATH=/usr/bin:/bin\nwhich - sh\nprintf \"[%s]\\n\" \"$?\"\n"
+   ],
+   "domain": "builtins",
+   "family": "which",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "fea8dca002ee2c10",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "ad5ea378628b0587dfbd6199aaaf5ed22f6a958a6ea989b748346a18ed0d172f"
+  },
   "utility": "which"
  },
  {
@@ -46751,6 +53924,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r84",
+  "utility": "cal"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "2001"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "cal"
+  },
+  "domain": "files",
+  "id": "3abdbf6bf83dcf14",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "cal"
  },
  {
@@ -47386,6 +54591,39 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r89",
+  "utility": "cp"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "a.txt",
+    "copy"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_yes",
+   "tier": "singles",
+   "utility": "cp"
+  },
+  "domain": "files",
+  "id": "1cb302235e9aeb09",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "cp"
  },
  {
@@ -51012,6 +58250,39 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "c.txt",
+    "2"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "csplit"
+  },
+  "domain": "files",
+  "id": "f38ef893a29efba5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "csplit"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
    "stdout": "25d4f2a86deb5e2574bb3210b67bb24fcc4afb19f93a7b65a057daa874a9d18e"
   },
   "case": {
@@ -52199,6 +59470,130 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
+   "stdout": "4f8a99ed0c16119c8fa1efa29781c2a0da32035321867c078573676dbc50ddaa"
+  },
+  "case": {
+   "argv": [
+    "--file-type"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dir"
+  },
+  "domain": "files",
+  "id": "25dc8df95d82301b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "e96d555d024146db7480d9cd2c593796efb676d7ac3fd0a5130aaac38c293b08"
+  },
+  "utility": "dir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "32da2c07c604a0967a080c5a30009166605e8dd7f51ebb36544e4d9e22946468"
+  },
+  "case": {
+   "argv": [
+    "--time=mtime"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dir"
+  },
+  "domain": "files",
+  "id": "2c9aaebab9354560",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "010c15b3f82313c61b832b440809a92321aad6fce08c09aad88c1cfbb33c7c82"
+  },
+  "utility": "dir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "32da2c07c604a0967a080c5a30009166605e8dd7f51ebb36544e4d9e22946468"
+  },
+  "case": {
+   "argv": [
+    "-L"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dir"
+  },
+  "domain": "files",
+  "id": "3caa045682f00a62",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "32da2c07c604a0967a080c5a30009166605e8dd7f51ebb36544e4d9e22946468"
+  },
+  "utility": "dir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "9226fd888368a1adada75193f4666cfbea6cb8c8898f17300228fd8cd813547d"
+  },
+  "case": {
+   "argv": [
+    "--quoting-style=shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dir"
+  },
+  "domain": "files",
+  "id": "48bea336b8f37e49",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a115abf3cae6189837cbab39852d0aab723b33f614f189945ffd5d4b517d79ee"
+  },
+  "utility": "dir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
    "stdout": "af0bfde4e8e6dd50ae9c27741ee9cbccf2bfcf0dd676187c32e53271a8dbc42a"
   },
   "case": {
@@ -52219,6 +59614,161 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r96",
+  "utility": "dir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "3632ee2f9642a2f919a6010f9c90b37aa2b9e58930efa9e4106f20865e172e8d"
+  },
+  "case": {
+   "argv": [
+    "--format=commas"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dir"
+  },
+  "domain": "files",
+  "id": "557857c8d97f20cf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "2dee31fc44b1d1da6a973b44b0e08ba80fa16cb170193f608db6aa487758c521"
+  },
+  "utility": "dir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "4f8a99ed0c16119c8fa1efa29781c2a0da32035321867c078573676dbc50ddaa"
+  },
+  "case": {
+   "argv": [
+    "--indicator-style=file-type"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dir"
+  },
+  "domain": "files",
+  "id": "6a15ec37f13c6de7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "e96d555d024146db7480d9cd2c593796efb676d7ac3fd0a5130aaac38c293b08"
+  },
+  "utility": "dir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "e11f3097a8c6f91b89cde940dc86cccbe6f4de1e23d61473624e3b429e83278e"
+  },
+  "case": {
+   "argv": [
+    "badwalk"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dir"
+  },
+  "domain": "files",
+  "id": "8b10f7c159b37c6d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "616a6a6598c632f5f8b28d06e820abc7ae27d6859296544cc30d4787f103f703"
+  },
+  "case": {
+   "argv": [
+    "--hyperlink=always"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dir"
+  },
+  "domain": "files",
+  "id": "b3701af9e272279b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "4a38f17bac761ca14fc4d301873ae3b97b3c244d87a38b1f53ebf16c6d45ea44"
+  },
+  "utility": "dir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "32da2c07c604a0967a080c5a30009166605e8dd7f51ebb36544e4d9e22946468"
+  },
+  "case": {
+   "argv": [
+    "--time=modification"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dir"
+  },
+  "domain": "files",
+  "id": "c72748944c1da40e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "010c15b3f82313c61b832b440809a92321aad6fce08c09aad88c1cfbb33c7c82"
+  },
   "utility": "dir"
  },
  {
@@ -52466,6 +60016,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r97",
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "--"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "singles",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "524b87eaa42b08e4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
   "utility": "dircolors"
  },
  {
@@ -53075,6 +60656,37 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r98",
+  "utility": "du"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-ø"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_nul_words",
+   "tier": "singles",
+   "utility": "du"
+  },
+  "domain": "files",
+  "id": "9b155b7bb5fc0af7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "du"
  },
  {
@@ -54670,31 +62282,6 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-nonsense"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "17c2eff0bc8c8430",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
    "stdout": "6c106562fe6a5ac3fdcaad11820f49e1bc502c9d677efb3cdf15864ecf307e4f"
   },
@@ -55651,35 +63238,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    ".",
-    "-D",
-    "tree",
-    "-name",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "4a08a4eaa4491172",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "dir",
     "-maxdepth",
     "x",
@@ -56111,32 +63669,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "63010b1fab0776fa",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    ".",
-    "-nonsense"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "63ba75ab6d2522e0",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
@@ -58070,6 +65602,38 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--",
+    "."
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_yes",
+   "tier": "singles",
+   "utility": "find"
+  },
+  "domain": "files",
+  "id": "ce0e1c929fdf9211",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "eb0fe79be99eea0f8e8ac323e2e6e020f65ee0ed49de3e52010341a187e3f09f"
+  },
+  "utility": "find"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
    "stdout": "96415964201857dcfd88ef89476a37d0eddd6ba437b3a1f383db6175125ede97"
   },
   "case": {
@@ -59204,6 +66768,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r104",
+  "utility": "hardlink"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "9a596a7d3f17efc48fa30503666fdc84e1920accf6456049904e8c5a2a2c46a3"
+  },
+  "case": {
+   "argv": [
+    "--",
+    "dup"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "hardlink"
+  },
+  "domain": "files",
+  "id": "1b325697c9094e88",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "9091ed281b891dd22170a0e70c0de38dbbfb359a633fcb241ecf05cc08beaed1"
+  },
   "utility": "hardlink"
  },
  {
@@ -60596,6 +68192,38 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
+   "stdout": "9a596a7d3f17efc48fa30503666fdc84e1920accf6456049904e8c5a2a2c46a3"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "dup"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "hardlink"
+  },
+  "domain": "files",
+  "id": "c1c61f4470d3365f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "63842818395087804c154cfacdd7964fe660b253927cb36003820c371e5efd6a"
+  },
+  "utility": "hardlink"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
    "stdout": "9fb2140a7094f49e465b14486af213a981b9b697a187e4c7d8fc178551bc7588"
   },
   "case": {
@@ -61928,6 +69556,39 @@ PINNED = r"""
   "utility": "install"
  },
  {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "a.txt",
+    "made"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "install"
+  },
+  "domain": "files",
+  "id": "f9f4bab18c303ac4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "install"
+ },
+ {
   "domain": "files",
   "kind": "bug",
   "list": "ledger",
@@ -62156,6 +69817,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r108",
+  "utility": "kill"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--bogus-option",
+    "999999"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "kill"
+  },
+  "domain": "files",
+  "id": "a3c65360aa2f039d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "kill"
  },
  {
@@ -62739,6 +70432,39 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-",
+    "a.txt",
+    "pointer"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_yes",
+   "tier": "singles",
+   "utility": "ln"
+  },
+  "domain": "files",
+  "id": "d4ce203678ed2a5f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ln"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "a.txt",
     "-dash"
    ],
@@ -62866,81 +70592,6 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "0ecab159f38415aeb9f3dd438907393fce2761516314e27c245047f51ca4d957"
-  },
-  "case": {
-   "argv": [
-    "--time=atime"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "2885b603a8c9a0c4",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "0ecab159f38415aeb9f3dd438907393fce2761516314e27c245047f51ca4d957"
-  },
-  "case": {
-   "argv": [
-    "--time=access"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "2916d9f5c68218cd",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "0ecab159f38415aeb9f3dd438907393fce2761516314e27c245047f51ca4d957"
-  },
-  "case": {
-   "argv": [
-    "-u"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "46159b667466da7d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
    "stdout": "cbd66e71c5b8917f25cc04ceec46fd06e4495ae33220a034e33955181d4635de"
   },
   "case": {
@@ -62983,31 +70634,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "858479b2fd8c26a7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "0ecab159f38415aeb9f3dd438907393fce2761516314e27c245047f51ca4d957"
-  },
-  "case": {
-   "argv": [
-    "--time=use"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "ba86226df54d005f",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r111",
@@ -63158,31 +70784,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "ea12aaadc3729835",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--time-style=bogus"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "eb9dc465f0b86547",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r111",
@@ -64016,6 +71617,39 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-",
+    "pipe",
+    "p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "mknod"
+  },
+  "domain": "files",
+  "id": "7a2388ecb87c0ebe",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "mknod"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "node",
     "p",
     "1",
@@ -64572,6 +72206,39 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r116",
+  "utility": "mv"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "a.txt",
+    "renamed"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_yes",
+   "tier": "singles",
+   "utility": "mv"
+  },
+  "domain": "files",
+  "id": "80acaf7fd09f2e5a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "mv"
  },
  {
@@ -66929,6 +74596,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r127",
+  "utility": "sleep"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--",
+    "0"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "sleep"
+  },
+  "domain": "files",
+  "id": "64d3cf641b204fdb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sleep"
  },
  {
@@ -69313,6 +77012,68 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--color=yes"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "08f50fbd935092b9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d2885c28b7a4a3b5855f9213f7099bc841d9bc6cdbe254dc9474bc2ed6e8c339"
+  },
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "3632ee2f9642a2f919a6010f9c90b37aa2b9e58930efa9e4106f20865e172e8d"
+  },
+  "case": {
+   "argv": [
+    "--format=commas"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "0e3841aea81556e4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "2dee31fc44b1d1da6a973b44b0e08ba80fa16cb170193f608db6aa487758c521"
+  },
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "e7cdca5c8665a7b59d3da5e37652f34b2e6614aedad4f7fe5f76a3b3f1a3441a"
+  },
+  "case": {
+   "argv": [
     "--color=always"
    ],
    "domain": "files",
@@ -69328,6 +77089,68 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r96",
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "307efba08fa70e841ed638ee00eb33406af157b3f896f8e7ce54666db06b9d07"
+  },
+  "case": {
+   "argv": [
+    "--hyperlink=always"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "1f7761e761ed0a40",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "2d078c79a4386f153665b0c1b66edfcac298bb300ac5864807e690ed9e5f905c"
+  },
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "e7cdca5c8665a7b59d3da5e37652f34b2e6614aedad4f7fe5f76a3b3f1a3441a"
+  },
+  "case": {
+   "argv": [
+    "--color"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "63cc2e331e210c59",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d2885c28b7a4a3b5855f9213f7099bc841d9bc6cdbe254dc9474bc2ed6e8c339"
+  },
   "utility": "vdir"
  },
  {
@@ -69353,6 +77176,224 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r96",
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "1e570c919f6c198084b623dc4e54aa4bbaf5e56bafc628bcf9c0b0f2cf6ac4fd"
+  },
+  "case": {
+   "argv": [
+    "--file-type"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "7b2b3603a8588f32",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c6abe108360d42f7b16bf64b135b06ecb903cd9fc9c3518ed53ff3a2ed64e26f"
+  },
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "3e5c8d3057e66d20e650b96df3bd9d300ea3f24603471982d8c1cf6ec2b87e1d"
+  },
+  "case": {
+   "argv": [
+    ".hidden",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "8ff3fd3231ade8ea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "64ca8bc7ec45ddb5d033aff5213c5ea08d304256e521d467c7867b2f7b519e55"
+  },
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "47aef0e2c0a70aa114aa8569ea716db3ecb53b89ae009335503d05266cc4f43f"
+  },
+  "case": {
+   "argv": [
+    "--quoting-style=shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "a295c2dc5abbffb6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "12ef647a60a6dbf6eb018201607fcaa13f5d7447d450b7a07c211bee25d2aa27"
+  },
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "8b3d0de96e08f2d346d6d867e32229549b24f9de7fee1d30afd434d1cf4f2a61"
+  },
+  "case": {
+   "argv": [
+    "-L"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "bebcdab80ce37a0c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "8b3d0de96e08f2d346d6d867e32229549b24f9de7fee1d30afd434d1cf4f2a61"
+  },
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "512410e5449218709d1d72d7bd8e61fef52cdf9e50217bcd3a23b010c579262e"
+  },
+  "case": {
+   "argv": [
+    "--block-size=1K"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "d52f4645a9051b91",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "6befa99c8812f6ec1ad94ecb1a1b9f65e3e398070a13378a9df02b921e268c94"
+  },
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "545b8a547cbbe6cbd09557b629cc38e72051d66ebcbe57300f062ae7da8358f2"
+  },
+  "case": {
+   "argv": [
+    "--zero"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "df1abdde627a942f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "8135094644afab28d2bbfc7a3c03b2d16db9f00d7e495f76fb0ef901fda7bf2c"
+  },
+  "utility": "vdir"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "1e570c919f6c198084b623dc4e54aa4bbaf5e56bafc628bcf9c0b0f2cf6ac4fd"
+  },
+  "case": {
+   "argv": [
+    "--indicator-style=file-type"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "vdir"
+  },
+  "domain": "files",
+  "id": "fc7f5f5603d3783c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c6abe108360d42f7b16bf64b135b06ecb903cd9fc9c3518ed53ff3a2ed64e26f"
+  },
   "utility": "vdir"
  },
  {
@@ -69490,6 +77531,38 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "3ab57dea4c91b113cea6a437a292d12faa51a8e3234eefacb80d4d16018fea61"
+  },
+  "case": {
+   "argv": [
+    "--",
+    "ls"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "whereis"
+  },
+  "domain": "files",
+  "id": "53bca955e6a9a884",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "whereis"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -69512,6 +77585,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r136",
+  "utility": "whereis"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "9e613f19cb06355f833761e23572757bd2f2f1ec67280121a7dffb5372b7a81e"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "ls"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "whereis"
+  },
+  "domain": "files",
+  "id": "66ebe22d0d3dd77a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "3ab57dea4c91b113cea6a437a292d12faa51a8e3234eefacb80d4d16018fea61"
+  },
   "utility": "whereis"
  },
  {
@@ -73447,64 +81552,6 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-x",
-    "./exe"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "nohup"
-  },
-  "domain": "misc",
-  "id": "0c5e8ac4afc11549",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r213",
-  "utility": "nohup"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "1000",
-    "1K",
-    "1Ki",
-    "2.5M",
-    "-1001000",
-    "0",
-    "1.5",
-    "bad"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "numbers",
-   "utility": "numfmt"
-  },
-  "domain": "misc",
-  "id": "dea8e07119aebe3e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r213",
-  "utility": "numfmt"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
    "stdout": "787a6546a3c51622cedb61c5d7c4c1152d02393bc3350033eec8cb4b2325147c"
   },
@@ -74457,32 +82504,6 @@ PINNED = r"""
   "option": "-S",
   "reason_id": "r224",
   "utility": "scriptreplay"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-1",
-    "./exe"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "timeout"
-  },
-  "domain": "misc",
-  "id": "afc5908f9f4c8879",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r213",
-  "utility": "timeout"
  },
  {
   "candidate": {
@@ -76106,31 +84127,6 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r225",
   "utility": "tsort"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-x"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "users"
-  },
-  "domain": "misc",
-  "id": "5aaba4fc92045c57",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r213",
-  "utility": "users"
  },
  {
   "domain": "misc",
