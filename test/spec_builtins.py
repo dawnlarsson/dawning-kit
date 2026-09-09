@@ -1257,9 +1257,13 @@ def builtins_array_machinery(rng):
                              "declare -p a", "a=([only]=one)", ":"))
         query = rng.choice(('"${a[@]}"', '"${!a[@]}"', '"${#a[@]}"',
                             '"${a[k]-none}"', '"${a[missing]-none}"'))
+    # An associative array has no defined order, so its keys and its
+    # declare -p are sorted before comparison; an indexed one is ordered.
+    report = ("declare -p a 2>/dev/null\n" if kind == "indexed" else
+              "declare -p a 2>/dev/null | /usr/bin/tr ' ' '\\n' | /usr/bin/sort\n")
     script = (setup + "\n" + change + "\n"
-              "printf '<%s>' " + query + "\necho\n"
-              "declare -p a 2>/dev/null\n")
+              "printf '<%s>' " + query + " | /usr/bin/tr ' ' '\\n' | /usr/bin/sort | /usr/bin/tr '\\n' ' '\necho\n"
+              + report)
     return "builtins-array-machinery", ("bash", "posix"), script
 
 

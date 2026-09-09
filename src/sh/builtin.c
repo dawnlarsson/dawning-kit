@@ -6167,8 +6167,10 @@ static COLD fn shell_declare_elements(writer write, string_address name,
         // Bash leaves one space before the bracket of a keyed listing and
         // none before an indexed one. A listing is meant to be a line the
         // shell could be fed back, and a diff of two shells' listings should
-        // show nothing, so the difference is kept rather than tidied.
-        if (keyed)
+        // show nothing, so the difference is kept rather than tidied. An
+        // empty keyed array has no bracket to stand before, and Bash writes
+        // that one as =() with nothing between.
+        if (keyed && count)
                 write(" ", 1);
 
         write(")", 1);
