@@ -6398,10 +6398,9 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
 
         kept->promoted = false;
         kept->detached = false;
-        bracket = string_first_of(word, '[');
-
-        if (bracket && (positive)(bracket - word) >= length)
-                bracket = null;
+        // Valid names carry a closing bracket only for an explicit subscript.
+        bracket = length && word[length - 1] == ']' ?
+            memory_first_of(word, '[', length) : null;
 
         // Resolve an explicit subscript once and retain that concrete key.
         if (bracket)
