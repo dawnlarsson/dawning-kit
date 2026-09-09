@@ -2132,6 +2132,9 @@ static b32 process_script_record(process_script_state address_to state,
                                     (positive)master, output, sizeof(output));
                                 if (got > 0)
                                 {
+                                        //      The session has spoken, so a
+                                        //      held end-of-file may go now.
+                                        session_spoke = true;
                                         if (!process_script_payload(
                                                 state, 'O', output,
                                                 (positive)got))
