@@ -834,6 +834,102 @@
  {
   "list": "ledger",
   "domain": "util_linux",
+  "utility": "mount",
+  "option": "--beneath",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--exclusive",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--map-groups",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--map-users",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--mkdir",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--namespace",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--onlyonce",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--options-mode",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--options-source",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--options-source-force",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "--target-prefix",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mount",
+  "option": "-N",
+  "kind": "deliberate",
+  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
   "utility": "nsenter",
   "option": "--env",
   "kind": "deliberate",
@@ -974,6 +1070,22 @@
   "option": "--selinux-label",
   "kind": "deliberate",
   "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "umount",
+  "option": "--namespace",
+  "kind": "deliberate",
+  "reason": "unmounting happens in this namespace; another task's is refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "umount",
+  "option": "-N",
+  "kind": "deliberate",
+  "reason": "unmounting happens in this namespace; another task's is refused"
  },
  {
   "list": "ledger",

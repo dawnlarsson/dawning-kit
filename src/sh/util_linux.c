@@ -7575,11 +7575,10 @@ static bool ul_getopt_short(string_address word, string_address next,
                 if (letter == '?' || letter == ':')
                 {
                         okay = false;
-                        /* As upstream: the cluster once getopt has stepped
-                           past it, otherwise the name it stands under. */
+                        /* The word the unknown letter stands in, which is
+                           what upstream keeps; never this program's name. */
                         if (ul_getopt_keep_unknown)
-                                ul_getopt_value(optind >= 2 ? word : name,
-                                                unquoted, csh, output);
+                                ul_getopt_value(word, unquoted, csh, output);
                         if (optind >= 2)
                                 break;
                         continue;
