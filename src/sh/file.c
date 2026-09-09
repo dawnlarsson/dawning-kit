@@ -2424,6 +2424,16 @@ static bool file_option_needs(file_taking address_to taking, string_address word
                 string_format(log_error, "%s: option requires an argument -- '%s'\n",
                               taking->program, word + 1);
 
+        /*
+                Both families say where to look next here as well, in the
+                same words they use for an option that is not there at all:
+                coreutils out of usage() and util-linux out of errtryhelp().
+                An option given without its value was a line short of the
+                reference in every program that has one.
+        */
+        string_format(log_error, "Try '%s --help' for more information.\n",
+                      taking->program);
+
         return false;
 }
 
@@ -2536,6 +2546,13 @@ static bool file_take_from(file_taking address_to taking, positive index)
                                             min(cursor.name_length + 2, FILE_NAME_MAX - 1));
                         string_format(log_error, "%s: option '%s' doesn't allow an argument\n",
                                       taking->program, name);
+                        //      Same line, and for the same reason, as the one
+                        //      an unknown option gets: both families send the
+                        //      reader on to --help and this path was a line
+                        //      short of them.
+                        string_format(log_error,
+                                      "Try '%s --help' for more information.\n",
+                                      taking->program);
                         return false;
                 }
                 taking->flags |= (positive)1 << bit;
@@ -9661,7 +9678,9 @@ static b32 file_df()
         bool df_failed = false;
         file_taking taking = {
             .program = (string_address) "df",
-            .allowed = (string_address) "ahikPT",
+            //      -v is accepted and does nothing, which is all the
+            //      reference does with it too.
+            .allowed = (string_address) "ahikPTv",
             .valued = (string_address) "",
             .longs = df_longs,
         };
@@ -10159,6 +10178,14 @@ static bool chown_quiet;
 static p8 chown_dereference_option;
 static string_address chown_program;
 static bool chown_groups_only;
+//      The spec exactly as it was written, which is what the reference puts
+//      after "to" when it says what it could not do -- the name it was given
+//      and not the name that number happens to have in the database.
+static string_address chown_spec;
+//      --from: change only where the owner is already this one. -1 in either
+//      half is "whatever it is", so --from=:group tests the group alone.
+static bipolar chown_from_user = -1;
+static bipolar chown_from_group = -1;
 
 static const file_supersede chown_supersedes[] = {
     {(string_address) "dh", address_of chown_dereference_option},
@@ -10224,6 +10251,12 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         // change: the reference says it could not look at it.
         if (looked == -ERROR_NO_ENTRY)
         {
+                if (chown_loud)
+                        string_format(log, chown_groups_only
+                                               ? "failed to change group of '%s' to %s\n"
+                                               : "failed to change ownership of '%s' to %s\n",
+                                      shown, chown_spec);
+
                 if (!chown_quiet)
                         string_format(log_error, "%s: cannot access '%s': %s\n",
                                       chown_program, shown, file_reason(looked));
@@ -10232,11 +10265,40 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
                 return;
         }
 
+        //      --from names the ownership a file must already have. One that
+        //      has another is left alone, and -v calls that a retention
+        //      rather than a change.
+        if (known && ((chown_from_user >= 0 && facts.owner != (positive)chown_from_user) ||
+                      (chown_from_group >= 0 && facts.group != (positive)chown_from_group)))
+        {
+                chown_said(shown, address_of facts, false);
+                return;
+        }
+
         bipolar done = system_change_owner_at(
             directory, name, chown_user, chown_group, through);
 
         if (done < 0)
         {
+                if (chown_loud)
+                {
+                        p8 before[FILE_PATH_MAX];
+
+                        if (known)
+                        {
+                                chown_who(facts.owner, facts.group, before);
+                                string_format(log, chown_groups_only
+                                                       ? "failed to change group of '%s' from %s to %s\n"
+                                                       : "failed to change ownership of '%s' from %s to %s\n",
+                                              shown, before, chown_spec);
+                        }
+                        else
+                                string_format(log, chown_groups_only
+                                                       ? "failed to change group of '%s' to %s\n"
+                                                       : "failed to change ownership of '%s' to %s\n",
+                                              shown, chown_spec);
+                }
+
                 if (!chown_quiet)
                         string_format(log_error,
                                       chown_groups_only
@@ -10259,6 +10321,7 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
 
 static const file_long chown_longs[] = {
     {(string_address) "changes", 'c'},
+    {(string_address) "from", 'F'},
     {(string_address) "no-preserve-root", 'N'},
     {(string_address) "preserve-root", 'N'},
     {(string_address) "dereference", 'd'},
@@ -10271,6 +10334,65 @@ static const file_long chown_longs[] = {
     {null, 0},
 };
 
+/*
+        A USER[:GROUP] spec, read the way chown reads its operand: an empty
+        half means "leave this one alone", "user:" is a spec this image
+        cannot complete, and a half that names nobody is refused with the
+        whole spec quoted, which is how the reference quotes it.
+*/
+static bool chown_spec_read(string_address who, bipolar address_to user,
+                            bipolar address_to group)
+{
+        p8 name[FILE_NAME_MAX];
+        positive length = 0;
+
+        while (string_get(who + length) && !string_is(who + length, ':') &&
+               !string_is(who + length, '.') && length + 1 < FILE_NAME_MAX)
+        {
+                name[length] = string_get(who + length);
+                length++;
+        }
+
+        name[length] = end;
+
+        string_address rest = null;
+
+        if (string_is(who + length, ':') || string_is(who + length, '.'))
+                rest = who + length + 1;
+
+        if (rest && !string_get(rest))
+                return string_report(log_error, false, "%s: invalid spec: '%s'\n",
+                                     chown_program, who);
+
+        if (length > 0)
+        {
+                positive number;
+
+                address_to user = string_digits_exact(name, address_of number)
+                                      ? (bipolar)number
+                                      : file_user_id(name);
+
+                if (address_to user < 0)
+                        return string_report(log_error, false, "%s: invalid user: '%s'\n",
+                                             chown_program, who);
+        }
+
+        if (rest && string_get(rest))
+        {
+                positive number;
+
+                address_to group = string_digits_exact(rest, address_of number)
+                                       ? (bipolar)number
+                                       : file_group_id(rest);
+
+                if (address_to group < 0)
+                        return string_report(log_error, false, "%s: invalid group: '%s'\n",
+                                             chown_program, who);
+        }
+
+        return true;
+}
+
 static fn chown_paths(positive first, positive count)
 {
         file_change_paths(first, count, (chown_flags & FILE_FLAG('R')) != 0,
@@ -10282,20 +10404,29 @@ static b32 file_chown_common(string_address program, bool groups_only)
         positive count = (positive)program_argument_count();
         chown_user = -1;
         chown_group = -1;
+        chown_from_user = -1;
+        chown_from_group = -1;
         chown_status = 0;
         chown_dereference_option = 'd';
         chown_program = program;
         chown_groups_only = groups_only;
+        chown_spec = (string_address) "";
 
         file_taking taking = {
             .program = program,
             .allowed = (string_address) "HLPRcfhvN",
-            .valued = (string_address) "e",
+            .valued = (string_address) "eF",
             .longs = chown_longs,
             .supersedes = chown_supersedes,
         };
 
         if (!file_take(address_of taking))
+                return 1;
+
+        string_address from = file_option_value(address_of taking, 'F');
+
+        if (from && !chown_spec_read(from, address_of chown_from_user,
+                                     address_of chown_from_group))
                 return 1;
 
         positive first = taking.first;
@@ -10326,14 +10457,24 @@ static b32 file_chown_common(string_address program, bool groups_only)
         if (first >= count || (!like && first + 1 >= count))
                 return string_report(log_error, 1, "%s: missing operand\n", program);
 
+        static p8 chown_reference_spec[FILE_PATH_MAX];
+
         if (like)
         {
+                //      There is no written spec behind --reference, so the
+                //      one -v quotes is the reference file's own ownership.
+                chown_who(chown_user < 0 ? 0 : (positive)chown_user,
+                          chown_group < 0 ? 0 : (positive)chown_group,
+                          chown_reference_spec);
+                chown_spec = chown_reference_spec;
                 chown_paths(first, count);
 
                 return chown_status;
         }
 
         string_address who = program_argument((b32)first++);
+
+        chown_spec = who;
 
         if (groups_only)
         {
@@ -10437,6 +10578,7 @@ static bool file_targets_told(string_address program);
 // ln ------------------------------------------------------------
 // ln [-s] [-f] TARGET [NAME], and ln [-s] [-f] TARGET... DIRECTORY.
 static bool ln_symbolic;
+static bool ln_directories;
 static bool ln_force;
 static bool ln_ask;
 static bool ln_loud;
@@ -10510,7 +10652,11 @@ static bool ln_make(string_address target, string_address name)
                         return false;
                 }
 
-                if ((source.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                //      -d, -F and --directory ask for the link to be
+                //      attempted anyway, and the kernel is then the one that
+                //      refuses it -- with its own words and not these.
+                if (!ln_directories &&
+                    (source.mode & MODE_FORMAT) == MODE_DIRECTORY)
                 {
                         string_format(log_error, "ln: %s: hard link not allowed for directory\n",
                                       target);
@@ -10566,11 +10712,17 @@ static bool ln_make(string_address target, string_address name)
                 done = system_link_at(AT_FDCWD, target, AT_FDCWD, name,
                                       ln_through ? AT_SYMLINK_FOLLOW : 0);
 
+        //      A hard link that could not be made names both ends; a
+        //      symbolic one names only the name it was to be given, which is
+        //      how the reference writes each of them.
         if (done < 0)
-                return string_report(log_error, false, "ln: failed to create %s link '%s': %s\n",
-                              ln_symbolic ? (string_address) "symbolic"
-                                          : (string_address) "hard",
-                              name, file_reason(done));
+                return ln_symbolic
+                    ? string_report(log_error, false,
+                                    "ln: failed to create symbolic link '%s': %s\n",
+                                    name, file_reason(done))
+                    : string_report(log_error, false,
+                                    "ln: failed to create hard link '%s' => '%s': %s\n",
+                                    name, target, file_reason(done));
 
         if (ln_loud)
                 string_format(log, ln_symbolic ? "'%s' -> '%s'\n" : "'%s' => '%s'\n",
@@ -10581,6 +10733,7 @@ static bool ln_make(string_address target, string_address name)
 
 static const file_long ln_longs[] = {
     {(string_address) "backup", 'B'},
+    {(string_address) "directory", 'd'},
     {(string_address) "force", 'f'},
     {(string_address) "suffix", 'S'},
     {(string_address) "interactive", 'i'},
@@ -10605,7 +10758,10 @@ static b32 file_ln()
 
         file_taking taking = {
             .program = (string_address) "ln",
-            .allowed = (string_address) "bfiLnPrsStTv",
+            //      -d, -F and --directory ask for a hard link to a
+            //      directory, which the kernel gives only to a privileged
+            //      caller; taken and left to the link call to refuse.
+            .allowed = (string_address) "bdfFiLnPrsStTv",
             .valued = (string_address) "tS",
             .long_optional = (string_address) "B",
             .longs = ln_longs,
@@ -10626,6 +10782,7 @@ static b32 file_ln()
         positive first = taking.first;
 
         ln_symbolic = (flags & FILE_FLAG('s')) != 0;
+        ln_directories = (flags & (FILE_FLAG('d') | FILE_FLAG('F'))) != 0;
         ln_force = ln_collision_option == 'f';
         ln_ask = ln_collision_option == 'i';
         ln_loud = (flags & FILE_FLAG('v')) != 0;
@@ -17456,7 +17613,10 @@ static const file_long cp_longs[] = {
     {(string_address) "archive", 'a'},
     {(string_address) "attributes-only", 'A'},
     {(string_address) "backup", 'B'},
+    {(string_address) "context", 'Z'},
     {(string_address) "copy-contents", 'C'},
+    {(string_address) "debug", 'v'},
+    {(string_address) "keep-directory-symlink", 'K'},
     {(string_address) "no-preserve", 'N'},
     {(string_address) "one-file-system", 'x'},
     {(string_address) "parents", 'e'},
@@ -17509,6 +17669,14 @@ static b32 file_cp()
 
         if (!file_targets_told((string_address) "cp"))
                 return 1;
+
+        //      This image has no SELinux. -Z and a bare --context are
+        //      no-ops there, and a named context is warned about and
+        //      otherwise ignored; cp says "SELinux-enabled" where mkdir
+        //      and mknod say "SELinux/SMACK-enabled".
+        if (file_option_value(address_of taking, 'Z'))
+                log_error("cp: warning: ignoring --context; it requires an "
+                          "SELinux-enabled kernel\n", 0);
 
         bool wants_context = false;
 
@@ -18008,6 +18176,7 @@ static fn mv_one(string_address source, string_address destination)
 
 static const file_long mv_longs[] = {
     {(string_address) "backup", 'B'},
+    {(string_address) "context", 'Z'},
     {(string_address) "debug", 'v'},
     {(string_address) "force", 'f'},
     {(string_address) "no-copy", 'c'},
@@ -18034,7 +18203,9 @@ static b32 file_mv()
             .program = (string_address) "mv",
             .allowed = (string_address) "bcfinSTtuvwZ",
             .valued = (string_address) "tS",
-            .long_optional = (string_address) "BuZ",
+            //      mv's --context takes no value at all, unlike cp's and
+            //      mkdir's, so Z is not among the ones that may carry one.
+            .long_optional = (string_address) "Bu",
             .longs = mv_longs,
             .seen = file_target_seen,
             .supersedes = mv_supersedes,
@@ -21684,6 +21855,145 @@ static b32 kill_list(positive count, positive index)
 
 #define KILL_PIDFD_OPEN 434
 
+/*
+        The three signal masks a process carries, read out of the one line
+        each occupies in /proc/<pid>/status. -r asks whether a handler is
+        there before signalling, and -d prints all three; both are the same
+        record read the same way, so it is read once here.
+*/
+static bipolar kill_process_status(string_address pid, p8 address_to into,
+                                   positive capacity)
+{
+        p8 path[FILE_PATH_MAX];
+        positive at = 0;
+
+        string_copy(path, (string_address) "/proc/");
+        at = string_length(path);
+
+        for (positive i = 0; string_get(pid + i) && at + 9 < sizeof(path); i++)
+                path[at++] = string_get(pid + i);
+
+        string_copy(path + at, (string_address) "/status");
+
+        return file_slurp_once_at(AT_FDCWD, path, into, capacity);
+}
+
+// The hexadecimal mask written after one of the Sig* labels, or false when
+// this record has no such line.
+static bool kill_status_mask(string_address text, string_address label,
+                             positive address_to mask)
+{
+        for (positive at = 0; text[at]; at++)
+        {
+                if (at && text[at - 1] != '\n')
+                        continue;
+
+                if (string_compare_max(text + at, label, string_length(label)))
+                        continue;
+
+                positive from = at + string_length(label);
+
+                while (text[from] == ' ' || text[from] == '\t')
+                        from++;
+
+                positive value = 0;
+                bool any = false;
+
+                for (; byte_is_hexadecimal(text[from]); from++)
+                {
+                        p8 byte = text[from];
+                        positive digit = byte_is_digit(byte) ? (positive)(byte - '0')
+                                         : byte >= 'a'       ? (positive)(byte - 'a' + 10)
+                                                             : (positive)(byte - 'A' + 10);
+
+                        value = value * 16 + digit;
+                        any = true;
+                }
+
+                if (!any)
+                        return false;
+
+                address_to mask = value;
+                return true;
+        }
+
+        return false;
+}
+
+// "Blocked: HUP INT ", the way the utility writes one mask out.
+static fn kill_mask_written(string_address label, positive mask)
+{
+        p8 name[16];
+
+        string_format(log, "%s: ", label);
+
+        for (positive i = 1; i <= KILL_MOST; i++)
+                if (mask >> (i - 1) & 1)
+                {
+                        kill_number_named(i, name);
+                        string_format(log, "%s ", name);
+                }
+
+        log("\n", 1);
+}
+
+static b32 kill_process_state(string_address pid)
+{
+        positive used;
+        bipolar who = string_bipolar(pid, address_of used);
+
+        if (!used || string_get(pid + used) || who < 0)
+                return string_report(log_error, 1,
+                                     "kill: invalid PID argument: '%s'\n", pid);
+
+        p8 text[8192];
+        bipolar got = kill_process_status(pid, text, sizeof(text));
+
+        if (got < 0)
+                return string_report(log_error, 1,
+                                     "kill: failed to initialize procfs handler: %s\n",
+                                     file_reason(got));
+
+        static const struct
+        {
+                string_address label;
+                string_address line;
+        } wanted[] = {
+            {(string_address) "SigBlk:", (string_address) "Blocked"},
+            {(string_address) "SigIgn:", (string_address) "Ignored"},
+            {(string_address) "SigCgt:", (string_address) "Caught"},
+        };
+
+        for (positive i = 0; i < array_count(wanted); i++)
+        {
+                positive mask = 0;
+
+                kill_status_mask(text, wanted[i].label, address_of mask);
+                kill_mask_written(wanted[i].line, mask);
+        }
+
+        log_flush();
+        return 0;
+}
+
+// -r: a signal with no handler on the other side is not sent at all.
+static bool kill_handled(string_address pid, bipolar number)
+{
+        p8 text[8192];
+        positive mask = 0;
+
+        if (number <= 0 || number > KILL_MOST)
+                return false;
+
+        if (kill_process_status(pid, text, sizeof(text)) < 0)
+                return false;
+
+        if (!kill_status_mask(text, (string_address) "SigCgt:", address_of mask))
+                return false;
+
+        return (mask >> (number - 1) & 1) != 0;
+}
+
 static b32 file_kill()
 {
         positive count = (positive)program_argument_count();
@@ -21693,6 +22003,9 @@ static b32 file_kill()
         bool print_only = false;
         bool loud = false;
         bool timed = false;
+        bool needs_handler = false;
+        bool show_state = false;
+        string_address state_pid = null;
         positive milliseconds = 0;
 
         while (index < count)
@@ -21744,6 +22057,26 @@ static b32 file_kill()
                 if (longer && !string_compare(name, "verbose"))
                 {
                         loud = true;
+                        index++;
+                        continue;
+                }
+
+                if ((one && string_is(name, 'r')) ||
+                    (longer && !string_compare(name, "require-handler")))
+                {
+                        needs_handler = true;
+                        index++;
+                        continue;
+                }
+
+                //      -d is a bare letter only: the reference reads -d1 as
+                //      a signal called d1, and takes the process to look at
+                //      from --show-process-state=PID or from the one operand.
+                if ((one && string_is(name, 'd')) ||
+                    (longer && !string_compare(name, "show-process-state")))
+                {
+                        show_state = true;
+                        state_pid = value;
                         index++;
                         continue;
                 }
@@ -21879,6 +22212,20 @@ static b32 file_kill()
                 break;
         }
 
+        if (show_state)
+        {
+                positive given = count - index + (state_pid ? 1 : 0);
+
+                if (!given)
+                        return string_report(log_error, 1, "kill: too few arguments\n");
+
+                if (given > 1)
+                        return string_report(log_error, 1, "kill: too many arguments\n");
+
+                return kill_process_state(state_pid ? state_pid
+                                                    : program_argument((b32)index));
+        }
+
         if (index >= count)
         {
                 log_error("kill: not enough arguments\n", 0);
@@ -21903,6 +22250,15 @@ static b32 file_kill()
                 if (print_only)
                 {
                         file_line(word);
+                        continue;
+                }
+
+                //      -r looks first and says nothing: a process with no
+                //      handler for this signal is left alone, and so is one
+                //      that is not there to be asked.
+                if (needs_handler && !kill_handled(word, number))
+                {
+                        answer = 1;
                         continue;
                 }
 
@@ -22907,6 +23263,8 @@ static positive xargs_line_count;
 */
 static positive xargs_mark;
 
+static bool xargs_ask;
+
 static fn xargs_trace_words(string_address address_to words, positive count)
 {
         for (positive i = 0; i < count; i++)
@@ -22917,7 +23275,10 @@ static fn xargs_trace_words(string_address address_to words, positive count)
                 ls_quote_shell(log_error, words[i], string_length(words[i]), false, false);
         }
 
-        log_error("\n", 1);
+        //      -p writes the same words and then waits on the terminal, so
+        //      the line is left open for the question mark that follows.
+        if (!xargs_ask)
+                log_error("\n", 1);
 }
 
 static bool xargs_add(string_address text, positive length)
@@ -22962,7 +23323,40 @@ static fn xargs_item_put(p8 letter)
 */
 #define XARGS_EXEC_SIGNAL (-4097)
 #define XARGS_EXEC_SYSTEM (-4098)
+#define XARGS_EXEC_TTY (-4099)
 #define XARGS_O_CLOEXEC 02000000
+
+/*
+        -p asks the terminal before each command, and the terminal it asks is
+        /dev/tty and never the input, which is where the items come from.
+        A session with no controlling terminal has no /dev/tty to open, and
+        the reference stops there -- after it has written the command it was
+        about to run, which is why the question mark is written afterwards
+        rather than with it.
+
+        An answer that begins with y or Y runs the command; anything else,
+        end of input included, skips it and goes on to the next batch.
+*/
+static bipolar xargs_terminal = -2;
+
+static bool xargs_allowed(void)
+{
+        log_error("?...", 4);
+
+        p8 answer[2];
+        bipolar got = system_read_once((b32)xargs_terminal, answer, 1);
+
+        if (got != 1)
+                return false;
+
+        bool yes = answer[0] == 'y' || answer[0] == 'Y';
+
+        while (answer[0] != '\n' &&
+               system_read_once((b32)xargs_terminal, answer, 1) == 1)
+                ;
+
+        return yes;
+}
 
 static bipolar xargs_execute(string_address address_to words,
                              positive word_count)
@@ -22972,8 +23366,27 @@ static bipolar xargs_execute(string_address address_to words,
 
         words[word_count] = null;
 
-        if (xargs_trace)
+        if (xargs_trace || xargs_ask)
                 xargs_trace_words(words, word_count);
+
+        if (xargs_ask)
+        {
+                if (xargs_terminal == -2)
+                        xargs_terminal = system_open_at(AT_FDCWD,
+                                                       (string_address) "/dev/tty",
+                                                       FILE_READ | XARGS_O_CLOEXEC);
+
+                if (xargs_terminal < 0)
+                {
+                        string_format(log_error,
+                                      "xargs: failed to open /dev/tty for reading: %s\n",
+                                      file_reason(xargs_terminal));
+                        return XARGS_EXEC_TTY;
+                }
+
+                if (!xargs_allowed())
+                        return 0;
+        }
 
         log_flush();
 
@@ -23080,6 +23493,13 @@ static bool xargs_execute_range(positive first, positive count)
 
                 return xargs_execute_range(first, left) &&
                        xargs_execute_range(first + left, count - left);
+        }
+
+        if (code == XARGS_EXEC_TTY)
+        {
+                xargs_answer = 1;
+                xargs_done = true;
+                return false;
         }
 
         if (code == XARGS_EXEC_SYSTEM)
@@ -23423,7 +23843,7 @@ static b32 file_xargs()
 
         file_taking taking = {
             .program = (string_address) "xargs",
-            .allowed = (string_address) "0aEdILilnPrstx",
+            .allowed = (string_address) "0aEdILilnPprstx",
             .valued = (string_address) "aEdILnPsV",
             .optional = (string_address) "il",
             .longs = xargs_longs,
@@ -23435,6 +23855,8 @@ static b32 file_xargs()
         positive index = taking.first;
 
         xargs_null = (taking.flags & FILE_FLAG('0')) != 0;
+        xargs_ask = (taking.flags & FILE_FLAG('p')) != 0;
+        xargs_terminal = -2;
         xargs_trace = (taking.flags & FILE_FLAG('t')) != 0;
         xargs_needs_input = (taking.flags & FILE_FLAG('r')) != 0;
         xargs_ending = file_option_value(address_of taking, 'E');
