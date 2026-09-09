@@ -655,7 +655,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                 positive unreadable = 0;
                 positive verified = 0;
 
-                while (text_line_next())
+                while (text_line_next(text_line, 0))
                 {
                         p8 expected[64];
                         p8 digest[64];
