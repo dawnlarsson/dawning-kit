@@ -16,6 +16,112 @@
   "utility": "b2sum"
  },
  {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 125,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--groups=0",
+    "/",
+    "./exe"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "chroot"
+  },
+  "domain": "misc",
+  "id": "1c08399d2586ea32",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --groups and --userspec change the credentials the command runs with, which needs setgroups/setresgid/setresuid and the account lookups behind them; the option is refused rather than accepted and ignored.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 125,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "chroot"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-amd5",
+    "--algorithm=blake2b",
+    "--base64",
+    "-c",
+    "--check",
+    "-l",
+    "0",
+    "--ignore-missing",
+    "--status",
+    "--strict",
+    "sums.b2sum.tagged"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "10a24a6699b04a97",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: crc32b, sm3 and the sum(1) variants are not among the kernel transforms this checksum path uses, and cksum --check must recognise every tagged and untagged spelling of nine algorithms including the CRC and sum formats; both are refused rather than answered partly.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "crc32b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "54a294f830147274",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: crc32b, sm3 and the sum(1) variants are not among the kernel transforms this checksum path uses, and cksum --check must recognise every tagged and untagged spelling of nine algorithms including the CRC and sum formats; both are refused rather than answered partly.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a654371703ffa39f1e4db7a000ad4278b14688303adb84e28baef1933f6243a2"
+  },
+  "utility": "cksum"
+ },
+ {
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
@@ -440,6 +546,167 @@
   "utility": "dmesg"
  },
  {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "pinned",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "0317244b0fbc21f0",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one, and its ceiling is a whole unsigned word; GNU falls back to a bignum. A truncated factorization would be plausible and wrong, so the integer past the ceiling is refused instead.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "8e97f0cb3156d03f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one, and its ceiling is a whole unsigned word; GNU falls back to a bignum. A truncated factorization would be plausible and wrong, so the integer past the ceiling is refused instead.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "DIRTY_PAGES",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "622a11218b14c17c",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the dirty, writeback and evicted page counters are cachestat fields this reader does not collect; the column is refused rather than filled with a plausible zero.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "c48cfac4ebc42c9362247f35b1e7e70b33b008373e1d78414b3efd24b850333c"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "-b",
+    "-o",
+    "DIRTY_PAGES",
+    "-r",
+    "--json",
+    "dangling"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "eb5129f52e516114",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the dirty, writeback and evicted page counters are cachestat fields this reader does not collect; the column is refused rather than filled with a plausible zero.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "0129b173236c81089e7b2b0a0c544d1eeeee38f8d824f7f1f6200664a752b689"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "130ce963311ddacf4742389b6054c7fa6b70af32f06d98dfd0e7eafeb33fc195"
+  },
+  "case": {
+   "argv": [
+    "long"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "f4d66756d72bd1b6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bug (shared): the human-readable size comes from the shared nearest-value formatter, which rounds 68.4K to 68K; util-linux keeps the tenth. The formatter is shared with several domains and is not this program to change.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "655a720fb7404849314e77999bb3bd350b19245ed12f8b5ca9c7a4b09432f7e9"
+  },
+  "utility": "fincore"
+ },
+ {
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
@@ -518,6 +785,38 @@
   "option": "-f",
   "reason": "deliberate: a file of format strings is the same unimplemented language read from elsewhere.",
   "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "cda2b120e902b1988d5185fc8b4e6b42d7e391bc747af17e591d33ac359ae636"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "utmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "5f1c6b0750ff1c4b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this reader indexes records from the start of the database and ignores a partial tail, as who and users do; util-linux last walks backwards from the end, so a file whose length is not a whole number of records yields nothing at all.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2601ffbf8d1a27360dfdeff4a670819a79753a9390c9f8fbf5ee04d48bf759a4"
+  },
+  "utility": "last"
  },
  {
   "domain": "misc",
@@ -600,6 +899,148 @@
   "utility": "logger"
  },
  {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 125,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "./exe"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "nohup"
+  },
+  "domain": "misc",
+  "id": "0c5e8ac4afc11549",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bug (shared): the option complaint comes from file.c file_complain, which writes NAME: -x: invalid option where coreutils writes NAME: invalid option -- x and adds its usage hint. The wording belongs to the shared taker, not to this program.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 125,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "nohup"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "1000",
+    "1K",
+    "1Ki",
+    "2.5M",
+    "-1001000",
+    "0",
+    "1.5",
+    "bad"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "pinned",
+   "utility": "numfmt"
+  },
+  "domain": "misc",
+  "id": "dea8e07119aebe3e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bug (shared): the option complaint comes from file.c file_complain, which writes NAME: -x: invalid option where coreutils writes NAME: invalid option -- x and adds its usage hint. The wording belongs to the shared taker, not to this program.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "numfmt"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "787a6546a3c51622cedb61c5d7c4c1152d02393bc3350033eec8cb4b2325147c"
+  },
+  "case": {
+   "argv": [
+    "binary",
+    "0x10"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "221e4b12ebd0bc38",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the traditional second call format, where a digit-leading last operand is an offset rather than a file, is read only when --traditional asks for it; GNU also applies it to an undecorated pair, which silently turns a file name into a seek.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "f6cdd8bf04758f7c2e597e950c78928ccb710e98393c6220d635fbf4620ae769"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "bb5fd04e64a538fa1f689f5f1488f57579b4de3a6dc1ce21b974258778f1e3e7"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--endian=little",
+    "-Add",
+    "--traditional",
+    "-l",
+    "-d",
+    "-j",
+    "0x3",
+    "a.txt",
+    "+3"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "e540b449d88b02e5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the traditional second call format, where a digit-leading last operand is an offset rather than a file, is read only when --traditional asks for it; GNU also applies it to an undecorated pair, which silently turns a file name into a seek.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "f2ba86e9a331bc8c78410249886f1ff64d38654893c80cc638ba1e3cd8917906"
+  },
+  "utility": "od"
+ },
+ {
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
@@ -622,6 +1063,117 @@
   "option": "-f",
   "reason": "deliberate: floating point output needs a binary float formatter (and, for -F, long double) whose rounding this freestanding tree does not provide; the type is refused rather than printed wrongly.",
   "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-l",
+    "-b",
+    "-w",
+    "-i",
+    "-q",
+    "--",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "545d0487a8587507",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "46229e33919f2d3f2a4b772158e624de2c1ef3b52f69a3875ce7e8a2366ff2a2"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "-A",
+    "-f",
+    "-w",
+    "-o",
+    "tty",
+    "--format=pid,comm",
+    "-p1,1",
+    "--ppid=0",
+    "--sort=pid,-pid",
+    "--no-headers",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "001c5f46f348a706",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the BSD personality is a different column set and selection rule, not more rows: an undashed number selects and reformats. Accepting it while printing the ordinary columns would silently answer another question.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "649e6746d45eff5a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the BSD personality is a different column set and selection rule, not more rows: an undashed number selects and reformats. Accepting it while printing the ordinary columns would silently answer another question.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b5f7f9066cee0bf46437e71dd653b75209088e9500ad714a44b0094b112ed05d"
+  },
+  "utility": "ps"
  },
  {
   "domain": "misc",
@@ -678,6 +1230,133 @@
   "option": "-S",
   "reason": "deliberate: the summary is a separate report over the timing file's header records; it is refused rather than printed incomplete.",
   "utility": "scriptreplay"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--quiet",
+    "--status",
+    "-w",
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sha512sum"
+  },
+  "domain": "misc",
+  "id": "dfdb5f710fd52362",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bug (shared): the read failure is reported by text.c as Read error where coreutils writes read error, and this verifier adds nothing further; the wording belongs to the shared reader.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sha512sum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 125,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-1",
+    "./exe"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "timeout"
+  },
+  "domain": "misc",
+  "id": "afc5908f9f4c8879",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bug (shared): the option complaint comes from file.c file_complain, which writes NAME: -x: invalid option where coreutils writes NAME: invalid option -- x and adds its usage hint. The wording belongs to the shared taker, not to this program.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 125,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "timeout"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "1e616a34b238697d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "users"
+  },
+  "domain": "misc",
+  "id": "5aaba4fc92045c57",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bug (shared): the option complaint comes from file.c file_complain, which writes NAME: -x: invalid option where coreutils writes NAME: invalid option -- x and adds its usage hint. The wording belongs to the shared taker, not to this program.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "users"
  },
  {
   "domain": "misc",
