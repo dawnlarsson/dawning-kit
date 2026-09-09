@@ -97005,7 +97005,7 @@ PINNED = r"""
   "id": "25dc8df95d82301b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97036,7 +97036,7 @@ PINNED = r"""
   "id": "2c9aaebab9354560",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97067,7 +97067,7 @@ PINNED = r"""
   "id": "3caa045682f00a62",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97098,7 +97098,7 @@ PINNED = r"""
   "id": "48bea336b8f37e49",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97155,7 +97155,7 @@ PINNED = r"""
   "id": "557857c8d97f20cf",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97186,7 +97186,7 @@ PINNED = r"""
   "id": "6a15ec37f13c6de7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97217,7 +97217,7 @@ PINNED = r"""
   "id": "8b10f7c159b37c6d",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 2,
@@ -97248,7 +97248,7 @@ PINNED = r"""
   "id": "b3701af9e272279b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97279,7 +97279,7 @@ PINNED = r"""
   "id": "c72748944c1da40e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97531,7 +97531,7 @@ PINNED = r"""
   "id": "524b87eaa42b08e4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "the compiled dircolors database is deliberately shorter than GNU 9.11's, so anything that prints it differs; whereis keeps a lone - as a name to look up where the reference drops it",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -98145,7 +98145,7 @@ PINNED = r"""
   "id": "9b155b7bb5fc0af7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "the reference names itself in these diagnostics by the path it was run from, which a farm of links cannot match, and du writes one line per byte of a character that is not an option where this writes one per character",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -104226,11 +104226,11 @@ PINNED = r"""
   "id": "1b325697c9094e88",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "hardlink here compares whole contents where 2.41 takes a sha256 of them, so its report names a different method, and a - operand is a name it stats rather than a path it resolves",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "9091ed281b891dd22170a0e70c0de38dbbfb359a633fcb241ecf05cc08beaed1"
+   "stdout": "b7adf5f9a75de42a525ac24dc419c10e840d275d42cf5be731b22db9b2579298"
   },
   "utility": "hardlink"
  },
@@ -105644,11 +105644,11 @@ PINNED = r"""
   "id": "c1c61f4470d3365f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "hardlink here compares whole contents where 2.41 takes a sha256 of them, so its report names a different method, and a - operand is a name it stats rather than a path it resolves",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "63842818395087804c154cfacdd7964fe660b253927cb36003820c371e5efd6a"
+   "stdout": "0a46e86de15f7e7beaa98e00fa5cdbaeab39377a3723182c9f42bcf52a74c2ec"
   },
   "utility": "hardlink"
  },
@@ -108783,7 +108783,7 @@ PINNED = r"""
   "id": "7a2388ecb87c0ebe",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "the reference names itself in these diagnostics by the path it was run from, which a farm of links cannot match, and du writes one line per byte of a character that is not an option where this writes one per character",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -113845,7 +113845,7 @@ PINNED = r"""
   "id": "08f50fbd935092b9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -113876,7 +113876,7 @@ PINNED = r"""
   "id": "0e3841aea81556e4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -113932,7 +113932,7 @@ PINNED = r"""
   "id": "1f7761e761ed0a40",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -113963,7 +113963,7 @@ PINNED = r"""
   "id": "63cc2e331e210c59",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114019,7 +114019,7 @@ PINNED = r"""
   "id": "7b2b3603a8588f32",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114051,7 +114051,7 @@ PINNED = r"""
   "id": "8ff3fd3231ade8ea",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114082,7 +114082,7 @@ PINNED = r"""
   "id": "a295c2dc5abbffb6",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114113,7 +114113,7 @@ PINNED = r"""
   "id": "bebcdab80ce37a0c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -114144,7 +114144,7 @@ PINNED = r"""
   "id": "d52f4645a9051b91",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114175,7 +114175,7 @@ PINNED = r"""
   "id": "df1abdde627a942f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114206,7 +114206,7 @@ PINNED = r"""
   "id": "fc7f5f5603d3783c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114397,7 +114397,7 @@ PINNED = r"""
   "id": "66ebe22d0d3dd77a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
+  "reason": "the compiled dircolors database is deliberately shorter than GNU 9.11's, so anything that prints it differs; whereis keeps a lone - as a name to look up where the reference drops it",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -135964,12 +135964,85 @@ PINNED = r"""
   "utility": "xtrace-shape"
  },
  {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5e56d9216398e4e5129b3c0ab59bf8d7cfe7fa40ee3e3c003d6e5f98abb966e3"
+  },
+  "case": {
+   "argv": [
+    "-d",
+    "-i",
+    "--ignore-garbage",
+    "--wrap=5",
+    "--z85"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_bytes",
+   "tier": "pinned",
+   "utility": "basenc"
+  },
+  "domain": "text",
+  "id": "5387559f1db3cbf6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "basenc does not refuse the z85 input GNU calls invalid.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "basenc"
+ },
+ {
   "domain": "text",
   "kind": "deliberate",
   "list": "ledger",
   "option": "--base58",
   "reason_id": "r241",
   "utility": "basenc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-s",
+    "--quiet",
+    "--silent",
+    "-n3",
+    "-i1K",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "04fe1c40d53778fa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cmp"
  },
  {
   "candidate": {
@@ -136008,6 +136081,115 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--print-bytes",
+    "-s",
+    "-n",
+    "65000",
+    "-i",
+    "0",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "2f22df87b3321ea1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "345f0f167e5b9e85",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--print-bytes",
+    "-n",
+    "0",
+    "--bytes=3",
+    "-i1:2",
+    "--ignore-initial=5:7",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "3b1f379f4569a70e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -136036,6 +136218,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r242",
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "dc2a5d7ba211b97b835b04a96aaedf99acfa8a25f07a11afb67f9dcf333b2391"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "469daa066f55d6ac",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "cmp"
  },
  {
@@ -136093,6 +136307,38 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "682f12db0ea34082",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -136129,6 +136375,187 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-n",
+    "5",
+    "--bytes=3",
+    "-i5:7",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "7ccd7f06f16c0030",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "2a861f6d5f8baa925e7f5bc7c71b735029b30eac8fe2f26eae6c2f46b4cfbf2d"
+  },
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--print-bytes",
+    "-s",
+    "-n",
+    "1KiB",
+    "-i5:7",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "ac8c8cf5a0d91da0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--print-bytes",
+    "-s",
+    "--quiet",
+    "-n9999",
+    "-i",
+    "5",
+    "--ignore-initial=5:7",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "cfb09a07b020d692",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "2a861f6d5f8baa925e7f5bc7c71b735029b30eac8fe2f26eae6c2f46b4cfbf2d"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "d67dd1f9f25ea752",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-i1K",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "cmp"
+  },
+  "domain": "text",
+  "id": "df411287afcd5264",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU cmp calls two operands naming one open file at one offset identical without reading them, and reports a bad file descriptor when the offsets differ.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-",
     "-"
    ],
@@ -136146,6 +136573,39 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r242",
   "utility": "cmp"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "50eaa6586724d7d332e61612ebe23d8934087d056d7f3bf28d0d9e813eb29d45"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-h",
+    "-f"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "0318c96ad8daff83",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "col's handling of a form feed and of half-line motion under -f and -p differs from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "44a0cd619ddf2c06bb0c49881b63b07f8847c36fe2de653da8232f691949140d"
+  },
+  "utility": "col"
  },
  {
   "candidate": {
@@ -136245,6 +136705,43 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-b",
+    "-f",
+    "--fine",
+    "-p",
+    "--pass",
+    "-l128",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "0c71e4f3ba813cc6",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
     "-p",
     "--no-backspaces",
     "-h"
@@ -136291,6 +136788,43 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-f",
+    "--fine",
+    "-p",
+    "--tabs",
+    "-l0",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "17ab0df8cd5787f1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
   "utility": "col"
  },
  {
@@ -136357,6 +136891,77 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-h",
+    "--pass",
+    "-b",
+    "-f",
+    "--tabs",
+    "--no-backspaces"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "27b5ddb96b4ba708",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "col's handling of a form feed and of half-line motion under -f and -p differs from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "fba9eff7652b8bd0122e460d9961c35bcf30a812e3df570edf66d5ea35a6c630"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0c9707711c7c7c2c9ea07d7a8fe4346ce27cc5eb7f530634488182d391e7b5eb"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--pass",
+    "--tabs",
+    "-l2",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "30a980c4c1cc1c72",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "col's handling of a form feed and of half-line motion under -f and -p differs from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "fba9eff7652b8bd0122e460d9961c35bcf30a812e3df570edf66d5ea35a6c630"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0c9707711c7c7c2c9ea07d7a8fe4346ce27cc5eb7f530634488182d391e7b5eb"
+  },
+  "case": {
+   "argv": [
     "--no-backspaces",
     "-f",
     "--fine",
@@ -136379,6 +136984,116 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-f",
+    "--lines=3",
+    "-x",
+    "--pass"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "3d7558230e574ddb",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "--no-backspaces",
+    "-p",
+    "-x",
+    "-b",
+    "--lines=3",
+    "--fine"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "41ac06b34d11c4da",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0c9707711c7c7c2c9ea07d7a8fe4346ce27cc5eb7f530634488182d391e7b5eb"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--no-backspaces",
+    "--fine",
+    "-p",
+    "-h",
+    "--tabs",
+    "-l",
+    "0",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "43feef4624c00b69",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "col's handling of a form feed and of half-line motion under -f and -p differs from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "fba9eff7652b8bd0122e460d9961c35bcf30a812e3df570edf66d5ea35a6c630"
+  },
   "utility": "col"
  },
  {
@@ -136437,6 +137152,227 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "--lines=3",
+    "-h",
+    "--tabs",
+    "--no-backspaces",
+    "-f",
+    "-p"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "57790da1474d5671",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-f",
+    "-p",
+    "--pass",
+    "-l",
+    "1",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "6427bf11a08392fe",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--lines=3",
+    "-f",
+    "--fine",
+    "-p"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "64401a1fee128ede",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-b",
+    "--pass",
+    "--lines=3",
+    "-f",
+    "--tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "652cf895bd43d657",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-f",
+    "-x",
+    "--spaces",
+    "-l",
+    "1",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "6933ea71ec278784",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c76bcc2ffc13ebfbafcecda060167a9a46e0ee98f15c86be6fe8e9daa935f112"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--no-backspaces",
+    "-f",
+    "--fine",
+    "-p",
+    "--pass",
+    "--spaces",
+    "-l",
+    "2",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "7de13e1e93c6d656",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "col's handling of a form feed and of half-line motion under -f and -p differs from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e0f56f3b1ee1930a0d9fc30ff05373ac908910925765462125d0cf607d483a38"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "0c9707711c7c7c2c9ea07d7a8fe4346ce27cc5eb7f530634488182d391e7b5eb"
   },
   "case": {
@@ -136461,6 +137397,42 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--no-backspaces",
+    "-f",
+    "--fine",
+    "-l",
+    "0"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "874450472d39eb2a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
   "utility": "col"
  },
  {
@@ -136521,6 +137493,182 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c76bcc2ffc13ebfbafcecda060167a9a46e0ee98f15c86be6fe8e9daa935f112"
+  },
+  "case": {
+   "argv": [
+    "--no-backspaces",
+    "--fine",
+    "--pass",
+    "-x",
+    "-l",
+    "100000"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "977f61c938001f4f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "col's handling of a form feed and of half-line motion under -f and -p differs from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e0f56f3b1ee1930a0d9fc30ff05373ac908910925765462125d0cf607d483a38"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--no-backspaces",
+    "-x",
+    "--spaces",
+    "-l100000",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "a491cf267ec6e062",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "--fine",
+    "-p",
+    "-h",
+    "--pass",
+    "-l0",
+    "--no-backspaces"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "a5d3e3bf9a96d707",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0c9707711c7c7c2c9ea07d7a8fe4346ce27cc5eb7f530634488182d391e7b5eb"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-p",
+    "-l1"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "a87e4014e877c20d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "col's handling of a form feed and of half-line motion under -f and -p differs from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "fba9eff7652b8bd0122e460d9961c35bcf30a812e3df570edf66d5ea35a6c630"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c76bcc2ffc13ebfbafcecda060167a9a46e0ee98f15c86be6fe8e9daa935f112"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-p",
+    "-x",
+    "--spaces",
+    "-l0"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "a8ef85b49d56f830",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "col's handling of a form feed and of half-line motion under -f and -p differs from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e0f56f3b1ee1930a0d9fc30ff05373ac908910925765462125d0cf607d483a38"
+  },
   "utility": "col"
  },
  {
@@ -136617,6 +137765,74 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "--pass",
+    "-l128"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "c70afd45862a9a38",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--no-backspaces",
+    "-p",
+    "--pass",
+    "--spaces",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "c84cb07fa6d10abd",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "0c9707711c7c7c2c9ea07d7a8fe4346ce27cc5eb7f530634488182d391e7b5eb"
   },
   "case": {
@@ -136680,6 +137896,112 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--pass",
+    "-l100000",
+    "-x",
+    "-f",
+    "-b",
+    "--fine"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "d596d7b676f4abf7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "col's handling of a form feed and of half-line motion under -f and -p differs from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e0f56f3b1ee1930a0d9fc30ff05373ac908910925765462125d0cf607d483a38"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "--fine",
+    "--tabs",
+    "-l2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "d5f2b09a53d63c2f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "--no-backspaces",
+    "-f",
+    "-p",
+    "-x",
+    "--spaces",
+    "-l0",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "dd32b22068b66d3c",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c76bcc2ffc13ebfbafcecda060167a9a46e0ee98f15c86be6fe8e9daa935f112"
+  },
+  "case": {
+   "argv": [
     "--spaces",
     "--pass",
     "--no-backspaces",
@@ -136700,6 +138022,118 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "--spaces",
+    "-l",
+    "128",
+    "-p",
+    "-x",
+    "-b"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "de1b0b25e1dbd2ad",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--no-backspaces",
+    "-f",
+    "--pass",
+    "-x",
+    "-l",
+    "2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "e00cc87bb56f7a90",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--no-backspaces",
+    "-f",
+    "--fine",
+    "--pass",
+    "-x",
+    "--spaces",
+    "-l",
+    "2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "e453e5b843de09ec",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
   "utility": "col"
  },
  {
@@ -136768,6 +138202,42 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "--no-backspaces",
+    "-f",
+    "-x",
+    "-l",
+    "0",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "e9b614b936e506cb",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "6504daa9791f75accf20b76171aa30ef69d5fbaba990b3906fcdb60b9c4ef183"
   },
   "case": {
@@ -136820,6 +138290,42 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--no-backspaces",
+    "-h",
+    "--tabs",
+    "-l",
+    "128"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "f0d2b67a6eea9b71",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
   "utility": "col"
  },
  {
@@ -136884,6 +138390,143 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "f6b1b49827ae1f02",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--pass",
+    "-x",
+    "-l1",
+    "--lines=3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "f7b0785aa4c099b9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "-l100000",
+    "--tabs",
+    "--lines=3",
+    "--fine",
+    "--no-backspaces",
+    "-p"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "f92c71b28b9d2a73",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "478573622cc3f731d921141853fcb3fb18597ce332730175202df21782266ad6"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-f",
+    "--fine",
+    "-p",
+    "--pass",
+    "--spaces",
+    "-l100000"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "col"
+  },
+  "domain": "text",
+  "id": "f99f840c870f1a17",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cda880d996a2a0a96170337550e7be6aee31d4058d02529e6e63541fffba13d"
+  },
+  "utility": "col"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "0c9707711c7c7c2c9ea07d7a8fe4346ce27cc5eb7f530634488182d391e7b5eb"
   },
   "case": {
@@ -136937,6 +138580,39 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2",
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "08f10ae94bb69989",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
   "utility": "colcrt"
  },
  {
@@ -137026,6 +138702,38 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-2",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "1deb42f5d885305a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--no-underlining",
     "--half-lines",
     "dir"
@@ -137043,6 +138751,172 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3f2dc862549783dbe43597cb58819a0d6468df37a8bdecde533d5ddc74ee78ca"
+  },
+  "case": {
+   "argv": [
+    "--no-underlining",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "21a231d43fe01e98",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "47359bf14e2a863952c211cf24f9f54ca4f28385a453606387131d0326df0074"
+  },
+  "case": {
+   "argv": [
+    "-2",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "26349e0bdb718add",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "47359bf14e2a863952c211cf24f9f54ca4f28385a453606387131d0326df0074"
+  },
+  "case": {
+   "argv": [
+    "--half-lines",
+    "-2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "2c5ccdf95bbd6d71",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d742dcc263a0fe0ba07ed9009ccee9f48ee615243c64addfe688825812cbe6cb"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "--no-underlining",
+    "-2",
+    "--half-lines",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "2d87dc653540a5b7",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "--no-underlining",
+    "-2",
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_col",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "2db14815bb154067",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
   "utility": "colcrt"
  },
  {
@@ -137148,6 +139022,67 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "47359bf14e2a863952c211cf24f9f54ca4f28385a453606387131d0326df0074"
+  },
+  "case": {
+   "argv": [
+    "-2",
+    "--half-lines"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "379c7cb82fbfc223",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3f2dc862549783dbe43597cb58819a0d6468df37a8bdecde533d5ddc74ee78ca"
+  },
+  "case": {
+   "argv": [],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "3dbf7e3ed2cae955",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "colcrt"
  },
  {
@@ -137377,6 +139312,138 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "5973f6751c03ab3f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--half-lines",
+    "-2",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "59a1b5f414084707",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "5f7d539e11d1eb72",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "--no-underlining",
+    "-2",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "604fe269837662f2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-",
     "-2",
     "dir"
@@ -137481,6 +139548,39 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-",
+    "-2",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "6c36a84587589a96",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-2",
     "--half-lines",
     "dir"
@@ -137536,6 +139636,40 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--no-underlining",
+    "-2",
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "7d7918f5beabf0fd",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-",
     "--no-underlining",
     "-2",
@@ -137555,6 +139689,136 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--half-lines",
+    "--no-underlining",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "830a677768db0f9a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "-2",
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "8377c0cc1a6c8f89",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3f2dc862549783dbe43597cb58819a0d6468df37a8bdecde533d5ddc74ee78ca"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "--no-underlining"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "8832f0d427bbc338",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d742dcc263a0fe0ba07ed9009ccee9f48ee615243c64addfe688825812cbe6cb"
+  },
+  "case": {
+   "argv": [
+    "--half-lines"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "8911bcd2646b53d8",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
   "utility": "colcrt"
  },
  {
@@ -137676,6 +139940,38 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "a4604cefec18141a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-",
     "-2",
     "--half-lines",
@@ -137754,6 +140050,37 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3f2dc862549783dbe43597cb58819a0d6468df37a8bdecde533d5ddc74ee78ca"
+  },
+  "case": {
+   "argv": [
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "ae8bbd4f77d67fe1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -137777,6 +140104,107 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "47359bf14e2a863952c211cf24f9f54ca4f28385a453606387131d0326df0074"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "--no-underlining",
+    "--half-lines",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "b88c983c43d24d37",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2",
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "bd32bc1bf2c033ac",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "--no-underlining",
+    "-2",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "bee747a3fb9fc8db",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
   "utility": "colcrt"
  },
  {
@@ -137832,6 +140260,39 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2",
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "cd74750f395f0de7",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
   "utility": "colcrt"
  },
  {
@@ -138001,6 +140462,39 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--no-underlining",
+    "--half-lines",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "colcrt"
+  },
+  "domain": "text",
+  "id": "f4083b8eecbc773d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "001eaf92dbf85df2a9e7a2e8062aac179eb1f9faddcc22fbee792a5916d83737"
   },
@@ -138047,6 +140541,38 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r243",
   "utility": "colcrt"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0f7544a977f0cfd7c7a9bcc1dc1e65477d8601087689091921d079cbf55300ad"
+  },
+  "case": {
+   "argv": [
+    "3",
+    "5"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "0cf27faee26de755",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6959097001d10501ac7d54c0bdb8db61420f658f2922cc26e46d536119a31126"
+  },
+  "utility": "colrm"
  },
  {
   "candidate": {
@@ -138229,6 +140755,69 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "183a5bbdfe76414a79999bdfa8a39112cbc997deb3e8c1c1f1b6b8a2839add09"
+  },
+  "case": {
+   "argv": [
+    "3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "4fdd8435432baf72",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6959097001d10501ac7d54c0bdb8db61420f658f2922cc26e46d536119a31126"
+  },
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b0c023e1a5fbb8d68e8012371784f2230c7634312ccb98a4db6ff11d13cc136e"
+  },
+  "case": {
+   "argv": [
+    "9",
+    "12"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "5c9c8b78682082aa",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "0fb91c7693196ba95dba58ea9576667e66fffd63e153388ef7b7b843ef23b330"
+  },
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
   },
   "case": {
@@ -138255,6 +140844,130 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "7a832641887ff467",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "0fb91c7693196ba95dba58ea9576667e66fffd63e153388ef7b7b843ef23b330"
+  },
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6812ff9f3b44a595a8aab17e066d0137646f5638155eeab91d4702ca240657b0"
+  },
+  "case": {
+   "argv": [
+    "1"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "7b6eae6df5240cc7",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "43bd73a038c22d18000a4d4ef52b2d2e1584c08bab765b1bd4f5c8a2493ebb95"
+  },
+  "case": {
+   "argv": [
+    "2",
+    "2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "7c1e358b340a91d6",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "730f7d03509cce2ddaed4203d62baac9b68d92824a9bafbe14c0214c82bf7fb4"
+  },
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8d70f04ff4f43b5bfe912483b5506451e0a41657a95af64048227a234b057784"
+  },
+  "case": {
+   "argv": [
+    "1",
+    "1"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "7edac46c5a553c4a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "503126878d17fcd6bde7df320ff6eb7c278a1c42f30014a03b17f3dd0c023c1d"
+  },
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "afb2e6e497446086496ee92255c3da3174262d8be1a0668218bdd38392cf59d7"
   },
   "case": {
@@ -138275,6 +140988,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "100"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "8cbeca2d20f3ecc4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "0fb91c7693196ba95dba58ea9576667e66fffd63e153388ef7b7b843ef23b330"
+  },
   "utility": "colrm"
  },
  {
@@ -138358,6 +141102,101 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "0",
+    "0"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "d30cb44a4f885e99",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "0fb91c7693196ba95dba58ea9576667e66fffd63e153388ef7b7b843ef23b330"
+  },
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2c422a0d439b2d076a070c8bc9104e4d3b423102a445cac64a6863472c01c0eb"
+  },
+  "case": {
+   "argv": [
+    "5",
+    "3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "d392866e336fa09a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "0fb91c7693196ba95dba58ea9576667e66fffd63e153388ef7b7b843ef23b330"
+  },
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0a0332d5eed2b297fabe8b3e7d74cfe1becf1abb4315e5613ee5d397203a050b"
+  },
+  "case": {
+   "argv": [
+    "0"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "d80b95c7c5f2ba92",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "0fb91c7693196ba95dba58ea9576667e66fffd63e153388ef7b7b843ef23b330"
+  },
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "2ab24e4ccdf6de0d2e0b8190860b92a567ee76e90960b8a2edd5b09b111d0fca"
   },
   "case": {
@@ -138377,6 +141216,39 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "colrm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0f7544a977f0cfd7c7a9bcc1dc1e65477d8601087689091921d079cbf55300ad"
+  },
+  "case": {
+   "argv": [
+    "3",
+    "5",
+    "7"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "colrm"
+  },
+  "domain": "text",
+  "id": "fb36d9eafabd11c2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6959097001d10501ac7d54c0bdb8db61420f658f2922cc26e46d536119a31126"
+  },
   "utility": "colrm"
  },
  {
@@ -138573,6 +141445,37 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "59e9d84144b19cf240b88682de3ea027820d3083c293eaef41a291f448eee1b8"
+  },
+  "case": {
+   "argv": [
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "column"
+  },
+  "domain": "text",
+  "id": "44f1ed4b74e37761",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "column's table filling and its refusal of --json without a name for every visible column differ from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bd684b0f0cbc0bde0a7d58e831d4af5b38fedca4064c7bf63635e67b68f56667"
+  },
+  "utility": "column"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "5482b6a09c17ed7781023ca9473482bcae2e873b6c97d77e61e3ef9f164e0404"
   },
   "case": {
@@ -138658,6 +141561,37 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r246",
+  "utility": "column"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "59e9d84144b19cf240b88682de3ea027820d3083c293eaef41a291f448eee1b8"
+  },
+  "case": {
+   "argv": [
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "column"
+  },
+  "domain": "text",
+  "id": "69ecd8b9e7d6c045",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "column's table filling and its refusal of --json without a name for every visible column differ from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bd684b0f0cbc0bde0a7d58e831d4af5b38fedca4064c7bf63635e67b68f56667"
+  },
   "utility": "column"
  },
  {
@@ -138860,6 +141794,37 @@ PINNED = r"""
    "fixture": "text",
    "input_kind": "command",
    "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "column"
+  },
+  "domain": "text",
+  "id": "8ad88bcdf1344955",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "column's table filling and its refusal of --json without a name for every visible column differ from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bd684b0f0cbc0bde0a7d58e831d4af5b38fedca4064c7bf63635e67b68f56667"
+  },
+  "utility": "column"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "59e9d84144b19cf240b88682de3ea027820d3083c293eaef41a291f448eee1b8"
+  },
+  "case": {
+   "argv": [
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
    "stdin": "blanks",
    "utility": "column"
   },
@@ -138868,6 +141833,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r245",
+  "utility": "column"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "dc9efa4c4a0757c10a3a097d8b65b87e53cf79e62f76d7ef4b0bb8ffb4389dd7"
+  },
+  "case": {
+   "argv": [
+    "-RA",
+    "-d",
+    "-EB",
+    "--separator=:",
+    "-N",
+    "A,B",
+    "--table",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "column"
+  },
+  "domain": "text",
+  "id": "9672c9098733b74e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "column's table filling and its refusal of --json without a name for every visible column differ from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6323e5e4484d1bd692457518e66fd59e0d798e4477aeb75d818f4d1fa5fe4e7c"
+  },
   "utility": "column"
  },
  {
@@ -139135,6 +142138,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "c002647f065d0a503051c969bf3e5f8f8c613b6497e4b0b6468963377c605c3e"
+  },
+  "case": {
+   "argv": [
+    "-K",
+    "--output-separator=|",
+    "-L",
+    "-l2",
+    "--use-spaces=2",
+    "--table-hide=1",
+    "keys"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_sort_keys",
+   "tier": "pinned",
+   "utility": "column"
+  },
+  "domain": "text",
+  "id": "f0c427a4edd9a5c7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "column's table filling and its refusal of --json without a name for every visible column differ from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "33ce42ce311a0635501a3b856742227cc8c77f0751003b6e04ad3d3d877e11b5"
+  },
+  "utility": "column"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "59e9d84144b19cf240b88682de3ea027820d3083c293eaef41a291f448eee1b8"
   },
   "case": {
@@ -139179,6 +142219,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r245",
+  "utility": "column"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-NA,,C",
+    "--table",
+    "--json",
+    "--table-noheadings",
+    "-o",
+    "-s\t",
+    "fields"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "spaces",
+   "tier": "pinned",
+   "utility": "column"
+  },
+  "domain": "text",
+  "id": "f79fd7aaa76425b3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "column's table filling and its refusal of --json without a name for every visible column differ from util-linux's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "60fc0069635e99f4e595e8edd651bb7e21ba7ab51c0ca0afafacdb9167b0996a"
+  },
   "utility": "column"
  },
  {
@@ -139309,6 +142386,44 @@ PINNED = r"""
   "option": "-r",
   "reason_id": "r247",
   "utility": "column"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-3",
+    "-23",
+    "-z",
+    "--nocheck-order",
+    "--output-delimiter=\t",
+    "--total",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "comm"
+  },
+  "domain": "text",
+  "id": "27250db2977e7338",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU comm reads standard input for both operands when both are -; this refuses the second.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "c4097eca1563974f7f92b23ea90c0b70649b7bbc9b7abc9c2a2f22991a43fe63"
+  },
+  "utility": "comm"
  },
  {
   "candidate": {
@@ -139476,6 +142591,38 @@ PINNED = r"""
    "fixture": "text",
    "input_kind": "command",
    "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "comm"
+  },
+  "domain": "text",
+  "id": "5279a4127c8166f6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU comm reads standard input for both operands when both are -; this refuses the second.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "utility": "comm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
    "stdin": "nonl",
    "utility": "comm"
   },
@@ -139502,6 +142649,38 @@ PINNED = r"""
    "fixture": "text",
    "input_kind": "command",
    "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "comm"
+  },
+  "domain": "text",
+  "id": "5df5d717ada1dcca",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU comm reads standard input for both operands when both are -; this refuses the second.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "614a08772c89c4fda5ed18803f14a493854442a707bc50fe8a8232993d266612"
+  },
+  "utility": "comm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
    "stdin": "text",
    "utility": "comm"
   },
@@ -139510,6 +142689,76 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r242",
+  "utility": "comm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--output-delimiter=::",
+    "-z",
+    "-3",
+    "--check-order",
+    "-2",
+    "-23",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "comm"
+  },
+  "domain": "text",
+  "id": "6b3a45df139ad9ed",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU comm reads standard input for both operands when both are -; this refuses the second.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "c2f79ebe5c52b53a4ad94846409f395c7e6ba127a2fd27cbec019a8aa7748d00"
+  },
+  "utility": "comm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "comm"
+  },
+  "domain": "text",
+  "id": "721a5a25312265e4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU comm reads standard input for both operands when both are -; this refuses the second.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "56479685d124f33af3523dcfe0e533648115bc71b17bdfe13718156c4f995d06"
+  },
   "utility": "comm"
  },
  {
@@ -139584,6 +142833,38 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "comm"
+  },
+  "domain": "text",
+  "id": "81be321f9bee9bd3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU comm reads standard input for both operands when both are -; this refuses the second.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "63be28c14377de31674813c9b075d062a6d20288307c0ad20bf4db6b7ab8d6db"
+  },
+  "utility": "comm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--check-order",
     "-2",
     "-z",
@@ -139606,6 +142887,41 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r242",
+  "utility": "comm"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-3",
+    "-z",
+    "--total",
+    "-",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "comm"
+  },
+  "domain": "text",
+  "id": "afdd6d6e8f8a210d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU comm reads standard input for both operands when both are -; this refuses the second.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "9ba06c973a4d8d8a984066ca8a0c6e1fb3a3c9544dce58cfa73d19f99d225790"
+  },
   "utility": "comm"
  },
  {
@@ -139752,6 +143068,41 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r249",
+  "utility": "expand"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a7f5f0624bdc955de4880720e4a66c5d23aa0d465df220892fb27747d0624782"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "+4",
+    "--tabs=4",
+    "-8",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "expand"
+  },
+  "domain": "text",
+  "id": "24ff1148dd392203",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the relative and divisor forms of a tab list -- -t +N and -t /N -- are not implemented, so the stops fall where a plain list would put them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f4f94f4f731d86c7aef1b7a5cc60b7c0bd46e8e92ffa2d90f82df4f2fbf36eea"
+  },
   "utility": "expand"
  },
  {
@@ -140053,6 +143404,44 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "3e52ce91c049df8c8fa20840f714d16704c625335987602d2937ef9930935be7"
+  },
+  "case": {
+   "argv": [
+    "--context=1",
+    "-n",
+    "--no-messages",
+    "-c",
+    "-E",
+    "--regexp=^$",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "01ef17b71087112a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "c51dc8ed6fd86012bc08299dda025960672306f538cb29ada057aba7d7bc60cd"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -140086,6 +143475,45 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1ac2e1421ac46d2c0d8deab98c2aaeccd1533157e57a688cb4ab34f3e898e7df"
+  },
+  "case": {
+   "argv": [
+    "--exclude-dir=inner/",
+    "-e",
+    "\\(a\\)",
+    "--initial-tab",
+    "-C0",
+    "--regexp=^$",
+    "-R",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "029208e442fb9660",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1e4a5cea92c32329b892fc207488ba94fcda7ec3d78c0caf7e03190f9c5e36b8"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -140114,6 +143542,118 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "7bba1ea0199aac5ac3ae92cf38cc35aef02ec879f3599a244c51bec9ce62cc63"
+  },
+  "case": {
+   "argv": [
+    "--after-context=1",
+    "--color=sometimes",
+    "--files-without-match",
+    "--byte-offset",
+    "-R",
+    "--colour=always",
+    "tree"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "03cec1e01e098224",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "^*",
+    "-A1",
+    "--word-regexp",
+    "--no-group-separator",
+    "-E",
+    "--count",
+    "tree"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "089f9546749ebfc7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-fpats",
+    "-x",
+    "-w",
+    "--basic-regexp",
+    "-C0",
+    "--color=sometimes",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "091487fe5ced9432",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
   "utility": "grep"
  },
  {
@@ -140212,6 +143752,83 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-E",
+    "-e",
+    "a\nb\nc",
+    "--regexp=",
+    "-f-",
+    "--file=pats",
+    "-i",
+    "--no-ignore-case",
+    "-y",
+    "-w",
+    "-x",
+    "--line-regexp",
+    "-z",
+    "--null-data",
+    "--no-messages",
+    "-v",
+    "--invert-match",
+    "-m",
+    "0",
+    "--max-count=1",
+    "-b",
+    "--byte-offset",
+    "-n",
+    "--line-number",
+    "-h",
+    "--label=",
+    "--only-matching",
+    "-d",
+    "recurse",
+    "-Dread",
+    "--include=*",
+    "--exclude-dir=inner",
+    "-l",
+    "--files-with-matches",
+    "-B2",
+    "--before-context=1",
+    "-A0",
+    "--after-context=1",
+    "-C1",
+    "--context=1",
+    "-1",
+    "-2",
+    "--group-separator=##",
+    "--color=sometimes",
+    "-U",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "0d302cf9f038879b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -140238,6 +143855,156 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--include=[ot]*",
+    "--before-context=1",
+    "--devices=skip",
+    "--line-number",
+    "-e",
+    "",
+    "--no-messages",
+    "dangling"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "0f5c98bb5d9eb829",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--regexp=^$",
+    "--word-regexp",
+    "-z",
+    "--devices=skip",
+    "--extended-regexp",
+    "-s",
+    "tree"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "0f836f92327a792d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--files-without-match",
+    "--exclude-from=excludes_nonl",
+    "-A2",
+    "--line-buffered",
+    "--ignore-case",
+    "--include=*",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "10ac36f7fedbbf5e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "10fbdce5d5e2ba7e0249a4a8921faede362fda69bae3c5bb8a59bb1b9407ad5e"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--no-filename",
+    "-L",
+    "--count",
+    "-v",
+    "--regexp=a|b",
+    "tree"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "1586bc59d92790c0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "f27e01fe7624cca3e69811a0bf9a4efd9dca9fd39f7a3a8f939cae0cfe8cdfb8"
+  },
   "utility": "grep"
  },
  {
@@ -140301,6 +144068,82 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-e",
+    "(a)\\1|(b)\\2",
+    "--group-separator=--",
+    "--null-data",
+    "-o",
+    "--color=sometimes"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "168aeaa2cdf43446",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "^.*b$",
+    "--files-without-match",
+    "--binary-files=without-match",
+    "-I",
+    "-v",
+    "--include=[ot]*",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "17958d9b2d60ab7f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "f27e01fe7624cca3e69811a0bf9a4efd9dca9fd39f7a3a8f939cae0cfe8cdfb8"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "81a5fb42223dea7311042c718f89b1cf4a7b883cf12bfb506cde409d0d466cfa"
   },
@@ -140328,6 +144171,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--include=*.zzz",
+    "--files-without-match",
+    "-a",
+    "-m",
+    "0",
+    "--label=X",
+    "-i",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "196870df907c85c4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "7058299627365fc7a3dd7840fd3d56f29306cd30c0f2c13cb500fe79617290ff"
+  },
   "utility": "grep"
  },
  {
@@ -140392,6 +144273,84 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "-e",
+    "^(a|aa)*b$",
+    "--regexp=a|b",
+    "-fpats_empty",
+    "--file=pats",
+    "--word-regexp",
+    "-x",
+    "-v",
+    "-m",
+    "1",
+    "--byte-offset",
+    "--line-buffered",
+    "-H",
+    "--with-filename",
+    "--quiet",
+    "--binary-files=text",
+    "-a",
+    "-I",
+    "-d",
+    "recurse",
+    "-Dread",
+    "--devices=skip",
+    "--recursive",
+    "-R",
+    "--dereference-recursive",
+    "--exclude=*.log",
+    "--exclude-from=-",
+    "-L",
+    "--files-without-match",
+    "--files-with-matches",
+    "-c",
+    "--count",
+    "-T",
+    "--initial-tab",
+    "-Z",
+    "-B",
+    "0",
+    "-A",
+    "0",
+    "--after-context=1",
+    "-C2",
+    "--context=1",
+    "-1",
+    "--group-separator=--",
+    "--colour=always",
+    "-U",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "1d6366ad2a23a963",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -140420,6 +144379,82 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--regexp=^$",
+    "--max-count=1",
+    "--count",
+    "-F",
+    "--color=sometimes",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "1e4e2ecda7f76119",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--no-filename",
+    "-o",
+    "--exclude=*",
+    "--colour=always",
+    "-B",
+    "2",
+    "-e",
+    "(a)\\1|(b)\\2",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "1f618dfb1b32159f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a back reference to a group that did not participate is refused by GNU's matcher and matched by this one.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "grep"
  },
  {
@@ -140478,6 +144513,46 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-A",
+    "2",
+    "--exclude=*",
+    "-L",
+    "-w",
+    "-f",
+    "pats",
+    "--with-filename",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "250567078afd0050",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "f27e01fe7624cca3e69811a0bf9a4efd9dca9fd39f7a3a8f939cae0cfe8cdfb8"
+  },
   "utility": "grep"
  },
  {
@@ -140636,6 +144711,156 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--files-with-matches",
+    "-L",
+    "-1",
+    "-m0",
+    "--exclude-dir=inner/",
+    "--initial-tab",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "301ec80c40137cdd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "d0e2dc251487ad59e5c424e50e6eca692455b36cdbec2e047fc929a5ba02aa25"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  "case": {
+   "argv": [
+    "--exclude-from=excludes_nonl",
+    "--count",
+    "-x",
+    "--no-filename",
+    "--with-filename",
+    "--binary",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "3161c0c5ef9b07c0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "ffc94270ab0d80c12a312712b3294df4c6dc9a7c39e184efff5e495aa0683f98"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "aeec181532d1daa62664a8ee9e7bd6c6b3f00e7253e990356b9e5680038121ef"
+  },
+  "case": {
+   "argv": [
+    "--word-regexp",
+    "-2",
+    "--text",
+    "-y",
+    "-f",
+    "-",
+    "-d",
+    "read",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "366cdd98333d9a93",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--invert-match",
+    "-I",
+    "--regexp=",
+    "-y",
+    "--context=1",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "3a182f2c7adb87bc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -140731,6 +144956,121 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
+   "stdout": "ff646650bc064e5981d37e75caf62e8551f146dff3b8967dd9cf36d263480e3a"
+  },
+  "case": {
+   "argv": [
+    "-Dread",
+    "-L",
+    "-e",
+    "(a)lph\\1.*gamma",
+    "-G",
+    "-y",
+    "-T",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "3eb647cb22025abe",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a back reference to a group that did not participate is refused by GNU's matcher and matched by this one.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "10fbdce5d5e2ba7e0249a4a8921faede362fda69bae3c5bb8a59bb1b9407ad5e"
+  },
+  "case": {
+   "argv": [
+    "-E",
+    "-e",
+    "^\\(a*\\)*b$",
+    "--files-without-match",
+    "--byte-offset",
+    "--line-number",
+    "--no-group-separator",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "3f01a0ccec51a56d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "d047bdd4eec96c283692e0ab5647e78dfcfb29ea639083634ebe40b63d41efe7"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "10fbdce5d5e2ba7e0249a4a8921faede362fda69bae3c5bb8a59bb1b9407ad5e"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "-l",
+    "--files-without-match",
+    "-y",
+    "-v",
+    "-b",
+    "-",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "3f3a639585e697c4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
@@ -140768,6 +145108,159 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-d",
+    "recurse",
+    "-e",
+    "\\.",
+    "-o",
+    "-l",
+    "-m1",
+    "-L",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "3f8efe8ea580910d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "d0e2dc251487ad59e5c424e50e6eca692455b36cdbec2e047fc929a5ba02aa25"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b834598c2aff88920e561734c88eb6bd18c700ac0fb1f0dbf07f7c43be5bf94b"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "\\w\\+",
+    "-F",
+    "--dereference-recursive",
+    "--colour=always",
+    "-C",
+    "0",
+    "-1",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "416254c1ea2b4894",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--no-messages",
+    "--colour=always",
+    "-e",
+    "newline",
+    "-E",
+    "-n",
+    "--null",
+    "loop"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "430244409b87955f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  "case": {
+   "argv": [
+    "--word-regexp",
+    "--no-filename",
+    "--regexp=^$",
+    "-G",
+    "--count",
+    "--no-group-separator",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "444d0406ffa3304b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-e",
     "\\"
    ],
@@ -140784,6 +145277,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r252",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-Z",
+    "--no-group-separator",
+    "-e",
+    "a{0,2}bb?",
+    "-U",
+    "--color=never",
+    "--count",
+    "tree"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "49cfd57df91ba474",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
   "utility": "grep"
  },
  {
@@ -140820,6 +145351,80 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--null",
+    "--files-with-matches",
+    "-R",
+    "--no-ignore-case",
+    "--include=a-b.txt",
+    "--word-regexp",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "4dcf8d2e17b86669",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--dereference-recursive",
+    "--directories=skip",
+    "-l",
+    "--basic-regexp",
+    "-q",
+    "--files-with-matches",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "4dd44703c60151c9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -140848,6 +145453,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "d6055cca5359c029b7180b081b4c157ff4147998b00bf35644fa836d658242de"
+  },
+  "case": {
+   "argv": [
+    "--recursive",
+    "--directories=skip",
+    "-c",
+    "--file=pats",
+    "--initial-tab",
+    "-e",
+    "^\\(a*\\)\\+$"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "54062655054b1e04",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7de1555df0c2700329e815b93b32c571c3ea54dc967b89e81ab73b9972b72d1d"
+  },
   "utility": "grep"
  },
  {
@@ -140950,6 +145592,90 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-E",
+    "--extended-regexp",
+    "-e",
+    "(ab)+(a|bc)",
+    "-f",
+    "pats_empty",
+    "--file=pats",
+    "-i",
+    "--ignore-case",
+    "-y",
+    "-w",
+    "--word-regexp",
+    "-x",
+    "-v",
+    "--invert-match",
+    "-m",
+    "0",
+    "-b",
+    "-n",
+    "--line-buffered",
+    "-H",
+    "--with-filename",
+    "-h",
+    "--label=X",
+    "--only-matching",
+    "-q",
+    "--quiet",
+    "--silent",
+    "--binary-files=binary",
+    "-a",
+    "-dskip",
+    "-Dskip",
+    "-r",
+    "--recursive",
+    "--include=[!b]*",
+    "--exclude=*",
+    "--exclude-dir=tree",
+    "-L",
+    "--files-with-matches",
+    "--count",
+    "--initial-tab",
+    "-Z",
+    "-B1",
+    "--before-context=1",
+    "-A",
+    "1",
+    "-C2",
+    "-2",
+    "--group-separator=",
+    "--no-group-separator",
+    "--color=sometimes",
+    "--color",
+    "--colour=always",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "5ae00635ed02891b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -141025,6 +145751,45 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--regexp=a|b",
+    "--line-regexp",
+    "--basic-regexp",
+    "--exclude=*",
+    "--line-buffered",
+    "-w",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "5dd587cf44f878b4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "8da8bc47ffcabfd06d2c65cea4541b4ec1a4adc29fea725244022f82233b2ccd"
   },
@@ -141088,6 +145853,81 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-G",
+    "-v",
+    "--file=pats",
+    "--with-filename",
+    "--invert-match",
+    "--files-without-match",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "681db4c532713792",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "baa36e7060b5155d6e766266c2424ddbe8e56fdb38ab3bfb76cd6351b0889606"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--directories=skip",
+    "--binary",
+    "-o",
+    "--color=sometimes",
+    "--regexp=alpha",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "6bfd0d1a578a5983",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "4ed014eb4cb74ea8cd16dabc668c4456aa1d4819e679be07679208cc4cd0c97d"
   },
@@ -141125,6 +145965,44 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-G",
+    "--color",
+    "--line-regexp",
+    "--only-matching",
+    "--before-context=1",
+    "-e",
+    "(a)\\1|(b)\\2",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "6d7ddb26cb51f663",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a back reference to a group that did not participate is refused by GNU's matcher and matched by this one.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--exclude=*.log",
     "--files-with-matches",
     "--no-group-separator",
@@ -141146,6 +146024,80 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7de1555df0c2700329e815b93b32c571c3ea54dc967b89e81ab73b9972b72d1d"
+  },
+  "case": {
+   "argv": [
+    "--regexp=",
+    "--binary",
+    "--count",
+    "-c",
+    "-dread",
+    "--no-ignore-case",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "6de2b2468cce79ea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "10159baf262b43a92d95db59dae1f72c645127301661e0a3ce4e38b295a97c58"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exclude=*",
+    "--files-without-match",
+    "--color=sometimes",
+    "--before-context=1",
+    "--null-data",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "6ed4e6acb9b93456",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
   "utility": "grep"
  },
  {
@@ -141178,6 +146130,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-G",
+    "--exclude=*",
+    "--count",
+    "-l",
+    "-f",
+    "-",
+    "-Z",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "71daeec2b9eb1f4f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "grep"
  },
  {
@@ -141248,6 +146238,42 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--color=sometimes",
+    "-R",
+    "--colour=always",
+    "-x",
+    "--word-regexp",
+    "--quiet"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "73791407fa125717",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -141311,6 +146337,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "--only-matching",
+    "-x",
+    "--exclude=a.txt",
+    "-v",
+    "--no-messages",
+    "dangling"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "75c6bfb969d9841b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -141369,6 +146432,126 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "--fixed-strings",
+    "-e",
+    "aaaa$",
+    "--regexp=",
+    "-f",
+    "dir",
+    "--file=pats",
+    "--ignore-case",
+    "--no-ignore-case",
+    "-y",
+    "-x",
+    "--line-regexp",
+    "--no-messages",
+    "-v",
+    "-m",
+    "-1",
+    "--byte-offset",
+    "-n",
+    "-h",
+    "--label=X",
+    "-o",
+    "--only-matching",
+    "-q",
+    "--silent",
+    "--binary-files=text",
+    "-I",
+    "-dbogus",
+    "-Dskip",
+    "--recursive",
+    "-R",
+    "--dereference-recursive",
+    "--include=a-b.txt",
+    "--exclude=a.txt",
+    "--exclude-dir=inner/",
+    "-L",
+    "--files-with-matches",
+    "-c",
+    "-T",
+    "-Z",
+    "--null",
+    "-B-1",
+    "-A1",
+    "--after-context=1",
+    "-C1",
+    "-2",
+    "--group-separator=",
+    "--no-group-separator",
+    "--color=always",
+    "--binary",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "779098f8225351f3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-w",
+    "--files-without-match",
+    "-e",
+    "^a",
+    "--only-matching",
+    "--fixed-strings",
+    "--devices=skip",
+    "loop"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "784a019307f92518",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "98a002176a1ca96a19b1ab34b32240688a7aced94e019bcc7f7d99c342caceed"
+  },
   "utility": "grep"
  },
  {
@@ -141506,6 +146689,43 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--files-with-matches",
+    "-r",
+    "--colour=always",
+    "-L",
+    "-A2",
+    "-o",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "7bc5ee150f5cba40",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "0f9a5df7b3d9c8e6519ab7d6719f3c6e2eb0b1d806b52172884a2503a651d4d8"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--color=sometimes",
     "-R",
     "--colour=always",
@@ -141623,6 +146843,235 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "--include=[ot]*",
+    "--null",
+    "--initial-tab",
+    "-e",
+    "\\Wa{2,}",
+    "--before-context=1",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "849d8e7ff5bec7a2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "[0-9]\\{3\\}",
+    "-U",
+    "--fixed-strings",
+    "--max-count=1",
+    "--no-messages",
+    "--line-number",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "85c60295b5f35458",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--after-context=1",
+    "--fixed-strings",
+    "--file=pats",
+    "-U",
+    "--include=?.txt",
+    "loop"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "8788192e1c1a39a5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-I",
+    "--file=pats",
+    "-E",
+    "-o",
+    "-s",
+    "-d",
+    "skip",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "8903e25955c72a4e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-I",
+    "-r",
+    "-G",
+    "-e",
+    "\\",
+    "--include=*.txt",
+    "--null",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "8ab8551b108508fc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d0e2dc251487ad59e5c424e50e6eca692455b36cdbec2e047fc929a5ba02aa25"
+  },
+  "case": {
+   "argv": [
+    "-l",
+    "--null-data",
+    "-w",
+    "--files-without-match",
+    "--binary",
+    "--invert-match",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "mixed_case",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "8b52ab6ccdfcfc66",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "grep"
  },
  {
@@ -141834,6 +147283,80 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--dereference-recursive",
+    "-q",
+    "-f",
+    "-",
+    "--with-filename",
+    "-G",
+    "-i",
+    "loop"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "mixed_case",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "969c0913f5309bea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6ff524147ad04fb53109b546f1ce04dbc604ff8260afabe0bdd05acd36e2eb4d"
+  },
+  "case": {
+   "argv": [
+    "--regexp=^$",
+    "-H",
+    "--only-matching",
+    "--ignore-case",
+    "-U",
+    "--after-context=1"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "9a10c0ac15781137",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-e",
     "a\\{1",
     "--only-matching",
@@ -141856,6 +147379,196 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r252",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--files-with-matches",
+    "-2",
+    "--regexp=^$",
+    "-C",
+    "2",
+    "-L",
+    "--max-count=1",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "9bd9c217c69c998f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "59711b2535c211f581f0cf84332a63afa490e72251e490bbf382ddbb91dab9c7"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "^a{0,2}b(a*)*b",
+    "--exclude-from=excludes_nonl",
+    "--invert-match",
+    "-z",
+    "-s",
+    "--fixed-strings",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "9cd37839ba230f63",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--file=pats",
+    "-s",
+    "--context=1",
+    "-F",
+    "-L",
+    "-x",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "9d0d4d1031c78b96",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "f27e01fe7624cca3e69811a0bf9a4efd9dca9fd39f7a3a8f939cae0cfe8cdfb8"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--file=pats",
+    "--label=X",
+    "--color=sometimes",
+    "-w",
+    "-L",
+    "--null-data",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "9f2a520dd7c73db4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5fe86f02d994f4aeb7697adde3cdbab726c51701de6d8ff4786080490bf71ce9"
+  },
+  "case": {
+   "argv": [
+    "--dereference-recursive",
+    "--group-separator=--",
+    "-e",
+    "[a-b]\\{3\\}",
+    "--before-context=1",
+    "--label=X",
+    "--invert-match",
+    "loop"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "9f61880aee983ade",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5fe86f02d994f4aeb7697adde3cdbab726c51701de6d8ff4786080490bf71ce9"
+  },
   "utility": "grep"
  },
  {
@@ -141957,6 +147670,45 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "17e682f060b5f8e47ea04c5c4855908b0a5ad612022260fe50e11ecb0cc0ab76"
+  },
+  "case": {
+   "argv": [
+    "-w",
+    "-e",
+    "(a)\\1|(b)\\2",
+    "--initial-tab",
+    "--invert-match",
+    "--max-count=1",
+    "-d",
+    "skip",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "a3088bc29c95f46a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a back reference to a group that did not participate is refused by GNU's matcher and matched by this one.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
@@ -141978,6 +147730,83 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "fa83e0a82725bf489b009ddbd5d2fd6412bc0a4c53a9f80942020ee70dae5c70"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--include=*",
+    "-R",
+    "-e",
+    "^delta",
+    "-B8193",
+    "--invert-match",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "a461f4a668bd3c84",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "47cc7b727a0f5b4ab9249d6e315293717ebb08b65865942910c68e4ea5a7da4d"
+  },
+  "case": {
+   "argv": [
+    "-T",
+    "--no-ignore-case",
+    "--regexp=alpha",
+    "--only-matching",
+    "-m100",
+    "-C1",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "a77904c9bef925a7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "742919b9526bf84425804c568f1deeb4275dcc9e5577222b91a5a2f642793099"
+  },
   "utility": "grep"
  },
  {
@@ -142051,6 +147880,82 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--include=[ot]*",
+    "-b",
+    "-U",
+    "--file=pats",
+    "--exclude-dir=tree",
+    "-1",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "abcf908d9efb7d43",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--line-number",
+    "--null",
+    "-Z",
+    "--file=pats",
+    "--color=sometimes",
+    "--color",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "words",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "ac4c9417dcdfe73a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-f",
     "pats",
     "-U",
@@ -142074,6 +147979,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-U",
+    "--no-messages",
+    "-L",
+    "--line-number",
+    "-e",
+    "\\w+",
+    "--only-matching",
+    "loop"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "ad292db8b0410339",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "98a002176a1ca96a19b1ab34b32240688a7aced94e019bcc7f7d99c342caceed"
+  },
   "utility": "grep"
  },
  {
@@ -142112,6 +148055,156 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--basic-regexp",
+    "--color",
+    "--files-without-match",
+    "--initial-tab",
+    "--no-messages",
+    "--file=pats",
+    "loop"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "b17999c1d6959e54",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "98a002176a1ca96a19b1ab34b32240688a7aced94e019bcc7f7d99c342caceed"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--context=1",
+    "-x",
+    "-b",
+    "-E",
+    "-r",
+    "-s",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "b291b210dbfb8f28",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "3e52ce91c049df8c8fa20840f714d16704c625335987602d2937ef9930935be7"
+  },
+  "case": {
+   "argv": [
+    "-w",
+    "--count",
+    "--regexp=^$",
+    "--after-context=1",
+    "-2",
+    "-z",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "b30426b980f97ef9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "c51dc8ed6fd86012bc08299dda025960672306f538cb29ada057aba7d7bc60cd"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bdfa7429f0869ee3a567f3801d20512b1619f2f2b9102cadcec056a958e282f7"
+  },
+  "case": {
+   "argv": [
+    "-C",
+    "0",
+    "--no-ignore-case",
+    "--text",
+    "--file=pats",
+    "--initial-tab",
+    "--dereference-recursive",
+    "tree"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "b36aa775c0bdaa31",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b410f6abe5a8c60f8932476b67a30629d656282daedc949bb8a69fbbd32f61c1"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "2d0e6d7966558bcf74c473339219738e9852fe92dec7d051b72af62b857747d4"
   },
@@ -142135,6 +148228,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-r",
+    "--initial-tab",
+    "--text",
+    "--with-filename",
+    "--directories=skip",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "b918156f03394270",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "grep"
  },
  {
@@ -142204,6 +148334,80 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--color=sometimes",
+    "--line-buffered",
+    "--file=pats",
+    "--exclude=*",
+    "--exclude=three*",
+    "--no-ignore-case",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "bf21493f4456c5ce",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--count",
+    "--no-messages",
+    "--files-with-matches",
+    "--files-without-match",
+    "--fixed-strings",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "c0ac34168e71e7cc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "d0e2dc251487ad59e5c424e50e6eca692455b36cdbec2e047fc929a5ba02aa25"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -142230,6 +148434,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "^$",
+    "--extended-regexp",
+    "-w",
+    "-1",
+    "--no-filename",
+    "-Z",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "c1afcc1e45fb341a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "grep"
  },
  {
@@ -142294,6 +148536,123 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--dereference-recursive",
+    "-L",
+    "-c",
+    "--null-data",
+    "-f",
+    "pats_empty",
+    "-I",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "c541731eeb0333ce",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "ff6c40f3a036e8b89f0d3731a719f669f9972eab564868c657bf638d7c927b3b"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--text",
+    "--no-group-separator",
+    "--file=pats",
+    "--exclude-dir=*",
+    "-a",
+    "-T",
+    "loop"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "c82dca102ee78198",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "b26c7840cf1179f1dd30977d1c56e7fa09b328cab29520120e076fca0f0067f4"
+  },
+  "case": {
+   "argv": [
+    "--text",
+    "-e",
+    "\\.",
+    "-A",
+    "1",
+    "-H",
+    "--regexp=alpha",
+    "-s",
+    "tree",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "mixed_case",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "ca7942c4ef40fa6e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "b26c7840cf1179f1dd30977d1c56e7fa09b328cab29520120e076fca0f0067f4"
+  },
   "utility": "grep"
  },
  {
@@ -142520,6 +148879,132 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "-x",
+    "-e",
+    "a\nb\nc",
+    "--no-group-separator",
+    "-f",
+    "-",
+    "--file=pats",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "d6a41eeae8e610cd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-E",
+    "-e",
+    "a\\{4000\\}",
+    "--regexp=alpha",
+    "-f",
+    "-",
+    "-i",
+    "-z",
+    "--null-data",
+    "-s",
+    "--no-messages",
+    "--invert-match",
+    "-m100",
+    "--max-count=1",
+    "--byte-offset",
+    "--line-buffered",
+    "-H",
+    "--with-filename",
+    "-h",
+    "--no-filename",
+    "--label=X",
+    "-o",
+    "--only-matching",
+    "-q",
+    "--quiet",
+    "--silent",
+    "--binary-files=binary",
+    "-a",
+    "-d",
+    "read",
+    "-D",
+    "skip",
+    "--devices=skip",
+    "-R",
+    "--dereference-recursive",
+    "--include=a-b.txt",
+    "--exclude=three*",
+    "--exclude-from=excludes",
+    "--exclude-dir=tree",
+    "-L",
+    "--files-without-match",
+    "-l",
+    "-c",
+    "--count",
+    "-Z",
+    "-B0",
+    "-A",
+    "0",
+    "-C",
+    "2",
+    "--context=1",
+    "-1",
+    "--group-separator=##",
+    "--no-group-separator",
+    "--color=sometimes",
+    "-U",
+    "dangling"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "d81f029ee395b5c5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "a34d819e4eb67ec23e61798933aaf3269f09e95db07b76e9132699490c3c7285"
   },
@@ -142671,6 +149156,119 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--no-ignore-case",
+    "-o",
+    "--colour=always",
+    "-c",
+    "-T",
+    "-e",
+    "^\\(ab\\)*$",
+    "tree"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "e2edf25888cc543c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--text",
+    "--regexp=alpha",
+    "--exclude=*",
+    "-U",
+    "-e",
+    "a(a*)*b",
+    "-H",
+    "tree"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "e57accef41f19659",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--color=sometimes",
+    "-drecurse",
+    "-R",
+    "-I",
+    "--line-regexp",
+    "--file=pats",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "e5a5ebf1fa6e10e7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a --color argument GNU does not know makes it print its whole help on standard output and exit zero; there is no help text here to print.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1bbcade0e2d2a9bd3b1f4eed4cb7d80b6d51d0b2c7054a702a55cf473db3b2c3"
+  },
   "utility": "grep"
  },
  {
@@ -142839,6 +149437,81 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a01c24ea26fcb07a7c5e91e9e0d8cb6c32f2e536694d629b21bbd5724fbc2848"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "-E",
+    "-a",
+    "--file=pats",
+    "-A0",
+    "-1",
+    "-",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "ec6a847f26db80e9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "83fd160584fee5f96af99854353bb745e6a8c203c3e91c14c8c5be5c82d91bbe"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--line-regexp",
+    "-E",
+    "--byte-offset",
+    "-q",
+    "-x",
+    "--dereference-recursive",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "words",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "ef18cafffb1e28d2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -142983,6 +149656,44 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-f",
+    "-",
+    "--word-regexp",
+    "--line-regexp",
+    "--include=*.txt",
+    "--exclude=*",
+    "-x",
+    "loop"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "mixed_case",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "f2446cf2731b175b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--include=a-b.txt",
     "--exclude=*",
     "--files-with-matches",
@@ -143004,6 +149715,81 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--null",
+    "--ignore-case",
+    "--file=pats",
+    "--no-messages",
+    "--before-context=1",
+    "--line-buffered",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "f46ede13ca2b8f4a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's recursive walk differs from GNU's in which directories, loops and unreadable files it names, and in when -s silences them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--line-number",
+    "--silent",
+    "-e",
+    "^*",
+    "-a",
+    "-E",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "f5aa7a4c4ba0a9f7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "grep"
  },
  {
@@ -143069,6 +149855,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r253",
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-m1",
+    "-e",
+    "a\nb\nc",
+    "--devices=skip",
+    "--extended-regexp",
+    "--byte-offset",
+    "--null",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "fcab3e19e628f2ff",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "grep's output for -o, -l and -L together, and its counting of empty matches, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8188f6b2084c7096c53412bc519e90a66da267020351d8b3f377f088b49e2f89"
+  },
   "utility": "grep"
  },
  {
@@ -143230,6 +150054,51 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0bf7b2a42a98620799d672f377ea2b265c3070cd52f918cf49388dbb9949147a"
+  },
+  "case": {
+   "argv": [
+    "-a2",
+    "-e",
+    "EMPTY",
+    "-o0 1.2",
+    "-t",
+    "",
+    "-v",
+    "2",
+    "-118446744073709551615",
+    "-21",
+    "--check-order",
+    "--nocheck-order",
+    "--zero-terminated",
+    "-",
+    "right"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_sorted_a",
+   "tier": "pinned",
+   "utility": "join"
+  },
+  "domain": "text",
+  "id": "1efa98e2956b9a95",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7ce2cf5547218f40973d9386f563a9f5882b78d8425eda3d4aa2d589ad627316"
+  },
+  "utility": "join"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "248e219be379aa3f4bd5d9b83788f2baa22a8b8c74973a6c258b6af75f565577"
   },
@@ -143258,6 +150127,123 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r258",
+  "utility": "join"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b3577f507cb282f8a52a32cd3365a9d1ac51c06165406c435df79f007e3472ff"
+  },
+  "case": {
+   "argv": [
+    "--ignore-case",
+    "-t",
+    ":",
+    "--zero-terminated",
+    "--header",
+    "-1",
+    "18446744073709551616",
+    "-eEMPTY",
+    "unordered",
+    "unordered2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "join"
+  },
+  "domain": "text",
+  "id": "2eb9b2bb7b19dc2a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a9d0916854ef5194b2a19f410e044aa646069b342df199d67958dc6a1356ec39"
+  },
+  "utility": "join"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "9bf51c157d0c944608d6e5e336e2e69a38ecf447596df1090eb47b8e3ba8a252"
+  },
+  "case": {
+   "argv": [
+    "-1",
+    "2",
+    "-v1",
+    "--check-order",
+    "--ignore-case",
+    "--header",
+    "-22",
+    "-",
+    "right"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "join"
+  },
+  "domain": "text",
+  "id": "5422794e5309f7a5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "172e3e6372a1ba59c705ad185ebc9cd2d22d117f0b4a8986bf214baf0918b633"
+  },
+  "utility": "join"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "669111295bb6f5d5892bc8706f324c606505592afcb375ce28e528777e1ca7d1"
+  },
+  "case": {
+   "argv": [
+    "--ignore-case",
+    "--header",
+    "--check-order",
+    "-i",
+    "--nocheck-order",
+    "-z",
+    "dir",
+    "right"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "join"
+  },
+  "domain": "text",
+  "id": "60c96aef78681b56",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "join"
  },
  {
@@ -143331,6 +150317,45 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "651eb7f7ba22a3ff5bb8162420f869e9ac28732e1ee7777b63ced51f8b83790a"
+  },
+  "case": {
+   "argv": [
+    "-1",
+    "2",
+    "-v2",
+    "--header",
+    "-a2",
+    "-t\\0",
+    "-z",
+    "left",
+    "left"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_join_left",
+   "tier": "pinned",
+   "utility": "join"
+  },
+  "domain": "text",
+  "id": "ba235f9ca29fbcd1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2d7665f016a244f89019bd685aed6ca958d612b6728ec48bf73f2fb329c1d0dd"
+  },
+  "utility": "join"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "b8dc3085455b38801687693f6358ab43618544e6fc944350d327afd4ec96679f"
   },
@@ -143360,6 +150385,130 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r258",
+  "utility": "join"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "cbc2072287bece122f3cd8c00a2bbf99bc8d7c6e5f5560c73b11d546b0eaf5b9"
+  },
+  "case": {
+   "argv": [
+    "-a2",
+    "-e",
+    "EMPTY",
+    "-i",
+    "-o0 1.2",
+    "-t\t",
+    "-1",
+    "18446744073709551615",
+    "--check-order",
+    "--nocheck-order",
+    "--header",
+    "-z",
+    "unordered",
+    "unordered"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "join"
+  },
+  "domain": "text",
+  "id": "cdf10adfd4941cc1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4b36ee1cb9693444ad8209cb5c3726f5291ac33a4a9615b52ea7b1bcf84f320c"
+  },
+  "utility": "join"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f0b1bcb4cfa61749129c7b673066a111c5f5c3a40061aebec92b55b880d86477"
+  },
+  "case": {
+   "argv": [
+    "--header",
+    "-21",
+    "--nocheck-order",
+    "-z",
+    "-e",
+    "",
+    "-1",
+    "2",
+    "wide",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "join"
+  },
+  "domain": "text",
+  "id": "d93874f036f0e3a7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "58c00cca88e1418c41724ba51cf6fde37efb709b302208e0dd0cf6abe01ebd2c"
+  },
+  "utility": "join"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ed45051cdf3f7d3499e4f218f530b18a340ee712b09a91c1a599f040b981e4db"
+  },
+  "case": {
+   "argv": [
+    "--ignore-case",
+    "-t",
+    "",
+    "-o",
+    "2.3,1.1",
+    "--header",
+    "-z",
+    "--check-order",
+    "left",
+    "left"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "join"
+  },
+  "domain": "text",
+  "id": "fe677ce0067a2494",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "join's empty field separator, its -o field list and the file and line it names for input out of order differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ceaa7a6074a00ceebd2da68f553d8bea5c1b1ba7841a9ea8c5d9a4eb7837a7b1"
+  },
   "utility": "join"
  },
  {
@@ -146392,6 +153541,82 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
+   "stdout": "dc478ac92566cffd4f02b98bfbca8089bb2c5af61ad7bc33935ee057c7d691b7"
+  },
+  "case": {
+   "argv": [
+    "--expand-tabs",
+    "--no-file-warnings",
+    "-m",
+    "+0",
+    "--omit-pagination",
+    "-n:",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "012b147f9b95828d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e087d92b2b6d1ac530707e518ba9ab0b82828c4866e2fca856461664ff8ada56"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "f7525754f8ef6f828911942921a6a3734bb354762e33db1deb5f831866e12e15"
+  },
+  "case": {
+   "argv": [
+    "-e4",
+    "-i4",
+    "--header=HEAD",
+    "+0",
+    "-1",
+    "-2",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "01c7c4ee7b23d7a3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "b2445bd08cc7b86b62a3fb9d9de9d71e9a1142c7bfdb838b7afc3bb86f2e850c"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
    "stdout": "c00342f057bd50a32290ed50e5078a73ba26044c3ebb76308f8cc413ec87f81e"
   },
   "case": {
@@ -146482,6 +153707,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--pages=2",
+    "--omit-pagination",
+    "-s,",
+    "--double-space",
+    "-m",
+    "--sep-string",
+    "pr_many"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "025ddb05efe11d10",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "pr"
  },
  {
@@ -146644,6 +153906,45 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "75882b75c2a5432d9a7882b17b2c58c3e8942fdcc6c13f74cb995ec459ffe2fa"
+  },
+  "case": {
+   "argv": [
+    "--omit-header",
+    "-T",
+    "-d",
+    "-n",
+    "--join-lines",
+    "-2",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "068d9d65eff2e411",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "d49ef0245c23dded5ee0a9d7feb063c223da35314bf06ec003a1f1006efbd1c9"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e8724430fb27da709b341dee3a1f54406580f2426eeba55c43400cd180b5869c"
   },
@@ -146670,6 +153971,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "-e",
+    "--merge",
+    "-f",
+    "+2",
+    "--first-line-number=5",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "076f3615a61185aa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "pr"
  },
  {
@@ -146761,6 +154099,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2a2a1c275d09d247640194219816961deb33fccd7d134a8524a4c59dcb1b2c63"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "",
+    "--length=7",
+    "-3",
+    "--columns=0",
+    "-l",
+    "1",
+    "-2",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "0c5053e7ab31b440",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "pr"
  },
  {
@@ -146890,6 +154267,119 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
+   "stdout": "06fe204d7339402c2b089b8243d33d67c26adb8ef78719f52b68f88aed2c3181"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "-n:3",
+    "+0",
+    "--first-line-number=5",
+    "-i",
+    "-e4",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "10397b012fe4b2e5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e9770c1a0dd30abb5c8a6519fcb6ac3c5ca9a362313117e772e6f7342dfdf86c"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b92fe84e169126ead8212f2a61640263f31c460795e012ce275625c3b7da0ffe"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e,",
+    "--header=HEAD",
+    "--separator",
+    "-W",
+    "1",
+    "--expand-tabs=,4",
+    "cleft",
+    "sorted2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "10480a8c4a1cd37d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1e533effd2ffc98ef796f52aee131faf14b118666079905ba0c4fa98c567e028"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "143b228aea842b3ee80c1f5ae4663692bef1cdd91b7566dc3f461f27c58c950b"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--length=7",
+    "--columns=0",
+    "-i4",
+    "+1:1",
+    "-2",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "10dcb3bd8dd343c0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
    "stdout": "1712fa875bc2ffc3800ff9bcead4ccd7b3d0ab451921973a3bdfcdb69c7aa8ce"
   },
   "case": {
@@ -146920,6 +154410,84 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-N",
+    "5",
+    "-h",
+    "a b",
+    "+1:1",
+    "--width=20",
+    "+2",
+    "-w",
+    "1",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "11c3f0bd2d92afb4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "1a84d5cfc4923de50b237395696dae25fb8ea432be2f55bcf55dc7f4b188fee5"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a7892c62ff33a621b8bf7e784e51b5e582bc0a71c081c602eac599ef7050a262"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "-e,",
+    "--sep-string",
+    "-n3",
+    "--form-feed",
+    "-n:",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "11e47722295812f3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "778ca96adedd658e9c604b539f6fb1af2e1443a4781ca74df068560171969285"
+  },
   "utility": "pr"
  },
  {
@@ -146988,6 +154556,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1da9f4fedeb7b4c1f1a4b846b0f03029278e5018e1a532f8ada585a0f0f5e187"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "-S::",
+    "--double-space",
+    "-i4",
+    "--no-file-warnings",
+    "--sep-string",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "128ea6a847fa92a0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ae2a88b89d80f7bf946cb52f75ffacefd81d0057bdb3b0674b7dc228e03ab135"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -147014,6 +154619,44 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r261",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "--number-lines=:3",
+    "--length=7",
+    "--omit-header",
+    "-D",
+    "%Y-%m-%d",
+    "-e,",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "13c613e63e4c93ea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "25607ded4cf7e5395849c2035fa7bb38f950b86d398ae097556eeb7b5f639678"
+  },
   "utility": "pr"
  },
  {
@@ -147046,6 +154689,119 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--number-lines",
+    "--page-width=20",
+    "--pages=2",
+    "-s",
+    "-s:",
+    "+2",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "1484a391e8fa0d65",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "76fb114ce14b7af021aa7d21d7a449b27ab1b9de947d80132e7467fddcb6ae6d"
+  },
+  "case": {
+   "argv": [
+    "--width=20",
+    "-s",
+    "-i",
+    "-i4",
+    "--columns=2",
+    "-ex4",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "14916294c44bd235",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "45b7e61d65a69a286d92fd3427c27fd04ba6e81cf444eff271977b3f2a6b8551"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d9406a2ea9a01e0442705f6de5b0d2848cdd08552c4d3bbf44c7da8f34043d6b"
+  },
+  "case": {
+   "argv": [
+    "--number-lines",
+    "--merge",
+    "--indent=4",
+    "-n3",
+    "-i",
+    "-ix4",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "15a75da302acf621",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c9f36305af070faddec9e06d83332e500c0c5395dd34a05ab30525267f01b43b"
+  },
   "utility": "pr"
  },
  {
@@ -147176,6 +154932,120 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "96270cc3499dc43a1d3f726fcc5623ae4b9f378ed5a6ac7a58b7e9607c92bb26"
+  },
+  "case": {
+   "argv": [
+    "--columns=2",
+    "-r",
+    "-o",
+    "0",
+    "-l1",
+    "-n:",
+    "--indent=4",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "1a42466e327293af",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "82a05715df8a562c18592c921805f041f0d7d592e982476229ee1a89219d396a"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6b1d31258db6296d43c150e69e2111ea83986a20cdd035e0ab2c962e82e71c60"
+  },
+  "case": {
+   "argv": [
+    "--indent=4",
+    "--expand-tabs=,4",
+    "--number-lines",
+    "-T",
+    "--double-space",
+    "-n:3",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "1d48772f407ec460",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6d15f00e1b29328ed5603301b7e5171238ad132e7fea9d029741ae75fcff24f2"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "db90abd4ad229b97b0f9f45d6f2db64752532721cd2d2219de4793d21c24eb8b"
+  },
+  "case": {
+   "argv": [
+    "-S::",
+    "-f",
+    "-w",
+    "41",
+    "-d",
+    "-s,",
+    "-e,",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "1e3f6361ba8f4fee",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2b521768a4f847d5608aef61908ea911afd04fed02b91eb0b639eca34ce63545"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
@@ -147201,6 +155071,80 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e78659274923ef76dfac6932fb534a3b0a8de9c2393cdf128b0f320345afd39f"
+  },
+  "case": {
+   "argv": [
+    "-o4",
+    "-2",
+    "-e4",
+    "-D%Y-%m-%d",
+    "--header=HEAD",
+    "-i4",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "1ecf0fa2ea7b9f1d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4eaed81a0a2c17f6d27dcbcf15bdafb187d09a1fb98eae954644f6081c0d000c"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "17f7de8e9aa850b94e03c4aad47a25f24b838a2327b60795d98f443ed1988599"
+  },
+  "case": {
+   "argv": [
+    "-d",
+    "+2",
+    "-e,",
+    "--across",
+    "-T",
+    "-ix4",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "1f92bc9729162c3d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b7f7c13c8ce3d4751b4c205e69bdc60ffcd5d9a2e8895b7ce81633dda40d4b8a"
+  },
   "utility": "pr"
  },
  {
@@ -147263,6 +155207,75 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "4e725b21ff850bd2a264d0828236c37d6c141ae401f3968ca1ed471a29ff43a2"
+  },
+  "case": {
+   "argv": [
+    "+2",
+    "+3:4",
+    "+0",
+    "+1:1",
+    "--pages=2",
+    "-a",
+    "--across",
+    "-d",
+    "--double-space",
+    "-D",
+    "%Y",
+    "--date-format=%Y",
+    "--expand-tabs",
+    "-f",
+    "--form-feed",
+    "-hHEAD",
+    "-ix4",
+    "--output-tabs",
+    "-l12",
+    "--number-lines",
+    "--number-lines=:3",
+    "-N",
+    "1",
+    "--first-line-number=5",
+    "-o0",
+    "--indent=4",
+    "--no-file-warnings",
+    "-s:",
+    "-s,",
+    "-S",
+    "-S::",
+    "--sep-string",
+    "-t",
+    "-T",
+    "-w",
+    "31",
+    "-W",
+    "1",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "202e81ced0d64823",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "121c8edd284dec12fccc4b71e1bfa836220e87fe577c9b2fe1b14066d1ff41df"
+  },
   "utility": "pr"
  },
  {
@@ -147334,6 +155347,117 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "57e307bc4d921615a82049458046e0b074d4f38973c96d33ce9adf5ad8944aee"
+  },
+  "case": {
+   "argv": [
+    "-ex4",
+    "--width=20",
+    "--no-file-warnings",
+    "-ix4",
+    "-S::",
+    "-n:",
+    "pr_many"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "2276a456088590da",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8e927e9d455a5370e32401a3b705fbc21687f23b03ed65e1e0448e2838551f60"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "03827faa4ab6bdeafa8e307606064eb4baea2c5371c254a9a55b48912902663b"
+  },
+  "case": {
+   "argv": [
+    "-n:3",
+    "-n3",
+    "--omit-pagination",
+    "--output-tabs=,4",
+    "-s,",
+    "-r",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_many",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "22f6b436543b7ddb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ff23e6f2f9832af03dd390dc66d8eaf3a25700d3001ddf7a26f08dea2d5c55a2"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b4d0a5dd85c28cd8b1477ee65cbbe71aa4fdb22dc9363dd7d4b7d37fb23ea286"
+  },
+  "case": {
+   "argv": [
+    "-W20",
+    "--date-format=%Y",
+    "-1",
+    "-f",
+    "-n3",
+    "--page-width=20",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "23a70386335461af",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0c7b57bb9883a60e372fdc6235d6855b175473e59add4c8c9b672149890a54f6"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e230f293175c979d6ac408802114d4b243635df6eb100e3bdc298a6c0c3d3f49"
   },
   "case": {
@@ -147398,6 +155522,80 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "cc2b9cd788bdcd2efb2a49da49399db772ff494d6203e4228658190d9cdf5c69"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "--across",
+    "-2",
+    "--expand-tabs=,4",
+    "-F",
+    "-d",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "247ba5a2cca9a9a2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "58550721998fc23b77ebdd98769970472d7f9dcd0a05b36b7063550e9849804c"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-d",
+    "--indent=4",
+    "-J",
+    "--merge",
+    "--separator",
+    "+2",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "2539a2b55f9ae2f9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
@@ -147429,6 +155627,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "61178adf497567c4ee2a52a32597c8d847b8efbd5c7eb2b668b0ea7fefc369e8"
+  },
+  "case": {
+   "argv": [
+    "--columns=2",
+    "-J",
+    "-n:3",
+    "-n3",
+    "-n:",
+    "-F",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "261ddfdd44cce42d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "fec2a127033c2d045ac6410b2e762c055796e918b793f149ce7d8aa8863c9b49"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e451d05a492826fbc7dce920a9344f1c1a837990492165a988f10c9fe3f39545"
   },
   "case": {
@@ -147454,6 +155689,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ade8c9076be37ad3d46cc6a35c99733ec91397cbaa9d909954debf7b46e6c267"
+  },
+  "case": {
+   "argv": [
+    "-3",
+    "--indent=4",
+    "-n:",
+    "-s:",
+    "-l",
+    "10",
+    "-e4",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "2656e80d94db0841",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8f63c7fb0c4d3a3ea7613643779e49cda72225966797229fb221fc8139c7213a"
+  },
   "utility": "pr"
  },
  {
@@ -147523,6 +155796,82 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "a343fea1dc7982281ee36e128394cae081ff738de22093ac84cf10b3f06ac021"
+  },
+  "case": {
+   "argv": [
+    "-s,",
+    "-h",
+    "",
+    "--sep-string=::",
+    "-ix4",
+    "-m",
+    "--omit-pagination",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "28d359dbd55b30d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "fc6c22727c302cee1c04de27569bab93fdc1f455a0f6b42b672e9799e4c7a97e"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0fd13c795811f242926f224d098ee87e8fe681bf242789c124c66249c632f01f"
+  },
+  "case": {
+   "argv": [
+    "-i4",
+    "-e",
+    "--double-space",
+    "--number-lines=:3",
+    "--omit-header",
+    "-n3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "28e8c86078907116",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e2c0eaa834797bd56514a46fd45d2c5576ec93e483a4234612de7d1ba40782da"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "2971bcde43b4acd3bcce114df49889db80f5d4066e1af4468622f43a1d831d43"
   },
@@ -147555,6 +155904,85 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "465f05a81e71b68286012b95f971b0827529c5e30fa7ff495a1314bd1ec91719"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-N",
+    "5",
+    "-3",
+    "-n:3",
+    "--separator=:",
+    "-n3",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "296b5faa0edabb59",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0c4cccfd512584699fffd76c5eefafd84e22fdeac596750b57ac8c1773512e17"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "3ae02e20b08f257842bbc1cde3519f84bec7a9c5e5b5b76c7bd8543f34b5072e"
+  },
+  "case": {
+   "argv": [
+    "--length=7",
+    "--page-width=20",
+    "--merge",
+    "--expand-tabs=,4",
+    "-T",
+    "-l",
+    "7",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "29b32fe640076c31",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "8b3f515c0a5a84f13b28985196b36796c396f5f8ffbd78c9c7a7811b5a0abd65"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "04eb34522f79699612c5abd488ba7e5d675e9a8e971e74577094b5033ba5338e"
   },
   "case": {
@@ -147580,6 +156008,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "286d0b0ba22528a26bc6daff75cfaccb22f1d8e8f627898c6bee2ffa7c6134ed"
+  },
+  "case": {
+   "argv": [
+    "--sep-string=::",
+    "--page-width=20",
+    "-S::",
+    "+0",
+    "-1",
+    "--number-lines",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "2baa3ac73ab08c81",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "eefb0bc80609bec42d815f936d1e843a29dcfbe1c284affd72d8fdce487cac12"
+  },
   "utility": "pr"
  },
  {
@@ -147709,6 +156174,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "a98fca56ec96bd6330b9b48bb39c6fb1920a98b4f61c4c4020d1dcaac87a03f5"
+  },
+  "case": {
+   "argv": [
+    "--expand-tabs=,4",
+    "--date-format=%Y",
+    "-F",
+    "-e4",
+    "--double-space",
+    "+0",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_many",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "309da9057aa03ab6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "f15541d8244f13154ae61004a2628fb3c555aec5078fbf967725ccc218264b37"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "2c7cc533c2f14b4662f1a22588e0207934387640f4507dbf1a1fcd36d0e13037"
   },
@@ -147735,6 +156237,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "1ea942a8c912a7ee65cd93e812c64f9162ea35886c3855e057b17e8f1ce6c45c"
+  },
+  "case": {
+   "argv": [
+    "--number-lines=:3",
+    "--header=HEAD",
+    "-o",
+    "80",
+    "--output-tabs",
+    "+0",
+    "-J",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "30c016cfa3bb066d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "207ad0ce6a30e2bb9be228d5a23bc2c792731350da379496ae669704bbb475f0"
+  },
   "utility": "pr"
  },
  {
@@ -147768,6 +156308,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "77fe2d73ca1ea20ac0b2f248f228e37a20ca0f1620b482d819f02e54433229db"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "-2",
+    "--join-lines",
+    "-N",
+    "0",
+    "-S",
+    "--length=7",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "325799ce82a5c52d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "78479bb1cf0dac78fb8e2caeb88ffc85fa22161aa73934e4c0f61968e0ee48a6"
+  },
   "utility": "pr"
  },
  {
@@ -148055,6 +156633,81 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--date-format=%Y",
+    "--merge",
+    "--first-line-number=5",
+    "-N-2",
+    "+3:4",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_formfeed",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "3a42b59fc14fb6f5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--pages=2",
+    "-N",
+    "5",
+    "+3:4",
+    "-F",
+    "--form-feed",
+    "-ix4",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "3a66fe617e457b1d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "374f4a5b7dff13b2b5db9ab1c256446519ab6431e0e851d4c9ea3658ee48d6e2"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "60beeafbe13b2f3f4041a64942b48df09d997606d7a4583cf36b2966c14ede48"
   },
@@ -148086,6 +156739,123 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "731610b18b5d9ab9d608530bf6c5851428b22f6d31256de31e1ef091d4c5c4aa"
+  },
+  "case": {
+   "argv": [
+    "--first-line-number=5",
+    "-F",
+    "--expand-tabs=,4",
+    "--no-file-warnings",
+    "-ix4",
+    "-n",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "3b65dc01aed2eef1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "33efd5869af5ee2035bcab3d73f33f7258df861f4a43bdc70b4d04e2bf587f2c"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "92e4bbc77e83d228d5a4077ce40f8cda5c4d4ebc3a3cefceaf8943516b4a25e4"
+  },
+  "case": {
+   "argv": [
+    "--form-feed",
+    "-h",
+    "a b",
+    "-d",
+    "--output-tabs=,4",
+    "-s:",
+    "--separator=:",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "3c111b3b7a356f13",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "0f757d0d8693818640684631a7ca50b3e259b1819acb30a3ae77b66efd496074"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4029566b505f11ac6a7659ba8d884834c7e5b1521263338450d61a8448b17267"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "+2",
+    "--length=7",
+    "+1:1",
+    "--header=HEAD",
+    "-ix4",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_formfeed",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "3c265b2eb85aa183",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "5b365656de8bd5ee13185cfc47ce298b821ff50a3c0d232dd13ce017851ec58e"
   },
@@ -148112,6 +156882,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "824a22d3c774bfec69d0aed8060ab067ca225c862c892ca6886cc23ceb840320"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-n:",
+    "-ix4",
+    "--indent=4",
+    "--width=20",
+    "--omit-header",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_many",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "3e5056241178f07d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "68e5e90d940b03aefb58f0569aa30b19069def0a0bbf9d76b396fb5c81f0f418"
+  },
   "utility": "pr"
  },
  {
@@ -148150,6 +156957,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "8c7e446f9f683618dcb302aa6a9196dd52462b16122cbe4b9323d22c8d0b37de"
+  },
+  "case": {
+   "argv": [
+    "-S::",
+    "-s:",
+    "-F",
+    "-w",
+    "72",
+    "--first-line-number=5",
+    "--double-space"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "4073d9a3251296b2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c1ecf68e74d14fdd3182b5b7c6a0f5509b98b39ea00fe1dbd47667d10e754e7b"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "2c63416408a237efe3645e1a88beba6a3724835f0ab82b840945f5ac0387fa90"
   },
   "case": {
@@ -148182,6 +157026,44 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "e6123ebe51e767fccf9a5a91fe0e431bb8aa056d24eb6342dac5c719e64c8d87"
+  },
+  "case": {
+   "argv": [
+    "-n:",
+    "-n3",
+    "-T",
+    "-a",
+    "-l",
+    "12",
+    "-1",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "41a65f74d72ec122",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "91a99f305fb9a3ad773f6af99c19e5c8cb8058fc29f965ce0f476bb894acb266"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "367a7eaea82efaf1e18c1930aba1c79dbd16a8788143d78333672c7e1145aeec"
   },
   "case": {
@@ -148207,6 +157089,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "71568077ecfbe56b370c08a8f11c94afb1efd5fa6c6f60d51909ca2e31e6756d"
+  },
+  "case": {
+   "argv": [
+    "--expand-tabs=,4",
+    "-i",
+    "-S",
+    "--output-tabs",
+    "-f",
+    "-o",
+    "80",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "41df8dfe29d8be61",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ca85dbb079ae475db3f98da6729cd289430c114be91ba484457acd5b93bbf9f7"
+  },
   "utility": "pr"
  },
  {
@@ -148245,6 +157165,45 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "-F",
+    "+1:1",
+    "--output-tabs",
+    "+3:4",
+    "+x",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "4343ff1f31ae6b2f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "3b7f04bd1e098d027f8f5796ee83e98a4559b86b8ce5579eccaebdb1ba3c8c36"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "fd2183caf5159da8d64ebba4b2184f20fe923cfad05ce6e54bd14ac3f6633dcf"
   },
@@ -148276,6 +157235,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n:3",
+    "+2",
+    "-s,",
+    "-r",
+    "-m",
+    "+1:1",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "44277bdb462e2452",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "df4834c8998d301af25a53978cc756336a3c387fe43e0eaead5426f27fb5b450"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "15f993c3259ae122d4fefaedbe5cba603bfd8c63d14ab66dfcb7fe9b8bc2e065"
   },
@@ -148302,6 +157298,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "62f115d5971e5fecf2de1df39ffcaa0eaa17a9f3ed8c5caca4d2825b4d39a763"
+  },
+  "case": {
+   "argv": [
+    "-n:3",
+    "--number-lines=:3",
+    "--date-format=%Y",
+    "-F",
+    "--separator=:",
+    "-d",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "4712bc0eeeed23dd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ac804920e0f05472f9fa623ee5a0a176895db3b9940b77d4ac9d14245d8e7bad"
+  },
   "utility": "pr"
  },
  {
@@ -148371,6 +157404,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "f4fe7859bfeb0295940d9ebc164fb764131d365eb03dcf49e73bcf8e5ee48df7"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "--expand-tabs",
+    "--output-tabs=,4",
+    "--merge",
+    "--double-space",
+    "-m",
+    "pr_many"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "4913055a579aa42c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bb2c4d6a29da32f59d9dd48c6889c2b28e15785582eaeeca132bc8a623fbc4a7"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "546296a8a37d239b4d645cc62ed649946127a9563dfd2a7db68492900c9caf28"
   },
   "case": {
@@ -148428,6 +157498,44 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r261",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--double-space",
+    "--sep-string=::",
+    "-r",
+    "--length=7",
+    "--form-feed",
+    "+2",
+    "cleft",
+    "sorted2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "4b6e214ed03957ca",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "pr"
  },
  {
@@ -148497,6 +157605,194 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "ea9661e6a87c98349af0ceb3a276c80b3a25fc20e2f6933505b88bd8ff5dd7f9"
+  },
+  "case": {
+   "argv": [
+    "--omit-pagination",
+    "--length=7",
+    "-F",
+    "-n:",
+    "-i4",
+    "-J",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "4e23a73225c534eb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e31ec307512b24a43e91c0564b9ae50995cacf198d51438ca115399d196cb402"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "8ac1ec48eb04c20d91ac769d528c0bd038ab6d7f8813d8db467d0bb552710979"
+  },
+  "case": {
+   "argv": [
+    "--output-tabs",
+    "-T",
+    "-F",
+    "+0",
+    "--sep-string=::",
+    "--merge",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "4ecc0f2e42432d85",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "f92fae78505a86b365e2b717f8982c310c5d808efcb7858a3187c453db8fd861"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "385292661bcab20e712b30c7811747dcfb73fd9830453c949eb4c8683c785554"
+  },
+  "case": {
+   "argv": [
+    "-W1",
+    "--sep-string",
+    "+2",
+    "--page-width=20",
+    "--output-tabs",
+    "+1:1",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "4ef2efc8fa73dead",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "441cf677c0f169f5a4528d37c449ecf60446ed75e0ef534cdd72c1efcbd60a51"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--length=7",
+    "+2",
+    "-l",
+    "10",
+    "-e",
+    "-m",
+    "--date-format=%Y",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "4f67d08de2352a36",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bd0c3162561416bf234976653f8fe34e0c042e2c0aaf2ce554acf0cdc19d95f0"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "--output-tabs",
+    "--width=20",
+    "--form-feed",
+    "--double-space",
+    "-D",
+    "",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "5010cc8ca05677aa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "14b5979ef0bbb6f95c9979f7d3ad793eda082b41faab884ddc5704401745087a"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "3537a951ff69e2eb13788051988f97cdc5f22adf85b08450838fb4104128d492"
   },
   "case": {
@@ -148555,6 +157851,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5e9ca88bbf73fa26abb2d3c0824e22ecb4a55413ff809a0f6524cb90e9e305fd"
+  },
+  "case": {
+   "argv": [
+    "-e4",
+    "-i4",
+    "--join-lines",
+    "-F",
+    "-n:",
+    "-m",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "529cd1166ca4b446",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2369fac61767f1bd73f99ac9252db2e42ae73ecf3d917aef177146819b241a70"
+  },
   "utility": "pr"
  },
  {
@@ -148623,6 +157956,195 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "6825e8630a54b15874bdd2c8a6629b2725c516a7afa409a922c9ed779d744da8"
+  },
+  "case": {
+   "argv": [
+    "--output-tabs=,4",
+    "-n:",
+    "-f",
+    "-F",
+    "-1",
+    "--output-tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_formfeed",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "55bab38b2ee0e1ba",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1660e6ad3a2bb19a2189c25560d4db50ee8e2a6e54e2d34ceeb4b05221620028"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "844322abf28697654502c593082b54ad7927c36cca59fde11decefb67ecb178f"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "-h",
+    "--double-space",
+    "-s",
+    "--omit-header",
+    "-r",
+    "cleft",
+    "sorted2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "55e6369f23dcd7cb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "630c612f03f00c4cad92b6f8e8999e8e85d080a8607c59a27dd065c5e8f62baa"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "5d34cd36a22b2382a31c980de1147ee9c05fafdfdf63d912ee7092f0d06d2914"
+  },
+  "case": {
+   "argv": [
+    "-ix4",
+    "-i4",
+    "--join-lines",
+    "-i",
+    "--across",
+    "-n:",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "580a385db9db4d4a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "c528d92143ad947e3cef2858724b41187448a4d1498220feb812e6dfda224807"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-ix4",
+    "-ha b",
+    "-S::",
+    "--merge",
+    "-m",
+    "+2",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "58f74550a0c31a32",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "dc358e6ee05a6b7d34739809d652527bf05678f93b6b9f0e2707b6257520f6e8"
+  },
+  "case": {
+   "argv": [
+    "--expand-tabs=,4",
+    "--number-lines=:3",
+    "-e4",
+    "-ix4",
+    "--length=7",
+    "--merge",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "592ff91ead6b9f99",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "42ee3798b7f60aef5845a3f9cfa27b0582384f4f00489a14fc6d14c2f568fcb8"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "ab3e52eb92a45e75651fb670c46bff640e13d3755f338fa82fc1cda46add517d"
   },
   "case": {
@@ -148647,6 +158169,80 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "-s,",
+    "-e",
+    "--pages=2",
+    "-o",
+    "80",
+    "--number-lines",
+    "pr_many"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "59a5dad5cfa54d5b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a9a0977f686ba3d7424b6bc4281b6e32681a1fe9801ecefbc3778f7dd50fd374"
+  },
+  "case": {
+   "argv": [
+    "-e4",
+    "-n:3",
+    "-t",
+    "-ix4",
+    "-i",
+    "--indent=4"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "5a024481d263ea6e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "13f9f83e3fc08e31547359ee8b4fd43b1d61459cbbcd623067b2e1e5f169f86b"
+  },
   "utility": "pr"
  },
  {
@@ -148688,6 +158284,43 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "+1:1",
+    "-F",
+    "--header=HEAD",
+    "-S",
+    "--date-format=%Y",
+    "-m",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "5bbcc46c00b2a91f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6a12b00cfa07f053120535018e5c34f4e9690950784417b466fd50ec0a49b7df"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-s,",
     "+1:1",
     "--date-format=%Y",
@@ -148710,6 +158343,117 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3e027b814afa2ea5212432d96251858058068f67d1017b8396a93028446754a9"
+  },
+  "case": {
+   "argv": [
+    "--width=20",
+    "-F",
+    "-W20",
+    "-e4",
+    "-n3",
+    "-2",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_formfeed",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "5c22041e2333a1af",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5c8a2fd74cef3a2048a489b71f76a7ac9132f22189876de36282d64d7a1ff826"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0549c4c0ba3de6168c056f65654a4fdc349c1d821eb5b6e27e1bd0714b081d2e"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "-d",
+    "-S",
+    "-1",
+    "-3",
+    "-w72",
+    "pr_many"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "5c32de3c95a1a4aa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f6de8f8ce390218f63b0344818860017f7f6ea309e0d2a755badf0bea4c5e85b"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "042203f9bf60b0654d330a296c1e8b77d7b0ad67700c21e562c5f625e2fb7603"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-T",
+    "-S::",
+    "-h",
+    "--expand-tabs",
+    "-i4",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "5d6873096f37ecdc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "04a5bc7fc27487b6bacc7172203db1a042be90c44809d27e7e61fa7d63554ecb"
+  },
   "utility": "pr"
  },
  {
@@ -148741,6 +158485,117 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2df85fe97d79ba57c6fb8e086beb15d9eac400a12f0ca44136070ee912de1558"
+  },
+  "case": {
+   "argv": [
+    "-i4",
+    "-e4",
+    "-n3",
+    "--separator=:",
+    "-e",
+    "-n:",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "5f863490dcc1558e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "af00120cbe4d0309100356900c081d90ca8a8333f77f9b09f60be96df5c198b8"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "686eac442e9e4076537aa176af52ab932c5dc462dfaecc9892bd8f28d1571637"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--page-width=20",
+    "-a",
+    "-n3",
+    "-w8",
+    "--first-line-number=5",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "6009faf3e4bd4f55",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b72c7c51575390ef071313fd8bf4afec094e1b0ccff6ed6f3de96e66fe84b518"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "94265238333870d6fc99242435c3694c840a45a7335fc76e6402481f623d456d"
+  },
+  "case": {
+   "argv": [
+    "-e,",
+    "-ex4",
+    "-3",
+    "--double-space",
+    "-S::",
+    "--page-width=20",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "6073a9d5e8676458",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "635d8ae93e15d2a82e4c5897dc22d0379dd54ca66a3778ff0676f8ed2a63ce0f"
+  },
   "utility": "pr"
  },
  {
@@ -148841,6 +158696,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "8fc5a4553e2d23db0022e8aee20bed66483782899e4fca68a208d112d2536165"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "--join-lines",
+    "-3",
+    "--output-tabs=,4",
+    "-n:",
+    "--expand-tabs",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "62ced33e6ef3743b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "95bd1151a508b6485eca3fb1a5dddaf63e07f63c77d6b675fe2f67b0ad33665d"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "7011430c7224c6a2e274dae432f0e1bc4fe52faa10cd2d1970f9613a94fa1330"
   },
   "case": {
@@ -148898,6 +158790,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "2864666595de5373dea99306247c89e3fd5590c8808aaccb6b185e66d896e4cf"
+  },
+  "case": {
+   "argv": [
+    "-S",
+    "+0",
+    "-S::",
+    "-i4",
+    "-o80",
+    "-h",
+    "a b",
+    "cleft",
+    "sorted2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "63d8ecd9147ea75b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "09d5675de1b1ff7e4d3a9e53666c8e4801af409026c238a4cbad466c0e04a16a"
+  },
   "utility": "pr"
  },
  {
@@ -148999,6 +158930,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "5e8e920db82072966204ea840e7a472f3efd02be06c3db4627e6b5afa9173e11"
+  },
+  "case": {
+   "argv": [
+    "--number-lines=:3",
+    "-e4",
+    "--header=HEAD",
+    "--output-tabs",
+    "--sep-string=::",
+    "--separator",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "65efa15dbcc2c038",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2d51f8279812b8ab0eeec1f4708cc42aaf7ed348f10ac50de0a30c9e4b17fbf4"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e19bed545ad8c7fc61c162e00cb6ef2f40e487689aa64948d6bf1a716c79e203"
   },
   "case": {
@@ -149024,6 +158992,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2e624e3c616f7a539ef6042d62717c5f63a37c926fa53cea46cbc59098cfd8c0"
+  },
+  "case": {
+   "argv": [
+    "--header=HEAD",
+    "--output-tabs",
+    "--omit-pagination",
+    "--width=20",
+    "--output-tabs=,4",
+    "-n",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "6758fb84addc9909",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4c4ca41e051e0d28cb86d54d91dcfcfb28a38707cbdff6ef5646580bbc53ef68"
+  },
   "utility": "pr"
  },
  {
@@ -149122,6 +159127,43 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r261",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c0fd13038fe78e54c0d129f12bdf011da3b101ef719663b4e43c730cc519bf24"
+  },
+  "case": {
+   "argv": [
+    "--sep-string",
+    "--number-lines",
+    "--output-tabs=,4",
+    "-ix4",
+    "-s,",
+    "--omit-pagination",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "68f8da3595d605d8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0d74d4e3badb73ab791c4b049f747e31d59a4571da8bbf94001672ea811f79c6"
+  },
   "utility": "pr"
  },
  {
@@ -149318,6 +159360,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "aed19ca7c7a2414a9676d58ab5a351690f3da9b12f5d61142fa896692ef6edd6"
+  },
+  "case": {
+   "argv": [
+    "--double-space",
+    "--expand-tabs=,4",
+    "--length=7",
+    "-D",
+    "+x",
+    "-t",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_many",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "6f36f1c6e805268f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a916d87cbf56210fb5c40a049e11db4c3ea5f031078b89ed36bd6a4e58564f42"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "d45f52e21aa0d48769a9a11ddc6de4fdcc86cd831a244881ffea8c717b845f1c"
   },
   "case": {
@@ -149411,6 +159490,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "a665b6742168a8737aa1becbd2cb2f606491ed98248677ef423518f2aaf93fe2"
+  },
+  "case": {
+   "argv": [
+    "-n:3",
+    "-e,",
+    "--join-lines",
+    "--omit-header",
+    "-r",
+    "+0",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "7188dfaa694052b7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "5496c4b6cb14e7e8b73d9cca7d3fbf856a3e9764f7d17ba46c0d59ca7b09a1ac"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -149475,6 +159591,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "306119f3aed8530b8fb3b346453541e8a553b89e5ed53b05218008c84df76773"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "--output-tabs=,4",
+    "-F",
+    "-o4",
+    "--double-space",
+    "-S",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "74c5bd699bf49acc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "76c57e254f60fe6e3bb0dad9e1869d63fcd8df7e59cecca984f0514363fca4b4"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "c2b5471c57d7e23a1db2064528be610c9ae626d315c5f278fa6d1c424840ae17"
   },
   "case": {
@@ -149500,6 +159653,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "7011430c7224c6a2e274dae432f0e1bc4fe52faa10cd2d1970f9613a94fa1330"
+  },
+  "case": {
+   "argv": [
+    "-ix4",
+    "-r",
+    "-n",
+    "-T",
+    "+0",
+    "-i4",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "760594d40530040e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "67b9ff1effdc22f408f33d054c1a0c51044fc4ab33f7912212278222500e51f4"
+  },
   "utility": "pr"
  },
  {
@@ -149568,6 +159758,42 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "c1e606e07075a443760b2d171e7aaf1d82ddc9b8cc90d978e54619cda142f1d6"
+  },
+  "case": {
+   "argv": [
+    "-S",
+    "-s:",
+    "--indent=4",
+    "-r",
+    "-i4",
+    "--omit-header"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "77eb5128c81bdfae",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "09a3f2c230718d6d92e8ba9f987d16e3ad3f28cdaf030666aeb91d101ab35a91"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
@@ -149593,6 +159819,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "ce0a0e14153da4744eec1452b1ae45f8138581fa0f8807191c248adf82898213"
+  },
+  "case": {
+   "argv": [
+    "+3:4",
+    "+1:1",
+    "--header=HEAD",
+    "-2",
+    "--across",
+    "-hHEAD",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "78f0048feaa466ea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "pr"
  },
  {
@@ -149691,6 +159956,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d50065436cc34d45a03aea953db4e76977613567cfb1a42d54ec015f8ef514af"
+  },
+  "case": {
+   "argv": [
+    "--pages=2",
+    "--date-format=%Y",
+    "+1:1",
+    "-h",
+    "--double-space",
+    "--merge",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "7a744a89184dd84d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "14c51789574f0c8f8171a2f1fa0a21e73a5cc65fecfc5de2b169fc1b09376b08"
   },
@@ -149751,6 +160053,81 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f41e9ad4c336f67ed82857ab174aec15c02c786fe5628b995ec5a2169bcdecf1"
+  },
+  "case": {
+   "argv": [
+    "-s:",
+    "-i4",
+    "-t",
+    "-ix4",
+    "--expand-tabs=,4",
+    "-n",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "7b788475717b3256",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bcdace28f0b854ece7886bffe35ac07d3c59395b5b82d5d59cd46b8b1b9cfeaf"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ac3bb79d570d473d54431bb059995aac57d6692ac692934e2fb3f5e47f62314d"
+  },
+  "case": {
+   "argv": [
+    "--date-format=%Y",
+    "-o",
+    "4",
+    "--number-lines",
+    "--output-tabs=,4",
+    "--omit-pagination",
+    "--expand-tabs",
+    "pr_many"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "7bb7c7cc8fbc2e1b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "64d313356095204cedec73124cb12b01dd8b2aebac3049137e34f7d06c6fb6ed"
+  },
   "utility": "pr"
  },
  {
@@ -149883,6 +160260,80 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "9ffde49486eac4e32839002a548c051d647dbc64eab048f64f840cc098e11ae4"
+  },
+  "case": {
+   "argv": [
+    "--pages=2",
+    "-F",
+    "-n3",
+    "--indent=4",
+    "-s,",
+    "-n",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "7e7630911e97c828",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bf908a0a01e0a2bc1e0d27529d4f734846494d87a4f2c572ae6d824edf50a77d"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a665b6742168a8737aa1becbd2cb2f606491ed98248677ef423518f2aaf93fe2"
+  },
+  "case": {
+   "argv": [
+    "-l2",
+    "-s:",
+    "-e4",
+    "--form-feed",
+    "-ix4",
+    "--number-lines=:3",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "7ead5d247a838165",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5496c4b6cb14e7e8b73d9cca7d3fbf856a3e9764f7d17ba46c0d59ca7b09a1ac"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "aed19ca7c7a2414a9676d58ab5a351690f3da9b12f5d61142fa896692ef6edd6"
   },
   "case": {
@@ -149909,6 +160360,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e6dcd67e43e4774f6045d9b14c2dd1d2d1bf736ce23c9463ce4830bf7df854e"
+  },
+  "case": {
+   "argv": [
+    "-T",
+    "-e4",
+    "-m",
+    "+0",
+    "--number-lines=:3",
+    "-f",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "8167896a56ddea85",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "bb06f27919c0f571737dcc569e564df76bf8690b5e37eed95d1a7d680b0b7d97"
+  },
   "utility": "pr"
  },
  {
@@ -150042,6 +160530,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "f4ecdb49fdf73cce9af5ec3511856fcadaba795c30b5527b2ccc841a42ae75b0"
+  },
+  "case": {
+   "argv": [
+    "--number-lines=:3",
+    "--width=20",
+    "--length=7",
+    "-s:",
+    "--double-space",
+    "--omit-pagination",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "8621f2a93ce288b7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "836436c9bd0ed17e391473f0583906cb0967e92e48b729501ddecc9972d69c62"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
@@ -150068,6 +160593,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9018ea15f80fd61a0bcda994ebfe8a3f3faece6742983268d87b88977f0ae0b5"
+  },
+  "case": {
+   "argv": [
+    "-e,",
+    "-F",
+    "--number-lines=:3",
+    "-r",
+    "--double-space",
+    "-n3",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "8784102d8c3750fa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b256da40f8738004aaa6df6119fd05890100927df2cbeb64c9ade141de3d083c"
+  },
   "utility": "pr"
  },
  {
@@ -150168,6 +160731,83 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "cb61328849108cd91138f9ae03281732e209cbd9568ce740001c2164865ac744"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "-S::",
+    "--output-tabs=,4",
+    "-o4",
+    "-l",
+    "11",
+    "--join-lines",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "89cb1536fdcfe677",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1a4137aa9943919cde907b848c0176602a5ae8c92f6997900fd63db38dc7ab5e"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "20a69ea23f5815d61ec06584b7806a0b5255870bca0d2095eb5ce6bf159e47a5"
+  },
+  "case": {
+   "argv": [
+    "-d",
+    "--page-width=20",
+    "--omit-header",
+    "--merge",
+    "-e,",
+    "-n",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "8a46ffc720a35d93",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e6804f4d7ed4ffdb1bd233a659a6e73fb69e9c19212edafba6ec3bd09071539d"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e814b690aa1b0cce293db3024bab78698b8d88c309ee53f702d8234ac7c71588"
   },
   "case": {
@@ -150262,6 +160902,45 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--number-lines",
+    "+1:1",
+    "-e4",
+    "+3:4",
+    "-o0",
+    "-e,",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "8c4f8a6407663b23",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e90b1cafc3509c60c361c273400c47e47f51b805517b4c63ae186154cd17168b"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "c256a39d91a07b728e2118bdf14fae182bc5bf7884219c0ed97127caa374f84a"
   },
@@ -150320,6 +160999,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "83c7608ec2d65637900d3d7d4ebe92f8ec0c1015e19c134d1359f09b37838eec"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "--separator=:",
+    "--number-lines",
+    "-W20",
+    "-i4",
+    "-e",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "8d9313ca0de04f1e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4cbc34d2396f24dd940429f7cbfb289cf8e3c2b77b71f267de10dd3046b4ebd6"
+  },
   "utility": "pr"
  },
  {
@@ -150451,6 +161167,118 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "1670b03ebe6faa61f462ef67393eec3194b8eedd92861e550782489ff61aa72c"
+  },
+  "case": {
+   "argv": [
+    "-ix4",
+    "--expand-tabs",
+    "+1:1",
+    "-i",
+    "+0",
+    "+2",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "8fe3e2268dbed350",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "afdce51f9f6c59ddec47ad729da5caee0389a05b03f40a72ce7d5f139f96d4d3"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d3156a033e8eddafbf2ecf00af75560c7953ae5805569da54c102c3d97524676"
+  },
+  "case": {
+   "argv": [
+    "--pages=2",
+    "--expand-tabs",
+    "--width=20",
+    "-h",
+    "a b",
+    "-e,",
+    "-ix4",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "901b1775a133ae32",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "29b25f1c16e914df86b012c9ff213db881506ee004075538c8b15509e89e9222"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--double-space",
+    "+2",
+    "--length=7",
+    "--output-tabs",
+    "--form-feed",
+    "--merge",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "91212803d54b1729",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "ba78abb6368f5e0c245223c00f3c0644aae6357f450b90eedc2881d66c09443c"
   },
@@ -150477,6 +161305,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "4efba5e0e2ab0a7311c4e92d02c3fba89004df25bcc991940c2fe7025e365eed"
+  },
+  "case": {
+   "argv": [
+    "--no-file-warnings",
+    "--merge",
+    "+0",
+    "--number-lines",
+    "--expand-tabs=,4",
+    "-m",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "922bf37806e3531c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "cd279b297cf11a3c5ad768e8072e3c0d04bfa6e368f9c7b41b0fdc1edfe65731"
+  },
   "utility": "pr"
  },
  {
@@ -150577,6 +161444,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "03827faa4ab6bdeafa8e307606064eb4baea2c5371c254a9a55b48912902663b"
+  },
+  "case": {
+   "argv": [
+    "-n3",
+    "-ix4",
+    "-e4",
+    "-F",
+    "--expand-tabs=,4",
+    "-T",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "95e1493e78705c37",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "42ee899823cdc426ec8eb35aade35537ecbcc26aab38033b0df5eca02a494c02"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "91d10c5f4c361e0ee4db17ef490d24085b8db93b130acb68dbd13b2c150184f8"
   },
   "case": {
@@ -150604,6 +161508,81 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3367ca489206d61c681369ffa0abc2f87ad777d7120db6b461c97f7d1b5cc44e"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--expand-tabs",
+    "--omit-header",
+    "-ex4",
+    "--number-lines=:3",
+    "-D",
+    "%Y",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "962070bfb662b032",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b3a0497f4cb93fe35c0ddc7f944d92701af27a30970d8e150e754571dae480c1"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "+2",
+    "+x",
+    "--sep-string",
+    "-J",
+    "-S::",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "963d68a5908e986e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "3d23c17bb5f04d97bfaaae076435374d90d39f995c1f466e09997c4997334d91"
+  },
   "utility": "pr"
  },
  {
@@ -150637,6 +161616,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5d8785fb10318514895845ced1f5acebc43fdb0855a8f241f5a869ff8db3ee7f"
+  },
+  "case": {
+   "argv": [
+    "--page-width=20",
+    "-n3",
+    "--omit-header",
+    "-f",
+    "-a",
+    "-n:",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_many",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "97c005a7bb4e659b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "936efcdf9532a0e9bc96166a085f055b82316733fe96268cd76eaa0e2524299e"
+  },
   "utility": "pr"
  },
  {
@@ -150699,6 +161715,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "909cfe53b9c6aae2366f1fcf2ace82655427805d4d201cb28c03b7e76bdc128a"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "-F",
+    "-s,",
+    "--double-space",
+    "-hHEAD",
+    "--separator",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "98969ecc2442ebc5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "adc516c5bb079178b04d80ecf8d3804ca6025dbd6354966ec4dc168839d8a51f"
+  },
   "utility": "pr"
  },
  {
@@ -150768,6 +161823,44 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
+   "stdout": "8e1c70c09f27e250444dd7b65c9445ef70071fd30033c38eea8bfc5dc8b34ec2"
+  },
+  "case": {
+   "argv": [
+    "--separator=:",
+    "-ha b",
+    "+0",
+    "--pages=3:4",
+    "+2",
+    "-N",
+    "1",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "9ab78bdd7f99b385",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
    "stdout": "a05ce270a9cfe41f36bbe21c25a52e6d798e25dc6064ad2303fd4114ed3ac2ef"
   },
   "case": {
@@ -150793,6 +161886,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "--length=7",
+    "-N",
+    "1",
+    "-d",
+    "--number-lines=:3",
+    "-m",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "9b0ef48f60bd7217",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "836436c9bd0ed17e391473f0583906cb0967e92e48b729501ddecc9972d69c62"
+  },
   "utility": "pr"
  },
  {
@@ -150829,6 +161960,79 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4e1db2a9472b6851bd6db74d1539ac5dfeb2d1f9b582621ed3c5120dc6b39f0e"
+  },
+  "case": {
+   "argv": [
+    "-2",
+    "--output-tabs",
+    "-s",
+    "--number-lines",
+    "-w20",
+    "-e,",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "9b784e188460aca8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "29bfa6cfac5660d62290c7c4fadb1d02043f21027606e9cf8c8873566958b95d"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2716710125a7048a897ec38cac0010bba32ac944ae6a4f5c296bdcf427d1512b"
+  },
+  "case": {
+   "argv": [
+    "-T",
+    "-F",
+    "-J",
+    "-1",
+    "-N5",
+    "--number-lines=:3"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "9bdbee3666d1d2dd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6cdaaaa2e27a2e903531d42abc3222526d358a4303b091f83b4c172ce3caf826"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -150855,6 +162059,192 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3570738937766054fa561bd1b223129909351baf3ff7e11c25db717c807fea02"
+  },
+  "case": {
+   "argv": [
+    "-T",
+    "-i4",
+    "-S::",
+    "-N5",
+    "--no-file-warnings",
+    "-n3",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "9dd4b98c0dc4af50",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "907a82d669b2f3bae4adb64ddf80598f3bab5f242f5d812f7f570e112eef593e"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e630aab11c8a8c56cd2b378736b968a968db639f79c27347f3e05001b265f176"
+  },
+  "case": {
+   "argv": [
+    "-n:3",
+    "-n3",
+    "-3",
+    "-i",
+    "-h",
+    "HEAD",
+    "-Dx",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "9e0a42ae1e7f2cef",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7df2c6da413ab2a126169d20ab8b6ad42797a31cd61489b611b796c25de630c3"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f1f8e96252f562010c6712c7332fe0d7a44b8c66aeb6f4c0427b9ad81d01bf75"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "--number-lines",
+    "-ox",
+    "--across",
+    "--indent=4",
+    "--sep-string",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_many",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "9e2ec9dad213b479",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-T",
+    "-m",
+    "--join-lines",
+    "+3:4",
+    "--output-tabs=,4",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "9ee7d770703273bf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8fd6bb45f0d3724ca9db6647961e7da3a66c2af24a4228a3b43d2ca20685d189"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "--pages=3:4",
+    "+3:4",
+    "--double-space",
+    "--width=20",
+    "--no-file-warnings",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "9fce7b6b1c82810b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "8fd6bb45f0d3724ca9db6647961e7da3a66c2af24a4228a3b43d2ca20685d189"
+  },
   "utility": "pr"
  },
  {
@@ -150926,6 +162316,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "3f8412d181dd98db932abf4da26450066c46c6a3d19b59eaa2ccc0ca6e6b0531"
+  },
+  "case": {
+   "argv": [
+    "-T",
+    "-h",
+    "-r",
+    "--sep-string",
+    "-3",
+    "--omit-header",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "a3fcd439965c7f22",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c2d1e2bba1050b5c847bfb94fc36db4b08008d68d5adf82e07f11d70e1b98065"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "fdba28737f4143f969fe9b4111023a84d823e5027a5a6bfe5d8ee167af1778ba"
   },
   "case": {
@@ -150982,6 +162409,82 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "216d25a4b91e1411a8b27cdecfd3d0f0ba6e990437e5c483052457952ee3353b"
+  },
+  "case": {
+   "argv": [
+    "--indent=4",
+    "-d",
+    "-F",
+    "-e",
+    "-e,",
+    "--omit-pagination",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "a5c6e41dd6a16241",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e4eddda4172dad99c660930236277a8b7956ec02635654a93999787346470b10"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "171d83722f1bb4dc5960cf7f1dd32916aa54ce94127af0032776720e623ec4e0"
+  },
+  "case": {
+   "argv": [
+    "+0",
+    "--merge",
+    "-l",
+    "1",
+    "--join-lines",
+    "-w",
+    "31",
+    "--indent=4",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "a6241ce020cb6303",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "12a9c1422172fec70d345df3d9dcbe417e055d6168acde1df265f76f69b252d2"
+  },
   "utility": "pr"
  },
  {
@@ -151052,6 +162555,81 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "39b7c66a2939a575545f4853daa0b3e8e4212f2b0732f77ba95bfd6000e75292"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-o",
+    "0",
+    "-2",
+    "--number-lines=:3",
+    "-n",
+    "--output-tabs=,4",
+    "pr_many"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "a8ddb11e07e43353",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "edfbe7ac605882a26f4a993a4bb02dddf31db90d02d8520a20925274800da12e"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f53fb6cc40006a2fbb22446c8cd1e6ff449d911d61b8cca6e5b07338b448e3e7"
+  },
+  "case": {
+   "argv": [
+    "-d",
+    "--indent=4",
+    "--expand-tabs",
+    "-r",
+    "--output-tabs=,4",
+    "--separator",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "a8f5e9fec8558dd2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e7def81025b62ac7461c114c226185d8da7f6e153e0122375a2111fd795dc261"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "b9486dce4136491466461ce1cc7fca0a045fa2b8dca5ee47a4c6d64d8dbaaadb"
   },
@@ -151080,6 +162658,119 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b858eb320cd872f99b0bc8a5f563dc33772be5fad7427be703938298102868ab"
+  },
+  "case": {
+   "argv": [
+    "-ix4",
+    "--page-width=20",
+    "--output-tabs",
+    "--separator=:",
+    "--merge",
+    "--indent=4",
+    "cleft",
+    "sorted2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "a9f683cd24cf6f08",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b749793a01877cf6bb7aaa9f3debc72443b800ed3354366121ef0e4b642f5af9"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9da31544aa0bd8f46a54cf2255c3def7e280d756a8766b92ac6c30923cf4ee14"
+  },
+  "case": {
+   "argv": [
+    "-o80",
+    "-3",
+    "-F",
+    "--date-format=%Y",
+    "-a",
+    "-h",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_many",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "ab51038c2d008712",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9388615dacd6f59f647fe674bf5cc4a6aa27b10847f7519727a5865ed492f983"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "31257372248df8a24e4d3214fe15b511cad6b137ac46998e9917cdc9460d387d"
+  },
+  "case": {
+   "argv": [
+    "--separator=:",
+    "--indent=4",
+    "--pages=3:4",
+    "+1:1",
+    "--sep-string=::",
+    "-h",
+    "HEAD",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "acd6cd2dce96408a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "pr"
  },
  {
@@ -151142,6 +162833,82 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1a839019a389a9846a48fecf632026e847a7118579a88b7e69f31aee03b5c378"
+  },
+  "case": {
+   "argv": [
+    "--indent=4",
+    "--omit-pagination",
+    "--number-lines",
+    "--separator",
+    "--output-tabs",
+    "-i4",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "b09add8a864f8c59",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "df708a4bea9e974d1e5be597d0efa50abd60e636019b260071bc42fc885738e2"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "199e3cb5557127188c11208900858dc082dda1028963ec7e1bfd53082da33dc8"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "80",
+    "-ix4",
+    "-r",
+    "-S",
+    "-D",
+    "%Y",
+    "--omit-pagination",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "b1343bf863692709",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1d4c8b89ee9ee19d7e1ab45f394d847ae48597aa5fce48cee840b7a677960240"
+  },
   "utility": "pr"
  },
  {
@@ -151338,6 +163105,154 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "7f1b2c430ee980d1f0a640d14edcaca4fd6e7b77aafd0135aea0e8e6b383d439"
+  },
+  "case": {
+   "argv": [
+    "--double-space",
+    "-d",
+    "-2",
+    "-r",
+    "-S::",
+    "--omit-header",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_formfeed",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "b291e55fd57ba254",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b2f6c72c987c62f5709cf40e40e21ee631a9d110422b3a523e6e43e3dbf1b950"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--omit-header",
+    "-F",
+    "-T",
+    "--pages=3:4",
+    "+3:4",
+    "--expand-tabs",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "b295e5326acf244e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8ea73e59d1c808b58f8a5836fa69ef74bf6cfd6262efbe7cd81c58a1e2032b28"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "-2",
+    "-3",
+    "--join-lines",
+    "-T",
+    "-f",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "b2a9c096d3b4a68b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "18fe8642b3b44ef154b6beb016eb58ad41fbd13f6c51f5417076104cf4995a20"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--indent=4",
+    "--merge",
+    "--separator=:",
+    "-n3",
+    "--sep-string",
+    "--expand-tabs",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "b329c694c4657f66",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "04ebc8ae58b5a9a798cf00f2ebad57c2628f773817becee0e552a33fa252f73a"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "0db80f016c6b9614297c948e671cdfbe89b18ac238933c44d23acc437f7e145c"
   },
   "case": {
@@ -151432,6 +163347,80 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4da72117c6ae5e517f64fa8cf63aae1534df5b471f62b013bf0f55b36df42899"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "-n:",
+    "-3",
+    "--number-lines",
+    "-J",
+    "--indent=4",
+    "pr_many"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "b59db3fc7e75ed77",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "05f3649d56af27e1117f9f47b775eed8e2887e6ddffecb07404c13cfd4c8621d"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "--date-format=%Y",
+    "--separator",
+    "-r",
+    "--form-feed",
+    "-F",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "b607fe9835eb5c30",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "199b8be438fd4ec6c156f2510e716e5725cc9c34ff50806bf7ea85b8a0667400"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "6f760ab19f66cc583e6fcb8203b10878246b873452a12040d27050dbe8a773a7"
   },
@@ -151491,6 +163480,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "217d2cb9edc840ff99d1517ee4c73a5e9c90a11c385d1516847156c8b2085b81"
+  },
+  "case": {
+   "argv": [
+    "--double-space",
+    "-f",
+    "-1",
+    "-J",
+    "--indent=4",
+    "+0",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "b86f2c177e5cf55f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "3a8e5d796f673e326ffe643aea2ae30f54330cee72e47d70561294679f1b4e17"
+  },
   "utility": "pr"
  },
  {
@@ -151593,6 +163619,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "df8d25af0c1bf3cd7380996bf07ff596885134f6cea4a118dd1b84b7a44a4c5e"
+  },
+  "case": {
+   "argv": [
+    "--length=7",
+    "-r",
+    "-d",
+    "-3",
+    "--page-width=20",
+    "-J",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "ba11a64565bbaac7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3f27c12669bd76a868617028b9e90ebc9b8f1f0a5b647cb86caaaa3f5e4120aa"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "755a9e3315c4b9a95084479a6c4801cde920f161fe45278781d8a91051061b4c"
   },
   "case": {
@@ -151618,6 +163681,82 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ad31e8a9e9861eae32cbd0d16082e1530f5f8a2f18d317d68cb65c9d72395d68"
+  },
+  "case": {
+   "argv": [
+    "--page-width=20",
+    "-1",
+    "--number-lines=:3",
+    "-r",
+    "-n3",
+    "--date-format=%Y",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "ba5abc9e97630482",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a1c441580033db44cc3d12672510fbb182c9bad6e190b8075ba2af8071c93dbf"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4029566b505f11ac6a7659ba8d884834c7e5b1521263338450d61a8448b17267"
+  },
+  "case": {
+   "argv": [
+    "--across",
+    "-l",
+    "x",
+    "-ha b",
+    "--length=7",
+    "-a",
+    "--page-width=20",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "bb51a74edd36d781",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "pr"
  },
  {
@@ -151718,6 +163857,80 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "85cb986fd9cbb0c99643b099e125dfb79ccc841565776d85f0cb376e7753f66c"
+  },
+  "case": {
+   "argv": [
+    "-ix4",
+    "-e,",
+    "-n3",
+    "--merge",
+    "--output-tabs=,4",
+    "--indent=4",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_formfeed",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "bc3968dcff30c948",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "aa8babf1bd03b59330d2fe9ec2d4d1b896c42adda320b972a54eb68dc1b25259"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "91d03cf2024e7837b694cc22d76c2eaf8fb0218510809f9d6c6f8fe603a1094e"
+  },
+  "case": {
+   "argv": [
+    "--sep-string",
+    "--expand-tabs",
+    "--expand-tabs=,4",
+    "--form-feed",
+    "--double-space",
+    "--separator=:",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "bccaaa1d7d554a93",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "998e4a4661073e1a1bc862a470720c1adada42321047bd47d4a05d485408b4d1"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "52567df6152add1b42990795c76a6692d6c7c97c68335ea0fdbcee6b60749e27"
   },
   "case": {
@@ -151777,6 +163990,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "229c93dbcb318dac342c746810716851f29d48bf07df74ab36cfad1e8e9cb0f6"
+  },
+  "case": {
+   "argv": [
+    "--length=7",
+    "-F",
+    "-i4",
+    "--output-tabs",
+    "-W",
+    "1",
+    "--indent=4",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_many",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "c0963c1c5056b8ee",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5e1758d158a04e7f82db30b22cb6995144df797058dc352a4a74e76a8d7eed18"
+  },
   "utility": "pr"
  },
  {
@@ -151870,6 +164121,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9ec973e8f123507ea792bad93158c23aa44e0887742c42009e87daaa9d29b5e9"
+  },
+  "case": {
+   "argv": [
+    "--expand-tabs",
+    "--across",
+    "-a",
+    "-n:3",
+    "--length=7",
+    "-d",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "c470d8dd5a42cbe0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4387199113d8e34cb5eda07e6c67f4c29d6af4b7049da493b6e80cee5eafa22a"
+  },
   "utility": "pr"
  },
  {
@@ -151973,6 +164261,119 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "42bfabddfbc72e10365433bf144c07ab9f8ab017ae32a65fc57281c252bca555"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "a b",
+    "+1:1",
+    "-T",
+    "--page-width=20",
+    "--number-lines=:3",
+    "--width=20",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "c7720ad1856b2f91",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "83e7d23df798035573cbbc81a740940b8d90a9462aa2a6ed8870702192abe701"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e5a372591c89b9bf3e0dd60caeb3e528501a40c75836e8f53dcaef1247180d7c"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--omit-header",
+    "--double-space",
+    "-W",
+    "1",
+    "--number-lines=:3",
+    "--date-format=%Y",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "c7df9eaf40dd8321",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f9d73f0a2fa173d0312845595f38f8d3d8c3ac6fc601adbeac870e1997cb63af"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7011430c7224c6a2e274dae432f0e1bc4fe52faa10cd2d1970f9613a94fa1330"
+  },
+  "case": {
+   "argv": [
+    "--output-tabs=,4",
+    "--omit-header",
+    "-n",
+    "--sep-string=::",
+    "-f",
+    "-F",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "c82f6de3b2c2cf20",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4c51f7d2bce7f3fb2078cd9f8363bcce7e8c9eecf102e00d4f36b810504d574b"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "4b81236cf6db52e3d190a846bf698caf5ff134d7edace01a7637ae1bb89270f3"
   },
   "case": {
@@ -151999,6 +164400,120 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "+3:4",
+    "-d",
+    "-e",
+    "-S::",
+    "--separator=:",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "cc270845e1574748",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "dadff147335d4c12261a4980a0f13bec20697c392eb2bfbab8e6661548446713"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-s:",
+    "+3:4",
+    "+1:1",
+    "--join-lines",
+    "-m",
+    "cleft",
+    "sorted2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_many",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "cc3a98d0828da564",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "7443ca6bf4f08f67b1b5c1ffad2c84d37cc75ee3f877671f75ee1f4c9f41cc79"
+  },
+  "case": {
+   "argv": [
+    "-n:",
+    "--date-format=%Y",
+    "-t",
+    "--join-lines",
+    "--output-tabs=,4",
+    "-e4",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "cc6034d200ac0277",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "eecc1c0c295d697bb05348d256b5f0b60b5f752cae92326e86cffd4a7d706a99"
+  },
   "utility": "pr"
  },
  {
@@ -152068,6 +164583,83 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
+   "stdout": "8cf4f9135d1ba9201cca5e0db821016bfc3610c1e7d6c86a60518e039ba2454b"
+  },
+  "case": {
+   "argv": [
+    "-ex4",
+    "-m",
+    "--no-file-warnings",
+    "-J",
+    "--width=20",
+    "--page-width=20",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "ce8a2917cf7bf3ca",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "613fad71cba73b9961ada0030b8209c2e8533a4022ea2008feacce954beda1c7"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f0dd495a90eeea0f247ac053bd562daac602082bc266c5ef4633f4df1896be6b"
+  },
+  "case": {
+   "argv": [
+    "--indent=4",
+    "--expand-tabs=,4",
+    "-r",
+    "--form-feed",
+    "-h",
+    "a b",
+    "--double-space",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "cea88a3020c596f1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "32b2607b8a9b128a20f7807522bea1e374a53d8dfad4cbfed136e800c06f321b"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
    "stdout": "af078e2292c69829ac6c269b5ab741a9da593084345a6f8c4567eda2ca7922dd"
   },
   "case": {
@@ -152093,6 +164685,83 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "+3:4",
+    "-o",
+    "80",
+    "+2",
+    "-s,",
+    "-W",
+    "8",
+    "--header=HEAD",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "d05e5f4cd3d2be4b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-d",
+    "--separator",
+    "-h",
+    "HEAD",
+    "-r",
+    "-D%Y-%m-%d",
+    "--merge",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "d05f48272ac0936d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "57b7a2d5749aacfd7f7a0b4e76ea1d6f1cd1487b3dcf81d959bfb71226611e9a"
+  },
   "utility": "pr"
  },
  {
@@ -152161,6 +164830,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "7624f88508bf9f04ea401e71b035b1a02b096877c3b0858a4ef4b4bcd86ad1dc"
+  },
+  "case": {
+   "argv": [
+    "--form-feed",
+    "--page-width=20",
+    "--merge",
+    "-s:",
+    "-ex4",
+    "--output-tabs",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "d3d0b02913ce38e6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "afaed1dc69e9a408a28cf87ddc8b65d19d0238e79ae1ebeb64faa6d5d6d9ed43"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "387e57c2b274c6ed9828a6a02f9b7b072475dd4d5d6a10f45e218c9faa6995d3"
   },
   "case": {
@@ -152186,6 +164892,82 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s,",
+    "-2",
+    "--date-format=%Y",
+    "--header=HEAD",
+    "+2",
+    "+3:4",
+    "cleft",
+    "sorted2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "d6d46bbafdc59e05",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "de1cf4a8e1f1e7a95bdfd8d23eff5609eade7a41fb4355f3c893c4d193bb310f"
+  },
+  "case": {
+   "argv": [
+    "-n:",
+    "--across",
+    "--indent=4",
+    "--output-tabs=,4",
+    "-h",
+    "",
+    "--sep-string",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "d7202cb674baa7e0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "964d9c1cd6ae725c85bb72a92ace8e71c892b8f7aaefb496e2396288c6e4b4dc"
+  },
   "utility": "pr"
  },
  {
@@ -152280,6 +165062,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-o4",
+    "-r",
+    "--merge",
+    "-S::",
+    "--expand-tabs",
+    "-n:3",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "d9b0ebf955aa9907",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7f9c9f0640b9c63546473751c7c32a51684eafebbf49c6fb1f589bfd5f184ae6"
+  },
   "utility": "pr"
  },
  {
@@ -152380,6 +165199,44 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "055f5cc95d90c6f15b69744526db16e20befdbee6791dd1958011018b8695bf0"
+  },
+  "case": {
+   "argv": [
+    "--first-line-number=5",
+    "-n",
+    "-l",
+    "7",
+    "-i",
+    "-ix4",
+    "-e",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "dc69e3c69dc547bd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a8474dd83196368585037924b0d6b20a96fc77cfd38f655fbeb92b19547ee97c"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "2b80b9852d7d1c12bc2ff88f0a58972ba421a0f7268d8d284fa331ef8b525a63"
   },
   "case": {
@@ -152441,6 +165298,119 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f159f21dae1cd3efb4edd697091f20fd2a34ddd9095be1a183923ebebeb90ab1"
+  },
+  "case": {
+   "argv": [
+    "-S::",
+    "--omit-header",
+    "--columns=2",
+    "-f",
+    "-2",
+    "-d",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "de10c13fe558f8bc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "67a9a6971d3081e8b69a56a9e49fd07a6f4ed9522d564675f75dceb51a1a8ab5"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--merge",
+    "+3:4",
+    "--sep-string=::",
+    "-s:",
+    "-S",
+    "-ex4",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "de1407c95eea7944",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9cc4c459f1a37f4d686059bb04900ee9db9f3bdd164b9258f83fae99fbf5504f"
+  },
+  "case": {
+   "argv": [
+    "-N5",
+    "-s:",
+    "-r",
+    "--number-lines",
+    "--output-tabs=,4",
+    "-n:",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e07c030b48c04870",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "afa3f204554f9b3294298f09abbc63a7538f7bf087e818b5703f34159f239727"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -152472,6 +165442,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "67d63618b7569f777327ff0180d38d9db3fb99e0a15a46fdee7b94b3ccfac5d4"
+  },
+  "case": {
+   "argv": [
+    "--output-tabs",
+    "--form-feed",
+    "-s",
+    "--pages=2",
+    "-ix4",
+    "-S",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e0de67cf3d0f2399",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "aa68b7a9ad28bd54650920d1f9f2eecb7e31b88824366bd6712a56a80334a199"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -152498,6 +165505,81 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r261",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5b69913c5cb0769a4cea6799b043e042c5aac2841c89d88e5c5a333561e269f0"
+  },
+  "case": {
+   "argv": [
+    "-n3",
+    "--page-width=20",
+    "-e4",
+    "-r",
+    "-i",
+    "-3",
+    "cleft",
+    "sorted2"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e12520e3919b5850",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "aa81bd21703cb2adfe30e26b1cdbdb95edd5181d9243b927a876ffc39a81a32a"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-S::",
+    "--number-lines",
+    "-s,",
+    "-S",
+    "-m",
+    "-e4",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e1919d6a92e80c0f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "18f737b3db1ee797ce681bde5358f92d7e8a623f0a060668084e2b55f575f9ab"
+  },
   "utility": "pr"
  },
  {
@@ -152537,6 +165619,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--date-format=%Y",
+    "--no-file-warnings",
+    "--indent=4",
+    "-S::",
+    "--sep-string",
+    "-m",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e24c1db99e48450e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "eab50a303c6e6050216886929416edd1ba36835642729d0d600d0f2133a1e802"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
    "stdout": "031948b1b671a942eaede3066ddbb4a07ac1d671eb967935ad93c94f1567ae31"
   },
   "case": {
@@ -152564,6 +165683,80 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8c66dd2a0a2a02158ac2ccbdd497e59dd860c7c44023fe3153b7e33c1921fa49"
+  },
+  "case": {
+   "argv": [
+    "-3",
+    "--number-lines",
+    "--header=HEAD",
+    "-e4",
+    "--across",
+    "-s:",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e3148f67c4eb7d4f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e121e64e196b6cb3b3ea5d24808654059bcf0a6ed52f3351b980df6f155f9fab"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--header=HEAD",
+    "--join-lines",
+    "-m",
+    "--sep-string",
+    "--first-line-number=5",
+    "--no-file-warnings",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e463581a6caf6210",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2ad51ee38d2815b4e03b3f3787aa6612beccdf3a05a0d17e279bd2292e5c3de4"
+  },
   "utility": "pr"
  },
  {
@@ -152666,6 +165859,81 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "347367e52784086c5699cea4361f40cfa38a43f2575991ffe917cca9bb9db846"
+  },
+  "case": {
+   "argv": [
+    "-i4",
+    "--expand-tabs",
+    "-W",
+    "1",
+    "+1:1",
+    "-N1",
+    "--width=20",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e4cf23ce0a589943",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b6496ebfec17c86e217bc460e14884059190fa5318939beef3e902c6c87e7f8e"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "22d3510821334bab32f49946212f4d94332288d48c5df061f355ee908affaf44"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "--indent=4",
+    "-f",
+    "-l11",
+    "-n",
+    "--date-format=%Y"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e56ec29dde98d337",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "cd12189bbbc670640a67bed19199fb627bb6dd91878a5d9d2ba308ba5618db4d"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "5c0ddabae8964eb0faf4ac8801111f26cf37649f07e92846145c453061024816"
   },
   "case": {
@@ -152691,6 +165959,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "d7f646ccbbf8cadb2a8099325a9c9d68ce40a0be9a460dec446e821ab18e1b30"
+  },
+  "case": {
+   "argv": [
+    "--indent=4",
+    "+0",
+    "-N",
+    "5",
+    "--output-tabs=,4",
+    "-D",
+    "",
+    "-t",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e57f9cd07a60d555",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "dad8b9467b1377de873af34d2488380cd1a534fad936fc59f76addc12e9d52e1"
+  },
   "utility": "pr"
  },
  {
@@ -152727,6 +166034,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "710ba6e2a4c0199c56a38b7b73195f809b54a099cba3cc194daba1e2ea47f34e"
+  },
+  "case": {
+   "argv": [
+    "+0",
+    "--output-tabs",
+    "-S::",
+    "-W1",
+    "-t",
+    "--width=20",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e6b8c4d293b4a2c1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "4fdbc441ea7b546100e086ac1e4fc5ae6749b7314311c99db05be450eca12996"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "ffb57656d31a9e70f41172c1b5597089e3a4a8dac6a0708f27124702b9ac1195"
   },
@@ -152752,6 +166096,83 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-l10",
+    "-W",
+    "20",
+    "--omit-pagination",
+    "--merge",
+    "-D",
+    "",
+    "-S",
+    "pr_ff"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e736f1151ad48b13",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr refuses a form feed in the input under --merge, which GNU carries through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ab4027b00e20aeb1c63e10af6d12318b135feb382c4c6b397db0fc1175b8a45e"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3a00e6073c0fb54169cc5f2c7f54e0f5583cd8ac9413c1f4cf0b201a52258bcd"
+  },
+  "case": {
+   "argv": [
+    "-e4",
+    "-w",
+    "31",
+    "-a",
+    "--separator",
+    "-i4",
+    "-f",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "e7aa0726da2f4e10",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5119a6cf3870e4234d43567dae1045add0dd7108e65effc616986814592689cd"
+  },
   "utility": "pr"
  },
  {
@@ -153105,6 +166526,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9d5b08e53db44322b467bacbca9e7456777f4371e481f2c2da484c659c777734"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-i4",
+    "--sep-string",
+    "-n3",
+    "--output-tabs=,4",
+    "-ex4",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "ef519b94f6289224",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d6839f31169720603f723bb8dbd85beed72a379a447da17f2d24a442a9e3252c"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "a46175b6b68ba8776b5d8f4eb3ea48d89efdf9f94a1a1092d79bdd8c3279242e"
   },
@@ -153131,6 +166589,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "faed9cc2b618930c2258feabf2fdf5b6b0ce28611b50d135e3368b60d9a8bd82"
+  },
+  "case": {
+   "argv": [
+    "--width=20",
+    "-3",
+    "--sep-string",
+    "--number-lines",
+    "--form-feed",
+    "--output-tabs=,4",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "ef9650d3b24bcca5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "f172c669a915cc786f128f273f45a598dd821c366cf6a1398da862c1a5347c85"
+  },
   "utility": "pr"
  },
  {
@@ -153295,6 +166792,153 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "60beeafbe13b2f3f4041a64942b48df09d997606d7a4583cf36b2966c14ede48"
+  },
+  "case": {
+   "argv": [
+    "-1",
+    "-ix4",
+    "--date-format=%Y",
+    "-F",
+    "--output-tabs",
+    "-n",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "f4f0bb2edfe3d9f4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "49f76807492ed473fa3bbc639121f3718b10e5000d4318864c1743a9d652b19a"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--pages=2",
+    "--number-lines=:3",
+    "-r",
+    "-S",
+    "-i",
+    "+x"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "f52d493495e850c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d9bbafeab2ea52cc9cb2b2119a7e4a9e18279bd224f372f4f18483f61b7bf04e"
+  },
+  "case": {
+   "argv": [
+    "--form-feed",
+    "-T",
+    "--separator=:",
+    "-n3",
+    "-ex4",
+    "--length=7",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_formfeed",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "f53663ef9e282dec",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6a50b6cac6cf02b5b01a18bef92ce780335696364af7718c24333b06e6221029"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9e75cc5b694f981d32e44aad29b2430c695d8e765ecee559d45f42b1737fc8f9"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-3",
+    "-ix4",
+    "--length=7",
+    "-n:3",
+    "-t",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "f55ee95ae85d5567",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "827919ffd64af40d31347df0f1d788cef5028dbf0ab5414cf527325d884268b5"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "0784f757f5593f4a1a4e81e92aae605edf4486563a057a644102bde68e12e11f"
   },
   "case": {
@@ -153326,6 +166970,80 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "a71cb50ac3238cf4609e4b6d4e0783961fe3b43f5d8a34be1d0b9399ac967829"
+  },
+  "case": {
+   "argv": [
+    "-N",
+    "5",
+    "--number-lines=:3",
+    "--double-space",
+    "--date-format=%Y",
+    "--across",
+    "-i"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "f67a89b081d40609",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bb8d5c02e830f1deadc89a0c0893edf504105a128aa46ac8d233cfda7ebb5418"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "40d50cd02276903cb4e95f6b275bf6eafe815c4021d7280c07f73bcbcd52db0a"
+  },
+  "case": {
+   "argv": [
+    "--indent=4",
+    "-ix4",
+    "-s",
+    "-i4",
+    "--no-file-warnings",
+    "-n3",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "f6879d24a1ebb5d7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "23debc1bf42d15757db5c17139fb9dc764e6e3794753372e979bc0c1f4de83de"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "c86eabf3534499292772fe60b678ada58b03556d25696fe44d0d6537dc407027"
   },
   "case": {
@@ -153350,6 +167068,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9887b445d920fbbfe7a34ca2c197a112ef315a777b039fa4d04d33314bd8b3cf"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "-i4",
+    "--no-file-warnings",
+    "--separator=:",
+    "-F",
+    "--indent=4",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "f9318242afdbc281",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "991636734dd522108c129255ac3911546e9bcfaa17a1f2ec9f6d0d7052bad2f8"
+  },
   "utility": "pr"
  },
  {
@@ -153421,6 +167176,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "38add76358433d917b179b1cd6503c35b181a4d45f845e34b172be36a0ed7b1e"
+  },
+  "case": {
+   "argv": [
+    "--across",
+    "--width=20",
+    "-d",
+    "--header=HEAD",
+    "--omit-pagination",
+    "-2",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "fbbc747b6c09630b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2b189d7874dc2fabb46d8b737446b6662d33728f51bd032c28a32b6e99047cf2"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "492a7666ef8903ce7deecaf846ebd5f88f981c2383df3898879a69d6af054fcb"
   },
   "case": {
@@ -153452,6 +167244,117 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "5fcc4c68f260ba52f713a66c2b97327ba0101e6e43dc8cf3f4a8a33c674e166f"
+  },
+  "case": {
+   "argv": [
+    "-d",
+    "-s:",
+    "-e4",
+    "-ix4",
+    "--double-space",
+    "--omit-pagination",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "fd1bacbec983c6ee",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f2326db3e0cbf3414591f65b4dd325c0fcd672146131bde625b28a42c58f8d88"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6213b4d0ca941ce652015f4ac9fc785583983af4edf17a41c5070efe3ce4ac51"
+  },
+  "case": {
+   "argv": [
+    "--output-tabs=,4",
+    "-m",
+    "-ix4",
+    "-s,",
+    "-F",
+    "--indent=4",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_pr_formfeed",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "fe37b036905980dc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c997b8154c2e990bec83ab5bb38363b1b242a95c3cef5fca91f9e71e48ea2952"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7acf84be46ef47da2b95908cb7ded432d5d9119afea75bfc573841016c0bbb80"
+  },
+  "case": {
+   "argv": [
+    "--indent=4",
+    "-s",
+    "-o4",
+    "--width=20",
+    "-i4",
+    "-e",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "fe488761fc2628a1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3552c1291fca2e5351213474a602fd4ec4e7be43a31d86b351a8a19c2520aa8b"
+  },
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e80b479e1ad38138594fe4a65d16f52dcd93a9547a039b79a6607585adf4156f"
   },
   "case": {
@@ -153477,6 +167380,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "utility": "pr"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "67443ee84175135f7d679568c490ac036b223bc4b7ddda0b13244b94baa84d62"
+  },
+  "case": {
+   "argv": [
+    "--first-line-number=5",
+    "--length=7",
+    "-S::",
+    "-d",
+    "-o80",
+    "-3",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "pr"
+  },
+  "domain": "text",
+  "id": "ffc4974cc84eadbb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "66835d3e61e7ffdf419823c3ed977d43a2593416fc699944ebcd112652bf87cf"
+  },
   "utility": "pr"
  },
  {
@@ -153587,6 +167527,43 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--word-regexp=[a-z][a-z]*",
+    "-bptx_breaks",
+    "-r",
+    "-Sx",
+    "--ignore-case",
+    "--macro-name=yy",
+    "ptx_refs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "02dd2d7eeb98df7d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b793735ddf0cba6bbb6eea28efd1c3fa926f076687f33c82148bce23c667c6f5"
+  },
   "utility": "ptx"
  },
  {
@@ -154495,6 +168472,58 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-A",
+    "--auto-reference",
+    "-F",
+    "--flag-truncation=++",
+    "-M",
+    "-R",
+    "--right-side-refs",
+    "-S",
+    "",
+    "--sentence-regexp=\\n",
+    "-bptx_breaks",
+    "--break-file=ptx_breaks",
+    "-g20",
+    "-iptx_ignore",
+    "--ignore-file=ptx_ignore",
+    "-o",
+    "missing",
+    "--only-file=ptx_only",
+    "-r",
+    "--typeset-mode",
+    "--width=40",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "27f95e1db8afe49d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--auto-reference",
     "-M",
     "",
@@ -154532,6 +168561,42 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "52e55d54ea916fc8f95a5cad9c864e048b98fae82c8d99731fb71e8080723660"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "--width=40",
+    "-f",
+    "--references",
+    "-R",
+    "--break-file=ptx_breaks"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fmt",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "2adc79691e17aa52",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ptx"
  },
  {
@@ -154773,6 +168838,43 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9fa26b0fe855e528eb9d604102970bd4ad71176382c754d65c5e20555075bb12"
+  },
+  "case": {
+   "argv": [
+    "--typeset-mode",
+    "--flag-truncation=++",
+    "-bempty",
+    "--ignore-file=ptx_ignore",
+    "--auto-reference",
+    "-M",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "34ad98b1dc93d202",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "aae50498e42978d44e4e8a1dd8017c172aac9f535fdb9660f3d750dfce0d29de"
+  },
   "utility": "ptx"
  },
  {
@@ -155026,6 +169128,45 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "0c419517c03660548defe3dec364d07fbca5cf90da1fc413659b164d8405f814"
+  },
+  "case": {
+   "argv": [
+    "-iptx_ignore",
+    "-M",
+    "yy",
+    "--auto-reference",
+    "--ignore-case",
+    "-S",
+    "[.?!]",
+    "-A",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "3b06e1d09476e3b8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "89a44342dbac4e630834e2cab3aaf673a650ed9cf6de0bf23e4b0757bc0f836c"
+  },
   "utility": "ptx"
  },
  {
@@ -155319,6 +169460,44 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--gap-size=2",
+    "--sentence-regexp=\\n",
+    "--right-side-refs",
+    "-W",
+    "x",
+    "--references",
+    "-i",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "44b6cf8311786c2b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--format=roff",
     "-S",
     "",
@@ -155341,6 +169520,44 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sentence-regexp=\\n",
+    "--auto-reference",
+    "-r",
+    "-o",
+    "empty",
+    "--break-file=ptx_breaks",
+    "--typeset-mode",
+    "ptx_refs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "46a7a990498b04c9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9bba598fbcd3b2597577813789e680ebb91a4e4d5e831efd081752625a3f2575"
+  },
   "utility": "ptx"
  },
  {
@@ -155416,6 +169633,43 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--only-file=ptx_only",
+    "--macro-name=yy",
+    "-r",
+    "--auto-reference",
+    "--flag-truncation=++",
+    "--ignore-file=ptx_ignore",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fmt",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "47e38be284cbbeae",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -155458,6 +169712,43 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "--typeset-mode",
+    "--right-side-refs",
+    "--references",
+    "--word-regexp=[a-z][a-z]*",
+    "-S\\n",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "485cb90f3cd06edd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "66a7cf5a52d3adbd7858fc06628182db603842f883f45f1a5e3f08819cbab5ee"
+  },
   "utility": "ptx"
  },
  {
@@ -155821,6 +170112,44 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "0bc117d0d8dd477c6a50087294ce52db66daff6f360fd19b0c90867cc46a9cea"
+  },
+  "case": {
+   "argv": [
+    "--auto-reference",
+    "-o",
+    "empty",
+    "-F",
+    "/",
+    "-A",
+    "-t",
+    "--macro-name=yy"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "53f40bdb947c7c72",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "dacf81b4d8c698777477270accaad5c01aa6557dac6faf16418dee29c77ebb4e"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "ca2171cf26e3e5e6f39fa627c84ca465bfcb3e0e489b81b9cc7d1b5734f8cdcb"
   },
   "case": {
@@ -156176,6 +170505,45 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d786c55355f9fbf6cf45f14302716e19e16254c0c58ece06000249d928ae73b0"
+  },
+  "case": {
+   "argv": [
+    "-W",
+    "\\w+",
+    "-M",
+    "",
+    "--break-file=ptx_breaks",
+    "-t",
+    "-bmissing",
+    "--sentence-regexp=\\n",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "5ff1d119e94fb8a0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -156330,6 +170698,44 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--sentence-regexp=\\n",
+    "--width=40",
+    "--ignore-case",
+    "-M",
+    "yy",
+    "-r",
+    "--right-side-refs",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "64c90acb894997bf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b82d744feb5c32e7c94c9839478063297a701e82b02ca6290db033a1b8d1275e"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--format=roff",
     "--auto-reference",
     "--sentence-regexp=\\n",
@@ -156351,6 +170757,81 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--ignore-case",
+    "--gap-size=2",
+    "--ignore-file=ptx_ignore",
+    "--sentence-regexp=\\n",
+    "-r",
+    "-f",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_ptx",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "68d993811cc94293",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "738c41ee059d59d0c98d282d785d09b5526a445b07c25ac5b3c86e08e03775c3"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bccd29f86e8d0f690b3f427428407941493e8c5a58c381744bb62a4969be82ce"
+  },
+  "case": {
+   "argv": [
+    "--right-side-refs",
+    "-W\\w+",
+    "-g1",
+    "--typeset-mode",
+    "-b",
+    "missing",
+    "--macro-name=yy",
+    "para"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_ptx_refs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "69009a5ba993a9e6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ptx"
  },
  {
@@ -156588,6 +171069,44 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--gap-size=2",
+    "-b",
+    "empty",
+    "-S",
+    "-A",
+    "--macro-name=yy",
+    "-r",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_ptx_refs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "7710d6290d6e357a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--auto-reference",
     "-Myy",
     "--macro-name=yy",
@@ -156693,6 +171212,43 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-r",
+    "--auto-reference",
+    "-A",
+    "--right-side-refs",
+    "--sentence-regexp=\\n",
+    "-f",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fmt",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "7c1939ff014ba131",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b5a948b8a1b2bf27a8892660659953d77fec737b5f9195cb48762f0898b35546"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--sentence-regexp=\\n",
     "-r",
     "-A",
@@ -156714,6 +171270,43 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--only-file=ptx_only",
+    "--sentence-regexp=\\n",
+    "--ignore-case",
+    "--right-side-refs",
+    "--references",
+    "--typeset-mode",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "7d153696892031ed",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ptx"
  },
  {
@@ -156855,6 +171448,45 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "-F",
+    "++",
+    "--word-regexp=[a-z][a-z]*",
+    "-M",
+    "",
+    "--sentence-regexp=\\n",
+    "--gap-size=2",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "835e31cbb0df69cc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6729e1cc318064da0ae705650aaeea0ce1f3f6ec7bc88a25ccfcac8659066fcc"
+  },
   "utility": "ptx"
  },
  {
@@ -157742,6 +172374,43 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--sentence-regexp=\\n",
+    "-W[a-z][a-z]*",
+    "--break-file=ptx_breaks",
+    "--gap-size=2",
+    "--references",
+    "--only-file=ptx_only",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "a19cd96928626841",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--auto-reference",
     "-F",
     "/",
@@ -158013,6 +172682,43 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--ignore-file=ptx_ignore",
+    "-A",
+    "--references",
+    "--sentence-regexp=\\n",
+    "--width=40",
+    "--ignore-case",
+    "ptx_src"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "a8e7922b789589bd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "964e4d44c510c563c5fa5f5191f7e729d25fdb51f46e180920d74a52e654cc16"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--auto-reference",
     "--ignore-case",
     "--gap-size=2",
@@ -158098,6 +172804,46 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "28b28417a2cd44aaa33dbcd8417fc31a979586c4e5580e27eb0a8c9b67343097"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "/",
+    "-t",
+    "-b",
+    "missing",
+    "--gap-size=2",
+    "-R",
+    "-W",
+    "x",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "ac1f06ea8b8c3b61",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ptx"
  },
  {
@@ -158644,6 +173390,46 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a5c465063ef7ac49c5a19c0530a5594154fd2d198b5fd8a9ba0032651d745cf3"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "ptx_ignore",
+    "--width=40",
+    "-b",
+    "empty",
+    "--auto-reference",
+    "-A",
+    "-r",
+    "ptx_src",
+    "ptx_refs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "bf93f9c57f1760e9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -159039,6 +173825,79 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-R",
+    "--references",
+    "--width=40",
+    "--only-file=ptx_only",
+    "--gap-size=2",
+    "--auto-reference"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "d1c2ac979e03c973",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sentence-regexp=\\n",
+    "-r",
+    "-A",
+    "--ignore-file=ptx_ignore",
+    "-optx_only",
+    "--gap-size=2",
+    "ptx_src"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "d409a7dd4251837d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c5794bd4f9ba64b63552ceb051bce0b5110a749cb0abdad8193573571672f1ed"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -159077,6 +173936,45 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "39ca600fdf71837499e54f2b24c7c9e2b89faa91e3a9476a217110c656f42ff7"
+  },
+  "case": {
+   "argv": [
+    "--typeset-mode",
+    "-r",
+    "-F",
+    "/",
+    "--word-regexp=[a-z][a-z]*",
+    "-M",
+    "",
+    "--flag-truncation=++",
+    "para"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "d4a321ecab9f4a41",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ptx"
  },
  {
@@ -159215,6 +174113,79 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e1c3ca1ee93c32741a9b14c869de214e4332cbf9c93e60eed7a458c0e7aa25c5"
+  },
+  "case": {
+   "argv": [
+    "-w100",
+    "-W\\w+",
+    "--right-side-refs",
+    "--gap-size=2",
+    "--ignore-file=ptx_ignore",
+    "--references"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "dc4e3c469e7d9bf0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "--sentence-regexp=\\n",
+    "-A",
+    "-t",
+    "-S",
+    "--ignore-file=ptx_ignore",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_ptx_refs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "dcad52bc54ed007b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ptx"
  },
  {
@@ -159661,6 +174632,44 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r263",
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--references",
+    "--width=40",
+    "-M",
+    "",
+    "-r",
+    "--sentence-regexp=\\n",
+    "--right-side-refs",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "ed99a2d5fb1cbe61",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "ptx does not implement --references beside --sentence-regexp, and does not refuse a --sentence-regexp whose match has length zero.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ptx"
  },
  {
@@ -160240,6 +175249,70 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--zero",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "03051de55e68d0f0",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
+  },
+  "case": {
+   "argv": [
+    "-0",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "07d5f2d0a33830a7",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
+  },
+  "case": {
+   "argv": [
     "-0",
     "--zero",
     "binary"
@@ -160283,6 +175356,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "dd632744263ebcbc1d4c46d54b98d2e969e566d571bc93ec346eb6999b74e867"
+  },
+  "case": {
+   "argv": [
+    "-0",
+    "--zero"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "0c00aee395be619b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "rev"
  },
  {
@@ -160411,6 +175516,35 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "73abdcdb7f32ed4b183fc0120ed322ae21f0f9d3e40df8e195766fe21c5cb566"
+  },
+  "case": {
+   "argv": [],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "2146e3d8e141c491",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "rev"
  },
  {
@@ -160634,6 +175768,38 @@ PINNED = r"""
    "fixture": "text",
    "input_kind": "command",
    "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "58c0eeaca23b75eb",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
    "stdin": "edge_131072",
    "utility": "rev"
   },
@@ -160642,6 +175808,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "28d983b719b7e66e885e18732e6f510d5933b6e1b5b4cedea03ac9749be562fb"
+  },
+  "case": {
+   "argv": [
+    "-0"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "7056e5973f4e90f5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "rev"
  },
  {
@@ -160668,6 +175865,99 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "28d983b719b7e66e885e18732e6f510d5933b6e1b5b4cedea03ac9749be562fb"
+  },
+  "case": {
+   "argv": [
+    "--zero"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "763c68f44a502d8e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f665e6a2aadb2af82310653955cf5b61afbc8b2d6af4312127f0f866f284572e"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "7df2207c8ac74186",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e48591a5d89a808ef8b1f273221c48de89bd64db6c967afd63921bca47d36273"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f665e6a2aadb2af82310653955cf5b61afbc8b2d6af4312127f0f866f284572e"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "7eaa9cc73f7c80f5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e48591a5d89a808ef8b1f273221c48de89bd64db6c967afd63921bca47d36273"
+  },
   "utility": "rev"
  },
  {
@@ -160776,6 +176066,69 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "f665e6a2aadb2af82310653955cf5b61afbc8b2d6af4312127f0f866f284572e"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "8c9dc8c8f1e50bce",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e48591a5d89a808ef8b1f273221c48de89bd64db6c967afd63921bca47d36273"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "8e470f0f8fe1c6f1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
   },
   "case": {
@@ -160849,6 +176202,39 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
+  },
+  "case": {
+   "argv": [
+    "-0",
+    "--zero",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "9e63306687b5717f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+  },
   "utility": "rev"
  },
  {
@@ -161130,6 +176516,39 @@ PINNED = r"""
    "fixture": "text",
    "input_kind": "command",
    "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "e341cab8d43665a9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
+  },
+  "case": {
+   "argv": [
+    "-0",
+    "--zero",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
    "stdin": "crlf",
    "utility": "rev"
   },
@@ -161195,6 +176614,71 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
+  },
+  "case": {
+   "argv": [
+    "-0",
+    "--zero",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "f0b332381d4e4df2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
+  },
+  "case": {
+   "argv": [
+    "-0",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "f18cf176e1c833d4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+  },
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "f665e6a2aadb2af82310653955cf5b61afbc8b2d6af4312127f0f866f284572e"
   },
   "case": {
@@ -161239,6 +176723,39 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "rev"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f001e59dc956a4a6c794c722b8cbbf76fdcc6454b2eb57979014d6256804bcef"
+  },
+  "case": {
+   "argv": [
+    "-0",
+    "--zero",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "rev"
+  },
+  "domain": "text",
+  "id": "f459314984202003",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+  },
   "utility": "rev"
  },
  {
@@ -161310,6 +176827,94 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "y/abc/xy/",
+    "--expression=$d",
+    "-fmissing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "-l70",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "00bf26eee057fbdc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--unbuffered",
+    "-s",
+    "-u",
+    "--expression=s/a/A/",
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "--file=script.sed",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "00df36bc6e0642b9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "00c97f86a7809c348311ede0ce2d1d912d113a09bc5e98d8e626a76b278b3143"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "a957e02741736cc969acb373e81e6616b9924bdc87d3815f826e31a0c178ce8d",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -161359,6 +176964,53 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/a/b/gg",
+    "--expression=$d",
+    "-fmissing",
+    "--file=script.sed",
+    "-i",
+    "--in-place",
+    "-l",
+    "2",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "014e91562c0328a0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--quiet",
     "-e",
     "s/a/b/x",
@@ -161393,6 +177045,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "case": {
+   "argv": [
+    "--null-data",
+    "-f",
+    "dir",
+    "-l",
+    "70",
+    "--separate",
+    "--posix",
+    "-e",
+    "3Q"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "015ff23bd2abea04",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -161482,6 +177173,108 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "03a6c4e5893b2d97",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "2,~2s/[abc]\\{2\\}a\\|b\\W/X/e",
+    "-f",
+    "script3.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l70",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "--null-data",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "047127821ef7acc0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "0eff4371f64c5f18eb1f61dcfcd81738da8880fd1cbf697257c4550442ec2bd7"
   },
@@ -161565,6 +177358,104 @@ PINNED = r"""
   "case": {
    "argv": [
     "-n",
+    "--silent",
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "--expression=s/a/A/",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-l",
+    "10",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "068a9ff6514f310a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "c54a84ea2e7ca893f5742fcca12ab17ee12dc673f64a1b668dc91751bf6f2271",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "--expression=$d",
+    "-fscript3.sed",
+    "--follow-symlinks",
+    "-i",
+    "-lx",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-s",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "06c597e329dfbf8b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
     "--quiet",
     "-e",
     "s/\\(\\([a-z]\\)[0-9]\\)/[\\1|\\2]/",
@@ -161592,6 +177483,292 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "1e echo hi",
+    "--expression=$d",
+    "-f",
+    "script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l",
+    "70",
+    "--line-length=2",
+    "-r",
+    "-s",
+    "-u",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "0811eff63dc38862",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b952538f0553fb59d9b191d3154f7ccf1dddb2f4ae1ed8153854a01a15705df4",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "-fscript3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "-l",
+    "0",
+    "-E",
+    "--separate",
+    "--sandbox",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "0865416cc6403a8d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "f86b1776e3a22b882d104263e337196986a6a25d6a7d4c5b36c67c4244e09ef6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/\\(al\\)pha/\\1/",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l10",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-z",
+    "--null-data",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "08f8b5d11338b759",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "00d671de3061fb637def868cbb7055f7b0bf1272fe21f96ec574159777b01d6e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/a/X/w out",
+    "--expression=s/a/A/",
+    "-fmissing",
+    "-i",
+    "--in-place",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "095575318d674467",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "2b9e2d21cfde9d82680f8d074667f6d600427c929f3f65e244aefd51d034f978",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "R b.txt",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "2",
+    "--line-length=2",
+    "-E",
+    "--separate",
+    "-u",
+    "-z",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "09f86819078a819d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "68b8a7d10999ec09a36197090735df0939254c72491e3c36748267af71c10542",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "ff9dac786cd62bd2babd723b51329a585b98a397f5123d585ad236f244b0f7d3",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "1{a one\nr b.txt\na two\n}",
+    "-fempty",
+    "-i",
+    "-l",
+    "10",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "0a02f010005b8157",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "01d050f0f330ee7e3cc6c0f5afe49665fe7ffb50d903ca66e555e027a3d98f30",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -161686,6 +177863,103 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/a/b/0",
+    "--expression=p",
+    "-fmissing",
+    "--file=script.sed",
+    "-i.bak",
+    "-lx",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "0b98be12d49a3255",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "2,/a/!s/a\\{2\\}\\(a$\\)/<\\1>/w out",
+    "--expression=$d",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "-l0",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "0bda7ec7df626a76",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "5b66a55411b68b9b3712a9bb2299cd12b0aa0f2a692e7708095ab01995e612dc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -161729,6 +178003,135 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "1e echo hi",
+    "--expression=s/a/A/",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-lx",
+    "-s",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "0cdb40cccdabd6b8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "00d671de3061fb637def868cbb7055f7b0bf1272fe21f96ec574159777b01d6e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "72cf05427b7f9712bbb6aed93802d2ece49599a016e6612a9aa491dd7b4bf881"
+  },
+  "case": {
+   "argv": [
+    "--expression=p",
+    "--posix",
+    "-e",
+    "/a/,~2a text;2,/a/!c text",
+    "-e",
+    "/a/!s/\\S.*.$/[&]/I",
+    "-s",
+    "--quiet",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "0daaf4db5dd2fa6c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "2,~2s/[abc]\\{2\\}a\\|b\\W/X/e",
+    "-f",
+    "empty",
+    "-i",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "--null-data"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "0f043f8be7acd3d8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -161763,6 +178166,50 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "2,/a/!s/a\\{2\\}\\(a$\\)/<\\1>/w out",
+    "--expression=s/a/A/",
+    "-fscript2.sed",
+    "--file=script.sed",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "1027dda1315b765c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "e40ff9ec002abe4d7a2926036b215a4e286a0f611bdb304fe4eeb80f4c1d2156",
+   "status": 0,
+   "stdout": "f576e218d1a2eb9b491db6187936c7064e7ce2fe623580110311e777618196d3"
+  },
   "utility": "sed"
  },
  {
@@ -161851,6 +178298,108 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "e1ce8c2278b2a19ff5c06ffccb2d04d59aba4a5b2296b8145466505b6dace60e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "l",
+    "--expression=p",
+    "-fscript3.sed",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "70",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "11c0393787acddff",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "bc7a9e6f249dbe800d0346f8deab5f42a08dc1167330f58cb44039e9bf195eab",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "e",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place",
+    "--in-place=.bak",
+    "-lx",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-z",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "120d700fbab595e9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "16a1e3047ecfcaf8673b4003b86fe9fbd6aacc4794c3f111b8ac66b5c783bab8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -161889,6 +178438,44 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r269",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-E",
+    "-i.bak",
+    "--null-data",
+    "-e",
+    "e",
+    "-i",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "12f3834c28083942",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "a757ee9c36206a95142858a2a2728d734eabd7d77d53a7d9ed81d6255d448c8a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -161954,6 +178541,149 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "583955405bd9586d62496ecfe03df01853caee382c227ea0d06e6060ccb99587",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "$r b.txt",
+    "--expression=p",
+    "-fscript3.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-lx",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-u",
+    "-z",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "147f57a8aa411027",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "70d2b06a88dc832210e00eeb730d140a2478061652b9229bf996b8210aebb7d8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "336fa6df8a36ef88d8a7c9712786abca23332e0d5ff0fc003eff72a894478de7",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "R b.txt",
+    "--expression=$d",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-lx",
+    "--line-length=2",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "14d18e0dc82b02f4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "6364b2a3fcc389931283ed123925a09bd5b301ae8ec1408af29c836653aacd14",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "0715330388a1e9ceab16b5224e70dce55c05df8ea64c04bc0b93f9586e5b0693",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "w /dev/stdout",
+    "--expression=$d",
+    "-fempty",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l2",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "154b31db41d1dacb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "878dd598a1454272dac7bc433ddf5a65ca8b7eb3a2a3c83794e6a8c6adba245e",
+   "status": 0,
+   "stdout": "4fdbc441ea7b546100e086ac1e4fc5ae6749b7314311c99db05be450eca12996"
+  },
   "utility": "sed"
  },
  {
@@ -162130,6 +178860,430 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "2,~2s/[abc]\\{2\\}a\\|b\\W/X/e",
+    "--expression=p",
+    "-f",
+    "script2.sed",
+    "-l",
+    "x",
+    "--posix",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--null-data",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "16cccb2be1a0e7cf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3d39f1cf5fcc01ee4e30355fb7601b0cfbf94e4f2d7e60b732cd88c4eb8b09a7"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/a",
+    "-f",
+    "missing",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l1",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "--separate",
+    "-u",
+    "-z",
+    "--null-data",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "1779c982de0854b9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "90e33c87a30c4912f59d9aa329e7ab5e2a63ca0de72783314a6c3f67e838d444",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "l 0",
+    "--expression=p",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l0",
+    "--line-length=2",
+    "-r",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "-z",
+    "--null-data",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "1806bd09511744a8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "d04d6884435ca145343316016864323ee138bc53e17fc0b1289a70fd5bf9cb16",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "d6a65223b24ac6b2b79dc21759d8a84e1b760eb327017f4edc374f59ce56f88b",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "2,/a/!l",
+    "--expression=p",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "-r",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "18ee2c5362cdc163",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "96ac532123768343a3db01fc6b99123c73e8e63ceb2cdfd1c65a0c2adb104adf",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "$,/a/s/\\(a\\|bc\\)/<\\1>/gp",
+    "-fdir",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "2",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "18f8e06a80768704",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "--expression=p",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place=.bak",
+    "-l1",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "1961751211b6e671",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/a/echo X/e",
+    "--expression=$d",
+    "-fscript2.sed",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "--line-length=2",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "-z",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "19bb1ae04551b2d1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "d22006420ecb53f10892067922e587bcdd9b3074ef8153fbc202fa6b646d6668",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "00d671de3061fb637def868cbb7055f7b0bf1272fe21f96ec574159777b01d6e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "-fscript3.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--line-length=2",
+    "-r",
+    "-u",
+    "-z",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "19cd057d3094e7fc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "2,~2s/[abc]\\{2\\}a\\|b\\W/X/e",
+    "--expression=p",
+    "-fscript.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--unbuffered",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "19e6ec57e99f414e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -162157,6 +179311,57 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/a/b",
+    "--expression=s/a/A/",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "-l",
+    "1",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "1ab3931e407f757b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -162201,6 +179406,100 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/a/b/x",
+    "--expression=s/a/A/",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "-i",
+    "--in-place",
+    "-l0",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--unbuffered",
+    "-z",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "1c2005c7b8c02828",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "/a/,+1Q",
+    "--expression=p",
+    "-fmissing",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l70",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "-u",
+    "--unbuffered",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "1cf6f68df7757341",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -162373,6 +179672,56 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "c20ef3339d58defcdf834dbfd3ed9aed18b3bd1986d438d89190ae137d9fbf22",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "l",
+    "--expression=s/a/A/",
+    "-f",
+    "script2.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l70",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-z",
+    "--null-data",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "1e84eb4211a9057f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9a94a2448ca314ab5c5cefeeb2ec599a2a5e5c8286a57b838cb199c3bae65172",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -162491,6 +179840,146 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "--expression=p",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "-r",
+    "-s",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "21465a1c5ca9aa46",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "97bdd0fbb02fc1bc17860e56b7566568b335591d7c10faf86f2e133aad1d1258",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "w /dev/stdout",
+    "--expression=p",
+    "-fscript3.sed",
+    "--follow-symlinks",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-z",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "216f057f142fd9f2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "df2a274eac27f557d0fdf07806b6ed23320f4e630d34a951f543f90ca319e25a",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "--expression=$d",
+    "-fmissing",
+    "--follow-symlinks",
+    "-l",
+    "2",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-u",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "21fd374ed021c196",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -162631,6 +180120,51 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "5ab4ea2f3c55b0ee19f3183329cbf9f5a44f22291cec6cba5dbe5cf2a4904b7c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "2,/a/!l",
+    "-fempty",
+    "--file=script.sed",
+    "--in-place=.bak",
+    "-lx",
+    "--posix",
+    "-E",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "226cc80487207880",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "877aa4b484422a2ea077bbcb6cdb0e514dcf7bdf923677f707c7054a4b7e86ee",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "27dd8ed44a83ff94d557f9fd0412ed5a8cbca69ea04922d88c01184a07300a5a"
@@ -162752,6 +180286,56 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "2,/a/!s/a\\{2\\}\\(a$\\)/<\\1>/w out",
+    "--expression=$d",
+    "-fmissing",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "2397bc825706fa5c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -162835,6 +180419,101 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/\\(a\\)\\(l\\)/\\u\\1\\U\\2\\E!/",
+    "--expression=s/a/A/",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "-i",
+    "-lx",
+    "--posix",
+    "--regexp-extended",
+    "--sandbox",
+    "--unbuffered",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "24362ca95ee7a871",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "31fe2b9a6b0263e8c36f2231ef7a119ab7262898ae2d8a8c87e55b62cc0c5f2c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "--expression=s/a/A/",
+    "-fmissing",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "-z",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "250827d7a08c471b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -162863,6 +180542,191 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "41c3e7737877ad8a1558f78c899de4c88b94aac2f7dfe9da6f47ce1bb9cc838e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--separate",
+    "--null-data",
+    "--file=script.sed",
+    "-l0",
+    "-i",
+    "-e",
+    "2,/a/!l",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "25a9eb75b35f4a53",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "685bb3b7b253589d41ce899629ad6c59c7e7f9cbfe912fc78d967436a6cc535e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "2,~2s/[abc]\\{2\\}a\\|b\\W/X/e",
+    "--expression=s/a/A/",
+    "-f",
+    "dir",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l10",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "266959554775b833",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "ed3508afed150d8a78a4e3b810ff94b17242f83f63889b96965436dd9947088c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "2,~2s/[abc]\\{2\\}a\\|b\\W/X/e",
+    "-f",
+    "script3.sed",
+    "-i.bak",
+    "--in-place=.bak",
+    "-lx",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "-z",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "26a1d3108771c5af",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "1,$s/^\\`a.*$/\\U&/w out",
+    "--expression=$d",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l10",
+    "--posix",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "26d51f98a6580cea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -162992,6 +180856,56 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "77765b45eb98499467c1b666b7de59b49260946a05fe7a822edf0cc705c08a9a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "w out",
+    "--expression=p",
+    "-f",
+    "dir",
+    "-i",
+    "-i.bak",
+    "-l70",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "288618e23c6aed03",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "eb0a555c9efa1d32e9beaec02fa79199e6d448811d5e521fcb232d20ef8dfd0a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -163033,6 +180947,139 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "0p",
+    "--expression=p",
+    "-f",
+    "missing",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "--line-length=2",
+    "--posix",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "2924c136795f962d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "0,/a/!q",
+    "-fmissing",
+    "--separate",
+    "--sandbox",
+    "--line-length=2",
+    "--file=script.sed",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "299bd0b4dc196615",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "337847e9a18899251adae445fea6fbc1b44090eb55a81decdc296f89fdb29b8c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "1r b.txt",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-l0",
+    "--posix",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "29d12079d35b4d84",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "aed24bcf5d7c39d450781c24067cb16799a5bc58f5376c1fbd02d319f7c9aa18",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -163118,6 +181165,146 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/a",
+    "--expression=$d",
+    "-f",
+    "missing",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--posix",
+    "-E",
+    "--unbuffered",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "2a8e24a1c5f15e9b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/a/echo X/e",
+    "--expression=p",
+    "-fempty",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place",
+    "-l70",
+    "--line-length=2",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "2b0af464f19c0fdf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "c54a84ea2e7ca893f5742fcca12ab17ee12dc673f64a1b668dc91751bf6f2271",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "--expression=s/a/A/",
+    "-f",
+    "empty",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l2",
+    "--posix",
+    "-E",
+    "--sandbox",
+    "-u",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "2b78681c08238543",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -163148,6 +181335,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "aacd2bd4e7e62bffe592db956c235d6a38e818862ea48ddcb8a40a46f1231550"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "2,/a/!s/^\\`aa\\{,2\\}/X/p"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "2c217231b84028ba",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4443d99e6f9c7004d573dd408dee93adf6341b6066aee2e440f3cb18d49fb97a"
+  },
   "utility": "sed"
  },
  {
@@ -163190,6 +181409,55 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "e674ad7f809e364783e2393d41128ff23b7b7cf1ccdca98029dc0bca491cbb85",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "1F",
+    "--expression=p",
+    "-fscript.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l1",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "2d482b57ae661978",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "d3d274a5c07598f59ffef1ec98c3ece388eaa7514c17f3537e125895ca31773f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -163217,6 +181485,54 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "64f0a1d501225501048d10bc62b68085f3b95143ed7a02aeab4c521ae19fc69d",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "--expression=$d",
+    "-fempty",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "-l",
+    "70",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--null-data",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "2e152cf42b90989c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -163249,6 +181565,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-r",
+    "--in-place=.bak",
+    "-e",
+    "2,~2s/[abc]\\{2\\}a\\|b\\W/X/e",
+    "-f",
+    "script.sed",
+    "--silent",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "2f2272fc64df3a42",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "e0d4bad368028765aed7b85a250116a8fcce86cb37ee6816a20f4887bd6a43cb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -163298,6 +181653,101 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "046566de28a514843b87448a56d0d6246c830a3bc17ea3867dc15932f8c2b075",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/(al)+pha/X/",
+    "--expression=p",
+    "-fdir",
+    "--file=script.sed",
+    "-i",
+    "-l",
+    "70",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "31656486868d6ddc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/\\(al\\)pha/\\1/",
+    "-fscript2.sed",
+    "--file=script.sed",
+    "-i",
+    "--in-place",
+    "-l2",
+    "--line-length=2",
+    "-r",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "317e1b921c073cb5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "efb1f8be3de3f6305d7ab723b8d3bee975e6b9ffd17d52f5aa33096acc91b616",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -163339,6 +181789,215 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "/a/,+0w out",
+    "--expression=s/a/A/",
+    "-fmissing",
+    "--file=script.sed",
+    "-i.bak",
+    "-l",
+    "0",
+    "-E",
+    "-r",
+    "-s",
+    "-z",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "31ebb09f3c0d1625",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-e",
+    "s/a/echo X/e",
+    "-e",
+    "s/zzz/X/w out",
+    "--separate",
+    "--follow-symlinks",
+    "--unbuffered",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "321760ac96a7bbb9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 0,
+   "stdout": "9821dd142e085e36f5e4e3c1c2d3fdec263d9425c7e74956b7526ddabc71e9c6"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--separate",
+    "--follow-symlinks",
+    "-e",
+    "s/^ab\\(a\\)*\\(^a\\)//I",
+    "-r",
+    "-s",
+    "-z",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3246f873d74c04cc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "--expression=p",
+    "-f",
+    "dir",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "-r",
+    "--sandbox",
+    "-u",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "32548fc74dcc2895",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "00d671de3061fb637def868cbb7055f7b0bf1272fe21f96ec574159777b01d6e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "--expression=s/a/A/",
+    "-fempty",
+    "--follow-symlinks",
+    "-i",
+    "-lx",
+    "--line-length=2",
+    "-r",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "-z"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3292d12467105520",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -163423,6 +182082,50 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/alpha|zeta/X/",
+    "--expression=p",
+    "-fscript.sed",
+    "--follow-symlinks",
+    "-l70",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "--unbuffered",
+    "-z",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3376995f4cf4ac48",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -163580,6 +182283,108 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "w out",
+    "--expression=$d",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "1",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "34c547ac5cb14c8f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "34794fb3dcf46569d00ddbcbf7cbc99fd0d12e748a04dbd502ac88e8b6a2747e",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "w out",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "--in-place",
+    "--in-place=.bak",
+    "-l1",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "34ca653325e6d6b1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "1dccea683f04705d7bc1278dfd6260a95846dd9a7e7d5794b7ccb58ab19536fc",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -163707,6 +182512,91 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/a/echo X/e",
+    "--expression=s/a/A/",
+    "-f",
+    "empty",
+    "-i",
+    "-i.bak",
+    "-l10",
+    "--line-length=2",
+    "-r",
+    "-s",
+    "--separate",
+    "--unbuffered",
+    "--null-data",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "35ff4bd8b1487722",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "2ac39fb12621e6a5ac5da7c95dc4ee8e02a61d5dc80b84a3927843747b7f4a85",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "--sandbox",
+    "-s",
+    "-n",
+    "--regexp-extended",
+    "--expression=$d",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "360bfa576a90264f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 4,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -163787,6 +182677,53 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "5952560d35eac41a20e0ead4c6a4a3c7ecb1371dc668460cf7618c26dfd63f56",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "a",
+    "--expression=s/a/A/",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "--in-place",
+    "-l10",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "-u",
+    "-z",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "36a08a8dc12022fe",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -163915,6 +182852,136 @@ PINNED = r"""
   "case": {
    "argv": [
     "--quiet",
+    "--silent",
+    "-e",
+    "2,/a/!s/a\\{2\\}\\(a$\\)/<\\1>/w out",
+    "--expression=p",
+    "-fscript3.sed",
+    "-l70",
+    "--posix",
+    "-E",
+    "-r",
+    "--unbuffered",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3829eac1a1768b5a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 0,
+   "stdout": "2b2b0af734101086a253baaf882ca792319d47af350e1b553a47c0668def4c20"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "9fd3f5304b164c07ca038c4302355527fb8e4f36664916f868d47188fac44e4e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "l 5",
+    "--expression=p",
+    "-fscript3.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "-z",
+    "--null-data",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3850865dd3fb6069",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "3965c23981320658985d5d3497d904da9b5a881e036d35bcf4b28783d6d8d49b",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "27dd8ed44a83ff94d557f9fd0412ed5a8cbca69ea04922d88c01184a07300a5a"
+  },
+  "case": {
+   "argv": [
+    "--posix",
+    "--silent",
+    "-e",
+    "R b.txt",
+    "-l",
+    "0",
+    "-f",
+    "script2.sed",
+    "-s",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "385b3981aa14a3a8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
     "-e",
     "2,/x/s/\\(a\\|bc\\)/<\\1>/w out",
     "--expression=$d",
@@ -163986,6 +183053,49 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/a/echo X/e",
+    "-fscript.sed",
+    "-i.bak",
+    "-l",
+    "10",
+    "--line-length=2",
+    "-E",
+    "--sandbox",
+    "-u",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "38f63aa1e95ced75",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "16a1e3047ecfcaf8673b4003b86fe9fbd6aacc4794c3f111b8ac66b5c783bab8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 4,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -164013,6 +183123,105 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "efb1f8be3de3f6305d7ab723b8d3bee975e6b9ffd17d52f5aa33096acc91b616",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "N;P;D",
+    "--expression=p",
+    "-fscript3.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "390818049f97ba27",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "6a5c706c891dc9267fa3926330d89ef638981ce5c68dc9dad85f260905d88834",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "/A/Is/^\\(a\\|bc\\)/<\\1>/3g",
+    "--expression=p",
+    "-f",
+    "dir",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l70",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3928a2e38e320615",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "7ed54440d9d0f38c81e780b772050e03c760bfb997bbd84cc22d35c49ead745f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -164085,6 +183294,56 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r269",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "1e echo hi",
+    "--expression=s/a/A/",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place=.bak",
+    "-l",
+    "70",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3b1e2f7ad6748778",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b76991e36611a4e72a394c235afaf6101b43ba0d324e6d15739317949abdb9d3",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -164170,6 +183429,38 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 0,
+   "stdout": "aacd2bd4e7e62bffe592db956c235d6a38e818862ea48ddcb8a40a46f1231550"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "1,$s/^\\`a.*$/\\U&/w out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3b8f8b9fed8b1d86",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "a38aed6dbd341d2192d15458479869232cd607c7666a4ae4f6e94840ffefd29d",
+   "status": 0,
+   "stdout": "eafb3a0121f59f6ddd5613cf07e223998b352f5030842e724e0f7db8c39d4774"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b68f6373d6104ab8aafbdbaf6fe58e0bf6677baf7ab84ff9400089f3636dee82",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -164207,6 +183498,100 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/\\(a\\)\\(l\\)/\\u\\1\\U\\2\\E!/",
+    "--expression=p",
+    "-fdir",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-lx",
+    "-E",
+    "-s",
+    "--sandbox",
+    "-u",
+    "-z",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3c1fc2f3cc7b0946",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "a478d13458e377de9d69c6e57e75502e183c300112466c22c695d1421dee192e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "s/a/echo X/e",
+    "--expression=$d",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "--posix",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3c467e92b5c892db",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -164371,6 +183756,55 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "07f8b762cc5fb831cf41270db94ca828d6c2c013d9772ae6405a89c665a711fd",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "/a/,/b/=;1,$p",
+    "--expression=$d",
+    "-fscript2.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "70",
+    "--line-length=2",
+    "--regexp-extended",
+    "--separate",
+    "--unbuffered",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3e9827b67feb69de",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "6488bbfd507edd6422faf73b6667b37b068cc8d5acdd8a3a03d461cd2ff1194e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "0715330388a1e9ceab16b5224e70dce55c05df8ea64c04bc0b93f9586e5b0693",
    "status": 4,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -164455,6 +183889,44 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2978969a4df2f16993a823f072f8bdcc1661c3aad5939c60f03d2fe6b22291ee"
+  },
+  "case": {
+   "argv": [
+    "--separate",
+    "--line-length=2",
+    "--posix",
+    "-l0",
+    "-fscript3.sed",
+    "-e",
+    "/alpha/,+1p",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "3f823d116872a4e5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 4,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -164493,6 +183965,55 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "w",
+    "-fmissing",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "40f424fc662dfc72",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -164579,6 +184100,234 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "e0d4bad368028765aed7b85a250116a8fcce86cb37ee6816a20f4887bd6a43cb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "y",
+    "--expression=s/a/A/",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l0",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "432207fe1aedac40",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "f1a9612a52ffcba4a990329c8f517aee949d41ce674274aefd86400acdb637b8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-E",
+    "--posix",
+    "--in-place",
+    "--silent",
+    "--follow-symlinks",
+    "-e",
+    "l 5",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "446b3d712dac38fc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "e",
+    "-f",
+    "script2.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "-l2",
+    "--line-length=2",
+    "-r",
+    "-s",
+    "-u",
+    "-z",
+    "--null-data",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "44dcdaa28dc9ea6c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "47d6afa3eb0a255d27789a1a97dce773d9313e159f0ed9ebb9801859cc2bb162",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "F",
+    "--expression=$d",
+    "-fempty",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l0",
+    "-E",
+    "--regexp-extended",
+    "-u",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "459b13f3e3f45cf9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "40d43e737de5b5e51353d5df4393c8418a8d52fd3c2186aaed4d64acda7b9909",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "y/a/",
+    "--expression=p",
+    "-fmissing",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l",
+    "x",
+    "--line-length=2",
+    "--posix",
+    "-s",
+    "--sandbox",
+    "--unbuffered",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "459fbf32029977d3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "bff9ad2e9273da015a368509c464f09dc5f3fa47228dd0b850442abf761630bd",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -164608,6 +184357,51 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "d70e761ac4cc2a6e7a766c4b4fbd6280942376df724b2abd2b3df67350d333ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "1{a one\nr b.txt\na two\n}",
+    "-fdir",
+    "--file=script.sed",
+    "--in-place",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "--unbuffered",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "45b348aec8d5f83c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "8108df00ba9add9242ccc0c8a0d7bbd5f4f8f811fbd8c4b4e00b800009a92131",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -164690,6 +184484,201 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/a/X/w out",
+    "--expression=p",
+    "-fmissing",
+    "--in-place",
+    "-l70",
+    "--line-length=2",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "-z",
+    "--null-data"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "46a89f359df093c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "39af4cad3a8dbd2e96af320e2144a3d706a1161e5fb4c6a39e7a14d95ecad621",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/alpha|zeta/X/",
+    "--expression=p",
+    "-fscript3.sed",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "474e6c6522a263ba",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "0c3700974fac4d38a16750b6c8e459165cc538ed08722193d8da501332337da8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "ecefa51b8a47a7de460b6350eff50487db4161cb63a96b82aa1f1854e3b34aff",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "/alpha/,~2p",
+    "--expression=p",
+    "-f",
+    "script3.sed",
+    "-i",
+    "--in-place",
+    "-l10",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "485f6420b22cfd36",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "0bc4416b3f6ea6255509507a3b3bd4dfa6f5467db1e0b4a29c5e7985c8d6d677",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "/a/,~1q7",
+    "-fmissing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "-l",
+    "2",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "-z",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "49202a55c780d3cc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -164767,6 +184756,53 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/\\(\\([a-z]\\)[0-9]\\)/[\\1|\\2]/",
+    "-fscript.sed",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "-lx",
+    "--posix",
+    "-r",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "4a77d6aa4d5e9927",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "19eeb98688cda0a6b3b299dcf53a20936d76793541d42ab5cdcfdbe020a8049f",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -164807,6 +184843,87 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "2,~2s/[abc]\\{2\\}a\\|b\\W/X/e"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "4ad5a0cdf287c4de",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "aacd2bd4e7e62bffe592db956c235d6a38e818862ea48ddcb8a40a46f1231550"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "a",
+    "-f",
+    "dir",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "70",
+    "--line-length=2",
+    "-E",
+    "-s",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "4b0820585eea61d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -164935,6 +185052,218 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--follow-symlinks",
+    "-r",
+    "-e",
+    "/delta/,+2s/^/> /",
+    "-l2",
+    "-fscript.sed",
+    "--quiet",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "4d4536058eb11ab2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/a/b/w",
+    "--expression=p",
+    "-fmissing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l10",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "-u",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "4dc0497508dacfc8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/\\(\\([a-z]\\)[0-9]\\)/[\\1|\\2]/",
+    "--expression=$d",
+    "-f",
+    "dir",
+    "-i",
+    "-l",
+    "70",
+    "--posix",
+    "-E",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "4e0490b81827cbb5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "51bd85825cbdbf1cca85988110ff1dcd966454da162efd0231b9540c20598370",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/\\`a/a\\\\b/e"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "4e21a22a612e61a2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c5b342fd571b5d02eb58aaec646adf327b6c2bb94bef20645ed326daed6dbb1a"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/a/b/0",
+    "-fmissing",
+    "--follow-symlinks",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--separate",
+    "--unbuffered",
+    "-z",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "4e7b58051fdcc01d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -165068,6 +185397,56 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "1,$w out;1,$a text",
+    "--expression=p",
+    "-fmissing",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l0",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "-z",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "4fd1f90f141ae91a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "199c7a58f80a3ed56f7d90fb678b858b4839916cf672b54ab54d1f8ecff809a6",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -165192,6 +185571,424 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "19eeb98688cda0a6b3b299dcf53a20936d76793541d42ab5cdcfdbe020a8049f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "R b.txt",
+    "-fdir",
+    "--file=script.sed",
+    "-i.bak",
+    "-l10",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "522c51239bc0e281",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "e02cce3ee3a757f3606f577153205b4bbb23b462e35cc244fcb432d9675fb277",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "t",
+    "--follow-symlinks",
+    "-n",
+    "-u",
+    "-r",
+    "--expression=p",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "52dac14eab00dfe7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "-l",
+    "2",
+    "-E",
+    "-r",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "52f564285a5383b7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/\\(one\\):\\(two\\)/\\2:\\1/",
+    "--expression=$d",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "-i.bak",
+    "-l",
+    "0",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "--unbuffered",
+    "--null-data",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "533d3e675d95ccb8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "02897dceeb9b4e49fb3f876c82084b8afc511178157b8484f2ce2a8d478d2a28",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "878dd598a1454272dac7bc433ddf5a65ca8b7eb3a2a3c83794e6a8c6adba245e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "/a/,~2s/a\\|ba[a-c]/\\t/p",
+    "--expression=$d",
+    "-fscript2.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "-l",
+    "1",
+    "--posix",
+    "-E",
+    "-s",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "53fa267de772e50a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "eee90896a1cdf1435e93b8cabd56c19177c4008812f136e35f3cda28d32b50b9",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "1fc4211be693a9db931fcc9d28c234d8e2c7b77666982cc691c38f609c422521",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "1R b.txt",
+    "--expression=s/a/A/",
+    "-fscript2.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l2",
+    "--posix",
+    "-E",
+    "-r",
+    "-s",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "540919202e40003f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "463cd82e09ad0b2268e2d8d2e43e059d25c6258276933b2010c99c3c9e786374",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "/a/,/b/s/ca\\{1,2\\}[*]/X/e",
+    "--expression=s/a/A/",
+    "-fscript.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "2",
+    "-r",
+    "-s",
+    "--sandbox",
+    "-z",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "5438a8dda8b63e5d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b83b88bc6a21964788dc468e1b12ab6e7a02470b657930e119f7add9e76049ff",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "1{r b.txt\na APPENDED\n}",
+    "--expression=p",
+    "-fdir",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "0",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "544236576b8a1502",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9828b166cf654aaf7b1282f8bcd7c3129c3e0ad734bef35c6e9b30e071b15e0f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "e",
+    "--expression=$d",
+    "-fdir",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "-l0",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "-s",
+    "--sandbox",
+    "--unbuffered",
+    "--null-data",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "546f334651eba5f6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "793e1f510bbb28e04d8a18bbf8aa49469d1c3da2722def4f8ff060339b9280e9",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -165229,6 +186026,57 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "0~2s/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
+    "--expression=p",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--line-length=2",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-z",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "556e0e115bb3c982",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "63b94e7ad0d2150474dae170b0e9b74f83c1a1deb55be2ca4f3abfce4b04b278",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -165307,6 +186155,102 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/\\(al\\)pha/\\1/",
+    "--expression=s/a/A/",
+    "-f",
+    "dir",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "56eb8ccdfc9c5e00",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "6a5c706c891dc9267fa3926330d89ef638981ce5c68dc9dad85f260905d88834",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/a/echo X/e",
+    "--expression=p",
+    "-f",
+    "script3.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "0",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-u",
+    "-z",
+    "--null-data",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "56ff726c49c88e83",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "bcc89149f499bd42d0a53df35f8ac7af8a4d35bd51bbce29e4ab9bf9fd4d90da",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -165350,6 +186294,44 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "c54a84ea2e7ca893f5742fcca12ab17ee12dc673f64a1b668dc91751bf6f2271",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-i",
+    "--file=script.sed",
+    "--posix",
+    "-e",
+    "/alpha/,~1d",
+    "-l10",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "586250bd7fe5e940",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -165387,6 +186369,57 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "90d2de09714a470f40a26e0aed66c71a79db1c8f65f4cac037de42eb4f1c68e8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "1,$s/^\\`a.*$/\\U&/w out",
+    "--expression=p",
+    "-f",
+    "script2.sed",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l",
+    "1",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "597f444b0e0b76b4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "8c2e6b39ec81fe45d7a39a8388e0ff23cab5f076b0a5d1fcc577215e3024be37",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -165471,6 +186504,102 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "$,/a/s/\\(a\\|bc\\)/<\\1>/gp",
+    "--expression=p",
+    "-fdir",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l1",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-u",
+    "-z",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "5b20d6ee22cc4908",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "c1ea86e82c28c234f23e3d427d76268a50d9371c9f3ee6c3b5ddb9051e81e802",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "/a/,/b/s/ca\\{1,2\\}[*]/X/e",
+    "--expression=$d",
+    "-f",
+    "dir",
+    "--in-place",
+    "--in-place=.bak",
+    "-l0",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "5b33400a6f158acc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "16a1e3047ecfcaf8673b4003b86fe9fbd6aacc4794c3f111b8ac66b5c783bab8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -165538,6 +186667,54 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "9ef3f476d16874b294978a854d55f8b6ca3986cd7ee0af130ad5004ebdb82d4e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "--expression=p",
+    "-fscript.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place=.bak",
+    "-l2",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "-s",
+    "-z",
+    "--null-data",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "5c4a1aed40ec9a67",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -165670,6 +186847,51 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "--expression=p",
+    "-fscript.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "-l70",
+    "--posix",
+    "-E",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "5d749060bb3df920",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "d5a56ef0e47a843c3e5d8ca97931f847fbb98bafea272631f34badc93295ca41",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "ba9ee78158e57656a281a2f51b2bf11be12bf60d12f518ec714a01f23b0c1f29",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -165756,6 +186978,299 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-e",
+    "0~2s/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
+    "--expression=s/a/A/",
+    "-f",
+    "script2.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-u",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "5f0b4155a3a90480",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "d83bd7fdaec789601946ad6498ad0aad18c8c1ad3cbfa7ab65ebd5c9d70a1552",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "01b1ec7175eeb0b92c97234870c3e3197f6d813bed5507b78f8c1aef55756745",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "/alpha/,~1d",
+    "--expression=p",
+    "-fempty",
+    "--file=script.sed",
+    "-i",
+    "-l",
+    "2",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "606eb6332a2981c9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "ed3508afed150d8a78a4e3b810ff94b17242f83f63889b96965436dd9947088c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "72121d5c7246fd40a75f5c3ae43c56899e8e4b2004ea58ce4034267332b25c63",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "w /dev/stdout",
+    "--expression=p",
+    "-f",
+    "script2.sed",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l0",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "6086f563e7e9c028",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "a478d13458e377de9d69c6e57e75502e183c300112466c22c695d1421dee192e",
+   "status": 0,
+   "stdout": "7194bd5d22fc96f0125ba6b928e9f01349b92d378bc85c73a585a0468ca0ab33"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "0c3700974fac4d38a16750b6c8e459165cc538ed08722193d8da501332337da8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/[0-9]\\+/N/",
+    "--expression=p",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "-l",
+    "x",
+    "-r",
+    "--separate",
+    "--unbuffered",
+    "-z",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "60b88d7a6d2aa37f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "77a7e676cb5c2004c67e02721c038a022525a727dca90e1f3c8440e394d9598f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "0,/a/!s/\\`a[abc]\\{2\\}/X/w out",
+    "--expression=$d",
+    "-f",
+    "missing",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "2",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "617757eb58511a1f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/\\(a\\)\\(l\\)/\\u\\1\\U\\2\\E!/",
+    "--expression=s/a/A/",
+    "-f",
+    "script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "621a93c6ea7a660b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--quiet",
     "-e",
     "s/a/echo X/e",
@@ -165817,6 +187332,56 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "--expression=s/a/A/",
+    "-fscript.sed",
+    "--file=script.sed",
+    "-i",
+    "-l",
+    "2",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "-z",
+    "--null-data",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "626dbcd1a5d053b0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -166044,6 +187609,324 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "878dd598a1454272dac7bc433ddf5a65ca8b7eb3a2a3c83794e6a8c6adba245e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l0",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "65258bacfbaa4595",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/\\(one\\):\\(two\\)/\\2:\\1/",
+    "--expression=s/a/A/",
+    "-fscript3.sed",
+    "-i.bak",
+    "--in-place",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "-s",
+    "--unbuffered",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "65a098a6e5caef51",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "23a975d125c4094b0ed2ac43401984c288c1a71231ee2ff0e82c0abee0f351ec",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "/A/Is/^\\(a\\|bc\\)/<\\1>/3g",
+    "--expression=$d",
+    "-fscript2.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "-l",
+    "x",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "6636deeea73dc00e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "2ac39fb12621e6a5ac5da7c95dc4ee8e02a61d5dc80b84a3927843747b7f4a85",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "-i.bak",
+    "-z",
+    "-r",
+    "--follow-symlinks",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "6672702832ec3cb4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "6a5c706c891dc9267fa3926330d89ef638981ce5c68dc9dad85f260905d88834",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/\\(al\\)pha/\\1/",
+    "--expression=p",
+    "-fdir",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l",
+    "x",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "67b461e561258994",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "p}",
+    "--expression=$d",
+    "-f",
+    "missing",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "10",
+    "--line-length=2",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "68c425edc1df3832",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "$,/a/s/\\(a\\|bc\\)/<\\1>/gp",
+    "-fscript.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place=.bak",
+    "-l2",
+    "--posix",
+    "-r",
+    "-s",
+    "--separate",
+    "-u",
+    "-z"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "68dab501d8c30f87",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "f1192a415cae67ff2ea6274d5f83b6ae209db8ce15dbaccfa3cd76e0d6c9c3c3",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -166251,6 +188134,53 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "/^$/s/^[abc]\\{2\\}/X/w out",
+    "--expression=p",
+    "-f",
+    "missing",
+    "--follow-symlinks",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--line-length=2",
+    "--separate",
+    "-u",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "6a4c183bc1034c1c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -166286,6 +188216,103 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b7e318611a17bc08e6a6c9a7beefd0c0c37408f4747a727076e3f4f1e5057769",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "l 5",
+    "--expression=p",
+    "-fscript.sed",
+    "-i",
+    "-i.bak",
+    "-l",
+    "70",
+    "--posix",
+    "-E",
+    "-s",
+    "--separate",
+    "-u",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "6d1e08406edc76ea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "cb2026fecacd5332a041234bbc7934769b74eb42a59485e264966ad96ca5548d",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/\\(one\\):\\(two\\)/\\2:\\1/",
+    "--expression=s/a/A/",
+    "-fscript2.sed",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "1",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "6e0302e8f26e9a61",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -166405,6 +188432,55 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "dd84455407b4367542b75618ef904164661b6d88336972c83abe01a951a4c83e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "1l",
+    "-f",
+    "empty",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-s",
+    "--separate",
+    "-z",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "700af8566dcf6360",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "cb5ebc303df363ff3ed7cdade840233f5761191fe0d6c0ebb3943d3941ed5a56",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -166443,6 +188519,56 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "e0d4bad368028765aed7b85a250116a8fcce86cb37ee6816a20f4887bd6a43cb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "--expression=s/a/A/",
+    "-f",
+    "script2.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "70",
+    "--line-length=2",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "70aa826f9206750b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -166515,6 +188641,100 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "0~2s/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
+    "--expression=s/a/A/",
+    "-fscript.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "--posix",
+    "-r",
+    "-s",
+    "--unbuffered",
+    "--null-data",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "726927e43edc92c4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "0,/a/!Q",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "x",
+    "--line-length=2",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "728dd3fd049d9b66",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -166599,6 +188819,104 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "-f",
+    "dir",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l10",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "746fb725a290431a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "910eaa21164566d4b7a935105516e128fad8cc7edd4818b44d9ea58987695903",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "--expression=p",
+    "-fdir",
+    "--follow-symlinks",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--unbuffered",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "747a70df276f7645",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -166721,6 +189039,51 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "3~0s/\\(a\\)\\1//2",
+    "--expression=$d",
+    "-fscript.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-l1",
+    "-E",
+    "--unbuffered",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "759fce114c6205c2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -166796,6 +189159,57 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "2,/a/!s/a\\{2\\}\\(a$\\)/<\\1>/w out",
+    "--expression=$d",
+    "-f",
+    "dir",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-lx",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "--null-data",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "760e6e7ab7771b0f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -166926,6 +189340,89 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "0f57956aba5c400d6f2d24f31495c0fb53548cf87d18fa4e8ff1de4de8d6627c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--posix",
+    "--quiet",
+    "-i",
+    "-i.bak",
+    "-e",
+    "2,/a/!l",
+    "--separate",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "77579f37521cb2bf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "0,/a/!w out",
+    "--expression=s/a/A/",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place=.bak",
+    "-l1",
+    "-E",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "77c8b310f56c5b64",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "ff646650bc064e5981d37e75caf62e8551f146dff3b8967dd9cf36d263480e3a"
@@ -166960,6 +189457,56 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "dd84455407b4367542b75618ef904164661b6d88336972c83abe01a951a4c83e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "1l",
+    "--expression=$d",
+    "-f",
+    "script2.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--separate",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "77db3aa99f7d98a0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "cb5ebc303df363ff3ed7cdade840233f5761191fe0d6c0ebb3943d3941ed5a56",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -167094,6 +189641,50 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--silent",
+    "-e",
+    "s/a/echo X/e",
+    "--expression=s/a/A/",
+    "-fscript.sed",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-u",
+    "--null-data",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "7a5dc56204a9a23e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--quiet",
     "-e",
     "$s/c\\(a\\)\\1/<\\1>/2",
@@ -167128,6 +189719,52 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "1w out\n2w out",
+    "-fmissing",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--line-length=2",
+    "--posix",
+    "-s",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "7b21129511356b40",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -167177,6 +189814,54 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/a",
+    "--expression=s/a/A/",
+    "-fmissing",
+    "--file=script.sed",
+    "--in-place",
+    "-l",
+    "70",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "-s",
+    "--sandbox",
+    "--unbuffered",
+    "--null-data",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "7bc7cde494139105",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -167219,6 +189904,52 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/a/b/gg",
+    "--expression=$d",
+    "-fmissing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "-l10",
+    "--line-length=2",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--unbuffered",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "7df89aa916678064",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -167250,6 +189981,87 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sandbox",
+    "-s",
+    "--regexp-extended",
+    "--separate",
+    "-n",
+    "--in-place=.bak",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "7f07095dbedce357",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "/a/,+1Q",
+    "--expression=p",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "--in-place",
+    "--in-place=.bak",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "--null-data",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "80adf8fd0e296e63",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -167289,6 +190101,55 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/\\(one\\):\\(two\\)/\\2:\\1/",
+    "-f",
+    "dir",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l10",
+    "-E",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "820202650d15c1f0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "ed3508afed150d8a78a4e3b810ff94b17242f83f63889b96965436dd9947088c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -167403,6 +190264,51 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "/a/,+0w out",
+    "--expression=$d",
+    "-fmissing",
+    "--follow-symlinks",
+    "-l",
+    "x",
+    "--posix",
+    "--regexp-extended",
+    "--separate",
+    "--unbuffered",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "84459bad8e840dc6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "e0d4bad368028765aed7b85a250116a8fcce86cb37ee6816a20f4887bd6a43cb",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -167477,6 +190383,53 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "6c1cbd3abe07fac8099bbdf39a7f947ebe7cd9b7451d2dd3ec95664fbe5a7554",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "/a/,~2s/a\\|ba[a-c]/\\t/p",
+    "-fdir",
+    "--file=script.sed",
+    "-i",
+    "--in-place",
+    "-l",
+    "1",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "854dad5941a830af",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "ca318c9e3458048c9955da653f0a368096554658eed506bcba81d8195f673aa5",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -167563,6 +190516,202 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "/a/,/b/!d",
+    "--expression=$d",
+    "-f",
+    "dir",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-l2",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "-s",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8644be9e01b43e74",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "/a/,/b/s/ca\\{1,2\\}[*]/X/e",
+    "--expression=s/a/A/",
+    "-f",
+    "dir",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-lx",
+    "--line-length=2",
+    "-s",
+    "--separate",
+    "--unbuffered",
+    "-z",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "876ef78fe1e54306",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "e0d4bad368028765aed7b85a250116a8fcce86cb37ee6816a20f4887bd6a43cb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "3311b7c59db203d866b9a96a417430fd519b8fa2e487c97b96fac586b592c8b5",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "x",
+    "--expression=p",
+    "-fscript3.sed",
+    "--file=script.sed",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l0",
+    "--posix",
+    "-E",
+    "-r",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "87a067f4d35199ac",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "0acdc172a32be60ef2ccadd6c23ab3c1fa768edb763ec154527b60ba08ee97b2",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "c30ecba35b85653810a51805a1f5b2467db354eaa1f03e3c2c4f07904f576237",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "1,$s/^\\`a.*$/\\U&/w out",
+    "--expression=$d",
+    "-fscript2.sed",
+    "-i",
+    "--in-place=.bak",
+    "-l70",
+    "-E",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "87d5e5f6d1e78731",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "fcdab1470d6a41f09b900130aeb2a6e787c74baae57825e41f1cfd4d05073218",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -167638,6 +190787,164 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "2,~2q",
+    "--expression=$d",
+    "-fmissing",
+    "-i",
+    "--in-place=.bak",
+    "-l70",
+    "-E",
+    "--regexp-extended",
+    "--separate",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "897b180bbe215cef",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "/a/,/b/s/ca\\{1,2\\}[*]/X/e"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "89ae77331ed9b17e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "aacd2bd4e7e62bffe592db956c235d6a38e818862ea48ddcb8a40a46f1231550"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--in-place=.bak",
+    "-e",
+    "2,~2s/[abc]\\{2\\}a\\|b\\W/X/e",
+    "-r",
+    "-l",
+    "1",
+    "--sandbox",
+    "--separate",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8a5fa1d1275784b5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "fdd0fdc0ede95b7c24675f97783561dd0a43ed524fd55606037ec8980ace3572",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "9e0c0426dd1b798c72cd6e27de6fc789b713b2bb485ce05aaf8e585de419c46a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "/a/,~2!d",
+    "--expression=$d",
+    "-fscript3.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--line-length=2",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8a5fbfac95e76b1a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "afd8c97ec496e73cef277899cb04eb915f5893cfb0131c5d840f6b94bb09dd12",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -167665,6 +190972,95 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r269",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/a/b/0",
+    "--expression=p",
+    "-fmissing",
+    "-l",
+    "0",
+    "--posix",
+    "--regexp-extended",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8ad913c57699f9f3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "e",
+    "--expression=$d",
+    "--file=script.sed",
+    "-i.bak",
+    "-l",
+    "70",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "-u",
+    "-z",
+    "--null-data",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8b9e30a150951bac",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -167720,6 +191116,149 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--silent",
+    "-e",
+    "0~2s/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
+    "--expression=s/a/A/",
+    "-fscript.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-lx",
+    "--line-length=2",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8c34419e405e1616",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "c54a84ea2e7ca893f5742fcca12ab17ee12dc673f64a1b668dc91751bf6f2271",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "--expression=$d",
+    "-fscript.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-z",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8caf293b912c1019",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "a957e02741736cc969acb373e81e6616b9924bdc87d3815f826e31a0c178ce8d",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "--expression=p",
+    "-f",
+    "missing",
+    "--follow-symlinks",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "1",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8d1af946271eb3d3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-n",
     "-e",
     "/a/,/b/s/\\(a\\)*\\(a\\|b\\)$/<\\1>/3g",
@@ -167765,6 +191304,194 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--quiet",
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "--expression=p",
+    "-f",
+    "script2.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l10",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--separate",
+    "--unbuffered",
+    "--null-data",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8d7c85c97e34a8e7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "0c910a7cd9f8cbc8868ae125094ba815899a30ee3d6e0ef4c555ff57116de518",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "5ae619cc6c5d01ba0f052ce505ba279d40ae98b1aa50b956160138609149eacc",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "l",
+    "-f",
+    "script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "-l",
+    "x",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8e15943f7e17b24c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "52f03e0a65aaac2152dabdaf8e339c9c115f75b683f40196781a0808a3a6e2d2",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "2w out",
+    "--expression=p",
+    "-fmissing",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8e8b894792f5e4b7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "574322e99eea1c4619eaaaa028624d673e292ea88db0cd2f5f21d775910c754e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "/b/,$x",
+    "--expression=p",
+    "-fscript3.sed",
+    "-i",
+    "--in-place=.bak",
+    "--posix",
+    "-E",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "8f0c3128b756c522",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "af830120d5edc5337680b3ee82be0eee36ea3288b1cdfa0793f36fc5a14b9f68",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--silent",
     "-e",
     "/A/Is/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
@@ -167795,6 +191522,52 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "47134ae34792ac0807de6e4a54cb2488fa08267b150c04a79fc1920bcdc870f7",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "1R b.txt",
+    "--expression=s/a/A/",
+    "-fscript2.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "-l0",
+    "-E",
+    "-r",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "9159fb5704f7cb55",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "da3e0cae234d1da732774fb3a945b6aa7ecdfdfe68b08502ec42f5aa00c9e31e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -167836,6 +191609,49 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "a",
+    "--expression=s/a/A/",
+    "-f",
+    "missing",
+    "-i",
+    "--in-place",
+    "-lx",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "926229adae305d18",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -167922,6 +191738,252 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "e8fdd8261cffb7cc7b30e3e126d6c0600f12a0ff4e5441422fcd04d03e071eed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "1{a one\nr b.txt\na two\n}",
+    "-f",
+    "script2.sed",
+    "-i",
+    "--in-place",
+    "-l2",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "94e813f58851bb3b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "716305957602781a3a8d8737a4f02789abf399c4ca8fa40896040c18f13ea21a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "e",
+    "--expression=s/a/A/",
+    "-f",
+    "dir",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "1",
+    "-r",
+    "-s",
+    "--separate",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "95b0d6167b2c756b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "d22006420ecb53f10892067922e587bcdd9b3074ef8153fbc202fa6b646d6668",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "1e echo hi",
+    "--expression=$d",
+    "-f",
+    "script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "95d2fce4ea9ee478",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "8796c1d293644cad15710c76ff7b4d0e351a49c03d598cd55f10723bf4eea211",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "2,/a/!l",
+    "--expression=$d",
+    "-f",
+    "script2.sed",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "963266b8775b0576",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "8cf4a913042802781140a7df536882d192eff2fe39c943c5f96a857682dd6917",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b31ea64f95e414ef288cf4a3d04262051b03f8ea275619189e9cb369f96694bf",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "F",
+    "--expression=p",
+    "-f",
+    "script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l10",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "964283ffd59f59e5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "e63c9265f86f23f6aeaa79d3e6bce529c45d11e42f42af2f937c1f4d2b099744",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "df2a274eac27f557d0fdf07806b6ed23320f4e630d34a951f543f90ca319e25a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -167963,6 +192025,52 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "/a/,/b/s/ca\\{1,2\\}[*]/X/e",
+    "--expression=p",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "-z"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "96a362a30a053b58",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -168094,6 +192202,56 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "de379346b13a6bcb9f69502efcf847c987a32cedea0b3e3f14f13666eaedc01d",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "r b.txt",
+    "--expression=p",
+    "-fscript3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place=.bak",
+    "-l0",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "98d615100dfd48d7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "17ab9003d3fa8edd365bac08f3281d7f0b28ac57cb4c8608f5b96aad56b59ba3",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "8a10516c6b057598ee413c19a30a8cdb92129bd2cdb8a73ae7c460dd5e5d97dd",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -168171,6 +192329,154 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/\\(one\\):\\(two\\)/\\2:\\1/",
+    "-f",
+    "script2.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-l70",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "9a2a4cead282c907",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "--expression=$d",
+    "-fdir",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "9abf20f79e1e5190",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "/a/,~1q7",
+    "--expression=$d",
+    "-f",
+    "missing",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "-u",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "9acbfcf8d1a0d7d6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -168285,6 +192591,53 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "}",
+    "--expression=s/a/A/",
+    "-f",
+    "missing",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "-z",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "9cedc17c03387aee",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -168417,6 +192770,105 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "--expression=p",
+    "-fscript3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-l",
+    "70",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "9f9c4fc030e4fb42",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6ab1161eb4999447cdc468027c7a5bcd1e40fcc626b0fb147ae8cdf425fd040f"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/\\(one\\):\\(two\\)/\\2:\\1/",
+    "--expression=p",
+    "-fempty",
+    "--in-place",
+    "-l",
+    "x",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "9fa977ad1f9bd537",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--silent",
     "-e",
     "/A/Is/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
@@ -168488,6 +192940,45 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "697fdbea869c067cf55a51265c2eb5a8eb5d9f3d73aca1a9b20d04c7febea895",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-e",
+    "z",
+    "--regexp-extended",
+    "-i",
+    "-e",
+    "s/^alpha/X/",
+    "--expression=p",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "a127bc44dc2ef733",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "fa2ff34040ae639e3e4e28669f887f52051232c5aba9587db2d36424488ea4a6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -168568,6 +193059,52 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "--expression=p",
+    "-f",
+    "script2.sed",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-r",
+    "-s",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "a29ded4eb45098b2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -168720,6 +193257,52 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--silent",
+    "-e",
+    "s/\\(a\\)\\(l\\)/\\u\\1\\U\\2\\E!/",
+    "--expression=$d",
+    "-f",
+    "dir",
+    "--file=script.sed",
+    "-i.bak",
+    "-l1",
+    "--line-length=2",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "-z",
+    "--null-data",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "a41b4c3d9957aad4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "878dd598a1454272dac7bc433ddf5a65ca8b7eb3a2a3c83794e6a8c6adba245e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-e",
     "e"
    ],
@@ -168736,6 +193319,48 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r269",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "a",
+    "--expression=p",
+    "-fmissing",
+    "--file=script.sed",
+    "-i.bak",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "a43ab887497f2a37",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -168769,6 +193394,167 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "2ac39fb12621e6a5ac5da7c95dc4ee8e02a61d5dc80b84a3927843747b7f4a85",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "i\\",
+    "-f",
+    "empty",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "--line-length=2",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "-z",
+    "--null-data",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "a5b7f45726053a63",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "f0bbf250c09f013d51222b86130ca099237cda70b34d357d9ae09b35cc943359",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "d4e66a0dee6a106b360a9bf7e9b45a102667a751d3f8fb279ea4b82bd3de375f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--posix",
+    "--quiet",
+    "-i.bak",
+    "-l",
+    "10",
+    "-e",
+    "s/^ab\\(a\\)*\\(^a\\)//I",
+    "-i",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "a5b88fb585eb3095",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-i.bak",
+    "-z",
+    "--quiet",
+    "-l1",
+    "--separate",
+    "-n",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "a5e0e836ccb30345",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "d5bd36deddd698280146fea8ed303a500a1f462201b037683f155e4d7bb453fa",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--posix",
+    "--quiet",
+    "--in-place",
+    "-e",
+    "/alpha/,+0p",
+    "--unbuffered",
+    "-E",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "a5e26fe7d844bd92",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -168848,6 +193634,56 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "1e echo hi",
+    "--expression=p",
+    "-fempty",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-u",
+    "--null-data",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "a84eb35755e994cf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "d732d88053dce187d9f88f6785ed670306676c5b6696117c183b374514a1ba3c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -169001,6 +193837,58 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "$w out",
+    "--expression=$d",
+    "-f",
+    "missing",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "-l",
+    "x",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "aa58cee82bbae4f1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "f949670b2e4db0bf84ef33f383e3636497c445e62f2101b55a1d027bb8762470",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -169075,6 +193963,89 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "6683c8693d635023df5ddf655c9791eaea21a13552d219803891760f5053c957",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "2,/a/!s/^\\`aa\\{,2\\}/X/p",
+    "--expression=p",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place",
+    "-l",
+    "0",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ab4a9a64fea21e22",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "8cb5c203fc2e3b80b1b16fb896e7816979d8f23f39ba7598fb2a1c6abe9af1cc",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "aacd2bd4e7e62bffe592db956c235d6a38e818862ea48ddcb8a40a46f1231550"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "1,/a/s/b*a\\'$/\\U&/g"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ac8612b50002096a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b84e5cda80b91a34908f3561c782487e6cd0514c0a68c5c614d3e8acd3d53951"
+  },
   "utility": "sed"
  },
  {
@@ -169258,6 +194229,99 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "6a5c706c891dc9267fa3926330d89ef638981ce5c68dc9dad85f260905d88834",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "2,/a/!s/^\\`aa\\{,2\\}/X/p",
+    "--expression=s/a/A/",
+    "-fscript.sed",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l2",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "-u",
+    "--null-data",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b05b402c8b7d96c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "065d9cd5cf45300597e2d64fe88e24309ca006146327fd3085d7767d9eba5754",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "1w out\n2w out",
+    "--expression=p",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l2",
+    "-r",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b07d3d9590669b9e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -169297,6 +194361,186 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "e0d4bad368028765aed7b85a250116a8fcce86cb37ee6816a20f4887bd6a43cb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "--expression=s/a/A/",
+    "-f",
+    "empty",
+    "-i",
+    "-i.bak",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-u",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b1362f4ce4cd3186",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "47d6afa3eb0a255d27789a1a97dce773d9313e159f0ed9ebb9801859cc2bb162",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "/a/,$!N;1,$F",
+    "-fscript.sed",
+    "-i",
+    "-i.bak",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b1997fa95e9df4ed",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "40d43e737de5b5e51353d5df4393c8418a8d52fd3c2186aaed4d64acda7b9909",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/\\(one\\):\\(two\\)/\\2:\\1/",
+    "--expression=$d",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "--in-place",
+    "-l1",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b2a11e74a9a805f0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "d992ff78afd729b5e5b1c36808c0f16cd18bcf78ce08b0d44d925f97542bb2c5",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/\\(\\([a-z]\\)[0-9]\\)/[\\1|\\2]/",
+    "--expression=$d",
+    "-fempty",
+    "-i",
+    "-l",
+    "2",
+    "--line-length=2",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-u",
+    "-z",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b31ff746dd2ea538",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "c54a84ea2e7ca893f5742fcca12ab17ee12dc673f64a1b668dc91751bf6f2271",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -169435,6 +194679,56 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "0~2s/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
+    "--expression=p",
+    "-fempty",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "-l70",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b3f05161786cdebf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-e",
     "s/\\(al\\)pha/\\1/",
     "-fscript.sed",
@@ -169496,6 +194790,94 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "0,5p",
+    "--expression=p",
+    "-fmissing",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "--line-length=2",
+    "-E",
+    "-s",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b4b818563284313a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-i.bak",
+    "--regexp-extended",
+    "-u",
+    "-E",
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b4f3face411aeb62",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "bb5351a143051b5c526756419754eaf0bae1983fdf01293072a761df06202e02",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -169536,6 +194918,51 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "16a1e3047ecfcaf8673b4003b86fe9fbd6aacc4794c3f111b8ac66b5c783bab8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/(a)(l)/\\2\\1/",
+    "--expression=$d",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-lx",
+    "--line-length=2",
+    "-r",
+    "--sandbox",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b59e11c233ea1a9e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -169622,6 +195049,50 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "--expression=$d",
+    "-fscript2.sed",
+    "--file=script.sed",
+    "-i",
+    "--in-place=.bak",
+    "-l1",
+    "-E",
+    "-r",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "b6fb6131e857728f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "16a1e3047ecfcaf8673b4003b86fe9fbd6aacc4794c3f111b8ac66b5c783bab8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -169803,6 +195274,100 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "eed7b27be599273371dad28a86cfa6def1f4e81775e1c0755261dd1f9c23a142",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "a",
+    "--expression=s/a/A/",
+    "--file=script.sed",
+    "-i",
+    "--in-place=.bak",
+    "-l1",
+    "--line-length=2",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "-z",
+    "--null-data",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ba43219c9caa401c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "1e echo hi",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l2",
+    "--posix",
+    "-E",
+    "-r",
+    "--unbuffered",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ba53d07d7062031f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "be88ca3f51a5284e4e8d76ea554f35975315c1427833bb1fab6fa70545aa16e1",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "8a4b446002a063f3e31e0f5a5630f389bd87c989308f0307e3e0cf0e725105a1",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -169852,6 +195417,52 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "/A/Is/^\\(a\\|bc\\)/<\\1>/3g",
+    "--expression=s/a/A/",
+    "-fdir",
+    "-i",
+    "--in-place=.bak",
+    "-l",
+    "1",
+    "--line-length=2",
+    "-E",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "bac0d04dda6c4ef6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "9ef3f476d16874b294978a854d55f8b6ca3986cd7ee0af130ad5004ebdb82d4e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 4,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -169894,6 +195505,50 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "N;$p",
+    "-fempty",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l",
+    "1",
+    "--line-length=2",
+    "--posix",
+    "-u",
+    "--null-data",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "bc79f7c2186caaa2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "ed3508afed150d8a78a4e3b810ff94b17242f83f63889b96965436dd9947088c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "49983191d731d677ca4cc0674e29bbfa8164875a49ac662201ba4deca8debe48",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -169929,6 +195584,99 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "0,/a/!q",
+    "--expression=s/a/A/",
+    "-fmissing",
+    "--file=script.sed",
+    "-i.bak",
+    "-l1",
+    "--line-length=2",
+    "--regexp-extended",
+    "-s",
+    "--sandbox"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "bcd18d45b6a5eef5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "c30ecba35b85653810a51805a1f5b2467db354eaa1f03e3c2c4f07904f576237",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "1,$s/^\\`a.*$/\\U&/w out",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l1",
+    "--posix",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "bcfe380c9640253b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "3ab44d284846da8f20ace6fbc4c568e690bffcb2bb76032997f89f7a268ca339",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -170017,6 +195765,91 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "d1b24f58ac330401d0ad6050459c82acc7dac9b29cd3e0b2b3140ab425945b8f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/alpha/X/w /dev/stdout",
+    "--expression=p",
+    "-fscript.sed",
+    "--file=script.sed",
+    "--in-place",
+    "--in-place=.bak",
+    "-l10",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "-s",
+    "-u",
+    "-z",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "be5120624021be4b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "4df557a92efd5c18290bf7e3b1eca53c697b2ddba702ebd982d9d69a59433850",
+   "status": 0,
+   "stdout": "1b55e95d72924b11ae7b22740597744f24dd6ac706ecc29ecfabc0e986cc520b"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "d7dd950477e7291572491ff31ef40d5c49f05d5ec054c45022be9dbe632eff86",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--posix",
+    "-e",
+    "/A/Ip",
+    "-i",
+    "-n",
+    "--in-place=.bak",
+    "--sandbox",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "be6d06bf70095333",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "9c1d389ce7aa7b8efd31e115d32dec89850919f4ccb14534efc8515aee3f4b08",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -170055,6 +195888,98 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "q x",
+    "--expression=$d",
+    "-fmissing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l10",
+    "-E",
+    "-s",
+    "--unbuffered",
+    "--null-data",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "bea496c58287a895",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "a957e02741736cc969acb373e81e6616b9924bdc87d3815f826e31a0c178ce8d",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "/a/,~2s/a\\|ba[a-c]/\\t/p",
+    "--expression=$d",
+    "-f",
+    "dir",
+    "--file=script.sed",
+    "--in-place=.bak",
+    "-l70",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "bf4c9fb04fd166dd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "4e705248d37102f5aee7db0f42a63aa4b7f79db40681067508c73922746f51e6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -170132,6 +196057,98 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/\\(\\([a-z]\\)[0-9]\\)/[\\1|\\2]/",
+    "--expression=p",
+    "-f",
+    "script.sed",
+    "--follow-symlinks",
+    "--in-place=.bak",
+    "-l1",
+    "--line-length=2",
+    "--regexp-extended",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "c101b521375ac5f0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "00d671de3061fb637def868cbb7055f7b0bf1272fe21f96ec574159777b01d6e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "a",
+    "--expression=$d",
+    "-f",
+    "script.sed",
+    "-i",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "--line-length=2",
+    "-s",
+    "--unbuffered",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "c1511c8d17fef3f7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -170259,6 +196276,54 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "13ff7533fa1856b594a9ebc5f5e59772c74e450a9770b47e364b08e008616b43",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "l",
+    "--expression=s/a/A/",
+    "-f",
+    "dir",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "--line-length=2",
+    "--posix",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "c32e4cba38bcbdd0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "289c8de088235a8ee6508130038dd16e2e73cf370b4543b96979bba9789c2106",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -170293,6 +196358,204 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/a/b/gg",
+    "-fmissing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "c640c72193e03d2c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "s/a/b/pp",
+    "-f",
+    "missing",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l1",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-u",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "c6c0d4403f57d74b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/\\(a\\)\\(l\\)/\\u\\1\\U\\2\\E!/",
+    "--expression=$d",
+    "-fempty",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "-l1",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "c6c455ff0c4b6085",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "2ac39fb12621e6a5ac5da7c95dc4ee8e02a61d5dc80b84a3927843747b7f4a85",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/\\(a\\)\\(l\\)/\\u\\1\\U\\2\\E!/",
+    "--expression=s/a/A/",
+    "-fscript.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l",
+    "70",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "c733f919f7a3eeb3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -170320,6 +196583,54 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "0,5p",
+    "--expression=s/a/A/",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l0",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "c85f3ea5ec6e40c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -170440,6 +196751,49 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "y",
+    "--expression=s/a/A/",
+    "-fmissing",
+    "-i",
+    "-l1",
+    "--line-length=2",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-z",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ca739a1f2c0cd2e3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -170525,6 +196879,53 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "4379e15de5d85b9e4ca0b6382d6db243daca6b372e1923a10e595b435db4d2f0",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "1R b.txt",
+    "--expression=s/a/A/",
+    "-fdir",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "-r",
+    "-s",
+    "--unbuffered",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ccf214838382cc60",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "4786eb617cea7ec81dddf42a6ab0e1f74559941b63a6102f159b3f58cf0f71b3",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 4,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -170572,6 +196973,103 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--quiet",
+    "-e",
+    "0p",
+    "-fmissing",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--line-length=2",
+    "-E",
+    "-s",
+    "--null-data",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "cd252cfa09e7ac5e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/\\(\\([a-z]\\)[0-9]\\)/[\\1|\\2]/",
+    "--expression=p",
+    "-fscript2.sed",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "cdd419ebe419f2ff",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "e7a8c711e4566c44bbdee8d875d5d7365cdb7531f82a32dd78640c9f3ed157bd",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-n",
     "--quiet",
     "-e",
@@ -170608,6 +197106,287 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "c54a84ea2e7ca893f5742fcca12ab17ee12dc673f64a1b668dc91751bf6f2271",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "2,/a/!s/^\\`aa\\{,2\\}/X/p",
+    "--expression=s/a/A/",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-lx",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ce4cc382115a3174",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "5a8325c27ddff7dac4df11ad3a6d3bbe8d9068ab1f9dc388f5c83fce0a2842db",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "7b30479a3a8b3bb21213e818c250257c9780145d4c4e8b21aaa852279d9967c9",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "1{r b.txt\na APPENDED\n}",
+    "--expression=$d",
+    "-fempty",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l10",
+    "--posix",
+    "-r",
+    "--sandbox",
+    "-u",
+    "-z",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "cfed854e3f4a3682",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "721f1e5ca30180871d62290fac28ee6a79b5f38d0c4aa514381b9fa6057992b2",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "--expression=s/a/A/",
+    "-fdir",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "--line-length=2",
+    "--separate",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d05d3f52e6dd5fe2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "d22006420ecb53f10892067922e587bcdd9b3074ef8153fbc202fa6b646d6668",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "0,/a/!q",
+    "--expression=$d",
+    "-fmissing",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l70",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d163a139dd32226b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/\\(a\\)\\(l\\)/\\u\\1\\U\\2\\E!/",
+    "--expression=s/a/A/",
+    "-f",
+    "script2.sed",
+    "--follow-symlinks",
+    "-i",
+    "-l10",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "-s",
+    "-u",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d1937a4f209b3438",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "a1281f08673b7ca7a01bb550c9ad4a934672b1603a508f36fb9b4a54d33898ff",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "a",
+    "--expression=$d",
+    "-fscript.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "--in-place",
+    "-l10",
+    "-E",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d212746a800fc8bd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -170741,6 +197520,95 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "0,/a/!s/\\`a[abc]\\{2\\}/X/w out",
+    "--expression=s/a/A/",
+    "-fmissing",
+    "-i.bak",
+    "--in-place",
+    "-l70",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "-s",
+    "--separate",
+    "-u",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d2ea13691970e0e5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "397ea40ceeed47fe0db70521e592b79de1c46c21aca9427acea0f91d62df8ba0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "/a/,$!N;1,$F",
+    "-fscript.sed",
+    "-i",
+    "-l",
+    "70",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d3145411bb378333",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "be338b08d9b3e200c7deac7fbfe103fc6de25b37ee3106c50c86fde0358c3816",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "3850947a8e0d794aa428086cdafdc5c84e1c38a49597da7e629823594ed497fa",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -170784,6 +197652,152 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "954b44b8429dd865bc0558e46f8256b5520484bb5db8d5c39be7e5c56caca3d3",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "/a/,$!N;1,$F",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l1",
+    "--posix",
+    "-E",
+    "-s",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d3f585a00d7e55c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "e66d0ff4beeae6b3290c134e6399b52cea0108d773732fd91a75db340b13b642",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "22bbea709f518adf7ecd07c3edd3e4d98c7c6575da3f2fa5d5e6159be8b864c0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "l 0",
+    "--expression=s/a/A/",
+    "-f",
+    "dir",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l70",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "--sandbox",
+    "-u",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d430989e59c69cae",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "842af8f77770dca46dc520438bd147d7690d484fb2c8449feb0d52518efbbedb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "cbc98cd7c42189dca2d08760b073484fbf5095c4f6422f6dab56bf864207af63",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/\\(a*\\)*b/X/",
+    "--expression=p",
+    "-f",
+    "script3.sed",
+    "--in-place",
+    "-l0",
+    "--posix",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d4497c98b07067fd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "ea6b2a73890d454738b1cc940edfb1f10b79d584229555bdafb85cfb02e5cdff",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -170867,6 +197881,55 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "913a3a8b1b969b2bf8aae6218ca1b7b37e93960959c01b0e230ae69ee3b3e874",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "l",
+    "-fscript.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l1",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d6aae8028552faee",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "840eab10d42419e596d64718278d599870e694dc683efe6c6fa37ecb759e8838",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 4,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -170902,6 +197965,51 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "0~2s/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
+    "-fscript3.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l",
+    "x",
+    "-r",
+    "-s",
+    "--unbuffered"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d6db3d2352263097",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -171025,6 +198133,56 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "/a/,+0w out",
+    "--expression=s/a/A/",
+    "-fmissing",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "10",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d766e7879ed352d3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -171064,6 +198222,53 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "s/a/echo X/e",
+    "--expression=$d",
+    "-fdir",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l10",
+    "--line-length=2",
+    "--posix",
+    "-E",
+    "--separate",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "wide"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "da798300aa4b2b4a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "64f0a1d501225501048d10bc62b68085f3b95143ed7a02aeab4c521ae19fc69d",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -171160,6 +198365,147 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "77765b45eb98499467c1b666b7de59b49260946a05fe7a822edf0cc705c08a9a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "/a/,+0w out",
+    "--expression=p",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "-i",
+    "--in-place=.bak",
+    "-l70",
+    "--posix",
+    "-s",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "db78c7cc36c58522",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "eb0a555c9efa1d32e9beaec02fa79199e6d448811d5e521fcb232d20ef8dfd0a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "s/a/echo X/e",
+    "--expression=p",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-l0",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "dbeac0f17d4e8f88",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a234ca2a238154b03f9ccf398d3cb9f8cc233a6a03ca266cf0de93fd7efe6a34"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "1e echo hi",
+    "--expression=p",
+    "-fscript.sed",
+    "--follow-symlinks",
+    "--in-place",
+    "--in-place=.bak",
+    "-l2",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--unbuffered",
+    "--null-data"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "dcc8c38efec148e7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -171330,6 +198676,195 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "32e8a540fda3caf031d7414bb2c4ad77380422f733f4d9d312f4f1de6074ce1d",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "--expression=s/a/A/",
+    "-fscript2.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "de1e5687edfdec60",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "l 5",
+    "--expression=p",
+    "-fscript3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-l70",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "-z",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "de304ecf1a8edaa7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "0~2s/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
+    "-f",
+    "empty",
+    "--follow-symlinks",
+    "-i",
+    "-l10",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "-z",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "df111d6454c80932",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "ebd398b20450f54deaae22638a371a5c73571ba2632e1ab4aaa8a9719694ee7f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "/a/,/b/!s/^\\sa/\\t/3g",
+    "--expression=p",
+    "-fscript3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-l",
+    "1",
+    "--posix",
+    "-E",
+    "-s",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "missing"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "dfd68c1c0c82c26f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -171415,6 +198950,97 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "6242add047a6eba94c5e17c54c959c85d41fa49a5fb12f5607761a83f377f387",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "1,$s/^\\`a.*$/\\U&/w out",
+    "--expression=$d",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l2",
+    "--line-length=2",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e01ea24364be9412",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "f2e72abd063666791b5c6a1826b6cd809ee542db0bf658bbec17823784916e90",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "y",
+    "--expression=p",
+    "-f",
+    "missing",
+    "--follow-symlinks",
+    "--in-place=.bak",
+    "-l10",
+    "--line-length=2",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e04db513c32a301f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -171506,6 +199132,52 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "1e echo hi",
+    "-f",
+    "script2.sed",
+    "-i",
+    "-i.bak",
+    "-l10",
+    "--posix",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--null-data",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e145848d39eeab91",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "274fe196eadd1607addd465889e7b07e8a91a09d0f13964cf2f82dab88fafa74",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--silent",
     "-e",
     "s/\\(one\\):\\(two\\)/\\2:\\1/",
@@ -171539,6 +199211,54 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r267",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "85f397830b233ddba9ad01d186c8483f908d4a64735f8d695b9a3717e14774be",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "1R b.txt",
+    "-f",
+    "script2.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l",
+    "1",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "-z",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e3abf57dd9b6b1c0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "eb31f93c99dc2cd4cf3c1493a7b799b3fbd3317b884ae95de61cea5f15780c75",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -171586,6 +199306,57 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "7f45fd6635d2d854b7f29519024af98ea7aafa7e374c8f47a0c786a9450a0c02",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "1F",
+    "--expression=s/a/A/",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "-l",
+    "70",
+    "--posix",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "--null-data",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e597fd5b1779b8c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "428555f7a91527940e4b92688b301100cdfe33d42eb4742ff2e9f15bb2a8990f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -171624,6 +199395,103 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "s/\\(a\\)\\(l\\)/\\u\\1\\U\\2\\E!/",
+    "--expression=p",
+    "-f",
+    "script3.sed",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "--separate",
+    "--sandbox",
+    "-z",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e802c7add98fa66c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "faa38fdad94e092af45573d81013b0aa25fdab4c89b1dceab8322c6c5d21fe00",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "65dba152a141f360035fa8695ce7085e6b025ab4cd32731f84e6fb03cf6e6161",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "R b.txt",
+    "--expression=$d",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "-l",
+    "2",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "-z",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e8224e25c952f194",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "54402b02be578b7d804cfcddc8fdfac2b005b3c94e95de17e8cd7a4ed70b3654",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -171653,6 +199521,186 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "6c9797929de5a43484a0516ad157ec16513c39206e0deffdb0d2eb80da0c38ae",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/alpha/X/w /dev/stdout",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "2",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--null-data",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e90fcdf3cad51ee2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "579e06cce69ec0a956ec45c1fa2ec3c69acb1185ba6d448b9d806fa7d58b70c6",
+   "status": 0,
+   "stdout": "289c85e9a8debb248f726b945f0a7a65c1e8b721f79e37f944d5fa3e662362fb"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "0,/a/!q",
+    "-f",
+    "missing",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "x",
+    "--posix",
+    "-E",
+    "-u",
+    "-z",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e930a843f6b837ef",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "9012eecd2af32853433135a7fad037dc23d68909c5b2e631ca3513192614aad2",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "F",
+    "--expression=s/a/A/",
+    "-fscript.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place=.bak",
+    "-l",
+    "70",
+    "--posix",
+    "--regexp-extended",
+    "--separate",
+    "--unbuffered",
+    "-z",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_words",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e953a1a8017c95b5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9a4293b185a2344752192313314241b6566c8732ad4cf73db885ebda331c770f",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "02897dceeb9b4e49fb3f876c82084b8afc511178157b8484f2ce2a8d478d2a28",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "-e",
+    "3~0s/\\(a\\)\\1//2",
+    "-i.bak",
+    "-u",
+    "--sandbox",
+    "-n",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "e954bc28da1b0472",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -171738,6 +199786,137 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "1ca85c5edc4036a45ff83c20fd88af41b8071810381d89a462d82d5fa61f14a4",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--follow-symlinks",
+    "-e",
+    "/alpha/,+1p",
+    "-e",
+    "1F",
+    "-z",
+    "--silent",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ea5f14b1fb79b6e5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "08a641d438232cfb7a4b5304055facacdad7272eb589bef2409ff2140730f935",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "--expression=p",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "-i.bak",
+    "--in-place",
+    "-l70",
+    "--line-length=2",
+    "-E",
+    "--regexp-extended",
+    "-u",
+    "-z",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ebcbe1c3996f108a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "/A/Is/^\\(a\\|bc\\)/<\\1>/3g",
+    "-fscript.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "-l1",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ebfcfe5b8b5e95c5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "00d671de3061fb637def868cbb7055f7b0bf1272fe21f96ec574159777b01d6e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "a957e02741736cc969acb373e81e6616b9924bdc87d3815f826e31a0c178ce8d",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -171788,6 +199967,50 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--silent",
+    "-e",
+    "s/a/b/pp",
+    "--expression=p",
+    "-fmissing",
+    "-i",
+    "--in-place=.bak",
+    "-l10",
+    "-E",
+    "-r",
+    "-s",
+    "--sandbox",
+    "--null-data",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ed6a580bcc56aa44",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-n",
     "--quiet",
     "--silent",
@@ -171823,6 +200046,138 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "581aca2199ce0d3c6edea803183fb272de0e7f3161f1f7cd42a05eac7c1def9c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "r missing",
+    "--expression=s/a/A/",
+    "-fdir",
+    "--file=script.sed",
+    "-i",
+    "-l",
+    "2",
+    "-E",
+    "-r",
+    "--separate",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "eddc02270ce63462",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "f240c827df43442f015cc09617dc04476a2fcb52dc753329ab278bffc9fc5306",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--posix",
+    "--follow-symlinks",
+    "--in-place",
+    "-e",
+    "3Q",
+    "-z",
+    "--sandbox",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ee8d2b7e97141b6d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "0~2s/\\sa[^a]\\(a\\|bc\\)/<\\1>/2p",
+    "--expression=s/a/A/",
+    "-fscript2.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l2",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ef0a56cabaaddad6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "16e42b25db710d1be64090d139f59ecbd0b46463abc354dc7401763897f23907",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -171939,6 +200294,242 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "ee85c300d10e56701c0136faa98098d8fa198fc5ebd23a77970ba7a1c1f9216e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "/a/,$!N;1,$F",
+    "--expression=s/a/A/",
+    "-f",
+    "script3.sed",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "0",
+    "-E",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "--null-data",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f2180cf34b41affb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "f7fd51593ba8300e74d568794910c0cc8366aa4d17ec0df7e8b020067d3da644",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/zzz/X/w out",
+    "--expression=s/a/A/",
+    "-f",
+    "missing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l",
+    "0",
+    "--posix",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f286ae2adbcb4429",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "db81fc2adeee35a8dae56d9984b654f1b1e34a31e9779e6064ed6acaf69449d3",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "--expression=s/a/A/",
+    "-fscript2.sed",
+    "--in-place",
+    "--line-length=2",
+    "--regexp-extended",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f2a4788a7a25e3fe",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "204d89738c9baba37bf1ac9af3b3b35aa76b365fc40823b7c772e357ba46fc39",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-e",
+    "a",
+    "-f",
+    "script.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l70",
+    "--posix",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "-u",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_backtrack",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f2dd4f5931a1eb5a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "be420dc666891ed5a6cb947d495784ca2977dc0a7059f9ad83c5f3805fcc2d04",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "y",
+    "--expression=s/a/A/",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "-i",
+    "-i.bak",
+    "--in-place=.bak",
+    "-l2",
+    "-s",
+    "--null-data",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f334496961e3a5f7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -171984,6 +200575,55 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "s/a/b/x",
+    "--expression=s/a/A/",
+    "-fmissing",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "1",
+    "--line-length=2",
+    "--posix",
+    "-s",
+    "--separate",
+    "--null-data",
+    "regex"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f3d00dc1606be649",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -172020,6 +200660,56 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "--silent",
+    "-e",
+    "/a/,/b/s/ca\\{1,2\\}[*]/X/e",
+    "--expression=$d",
+    "-f",
+    "empty",
+    "--file=script.sed",
+    "--in-place",
+    "-l",
+    "10",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "--null-data",
+    "link"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_regex",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f460a91e46f7d92a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "5735766973ee8a88d8ee770caa0c9cc9c6b49974223c37a0fd086396ee93c740",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -172104,6 +200794,140 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/a/X/w out",
+    "--expression=s/a/A/",
+    "-f",
+    "missing",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l1",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f5554d3b12791b57",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "9617d368359d415183c7cadca3844166f78302283bc0a2225935a8a951fb5c9b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f5862f22d0630389ff7a88d62655500130024bd5cc3df668d6b4fc8b54a3d725"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--expression=p",
+    "--regexp-extended",
+    "-r",
+    "--posix",
+    "-e",
+    "R b.txt",
+    "fifteen"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f57f71e801a0a492",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "/a/,/b/s/ca\\{1,2\\}[*]/X/e",
+    "--expression=p",
+    "-fscript3.sed",
+    "--follow-symlinks",
+    "-i",
+    "--in-place",
+    "-l70",
+    "--posix",
+    "-E",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--null-data",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "f7836389a047d005",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -172310,6 +201134,101 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "697fdbea869c067cf55a51265c2eb5a8eb5d9f3d73aca1a9b20d04c7febea895",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/(a|ab)(b|)/[\\1][\\2]/",
+    "--expression=$d",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "-r",
+    "-s",
+    "-u",
+    "-z",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "fc93fe9c8342eb6e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "GNU sed compiles each -e and -f where it stands in argv and names the expression and the character of a compile error; this reads every script first and refuses it as a whole, so a later unreadable -f is what gets named instead.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--quiet",
+    "-e",
+    "1,$s/c\\(a\\)\\1/<\\1>/2",
+    "--expression=p",
+    "-fscript.sed",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l1",
+    "-E",
+    "-r",
+    "-s",
+    "--separate",
+    "--sandbox",
+    "--unbuffered",
+    "--null-data",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "fca31864c5824a07",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -172344,6 +201263,52 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r266",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--silent",
+    "-e",
+    "e",
+    "-fempty",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "10",
+    "-E",
+    "-r",
+    "--regexp-extended",
+    "--sandbox",
+    "-u",
+    "-z",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "fd026e967e0f6a8d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -172505,6 +201470,106 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--silent",
+    "-e",
+    "s/\\(al\\)pha/\\1/",
+    "--expression=$d",
+    "-f",
+    "script.sed",
+    "--file=script.sed",
+    "--in-place=.bak",
+    "-l",
+    "10",
+    "--line-length=2",
+    "-r",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "-u",
+    "--unbuffered",
+    "-z",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "fe0f4ea8e729da17",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--silent",
+    "-e",
+    "s/\\`a/a\\\\b/e",
+    "--expression=p",
+    "-fscript3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i.bak",
+    "--in-place",
+    "--in-place=.bak",
+    "-l70",
+    "--line-length=2",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "--separate",
+    "--null-data",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "fe314f12778471e2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "210f9f90f2e67b5e483212779c6fa1775697b296fb095784d2c607b6d8c86f1b",
+   "status": 4,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
    "effects": "17e6ce1bad5d81784c734a3c1e00f3e477db86f1494593eee4bc4bbec38cbb17",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -172534,6 +201599,55 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r268",
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "3180385f920a2edc2b4d3b8da9b4c43c8cee36519de53dcfe4a2c0a57f77bb0e",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "1{a one\nr b.txt\na two\n}",
+    "--expression=s/a/A/",
+    "-fscript3.sed",
+    "--file=script.sed",
+    "--follow-symlinks",
+    "-i",
+    "-i.bak",
+    "--in-place",
+    "-l",
+    "1",
+    "--posix",
+    "--regexp-extended",
+    "-s",
+    "--sandbox",
+    "--unbuffered",
+    "--null-data",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "ffbf1547e4fb1ffb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sed's wording for a script or an input it cannot open, and what it leaves behind when -i is refused, differ from GNU's.",
+  "reference": {
+   "effects": "5154e59ad645ed2c9f325de909b424f0bfe3fb2bb05dc00a25d8ca4109e6f6e6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sed"
  },
  {
@@ -172583,6 +201697,44 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-z",
+    "-k",
+    "1r,1n",
+    "--ignore-leading-blanks",
+    "--check",
+    "--general-numeric-sort",
+    "--zero-terminated",
+    "months"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sort"
+  },
+  "domain": "text",
+  "id": "4a5f1d5e4975caaf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sort names a directory it cannot read in its own words, and -g and --random-source are not implemented.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sort"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--parallel=1",
     "-c",
     "-u",
@@ -172604,6 +201756,81 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r271",
+  "utility": "sort"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-k",
+    "1f",
+    "-u",
+    "--reverse",
+    "--check",
+    "--general-numeric-sort",
+    "-b",
+    "repeats"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_sort_human",
+   "tier": "pinned",
+   "utility": "sort"
+  },
+  "domain": "text",
+  "id": "55b1637bec769d67",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sort names a directory it cannot read in its own words, and -g and --random-source are not implemented.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sort"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--parallel=1",
+    "--check",
+    "--random-source=/dev/zero",
+    "--dictionary-order",
+    "-z",
+    "-Tdir",
+    "mixed"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "sort"
+  },
+  "domain": "text",
+  "id": "9b3fb65e519b40fc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sort names a directory it cannot read in its own words, and -g and --random-source are not implemented.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sort"
  },
  {
@@ -172708,6 +201935,44 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "31f5c7f10ec32eabe7b98ba703d34693f7b619016e66d0bfab2b0895deff11b7",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-d",
+    "--ignore-case",
+    "--output=out",
+    "-k",
+    "1.2",
+    "-V",
+    "-s",
+    "human"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "sort"
+  },
+  "domain": "text",
+  "id": "c5c959a6b01b9e4b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sort names a directory it cannot read in its own words, and -g and --random-source are not implemented.",
+  "reference": {
+   "effects": "ff00f89c3cc0463990afb4142feffd47dfcb431706178227eb9ec2b853ee2faf",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sort"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "71fe5f003a3b15c50586b78cecf1e4da1447b4a5a3cef9f098702abd951ff3d3"
@@ -172798,6 +202063,44 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r271",
+  "utility": "sort"
+ },
+ {
+  "candidate": {
+   "effects": "ed3508afed150d8a78a4e3b810ff94b17242f83f63889b96965436dd9947088c",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "a.txt",
+    "-r",
+    "--version-sort",
+    "--ignore-nonprinting",
+    "--key=1,1",
+    "-z",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "fields",
+   "tier": "pinned",
+   "utility": "sort"
+  },
+  "domain": "text",
+  "id": "e98c1a3bfd732ab2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "sort names a directory it cannot read in its own words, and -g and --random-source are not implemented.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "sort"
  },
  {
@@ -173046,6 +202349,50 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "f7fc73c23811072275b81b154e556bb679bc224afee064b05a038454b8d9664e"
+  },
+  "case": {
+   "argv": [
+    "-n18446744073709551616",
+    "--lines=3",
+    "-c-0",
+    "-q",
+    "--quiet",
+    "--silent",
+    "-v",
+    "--verbose",
+    "--zero-terminated",
+    "--retry",
+    "-s",
+    "0.5",
+    "--sleep-interval=2",
+    "--debug"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "1ed45db98d15b904",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "81e2a3e6e4af9a586813ec4148136491bafaae7b0044eef3bf82fa743eb420e6"
   },
   "case": {
@@ -173080,6 +202427,48 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r280",
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8f75d916f4e6594b820c9ec054fb8965f2247c3d6adcbc727892dce08c80b2fe"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "0",
+    "-c0",
+    "-q",
+    "--quiet",
+    "--verbose",
+    "--zero-terminated",
+    "--pid=99999",
+    "--sleep-interval=2",
+    "--max-unchanged-stats=2",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "26db6373e2299849",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "tail"
  },
  {
@@ -173190,6 +202579,52 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r280",
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f35fcf5ec9b2a517e5293cd831a7b3229d2b8b4743fc489290890b47ffe23e80"
+  },
+  "case": {
+   "argv": [
+    "-n+2",
+    "--lines=3",
+    "-c",
+    "18446744073709551616",
+    "-q",
+    "--silent",
+    "-v",
+    "-z",
+    "--retry",
+    "--pid=1",
+    "-s",
+    "2",
+    "--sleep-interval=2",
+    "a.txt",
+    "b.txt",
+    "repeats"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "4730622afc61a69f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "tail"
  },
  {
@@ -173376,6 +202811,249 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "81e2a3e6e4af9a586813ec4148136491bafaae7b0044eef3bf82fa743eb420e6"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "--max-unchanged-stats=2",
+    "--pid=1",
+    "-v",
+    "-c-0",
+    "-s0.5",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fifteen",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "a4153de3ed05d12e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4caa3b2878e4dcf11e6c86e400ab149092bf91671197addbb4e2b9d9d75365dd"
+  },
+  "case": {
+   "argv": [
+    "--lines=3",
+    "-c",
+    "-0",
+    "-q",
+    "--quiet",
+    "--silent",
+    "--verbose",
+    "--zero-terminated",
+    "--pid=99999",
+    "-s0.5",
+    "--sleep-interval=2",
+    "--debug",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "a92dad0304de1a1e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f35fcf5ec9b2a517e5293cd831a7b3229d2b8b4743fc489290890b47ffe23e80"
+  },
+  "case": {
+   "argv": [
+    "--lines=3",
+    "-c",
+    "0",
+    "-q",
+    "--quiet",
+    "--verbose",
+    "--zero-terminated",
+    "--retry",
+    "-s2",
+    "--sleep-interval=2",
+    "--max-unchanged-stats=2",
+    "--debug",
+    "a.txt",
+    "b.txt",
+    "repeats"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "b42b6b3a6cb237a0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--bytes=+30",
+    "--quiet",
+    "-c-0",
+    "--debug",
+    "-n",
+    "18446744073709551616",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "c5e2abca8471b33b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "8f75d916f4e6594b820c9ec054fb8965f2247c3d6adcbc727892dce08c80b2fe"
+  },
+  "case": {
+   "argv": [
+    "--lines=+3",
+    "-c",
+    "18446744073709551616",
+    "-z",
+    "-s0.5",
+    "--sleep-interval=2",
+    "--debug",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "c8fbdbc3ba0b1d9a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9843f6ea6461f5a64f7673d2366210d284fe887d84fae673c2531b8867b60aa2"
+  },
+  "case": {
+   "argv": [
+    "--debug",
+    "-v",
+    "--sleep-interval=2",
+    "--zero-terminated",
+    "-n0",
+    "-s",
+    "2",
+    "a.txt",
+    "-",
+    "b.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "ced8d9d8395869ab",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "da8f3044c2ab86a1dc31321f219f0c9858906f26feea2724118dcf445754d9c4"
   },
   "case": {
@@ -173409,6 +203087,122 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r280",
   "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "da8f3044c2ab86a1dc31321f219f0c9858906f26feea2724118dcf445754d9c4"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "-0",
+    "--quiet",
+    "-q",
+    "-z",
+    "--silent",
+    "-v",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "eb820fe56cadee82",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "69b12a0cf3a9ee894eef46e904634777a6b55c6234786bcb168238bdae7ecd26"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "1",
+    "--lines=3",
+    "-c",
+    "-0",
+    "--quiet",
+    "--silent",
+    "-v",
+    "--retry",
+    "--pid=1",
+    "-s0.5",
+    "--debug",
+    "two words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "tail"
+  },
+  "domain": "text",
+  "id": "f14ec13b312b428d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tail's byte and line counts past what the machine word holds, and which files it names under -v when one is missing, differ from GNU's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tail"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--output-error=exit",
+    "-p",
+    "--append",
+    "dir"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "04364e1422c7261c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "97ffbfc587e75c04b499478f9427bee6f9ad84b3944f56954a53fa21ce633fec"
+  },
+  "utility": "tee"
  },
  {
   "candidate": {
@@ -173469,6 +203263,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r281",
+  "utility": "tee"
+ },
+ {
+  "candidate": {
+   "effects": "0c6972ed5eee44ef014a4120ef723a548adfd94e0e63e27588a2aa8f9a8ca016",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-i",
+    "--ignore-interrupts",
+    "-p",
+    "--output-error=exit",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "1cfe766edce30c24",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "f8f054607cc59dce54e115f1c771d4806e5f7aac8b582fbb4e35bcd10acfb47e",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
   "utility": "tee"
  },
  {
@@ -173622,6 +203453,147 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "be1be8ca432ec6997b5a80accbe3835d496fa95342cc835ab5e6c7f000ac30b3",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--append",
+    "--output-error=warn",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "3c4483918fe4b45d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "fc22bb3fa91a0f9c87411bf93ea2573b2c1344c93f3c6cffcb2049cee032163f",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "utility": "tee"
+ },
+ {
+  "candidate": {
+   "effects": "0c6972ed5eee44ef014a4120ef723a548adfd94e0e63e27588a2aa8f9a8ca016",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--append",
+    "--output-error",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "3fe599282f7741f6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "f8f054607cc59dce54e115f1c771d4806e5f7aac8b582fbb4e35bcd10acfb47e",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "utility": "tee"
+ },
+ {
+  "candidate": {
+   "effects": "be1be8ca432ec6997b5a80accbe3835d496fa95342cc835ab5e6c7f000ac30b3",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--output-error",
+    "--output-error=warn-nopipe",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "593ad1f43ce56585",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "fc22bb3fa91a0f9c87411bf93ea2573b2c1344c93f3c6cffcb2049cee032163f",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "utility": "tee"
+ },
+ {
+  "candidate": {
+   "effects": "0c6972ed5eee44ef014a4120ef723a548adfd94e0e63e27588a2aa8f9a8ca016",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "case": {
+   "argv": [
+    "--append",
+    "-p",
+    "--output-error",
+    "--output-error=exit-nopipe",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "67ad831b35f1b65f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "f8f054607cc59dce54e115f1c771d4806e5f7aac8b582fbb4e35bcd10acfb47e",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "utility": "tee"
+ },
+ {
+  "candidate": {
    "effects": "0c6972ed5eee44ef014a4120ef723a548adfd94e0e63e27588a2aa8f9a8ca016",
    "status": 0,
    "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
@@ -173649,6 +203621,77 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r281",
+  "utility": "tee"
+ },
+ {
+  "candidate": {
+   "effects": "0c6972ed5eee44ef014a4120ef723a548adfd94e0e63e27588a2aa8f9a8ca016",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "case": {
+   "argv": [
+    "--append",
+    "--output-error=warn-nopipe",
+    "--output-error",
+    "-a",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "80b91f63217d819b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "f8f054607cc59dce54e115f1c771d4806e5f7aac8b582fbb4e35bcd10acfb47e",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "utility": "tee"
+ },
+ {
+  "candidate": {
+   "effects": "0c6972ed5eee44ef014a4120ef723a548adfd94e0e63e27588a2aa8f9a8ca016",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--ignore-interrupts",
+    "--output-error=warn",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "83ff636e1b05aee5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "f8f054607cc59dce54e115f1c771d4806e5f7aac8b582fbb4e35bcd10acfb47e",
+   "status": 0,
+   "stdout": "a1746ea548862190e1ab639332beeb9496e5a14a5aeaa0e6172d8356e134e08c"
+  },
   "utility": "tee"
  },
  {
@@ -173712,6 +203755,113 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "be1be8ca432ec6997b5a80accbe3835d496fa95342cc835ab5e6c7f000ac30b3",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--append",
+    "--output-error",
+    "--output-error=exit-nopipe",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "bfd9a006bb00ded2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "fc22bb3fa91a0f9c87411bf93ea2573b2c1344c93f3c6cffcb2049cee032163f",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "utility": "tee"
+ },
+ {
+  "candidate": {
+   "effects": "be1be8ca432ec6997b5a80accbe3835d496fa95342cc835ab5e6c7f000ac30b3",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "case": {
+   "argv": [
+    "--append",
+    "-i",
+    "--ignore-interrupts",
+    "-p",
+    "--output-error=warn-nopipe",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "c1a2cf725b214100",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "fc22bb3fa91a0f9c87411bf93ea2573b2c1344c93f3c6cffcb2049cee032163f",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "utility": "tee"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--output-error=exit-nopipe",
+    "-i",
+    "--output-error",
+    "unreadable"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "c4040b643f32d62a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "bbfb79e82216bd2db1ad2c507d44ddf80aeb12f64f9562056afe93aad43154d9"
+  },
+  "utility": "tee"
+ },
+ {
+  "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -173767,6 +203917,42 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r281",
+  "utility": "tee"
+ },
+ {
+  "candidate": {
+   "effects": "be1be8ca432ec6997b5a80accbe3835d496fa95342cc835ab5e6c7f000ac30b3",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
+  "case": {
+   "argv": [
+    "--append",
+    "-p",
+    "--output-error",
+    "--output-error=exit",
+    "out",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "tee"
+  },
+  "domain": "text",
+  "id": "fb6cd2b62ed1f066",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "tee opens the same output name twice and writes through both handles; GNU opens it once.",
+  "reference": {
+   "effects": "fc22bb3fa91a0f9c87411bf93ea2573b2c1344c93f3c6cffcb2049cee032163f",
+   "status": 0,
+   "stdout": "8f28667b7671f818264b25c386a16560a4596f89abfd9167355e587298e4c7d0"
+  },
   "utility": "tee"
  },
  {
@@ -173858,6 +204044,41 @@ PINNED = r"""
   "case": {
    "argv": [
     "-t",
+    "xterm",
+    "-Txterm",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "17873d5debbbfb50",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
+    "-t",
     "ansi",
     "-T",
     "xterm",
@@ -173905,6 +204126,40 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-tdumb",
+    "--terminal=xterm",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "2192b4355a07225b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ul"
  },
  {
@@ -173994,6 +204249,108 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-tdumb",
+    "-Txterm",
+    "-i"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "3a25663e85aaf2f1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-tvt100",
+    "-Txterm",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "3e310990bb6ddddf",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "bogus",
+    "-T",
+    "xterm",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "47d6bf806a789f1c",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
     "-tansi",
     "--terminal=xterm"
    ],
@@ -174010,6 +204367,42 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
+    "-tvt100",
+    "-T",
+    "xterm",
+    "--terminal=xterm",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "4cee448b4c5a9284",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ul"
  },
  {
@@ -174064,6 +204457,39 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "xterm",
+    "-Txterm"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "6aad547803cbcbdf",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ul"
  },
  {
@@ -174156,6 +204582,108 @@ PINNED = r"""
   "case": {
    "argv": [
     "-t",
+    "dumb",
+    "-Txterm",
+    "-i"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "728804552b5fd4f6",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
+    "-tansi",
+    "-Txterm",
+    "--terminal=dumb"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "75457df973504726",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "",
+    "--terminal=xterm",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "771e8c60dd84cca8",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
+    "-t",
     "vt100"
    ],
    "domain": "text",
@@ -174210,6 +204738,146 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-txterm",
+    "-T",
+    "xterm",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "81c4885d74d5262a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "vt100",
+    "-T",
+    "xterm",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "8fdb9ae32461aaa4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "dumb",
+    "-T",
+    "xterm",
+    "--terminal=xterm"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "90f04da46bd13281",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
+    "-tbogus",
+    "-Txterm",
+    "--terminal=xterm",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "9456f63e91564328",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
     "--terminal=xterm",
     "-tvt100"
    ],
@@ -174226,6 +204894,304 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-txterm",
+    "-Txterm",
+    "-i"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "980ebfea2754fbaf",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "ansi",
+    "--terminal=dumb",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "9b40d5e72de3595f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "vt100",
+    "-Txterm",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "a4ace0c9ec523cc1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "",
+    "-Txterm",
+    "--terminal=dumb",
+    "-i"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "a5b3821ca5bb6a77",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-tbogus",
+    "-i"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "becbf5db96528eb5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "bogus",
+    "-T",
+    "xterm",
+    "-i"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "caa84f456e48c1ee",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-tansi",
+    "-i",
+    "--indicated"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "d1d96d73516107ec",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "d2f03a6dc7cddc7a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abba0429e60f1c81e03a5ea579fb3646d314941ce1d78c970598435a26381aff"
+  },
+  "case": {
+   "argv": [
+    "-Txterm"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "d4c656ea3788b79a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ul"
  },
  {
@@ -174255,6 +205221,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r243",
+  "utility": "ul"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "56511fb19799621c7c327992bf94fc3fa049a4dcd22b0d204cc01ce6b3be6605"
+  },
+  "case": {
+   "argv": [
+    "-T",
+    "xterm"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ul"
+  },
+  "domain": "text",
+  "id": "ede30bcdd866ade7",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "util-linux reads its input as wide characters in the locale's encoding and stops at the first byte that is not one; these readers are byte-oriented, have no locale, and pass every byte through.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ul"
  },
  {
@@ -174364,6 +205362,41 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r249",
+  "utility": "unexpand"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e8b352677b78e1880db2522ed5e01b3a65564f067ee1c1b856bc2d264c55b326"
+  },
+  "case": {
+   "argv": [
+    "-t+4",
+    "--first-only",
+    "--all",
+    "-4",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "unexpand"
+  },
+  "domain": "text",
+  "id": "2901bf0743e88581",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the relative and divisor forms of a tab list -- -t +N and -t /N -- are not implemented, so the stops fall where a plain list would put them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f19a86fdfeab428f2a3acee014ee48ddba3179d084228e96cf605a94e69b5fc3"
+  },
   "utility": "unexpand"
  },
  {
@@ -174885,6 +205918,42 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "8298667fcb752143254fe8372ff8c3d0870421eaad2562b0da5104a08ff4bfd1"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "-t",
+    "/4",
+    "--tabs=4",
+    "tabs_part",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "unexpand"
+  },
+  "domain": "text",
+  "id": "d409856a76c3fd59",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the relative and divisor forms of a tab list -- -t +N and -t /N -- are not implemented, so the stops fall where a plain list would put them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c476959896a4e9c27940e5386d0c09f39fbe230a9aa883d5bf6bbbebbe44532f"
+  },
+  "utility": "unexpand"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "5de1534a1cc52bc285303f12e98cf903dfc31fcbd28ab1eda3cba0593a4fcf6c"
   },
   "case": {
@@ -174912,6 +205981,118 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r249",
+  "utility": "unexpand"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8298667fcb752143254fe8372ff8c3d0870421eaad2562b0da5104a08ff4bfd1"
+  },
+  "case": {
+   "argv": [
+    "--first-only",
+    "-t/4",
+    "--tabs=4",
+    "tabs_part",
+    "tabs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "unexpand"
+  },
+  "domain": "text",
+  "id": "dd5361ed64cf8bfa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the relative and divisor forms of a tab list -- -t +N and -t /N -- are not implemented, so the stops fall where a plain list would put them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "75822b9cde62357d2b6ee9109eb8932e2bdbd75416190d5a6ccb9a0f16e657af"
+  },
+  "utility": "unexpand"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "b87f1ac982b8289c3531dd67345beb1ce24c12f114d67824e32f3296ffe5ffab"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--all",
+    "--first-only",
+    "-t",
+    "/4",
+    "--tabs=4",
+    "-8",
+    "-0",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs_wide",
+   "tier": "pinned",
+   "utility": "unexpand"
+  },
+  "domain": "text",
+  "id": "e202cd1e88add902",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the relative and divisor forms of a tab list -- -t +N and -t /N -- are not implemented, so the stops fall where a plain list would put them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5a284f1d5e0a0c06156aa7f0f0ee8320f9dee5e0840ace5cbec53f1bae6dfa75"
+  },
+  "utility": "unexpand"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a7d39c086a1006928e36e5296780afc4ba96e14623e1fb8ce1cf672f8b857494"
+  },
+  "case": {
+   "argv": [
+    "--first-only",
+    "-4",
+    "--all",
+    "-t",
+    "+4",
+    "-0",
+    "tabs",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_tabs",
+   "tier": "pinned",
+   "utility": "unexpand"
+  },
+  "domain": "text",
+  "id": "e4d1cc529b1ea456",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the relative and divisor forms of a tab list -- -t +N and -t /N -- are not implemented, so the stops fall where a plain list would put them.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ecb4146e91e29882d2ee22c13313b9010b6fd90874f3396c2d57d56369bfb0f6"
+  },
   "utility": "unexpand"
  },
  {
@@ -175132,6 +206313,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "c24da2152f927a42db4cd9da2ee0c8abf4eaf64cbb234ea79496a025aae21a92"
+  },
+  "case": {
+   "argv": [
+    "--group",
+    "--group=prepend",
+    "--skip-fields=1",
+    "-w",
+    "3",
+    "--zero-terminated",
+    "--skip-chars=1"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "uniq"
+  },
+  "domain": "text",
+  "id": "545850507fafa63b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "uniq's --group beside --skip-fields and --skip-chars separates groups differently from GNU.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ae0489f7237ee7e4a37b24cb78d90820a7640de52f033401feab11d6da681c16"
+  },
+  "utility": "uniq"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "1794936f874bd684a0afc0f2a1eddc033b470b349aa6f1d275b31fd52577baf8"
   },
   "case": {
@@ -175193,6 +206411,44 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "97a11cc539adda63a25b674d4a186355fbbe1ec4c5408cdf131a05fb8e9f4da6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--skip-fields=1",
+    "--skip-chars=1",
+    "--check-chars=2",
+    "-D",
+    "--unique",
+    "--ignore-case",
+    "repeats",
+    "out"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "uniq"
+  },
+  "domain": "text",
+  "id": "7bee8154841045b4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "uniq's --group beside --skip-fields and --skip-chars separates groups differently from GNU.",
+  "reference": {
+   "effects": "544f6c893ebfe3441b3fd061fc7cc115bd7fb5e611c5d559d3f012b6c30641a5",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "uniq"
+ },
+ {
+  "candidate": {
    "effects": "829b734ba8bc589195b53946383949e3ef622f427908aa2195c4740d915b560d",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -175226,6 +206482,117 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r283",
+  "utility": "uniq"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "befebbffd48ab02abab1c250cd5791535b20e95234c2091197c7ac1cd38459da"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--all-repeated",
+    "--unique",
+    "-D",
+    "-w0",
+    "--ignore-case",
+    "unsorted"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "uniq"
+  },
+  "domain": "text",
+  "id": "918dc6c39307d3bd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "uniq's --group beside --skip-fields and --skip-chars separates groups differently from GNU.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a0974435c63fb55b90214e8e650944168f5f2a8e324102edb811d5e326f4cb8a"
+  },
+  "utility": "uniq"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e157ffa3352484b84ce73cfbbf908af876af4cd4af40716e6cf60afaaf4783dd"
+  },
+  "case": {
+   "argv": [
+    "--all-repeated",
+    "--skip-fields=1",
+    "-d",
+    "--ignore-case",
+    "--skip-chars=1",
+    "--unique"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_uniq_edge",
+   "tier": "pinned",
+   "utility": "uniq"
+  },
+  "domain": "text",
+  "id": "983c3cce022d38ec",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "uniq's --group beside --skip-fields and --skip-chars separates groups differently from GNU.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3ebeaa46e6557d167df1f279c3f7c014d15ed45ad3e0ad1e0b68981ab6fb7fdc"
+  },
+  "utility": "uniq"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "12f62c8da78f548c93a3ee5006c4fe496e6f029c0ddc904e05e9c4ee01860add"
+  },
+  "case": {
+   "argv": [
+    "--all-repeated=prepend",
+    "--skip-chars=1",
+    "-D",
+    "--check-chars=2",
+    "--ignore-case",
+    "-d",
+    "repeats",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_uniq_edge",
+   "tier": "pinned",
+   "utility": "uniq"
+  },
+  "domain": "text",
+  "id": "ae7bfdacbbd05e7e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "uniq's --group beside --skip-fields and --skip-chars separates groups differently from GNU.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "71cfc3c8899993974f1a943f85c7ec2a5b22504b67bf4888ebe9991da8963c0b"
+  },
   "utility": "uniq"
  },
  {
@@ -175288,6 +206655,43 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r283",
+  "utility": "uniq"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2fa9fb431b23c9fa0e2e5477fa3c03088fc8364a1f9af7fc88a551e9cb711ed3"
+  },
+  "case": {
+   "argv": [
+    "-D",
+    "-u",
+    "--check-chars=2",
+    "--unique",
+    "--ignore-case",
+    "--repeated",
+    "mixed"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blank_runs",
+   "tier": "pinned",
+   "utility": "uniq"
+  },
+  "domain": "text",
+  "id": "dea18c1838d7e8c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "uniq's --group beside --skip-fields and --skip-chars separates groups differently from GNU.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "cc5273fc5b3a71d7e3d9afb15aac72974d6138b4729e89ba62ad3102d560e1fc"
+  },
   "utility": "uniq"
  },
  {
@@ -175359,6 +206763,44 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r284",
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9448ec92867438017a21c085da109760b226359c403b2dcb7e428d86477c59c8"
+  },
+  "case": {
+   "argv": [
+    "-l",
+    "--lines",
+    "-L",
+    "--max-line-length",
+    "--words",
+    "--debug",
+    "--total=o",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "070eb4512df38ff4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "febf7cc1970b74388403d9589ded96a79c0abbdf7c51186a4cc976d4a2352e64"
+  },
   "utility": "wc"
  },
  {
@@ -175478,6 +206920,44 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "1825cfb61f69da5f59a4726ab679091152fa9f6e363be917344848a36990f986"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bytes",
+    "--chars",
+    "--max-line-length",
+    "--words",
+    "--debug",
+    "--total=only",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_names0",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "11aa14dc0794db8b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "409f9194783d411db3b307b90906bbdc0327b0ce81e90a5d0e001dc27a4d7d08"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "407b3a997a266c0e517aeac4bb6e85826422900df67a5ef9d3e3b7607ea50c8b"
   },
   "case": {
@@ -175561,6 +207041,46 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "191c1206785dcf9c457a33dbf42864079c427dea1018d936e07f96c882a77d10"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bytes",
+    "-m",
+    "-l",
+    "-L",
+    "--max-line-length",
+    "-w",
+    "--debug",
+    "--total=never",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "1bc9552558484427",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "2f5bf2ce4d8f97adf4aea1aefbf047923dae7268468fcfe234f2e0c412d14ae0"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "09cd2928d9cfce1c832f0a5bb36eb368c5b45f61163d410e84fee3fa5e9efdf6"
   },
   "case": {
@@ -175586,6 +207106,42 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r285",
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bffa2fd7b442af1c6ff6fdbb7184b3e2b06361972ea81368be8330a3f8f1562d"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "-l",
+    "--lines",
+    "--debug",
+    "--files0-from=names0",
+    "--total=only"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "2209476d6753b13b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "wc --debug names the hardware path the reference took to count its bytes; there is no such note here.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bffa2fd7b442af1c6ff6fdbb7184b3e2b06361972ea81368be8330a3f8f1562d"
+  },
   "utility": "wc"
  },
  {
@@ -175688,6 +207244,44 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "3adec07f0a6293bf0357baca0e33d9c933eb2427c65a5ffedd10e944ee28cbe4"
+  },
+  "case": {
+   "argv": [
+    "--lines",
+    "--total=never",
+    "-m",
+    "-w",
+    "--words",
+    "--max-line-length",
+    "-",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "2bacd403fd63a33b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "a341a1d68f701b3d261cb50614cb63c5b9c784b1db95d17fc857bbb35963f13b"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "515f09cd02ddae70ef5917549cb05bf76e5691092ff9b4e3b0475c7adc30ab57"
   },
   "case": {
@@ -175712,6 +207306,43 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r284",
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "fec15dcbb67703e888c73e011255c3f3eba68f8f59af90eb67c50aba14463245"
+  },
+  "case": {
+   "argv": [
+    "--words",
+    "-l",
+    "--max-line-length",
+    "-w",
+    "--chars",
+    "-L",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "2cc61a8b0544acbc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ac56b34b2ef0b8ada60458561297ae7aad879213169152c061c37090f9f85892"
+  },
   "utility": "wc"
  },
  {
@@ -175806,6 +207437,37 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "3662b331749485619d80e27efab609236085ef5f2fe17766cbed6c16775f6e93"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "3919db8a332dd7ec",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d50e9bed3b1e392f904571c47855734f804de4cfa38d65a52bd5a36bf1bb8079"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "3a83f6c968f39638826b17acc038b8cd5e264b86fa90235ca6116c9ee7e56570"
   },
   "case": {
@@ -175867,6 +207529,81 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "3cdb93cf02d9a9a5dfaa3e3465c5b290cd1a22cc3913b44e850f0fca1207ea33"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--chars",
+    "-l",
+    "-w",
+    "--debug",
+    "--total=auto",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "526a31e99ff7b7b1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d80f842e50b5277c8de7542f3d7d2fecec355b2c53ae1d90aa01f115fa95b1ae"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "955d4172bec2a636c2375bbc992c43f45477505e0ba91f2b84dfbbe1fa6921bd"
+  },
+  "case": {
+   "argv": [
+    "--bytes",
+    "--chars",
+    "--lines",
+    "--max-line-length",
+    "-w",
+    "--words",
+    "--total=o",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "53faf28c51a5d099",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5121fbcfde7f65aa5bc10c426d3ce1725f1c6cdd2afccbbbc3757cf06655da54"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "3662b331749485619d80e27efab609236085ef5f2fe17766cbed6c16775f6e93"
   },
   "case": {
@@ -175918,6 +207655,80 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r284",
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f9bdccaae51b10d72cec68d73322449cab598cebe69fe89ce3b3e63ca72ece58"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "--chars",
+    "-l",
+    "--max-line-length",
+    "--words",
+    "--total=o",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "6818a9ef498f0582",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "239ffa10a3aabe5b9ca49987a087ae3fd7049d53f0df01a2258dc4bd0e6ed257"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "40012cb10008dfabbe5255b3c43f21621f7a633b0149dd054f577a7a89c684c0"
+  },
+  "case": {
+   "argv": [
+    "--debug",
+    "-c",
+    "-l",
+    "-m",
+    "--lines",
+    "-",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "6b64227a6d9f15ca",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "wc --debug names the hardware path the reference took to count its bytes; there is no such note here.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "40012cb10008dfabbe5255b3c43f21621f7a633b0149dd054f577a7a89c684c0"
+  },
   "utility": "wc"
  },
  {
@@ -176007,6 +207818,42 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "1319df6499c3e8e8cab4f4653587ef0387f306c7c227b8528f3bf3442552573d"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "-m",
+    "-l",
+    "--debug",
+    "--total=only",
+    "nonl"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "7530c9016c102250",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "wc --debug names the hardware path the reference took to count its bytes; there is no such note here.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "1319df6499c3e8e8cab4f4653587ef0387f306c7c227b8528f3bf3442552573d"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "3662b331749485619d80e27efab609236085ef5f2fe17766cbed6c16775f6e93"
   },
   "case": {
@@ -176026,6 +207873,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r285",
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "abdfc25034412866f3dbe3659a0e9fe21e4df921ed5c33771d2c1350dbc728e3"
+  },
+  "case": {
+   "argv": [
+    "-",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "7e2366048e6419fe",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "9f7b04f43289ce7d4b89869f50ae042240f80d40f14054e76fb6ca470cb8f743"
+  },
   "utility": "wc"
  },
  {
@@ -176163,6 +208042,37 @@ PINNED = r"""
    "fixture": "text",
    "input_kind": "command",
    "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "84f2a00611b29300",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d50e9bed3b1e392f904571c47855734f804de4cfa38d65a52bd5a36bf1bb8079"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3662b331749485619d80e27efab609236085ef5f2fe17766cbed6c16775f6e93"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
    "stdin": "high",
    "utility": "wc"
   },
@@ -176171,6 +208081,43 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r285",
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6516d810943aa977c19ebad1737e43693dc919d78ff219577646434312e91b51"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "-l",
+    "--lines",
+    "-L",
+    "-w",
+    "--total=only",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65535",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "9451b364dbbf8a2e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7146d45353f1005576dd496fcd336893d3d4cfadb0f1d66d539e68c895c2edd7"
+  },
   "utility": "wc"
  },
  {
@@ -176196,6 +208143,108 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r285",
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6e4f7c6c1a1ece03356011cbaa95a3f4ec9f5af0ea21eb90eb0b4330aafb6baf"
+  },
+  "case": {
+   "argv": [],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "9e7e8dd21d94b01e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "87f73f2145ff9a04353ece5f6216ba9cfe90fc1b151426f7c4fef377f70fedca"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ef974d05ca091e017cc8f4bfeb012103a1c9fb75dc92b5a5369217ba375c25aa"
+  },
+  "case": {
+   "argv": [
+    "--bytes",
+    "--chars",
+    "-l",
+    "--debug",
+    "--files0-from=names0",
+    "--total=always"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul_lines",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "a01562356af402e5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "wc --debug names the hardware path the reference took to count its bytes; there is no such note here.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ef974d05ca091e017cc8f4bfeb012103a1c9fb75dc92b5a5369217ba375c25aa"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8021a8013afe318c5d69cab4bc6010709e8a000b7609639b0a06908fe95549d5"
+  },
+  "case": {
+   "argv": [
+    "--bytes",
+    "-m",
+    "--chars",
+    "--lines",
+    "--debug",
+    "--total=auto",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "a32e64def39741ab",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "wc --debug names the hardware path the reference took to count its bytes; there is no such note here.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "8021a8013afe318c5d69cab4bc6010709e8a000b7609639b0a06908fe95549d5"
+  },
   "utility": "wc"
  },
  {
@@ -176281,6 +208330,43 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "6516d810943aa977c19ebad1737e43693dc919d78ff219577646434312e91b51"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "--lines",
+    "--max-line-length",
+    "-w",
+    "--debug",
+    "--total=only",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_names0_nonl",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "c0445d78b8ec30ac",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7146d45353f1005576dd496fcd336893d3d4cfadb0f1d66d539e68c895c2edd7"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "fdfaf513584deeb8add00944d5fde6aa6abbfd3691a89130dd35c27921066ece"
   },
   "case": {
@@ -176306,6 +208392,184 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r284",
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6664032c4f83a3ff83ef21aabd71f89e27498d2c1b2f31081d59bb8cc1cd1d87"
+  },
+  "case": {
+   "argv": [
+    "--words",
+    "--lines",
+    "--max-line-length",
+    "-c",
+    "--total=always",
+    "--bytes",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_names0",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "c5b25637a6817086",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "bbe8f4be56bfe99a09b1f5e6a7b68fc27d20be7583ed22077bbc6bfc717ff794"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e601079e8c3329a202ca466dc4fe213a5d348df891418bee9c861be59d88132a"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bytes",
+    "-m",
+    "-L",
+    "-w",
+    "--total=never",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "ca282a7a8ac59c79",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5a595b0d43c40b79f614d8256e5a2779e81c7b7cdfd0642fa2f60db1b1e5b6fd"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "af46ef622aa1bd364eb798e9196975a18a2ded7e791cfe4c986031d5285035b0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--chars",
+    "-l",
+    "--lines",
+    "-w",
+    "--words",
+    "--total=only",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "d0b2dbede60d9e60",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "c977403ffae495b31e88d3e5d4ea23afef8f3426198d12f839c1d2557c674423"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3662b331749485619d80e27efab609236085ef5f2fe17766cbed6c16775f6e93"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "d1f63c22d4c8100c",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d50e9bed3b1e392f904571c47855734f804de4cfa38d65a52bd5a36bf1bb8079"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ef974d05ca091e017cc8f4bfeb012103a1c9fb75dc92b5a5369217ba375c25aa"
+  },
+  "case": {
+   "argv": [
+    "--bytes",
+    "--chars",
+    "--lines",
+    "--debug",
+    "--files0-from=names0"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "deda2e19171e8369",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "wc --debug names the hardware path the reference took to count its bytes; there is no such note here.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ef974d05ca091e017cc8f4bfeb012103a1c9fb75dc92b5a5369217ba375c25aa"
+  },
   "utility": "wc"
  },
  {
@@ -176425,6 +208689,44 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "955d4172bec2a636c2375bbc992c43f45477505e0ba91f2b84dfbbe1fa6921bd"
+  },
+  "case": {
+   "argv": [
+    "--bytes",
+    "-m",
+    "-l",
+    "-L",
+    "--words",
+    "--debug",
+    "--total=o",
+    "binary"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "ebe6eae4c04044e0",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "5121fbcfde7f65aa5bc10c426d3ce1725f1c6cdd2afccbbbc3757cf06655da54"
+  },
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "234e257c511d708078d96a0c057b2360324211c97b7448154f04d91cd05a1434"
   },
   "case": {
@@ -176449,6 +208751,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r284",
+  "utility": "wc"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "f1fbbb07810eac71a392e4f69127bf29faf134b20a8e32db77a7072761322bc1"
+  },
+  "case": {
+   "argv": [
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_utf8",
+   "tier": "pinned",
+   "utility": "wc"
+  },
+  "domain": "text",
+  "id": "ef4ec05359ee5da8",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "GNU counts words with the C locale's wide character classes, where U+00A0 is a blank; this splits on the seven ASCII blanks alone.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "343b2751d3bbf89e0afe180dbdf353f76ae5afbbe9839d756ea8e20530843e3d"
+  },
   "utility": "wc"
  },
  {
