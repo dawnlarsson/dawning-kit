@@ -12857,6 +12857,15 @@ fn shell_ulimit(writer write, string_address input)
                 picked_count = 1;
         }
 
+        //      Reporting or setting each resource named is Bash's; the
+        //      reference shell keeps only the last of them, and answers with
+        //      a bare value that has no name in front of it.
+        if (!shell_bash_compat)
+        {
+                picked[0] = chosen;
+                picked_count = 1;
+        }
+
         if (index >= shell_argc)
         {
                 for (positive at = 0; at < picked_count; at++)
