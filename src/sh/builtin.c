@@ -5462,6 +5462,17 @@ COLD fn shell_set(writer write, string_address input)
                         break;
                 }
 
+                // A lone - also ends the options, and POSIX has it turn off
+                // -x and -v on the way; neither reference keeps it as $1.
+                if (word_is(word, "-"))
+                {
+                        shell_option_letter_told('x', false);
+                        shell_option_letter_told('v', false);
+                        operands = true;
+                        index++;
+                        break;
+                }
+
                 if ((string_is(word, '-') || string_is(word, '+')) &&
                     string_not(word + 1, end))
                 {
@@ -10176,7 +10187,9 @@ COLD fn shell_trap(writer write, string_address input)
                 // Without -p only non-default conditions are listed.  Query
                 // inherited dispositions as well as the explicit table: an
                 // ignored-on-entry signal has never needed a table entry.
-                for (positive number = 0; number < TRAP_NAMES - 1; number++)
+                // Every number a trap can be set on is walked, so a trap on
+                // a real-time signal past the named ones is listed too.
+                for (positive number = 0; number <= TRAP_NUMBER_MAX; number++)
                 {
                         string_address recorded = trap_action(number);
 
@@ -10433,7 +10446,9 @@ COLD fn shell_alias(writer write, string_address input)
                                 alias_written(write, at);
                         }
                         else
-                                answer = 1;
+                                answer = string_report(log_error, 1,
+                                                       "alias: %s: not found\n",
+                                                       word);
                 }
 
                 index++;
@@ -10446,6 +10461,11 @@ COLD fn shell_unalias(writer write, string_address input)
 {
         positive index = 1;
         b32 status = 0;
+
+        // Nothing named is a usage error in both references, not a success.
+        if (shell_argc < 2)
+                return shell_answer(string_report(log_error, 2,
+                                                  "unalias: usage: unalias [-a] name [name ...]\n"));
 
         while (index < shell_argc)
         {
@@ -10473,7 +10493,8 @@ COLD fn shell_unalias(writer write, string_address input)
                 // A name that was never an alias is something the script asked
                 // for and did not get, which POSIX has this say so.
                 if (at >= alias_count)
-                        status = 1;
+                        status = string_report(log_error, 1,
+                                               "unalias: %s: not found\n", word);
 
                 if (at < alias_count)
                 {
