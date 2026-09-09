@@ -102,6 +102,13 @@ static bool exec_assignment_promote(const_string name, positive length);
 static b32 exec_unset_prefix(const_string name, positive length);
 static PURE bool exec_special_builtin(string_address name);
 static fn exec_special_error_note();
+static bool exec_child_process();
+static bool job_any_stopped();
+/* Whether the builtin before this one was exit, which is how both references
+   decide that a second exit past a refused one may leave. The dispatcher
+   maintains it, because it is a fact about what ran before. */
+static bool shell_exit_was_previous;
+static bool shell_exit_is_current;
 static fn exec_command_reader_finish();
 static fn exec_input_finish();
 static positive shell_command_reader_depth;
@@ -3911,6 +3918,31 @@ static COLD bool shell_dirstack_index(string_address word, positive count,
         return true;
 }
 
+//      A sign and digits and nothing else is a stack index. Anything else
+//      with one of those signs in front is a number the reference will not
+//      read, and it says so and answers two rather than looking for an entry
+//      it was never given the number of.
+static PURE bool shell_dirstack_spec(string_address word)
+{
+        positive digits;
+
+        if (string_not(word, '+') && string_not(word, '-'))
+                return false;
+
+        string_digits(word + 1, address_of digits);
+
+        return digits && !string_get(word + 1 + digits);
+}
+
+static COLD b32 shell_dirstack_number_refused(string_address command,
+                                              string_address word,
+                                              string_address usage)
+{
+        string_report(log_error, 2, "%s: %s: invalid number\n", command, word);
+
+        return string_report(log_error, 2, "%s: usage: %s\n", command, usage);
+}
+
 static COLD fn shell_dirstack_listed(writer write, bool full, bool numbered,
                                 bool lines)
 {
@@ -4019,11 +4051,33 @@ COLD fn shell_dirs(writer write, string_address input)
                 string_address address_to list =
                     shell_dirstack_entries(address_of count);
 
+                if (!shell_dirstack_spec(shell_argv[index]))
+                        return shell_answer(shell_dirstack_number_refused(
+                            "dirs", shell_argv[index],
+                            "dirs [-clpv] [+N] [-N]"));
+
                 if (!shell_dirstack_index(shell_argv[index], count,
                                           address_of wanted))
                         return shell_answer(string_report(log_error, 1, "dirs: %s: %s\n",
                                       shell_argv[index],
                                       "directory stack index out of range"));
+
+                //      -v numbers one entry as it numbers a listing, in a
+                //      field of two so the paths line up past nine.
+                if (numbered)
+                {
+                        p8 written[32];
+                        positive digits = positive_into_string(written, wanted);
+
+                        while (digits < 2)
+                        {
+                                write(" ", 1);
+                                digits++;
+                        }
+
+                        write(written, string_length(written));
+                        write("  ", 2);
+                }
 
                 shell_dirstack_said(write, list[wanted], full);
                 write("\n", 1);
@@ -4038,6 +4092,22 @@ static COLD bool shell_dirstack_move(string_address where)
 {
         bool physical_named = true;
         bool variables_set = true;
+        p8 joined[4096];
+
+        //      A relative name is joined onto where the shell is, which is
+        //      what cd does with it. Handed to shell_cd_try as written it
+        //      became PWD as written, and every listing after "pushd db"
+        //      then read "db" where both references write the whole path.
+        if (string_not(where, '/'))
+        {
+                if (path_join(joined, sizeof(joined), shell_directory, where)
+                        == sizeof(joined) - 1 &&
+                    !path_walk_join(joined, sizeof(joined), shell_directory,
+                                    string_length(shell_directory), where, ""))
+                        return false;
+
+                where = joined;
+        }
 
         return shell_cd_try(where, false, address_of physical_named,
                             address_of variables_set, null);
@@ -4052,43 +4122,69 @@ COLD fn shell_pushd(writer write, string_address input)
         p8 previous[SHELL_DIRECTORY_MAX];
         string_address rotated[SHELL_DIRSTACK_MAX + 1];
         positive index;
+        //      -n moves the stack and leaves the shell where it is; the
+        //      operand is then written into the stack as it was given,
+        //      because nothing ever went there to be named properly.
+        bool stack_only = false;
+        string_address named = null;
 
-        // With no operand the top two are exchanged, which needs something
-        // under the top to exchange with.
-        if (shell_argc < 2)
+        for (positive at = 1; at < shell_argc; at++)
         {
-                if (count < 2)
-                        return shell_answer(string_report(log_error, 1, "pushd: no other directory\n"));
+                string_address word = shell_argv[at];
 
-                memory_copy_apart(rotated, list, count * sizeof(list[0]));
-
-                rotated[0] = list[1];
-                rotated[1] = list[0];
-        }
-        else if (shell_dirstack_index(shell_argv[1], count, address_of index))
-        {
-                if (!index)
+                if (!named && word_is(word, "-n"))
                 {
+                        stack_only = true;
+                        continue;
+                }
+
+                if (!named && word_is(word, "--"))
+                {
+                        if (at + 1 < shell_argc)
+                                named = shell_argv[++at];
+                        continue;
+                }
+
+                //      A lone "-" is the previous directory, which is a
+                //      name and not an index; a sign in front of anything
+                //      but digits is a number pushd will not read.
+                if (!shell_dirstack_spec(word) && !word_is(word, "-") &&
+                    (string_is(word, '+') || string_is(word, '-')))
+                        return shell_answer(shell_dirstack_number_refused(
+                            "pushd", word, "pushd [-n] [+N | -N | dir]"));
+
+                if (named)
+                        return shell_answer(string_report(
+                            log_error, 1, "pushd: too many arguments\n"));
+
+                named = word;
+        }
+
+        if (named && !shell_dirstack_spec(named))
+        {
+                //      A name rather than an index: with -n it goes into the
+                //      stack under the top and the shell stays put.
+                if (stack_only)
+                {
+                        string_address kept[SHELL_DIRSTACK_MAX + 1];
+                        positive used = 0;
+
+                        kept[used++] = named;
+
+                        for (positive at = 1; at < count; at++)
+                                kept[used++] = list[at];
+
+                        if (!shell_dirstack_write(kept, used))
+                                return shell_answer(string_report(log_error, 1, "pushd: directory stack full\n"));
+
                         shell_dirstack_listed(write, false, false, false);
+
                         return shell_answer(0);
                 }
 
-                // A rotation is the suffix followed by the prefix.
-                memory_copy_apart(rotated, list + index,
-                                  (count - index) * sizeof(list[0]));
-                memory_copy_apart(rotated + count - index, list,
-                                  index * sizeof(list[0]));
-        }
-        else if (string_is(shell_argv[1], '+') || string_is(shell_argv[1], '-'))
-                return shell_answer(string_report(log_error, 1, "pushd: %s: directory stack index out of range\n",
-                              shell_argv[1]));
-        else
-        {
-                // The directory the shell is in is about to be written over
-                // by the move, and it is the entry being pushed.
                 string_copy_max_end(previous, shell_directory,
                                     sizeof(previous) - 1);
-                string_copy_max_end(wanted, shell_argv[1], sizeof(wanted) - 1);
+                string_copy_max_end(wanted, named, sizeof(wanted) - 1);
 
                 rotated[0] = previous;
 
@@ -4098,7 +4194,7 @@ COLD fn shell_pushd(writer write, string_address input)
 
                 if (!shell_dirstack_move(wanted))
                         return shell_answer(string_report(log_error, 1, "pushd: %s: no such directory\n",
-                                      shell_argv[1]));
+                                      named));
 
                 if (!shell_dirstack_write(rotated, count))
                         return shell_answer(string_report(log_error, 1, "pushd: directory stack full\n"));
@@ -4108,6 +4204,46 @@ COLD fn shell_pushd(writer write, string_address input)
                 return shell_answer(0);
         }
 
+        // With no operand the top two are exchanged, which needs something
+        // under the top to exchange with.
+        if (!named)
+        {
+                if (count < 2)
+                        return shell_answer(string_report(log_error, 1, "pushd: no other directory\n"));
+
+                if (stack_only)
+                {
+                        //      Nothing to move and nowhere to go: the stack
+                        //      is left as it is and nothing is written.
+                        return shell_answer(0);
+                }
+
+                memory_copy_apart(rotated, list, count * sizeof(list[0]));
+
+                rotated[0] = list[1];
+                rotated[1] = list[0];
+        }
+        else if (shell_dirstack_index(named, count, address_of index))
+        {
+                if (!index)
+                {
+                        //      Nothing moved, so with -n nothing is said.
+                        if (!stack_only)
+                                shell_dirstack_listed(write, false, false, false);
+
+                        return shell_answer(0);
+                }
+
+                // A rotation is the suffix followed by the prefix.
+                memory_copy_apart(rotated, list + index,
+                                  (count - index) * sizeof(list[0]));
+                memory_copy_apart(rotated + count - index, list,
+                                  index * sizeof(list[0]));
+        }
+        else
+                return shell_answer(string_report(log_error, 1, "pushd: %s: directory stack index out of range\n",
+                              named));
+
         string_copy_max_end(wanted, rotated[0], sizeof(wanted) - 1);
 
         // Written before the move, because the kept part is read out of the
@@ -4115,10 +4251,17 @@ COLD fn shell_pushd(writer write, string_address input)
         if (!shell_dirstack_write(rotated + 1, count - 1))
                 return shell_answer(string_report(log_error, 1, "pushd: directory stack full\n"));
 
-        if (!shell_dirstack_move(wanted))
+        //      -n rotates and stays: the shell keeps the directory it is in,
+        //      which is still the top of what is listed, so the entry the
+        //      rotation brought up is written under it rather than moved to.
+        if (!stack_only && !shell_dirstack_move(wanted))
                 return shell_answer(string_report(log_error, 1, "pushd: %s: no such directory\n", wanted));
 
-        shell_dirstack_listed(write, false, false, false);
+        //      A rotation asked to leave the shell where it is says nothing:
+        //      Bash writes the stack for a push and for a move, and a
+        //      rotation that moved nothing is neither.
+        if (!stack_only)
+                shell_dirstack_listed(write, false, false, false);
 
         shell_answer(0);
 }
@@ -4132,14 +4275,51 @@ COLD fn shell_popd(writer write, string_address input)
         p8 wanted[SHELL_DIRECTORY_MAX];
         positive index = 0;
         positive used = 0;
+        //      -n asks for the stack to lose an entry and the shell to stay
+        //      where it is, so the entry taken is the one under the top --
+        //      the top is the directory the shell is in and only a move
+        //      could remove it.
+        bool stack_only = false;
+        string_address named = null;
+
+        for (positive at = 1; at < shell_argc; at++)
+        {
+                string_address word = shell_argv[at];
+
+                if (!named && word_is(word, "-n"))
+                {
+                        stack_only = true;
+                        continue;
+                }
+
+                if (!named && word_is(word, "--"))
+                {
+                        if (at + 1 < shell_argc)
+                                named = shell_argv[++at];
+                        continue;
+                }
+
+                if (!shell_dirstack_spec(word))
+                        return shell_answer(shell_dirstack_number_refused(
+                            "popd", word, "popd [-n] [+N | -N]"));
+
+                if (named)
+                        return shell_answer(string_report(
+                            log_error, 1, "popd: too many arguments\n"));
+
+                named = word;
+        }
 
         if (count < 2)
                 return shell_answer(string_report(log_error, 1, "popd: directory stack empty\n"));
 
-        if (shell_argc > 1 &&
-            !shell_dirstack_index(shell_argv[1], count, address_of index))
+        if (named && !shell_dirstack_index(named, count, address_of index))
                 return shell_answer(string_report(log_error, 1, "popd: %s: directory stack index out of range\n",
-                              shell_argv[1]));
+                              named));
+
+        //      With -n the top is never the one that goes.
+        if (stack_only && !index)
+                index = 1;
 
         for (positive at = 0; at < count; at++)
                 if (at != index)
@@ -4461,10 +4641,46 @@ COLD fn shell_pwd(writer write, string_address input)
 fn shell_trap_exit();
 static bool exec_control_integer(string_address word, bipolar address_to answer);
 
+/*
+        "exit", which bash says as an interactive shell leaves and dash does
+        not. It is written before the operand is even looked at -- "exit bad"
+        says it and then complains -- and a subshell leaving says nothing,
+        because a subshell is not the shell leaving.
+
+        The end of the input is the same leaving by another road, so the
+        reader says it there too.
+*/
+fn shell_interactive_exit_said()
+{
+        if (shell_bash_compat && shell_is_interactive && !exec_child_process())
+                string_format(log_error, "exit\n");
+}
+
 COLD fn shell_exit(writer write, string_address input)
 {
         bipolar exit_code = shell_status_entering;
         positive first = 1;
+
+        shell_interactive_exit_said();
+
+        /*
+                A stopped job is work the person asked for and has not seen
+                the end of, so the first exit that would abandon one is
+                refused and only says so; a second exit straight after it
+                goes. Both references do this and each has its own sentence
+                for it. The warning is forgotten as soon as anything else
+                runs, which is why the flag is cleared by the reader rather
+                than here.
+        */
+        if (shell_is_interactive && !exec_child_process() &&
+            !shell_exit_was_previous && job_any_stopped())
+        {
+                string_format(log_error,
+                              shell_bash_compat
+                                  ? "There are stopped jobs.\n"
+                                  : "You have stopped jobs.\n");
+                return shell_answer(shell_bash_compat ? 1 : 0);
+        }
 
         if (shell_bash_compat && first < shell_argc &&
             word_is(shell_argv[first], "--"))
