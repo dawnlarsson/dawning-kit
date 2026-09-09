@@ -598,9 +598,8 @@ static bool logger_connect(logger_control address_to control)
                 socket_close((b32)control->handle);
         control->handle = -1;
 
-        if (control->no_action)
-                return true;
-
+        /* --no-act stops the writing, not the opening: the reference still
+           connects, and still says when it cannot. */
         if (control->transport != LOGGER_TRANSPORT_STREAM)
                 control->handle = logger_connect_kind(control,
                                                      LOGGER_TRANSPORT_DGRAM);
@@ -785,6 +784,11 @@ static bool logger_stream(logger_control address_to control,
                         {
                                 if (!(prefixed & 0xf8))
                                         prefixed |= default_priority & 0xf8;
+                                /* A prefix stands until another one
+                                   replaces it: the reference carries the
+                                   last one it read on to the lines that
+                                   have none of their own. */
+                                default_priority = prefixed;
                                 priority = prefixed;
                                 from = at + 1;
                         }
@@ -887,6 +891,23 @@ static bool logger_journald(logger_control address_to control,
 {
 #if defined(LINUX) && !defined(KERNEL_MODE)
         text_arena_used = 0;
+
+        /* The reference names this open itself rather than leaving it to
+           the reader's own complaint. */
+        {
+                bipolar handle = path ? text_open_handle(path, FILE_READ, 0) : 0;
+
+                if (handle < 0)
+                {
+                        text_flush();
+                        string_format(writer_stderr, "logger: cannot open %s: %s\n",
+                                      path, file_reason(handle));
+                        return false;
+                }
+                if (path)
+                        system_close((positive)handle);
+        }
+
         if (!text_open(path))
                 return false;
 
@@ -898,6 +919,15 @@ static bool logger_journald(logger_control address_to control,
         text_close();
         if (!entry || failed)
                 return false;
+
+        /* An entry with nothing in it is nothing to write. */
+        if (!length)
+        {
+                text_flush();
+                string_format(writer_stderr,
+                    "logger: journald entry could not be written\n");
+                return false;
+        }
 
         for (positive at = 0; at < length;)
         {
@@ -942,6 +972,123 @@ static bool logger_journald(logger_control address_to control,
 #endif
 }
 
+/*
+        Every value logger takes is read where it is written, because that is
+        where the reference reads it: getopt hands each option to a case that
+        validates it at once, so an --id that is no number and a --priority
+        that names nothing are reported in the order they were typed rather
+        than in the order this program looks them up afterwards. What the
+        walk works out is kept here for the run that follows it.
+*/
+static positive logger_seen_priority;
+static positive logger_seen_size;
+static positive logger_seen_process;
+static bool logger_seen_process_given;
+/* Each --rfc5424 takes away another field, so they accumulate rather than
+   the last one standing alone: --rfc5424=notime --rfc5424 keeps notime. */
+static bool logger_seen_rfc_time;
+static bool logger_seen_rfc_quality;
+static bool logger_seen_rfc_host;
+
+static bool logger_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'p' && value &&
+            !logger_priority(value, address_of logger_seen_priority))
+        {
+                string_address level = string_first_of(value, '.');
+
+                text_flush();
+                string_format(writer_stderr, "logger: unknown priority name: %s\n",
+                              level ? level + 1 : value);
+                return false;
+        }
+        if (letter == 'S' && value &&
+            !logger_size(value, address_of logger_seen_size))
+        {
+                text_flush();
+                string_format(writer_stderr,
+                    "logger: failed to parse message size: '%s': Invalid argument\n",
+                    value);
+                return false;
+        }
+        if (letter == 'm' && value && !logger_message_id_valid(value))
+        {
+                text_flush();
+                string_format(writer_stderr,
+                              "logger: --msgid cannot contain space\n");
+                return false;
+        }
+        if (letter == 'I')
+        {
+                logger_seen_process_given = true;
+                if (!value)
+                        logger_seen_process =
+                            (positive)system_call(syscall(getpid));
+                else if (!string_digits_exact(value, address_of logger_seen_process) ||
+                         !logger_seen_process || logger_seen_process > p32_max)
+                {
+                        positive parsed;
+                        bool numeric = string_digits_exact(value,
+                                                           address_of parsed);
+
+                        text_flush();
+                        string_format(writer_stderr, numeric
+                            ? (string_address)"logger: failed to parse id: '%s': Numerical result out of range\n"
+                            : (string_address)"logger: failed to parse id: '%s'\n",
+                            value);
+                        return false;
+                }
+        }
+        if (letter == 'f' && value)
+        {
+                bipolar handle = text_open_handle(value, FILE_READ, 0);
+
+                if (handle < 0)
+                {
+                        text_flush();
+                        string_format(writer_stderr, "logger: file %s: %s\n",
+                                      value, file_reason(handle));
+                        return false;
+                }
+                system_close((positive)handle);
+        }
+        if (letter == '4' && value)
+        {
+                logger_control scratch = {
+                    .rfc_time = logger_seen_rfc_time,
+                    .rfc_quality = logger_seen_rfc_quality,
+                    .rfc_host = logger_seen_rfc_host,
+                };
+
+                if (logger_rfc_flags(address_of scratch, value))
+                {
+                        logger_seen_rfc_time = scratch.rfc_time;
+                        logger_seen_rfc_quality = scratch.rfc_quality;
+                        logger_seen_rfc_host = scratch.rfc_host;
+                }
+                else
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "logger: ignoring unknown option argument: %s\n",
+                            value);
+                }
+        }
+        if (letter == 'E' && value && string_compare(value, "on") &&
+            string_compare(value, "off") && string_compare(value, "auto"))
+        {
+                text_flush();
+                string_format(writer_stderr,
+                    "logger: invalid argument: %s: using automatic errors\n",
+                    value);
+        }
+        if (letter == 'D' || letter == 'X')
+                return string_diagnostic(&text_diagnostic, 0, null,
+                    "structured-data and signature fields are not supported");
+
+        return true;
+}
+
 static b32 tools_logger()
 {
         p8 chosen_transport = LOGGER_TRANSPORT_ANY;
@@ -962,25 +1109,30 @@ static b32 tools_logger()
             .longs = logger_longs,
             .supersedes = supersedes,
             .operand = file_operand,
+            .seen = logger_option_seen,
         };
 
         text_begin("logger");
         text_delimiter = '\n';
+        logger_seen_priority = 13;
+        logger_seen_size = LOGGER_DEFAULT_SIZE;
+        logger_seen_process = 0;
+        logger_seen_process_given = false;
+        logger_seen_rfc_time = true;
+        logger_seen_rfc_quality = true;
+        logger_seen_rfc_host = true;
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
 
-        if (taking.flags & (FILE_FLAG('D') | FILE_FLAG('X')))
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "structured-data and signature fields are not supported"));
-
         logger_control control = {
             .handle = -1,
-            .priority = 13,
-            .maximum = LOGGER_DEFAULT_SIZE,
+            .priority = logger_seen_priority,
+            .maximum = logger_seen_size,
             .transport = LOGGER_TRANSPORT_ANY,
             .protocol = LOGGER_PROTOCOL_LOCAL,
-            .rfc_time = true,
-            .rfc_quality = true,
-            .rfc_host = true,
+            .rfc_time = logger_seen_rfc_time,
+            .rfc_quality = logger_seen_rfc_quality,
+            .rfc_host = logger_seen_rfc_host,
             .skip_empty = (taking.flags & FILE_FLAG('e')) != 0,
             .standard_error = (taking.flags & FILE_FLAG('s')) != 0,
             .no_action = (taking.flags & FILE_FLAG('A')) != 0,
@@ -1009,24 +1161,6 @@ static b32 tools_logger()
                 control.protocol_given = true;
         }
 
-        string_address priority_text = file_option_value(address_of taking, 'p');
-        if (priority_text && !logger_priority(priority_text, address_of control.priority))
-        {
-                string_address level = string_first_of(priority_text, '.');
-
-                text_flush();
-                return text_done(string_report(writer_stderr, 1,
-                    "logger: unknown priority name: %s\n",
-                    level ? level + 1 : priority_text));
-        }
-
-        string_address size_text = file_option_value(address_of taking, 'S');
-        if (size_text && !logger_size(size_text, address_of control.maximum))
-                return text_done(string_diagnostic(&text_diagnostic, 1, size_text, "invalid message size"));
-
-        if (control.message_id && !logger_message_id_valid(control.message_id))
-                return text_done(string_diagnostic(&text_diagnostic, 1, control.message_id, "message id cannot contain whitespace"));
-
         string_address socket_errors = file_option_value(address_of taking, 'E');
         if (socket_errors)
         {
@@ -1035,13 +1169,7 @@ static b32 tools_logger()
                 else if (!string_compare(socket_errors, "off"))
                         control.socket_errors = false;
                 else if (string_compare(socket_errors, "auto"))
-                {
-                        text_flush();
-                        string_format(writer_stderr,
-                            "logger: invalid argument: %s: using automatic errors\n",
-                            socket_errors);
                         socket_errors = (string_address)"auto";
-                }
         }
         if (!socket_errors || !string_compare(socket_errors, "auto"))
         {
@@ -1055,43 +1183,14 @@ static b32 tools_logger()
 
         if (taking.flags & FILE_FLAG('i'))
                 control.process = (positive)system_call(syscall(getpid));
-        if (taking.flags & FILE_FLAG('I'))
-        {
-                string_address identity = file_option_value(address_of taking, 'I');
-                if (identity)
-                {
-                        if (!string_digits_exact(identity, address_of control.process) ||
-                            !control.process || control.process > p32_max)
-                        {
-                                positive parsed;
-                                bool numeric = string_digits_exact(identity,
-                                                                   address_of parsed);
-
-                                text_flush();
-                                return text_done(numeric
-                                    ? string_report(writer_stderr, 1,
-                                          "logger: failed to parse id: '%s': Numerical result out of range\n",
-                                          identity)
-                                    : string_report(writer_stderr, 1,
-                                          "logger: failed to parse id: '%s'\n",
-                                          identity));
-                        }
-                }
-                else
-                        control.process = (positive)system_call(syscall(getpid));
-        }
+        if (logger_seen_process_given)
+                control.process = logger_seen_process;
 
         if (control.server && !control.protocol_given)
                 control.protocol = LOGGER_PROTOCOL_5424;
 
-        string_address rfc_flags = file_option_value(address_of taking, '4');
-        if (rfc_flags && !logger_rfc_flags(address_of control, rfc_flags))
-        {
-                text_flush();
-                string_format(writer_stderr,
-                              "logger: ignoring unknown option argument: %s\n",
-                              rfc_flags);
-        }
+        // The walk has already read every --rfc5424 and said which of their
+        // words it could not.
 
         if (!control.tag)
         {
