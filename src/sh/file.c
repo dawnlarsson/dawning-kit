@@ -17680,6 +17680,13 @@ static fn install_pair(string_address source, string_address destination)
         file_facts to;
         bipolar looked = file_look_code(AT_FDCWD, source, 0, address_of from);
 
+        if (looked == 0 && (from.mode & MODE_FORMAT) == MODE_DIRECTORY)
+        {
+                string_format(file_fail, "install: omitting directory '%s'\n", source);
+                install_status = 1;
+                return;
+        }
+
         if (looked < 0 || (from.mode & MODE_FORMAT) != MODE_FILE)
         {
                 string_format(file_fail, "install: cannot stat '%s': %s\n",
@@ -17690,7 +17697,9 @@ static fn install_pair(string_address source, string_address destination)
                 return;
         }
 
-        if (file_look_at(destination, address_of to) &&
+        // The destination is the name, not what a link there points at: a
+        // link is taken away and a file written in its place.
+        if (file_look_link(destination, address_of to) &&
             file_same_identity(address_of from, address_of to))
         {
                 string_format(file_fail,
@@ -17701,6 +17710,12 @@ static fn install_pair(string_address source, string_address destination)
         }
 
         if (install_parents && !install_leading(destination))
+        {
+                install_status = 1;
+                return;
+        }
+
+        if (!file_backup_made((string_address) "install", destination))
         {
                 install_status = 1;
                 return;
@@ -17801,6 +17816,29 @@ static b32 file_install()
                 {
                         string_address path = program_argument((b32)at);
 
+                        // Each level is named as it is made, which is what
+                        // -v is for; a level already there is passed over.
+                        if (install_loud)
+                                for (positive cut = 0; path[cut]; cut++)
+                                {
+                                        if (path[cut] != '/' && path[cut + 1])
+                                                continue;
+
+                                        p8 step[FILE_PATH_MAX];
+                                        positive length = path[cut] == '/' ? cut : cut + 1;
+
+                                        if (!length || length >= FILE_PATH_MAX)
+                                                continue;
+
+                                        memory_copy_apart(step, path, length);
+                                        step[length] = end;
+
+                                        if (!file_exists(AT_FDCWD, step))
+                                                string_format(log,
+                                                              "install: creating directory '%s'\n",
+                                                              step);
+                                }
+
                         if (!file_make_parents(path, 0755) ||
                             !install_attributes(path, null))
                         {
@@ -17809,9 +17847,6 @@ static b32 file_install()
                                               path);
                                 install_status = 1;
                         }
-                        else if (install_loud)
-                                string_format(log, "install: creating directory '%s'\n",
-                                              path);
                 }
 
                 log_flush();
