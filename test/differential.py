@@ -81,7 +81,7 @@ OUTPUT_LIMIT = 1 << 20
 #       caught the moment the number drops. Lowering a floor is a decision
 #       somebody makes here, in this table, on purpose.
 DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "default",
-                 "files": "singles", "shell": "quick", "util_linux": "default",
+                 "files": "full", "shell": "quick", "util_linux": "default",
                  "misc": "default"}
 
 DOMAIN_FLOOR = {
@@ -5233,7 +5233,10 @@ files_FIND_TESTS = (
     ("-perm", "644"), ("-perm", "-644"), ("-perm", "/222"), ("-perm", "-u+x"), ("-perm", "/u+w,g+w"),
     ("-perm", "0"), ("-perm", "/0"), ("-perm", "a=r"), ("-perm", "-000"), ("-perm", "755"), ("-perm", "x"),
     ("-perm", "+111"), ("-perm", "/u=x"), ("-perm", "-a="), ("-perm", "0000"), ("-perm", "u=rw,go=r"),
-    ("-links", "1"), ("-links", "2"), ("-links", "+1"), ("-links", "-2"), ("-links", "+2"), ("-inum", "+0"),
+    ("-perm", "-4000"), ("-perm", "-2000"), ("-perm", "-1000"), ("-perm", "-6000"), ("-perm", "/7000"),
+    ("-perm", "-u+s"), ("-perm", "/g+s,o+t"),
+    ("-links", "1"), ("-links", "2"), ("-links", "+1"), ("-links", "-2"), ("-links", "+2"), ("-links", "3"),
+    ("-links", "+3"), ("-inum", "+0"),
     ("-inum", "-1"), ("-inum", "x"), ("-user", "root"), ("-user", "nosuchuser"), ("-user", files_UID),
     ("-uid", "0"), ("-uid", "+0"), ("-uid", files_UID), ("-gid", "0"), ("-gid", "+0"), ("-gid", files_GID),
     ("-group", "root"), ("-group", "nosuchgroup"), ("-group", files_GID), ("-nouser",), ("-nogroup",),
@@ -5630,6 +5633,7 @@ FILES_UTILITIES = (
                       ("link", "missing", "dirlink"), ("loop/",), ("-",), ("/dev/null",)),
             stdin=("empty",), fixture="files", stderr="exact"),
     Utility("realpath", options=(Option("-e"), Option("-m"), Option("-L"), Option("-P"), Option("-q"),
+                                 Option("-E"), Option("--canonicalize"),
                                  Option("-s"), Option("-z"), Option("--canonicalize-existing"),
                                  Option("--canonicalize-missing"), Option("--logical"), Option("--physical"),
                                  Option("--quiet"), Option("--no-symlinks"), Option("--strip"), Option("--zero"),
@@ -5758,7 +5762,7 @@ FILES_UTILITIES = (
                     ("-d", "1", "-s", "dir"), ("-b", "-m", "a.txt"), ("-m", "-b", "a.txt"), ("-k", "-m", "a.txt"),
                    ("--inodes", "-a", "."), ("--apparent-size", "-a", "dir"), ("-l", "dup"), ("--files0-from=-",))),
     Utility("df", options=(Option("-a"), Option("-h"), Option("-H"), Option("-i"), Option("-k"), Option("-l"),
-                           Option("-P"), Option("-T"), Option("--all"), Option("--human-readable"), Option("--si"),
+                           Option("-P"), Option("-T"), Option("-v"), Option("--all"), Option("--human-readable"), Option("--si"),
                            Option("--inodes"), Option("--local"), Option("--portability"), Option("--print-type"),
                            Option("--total"), Option("--sync"), Option("--no-sync"), Option("--output"),
                            Option("-B", ("1", "K", "M", "512", "x"), None), Option("--block-size", ("1", "K"), True),
@@ -5806,15 +5810,19 @@ FILES_UTILITIES = (
                               Option("-L"), Option("-P"), Option("--changes"), Option("--silent"), Option("--quiet"),
                               Option("--verbose"), Option("--no-dereference"), Option("--dereference"),
                               Option("--recursive"), Option("--preserve-root"), Option("--no-preserve-root"),
+                              Option("--from", (files_UID + ":" + files_GID, ":" + files_GID, "root:root", "nosuch", ":"), True),
                               Option("--reference", ("b.txt", "missing", "link", "dir", "dangling", "shut/inside"), True)),
             operands=files_GID_OPERANDS, stdin=("empty",), fixture="files", stderr="exact"),
     Utility("chmod", options=(Option("-c"), Option("-f"), Option("-v"), Option("-R"), Option("--changes"),
                               Option("--silent"), Option("--quiet"), Option("--verbose"), Option("--recursive"),
                               Option("--preserve-root"), Option("--no-preserve-root"),
+                              Option("-h"), Option("--no-dereference"), Option("--dereference"),
+                              Option("-H"), Option("-L"), Option("-P"),
                               Option("--reference", ("b.txt", "missing", "link", "dir", "exe", "dangling", "shut/inside"), True)),
             operands=files_CHMOD_OPERANDS, stdin=("empty",), fixture="files", stderr="exact"),
     Utility("ln", options=(Option("-s"), Option("-f"), Option("-i"), Option("-n"), Option("-r"), Option("-v"),
-                           Option("-T"), Option("-L"), Option("-P"), Option("-b"), Option("--symbolic"),
+                           Option("-T"), Option("-L"), Option("-P"), Option("-b"), Option("-d"), Option("-F"),
+                           Option("--directory"), Option("--symbolic"),
                            Option("--force"), Option("--interactive"), Option("--no-dereference"), Option("--relative"),
                            Option("--verbose"), Option("--no-target-directory"), Option("--logical"), Option("--physical"),
                            Option("--backup"), Option("--backup", ("numbered", "simple", "none", "existing", "nil", "t", "bogus"), True),
@@ -5867,7 +5875,8 @@ FILES_UTILITIES = (
             operands=(("pipe",), ("one", "two", "three"), ("a.txt",), ("dir",), ("missing/pipe",), (), ("one", "-m", "0600", "two"),
                       ("dangling",), ("shut/pipe",), ("two words",), ("-dash",), ("--", "-dash2"), ("hollow/pipe",)),
             stdin=("empty",), fixture="files", stderr="exact"),
-    Utility("mknod", options=(Option("-Z"), Option("-m", ("0620", "0600", "1777", "x", "u=rw"), None), Option("--mode", ("0600",), True)),
+    Utility("mknod", options=(Option("-Z"), Option("--context"), Option("--context", ("x",), True),
+                              Option("-m", ("0620", "0600", "1777", "x", "u=rw"), None), Option("--mode", ("0600",), True)),
             operands=(("pipe", "p"), ("pipe", "potato"), ("block", "b", "1", "7"), ("char", "c", "1", "3"), ("char", "u", "0x1", "0x3"),
                       ("char", "c", "01", "03"), ("char", "c", "1", "256"), ("block", "b", "4095", "1048575"), ("node", "b", "4096", "0"),
                       ("node", "c", "1", "1048576"), ("node", "c"), ("node", "p", "1", "2"), ("node", "x"), ("node", "c", "0x", "1"),
@@ -5998,7 +6007,9 @@ FILES_UTILITIES = (
                            Option("--strip-trailing-slashes"), Option("--symbolic-link"), Option("-S", ("~", ".bak", ""), None),
                            Option("--suffix", (".orig",), True), Option("-t", ("dir", "missing", "a.txt", "dir/sub", "dirlink", "hollow"), None),
                            Option("--target-directory", ("dir", "hollow"), True), Option("--no-target-directory"), Option("--update"),
-                           Option("--update", ("all", "none", "none-fail", "older", "bogus"), True), Option("--verbose"), Option("-Z")),
+                           Option("--update", ("all", "none", "none-fail", "older", "bogus"), True), Option("--verbose"), Option("-Z"),
+                           Option("--context"), Option("--context", ("x", "unconfined_u:object_r:user_home_t:s0"), True),
+                           Option("--debug"), Option("--keep-directory-symlink")),
             operands=(("a.txt", "copy"), ("a.txt", "b.txt"), ("a.txt", "dir"), ("a.txt", "dir/"), ("dir", "copied"), ("a.txt", "b.txt", "dir"),
                       ("link", "copy"), ("dangling", "copy"), ("dirlink", "copy"), ("a.txt", "a.txt"), ("b.txt", "twin"), ("missing", "copy"),
                       ("missing", "a.txt", "dir"), ("a.txt",), (), ("dir", "a.txt"), ("dir/.", "hollow"), ("a.txt", "missing/copy"),
@@ -6050,7 +6061,8 @@ FILES_UTILITIES = (
                            Option("--force"), Option("--interactive"), Option("--no-clobber"), Option("--update"),
                            Option("--update", ("all", "none", "none-fail", "older", "bogus"), True), Option("--verbose"),
                            Option("--strip-trailing-slashes"), Option("--no-target-directory"), Option("--exchange"),
-                           Option("--no-copy"), Option("--debug"), Option("-S", ("~", ".bak", ""), None), Option("--suffix", (".orig",), True),
+                           Option("--no-copy"), Option("--debug"), Option("-Z"), Option("--context"),
+                           Option("--context", ("x",), True), Option("-S", ("~", ".bak", ""), None), Option("--suffix", (".orig",), True),
                            Option("-t", ("dir", "missing", "a.txt", "hollow", "dirlink", "dir/sub"), None),
                            Option("--target-directory", ("dir", "hollow"), True)),
             operands=(("a.txt", "renamed"), ("a.txt", "dir"), ("a.txt", "dir/"), ("dir", "moved"), ("a.txt", "b.txt"), ("a.txt", "b.txt", "dir"),
@@ -6104,7 +6116,13 @@ FILES_UTILITIES = (
                               Option("-n", ("1", "2", "3", "1000", "0", "x", "5"), None), Option("--max-args", ("2",), True),
                               Option("-s", ("10", "100", "4096", "x", "0", "60", "131072", "999999999"), None), Option("--max-chars", ("50",), True),
                               Option("-P", ("0", "1", "2", "x"), None), Option("--max-procs", ("1", "0"), True),
-                              Option("--process-slot-var", ("SLOT",), True)),
+                              Option("--process-slot-var", ("SLOT",), True),
+                              #  -p asks the terminal before each command and there is none here,
+                              #  so both sides say so and stop -- a comparison. -o is not walked:
+                              #  it reopens the child's input on /dev/tty, and findutils fails an
+                              #  assertion and dies of SIGABRT when that open fails, so the oracle
+                              #  answers nothing and the case would count in neither column.
+                              Option("-p"), Option("--interactive")),
             operands=((), ("echo",), ("./exe",), ("printf", "%s\\n"), ("sh", "-c", "echo $#"), ("true",), ("false",), ("nosuchcommand",),
                       ("./unreadable",), ("ls", "-d"), ("rm",), ("sh", "-c", "exit 255"), ("sh", "-c", "kill -TERM $$"), ("echo", "-n"),
                       ("sh", "-c", "printf %s\\\\n \"$@\"", "sh"), ("dir",), ("printf", "[%s]"), ("sh", "-c", "echo $SLOT"), ("--", "echo")),
@@ -6174,7 +6192,12 @@ FILES_UTILITIES = (
                              Option("--signal", ("TERM", "0"), True), Option("-l"), Option("-l", ("9", "15", "TERM", "x", "0", "64", "-1", "128"), True),
                              Option("--list"), Option("--list", ("9",), True), Option("-L"), Option("--table"), Option("-p"),
                              Option("--verbose"), Option("-a"), Option("-q", ("1", "x"), None), Option("--queue", ("1",), True),
-                             Option("--timeout", ("1000", "x"), True)),
+                             Option("--timeout", ("1000", "x"), True), Option("-r"), Option("--require-handler"),
+                             #  -d reads /proc/<pid>/status, so every value here names a process
+                             #  that is not there: a live one answers with its own signal mask,
+                             #  which is the kernel's answer and not this program's.
+                             Option("-d", ("999999", "abc", "0", ""), None),
+                             Option("--show-process-state", ("999999",), True)),
             operands=(("999999",), ("1",), ("abc",), ("",), (), ("999999", "999998"), ("-", "999999"), ("999999999999",), ("+1",),
                       ("--", "999999"), ("999999", "abc")),
             stdin=("empty",), fixture="files", stderr="exact",
@@ -9231,7 +9254,8 @@ def session():
     if settings.get("ignore_hup"):
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
-env = {"PATH": os.environ["PATH"], "HOME": os.getcwd(), "TERM": "dumb", "PS1": "$ ", "PS2": "> ",
+env = {"PATH": os.environ["PATH"], "HOME": os.getcwd(), "TERM": "dumb",
+       "PS1": "%mwPS1%", "PS2": "%mwPS2%", "HISTFILE": "",
        "LC_ALL": "C", "PS4": "+ ", "TMPDIR": os.getcwd()}
 process = subprocess.Popen([name] + flags, executable=shell, stdin=slave, stdout=slave, stderr=slave,
                            close_fds=True, preexec_fn=session, env=env)
@@ -9296,6 +9320,75 @@ def shell_pty_script(steps, settings, flags=()):
     return (shell_SELF +
             "python3 - " + shell_SELF_PATH + " " + shell_words(flags) + " <<'PY'\n" + driver + "PY\n"
             'rm -f "./$shell_me"\n')
+
+
+# ----------------------------------------------------------------------------
+#       What the terminal decided, taken back out of a transcript.
+#
+#       A pty case compares two whole sessions, and three things in one are
+#       the terminal's rather than the shell's answer:
+#
+#       The prompt. It is written before every read, so a session that reads
+#       one more or one fewer time -- because a continuation was recognised,
+#       or because a shell without a line editor never asks -- differs on
+#       every line after it, whatever the program did. The driver sets PS1
+#       and PS2 to marks of its own so dropping them is an exact deletion and
+#       not a guess about what "$ " at a line start means; a prompt the
+#       program sets for itself is not a mark, survives, and is compared.
+#
+#       The job notices. "[1]+ Stopped", "[1] 4242" and their fellows are
+#       written when the shell notices a child changed state, which is when
+#       it next reaches the reader -- so the same session interleaves them
+#       with its own output differently from one run to the next. They are
+#       lifted out, their pid taken (a pid is the kernel's answer, not the
+#       shell's, and the driver only scrubs it for one family), sorted and
+#       written back as a block at the end. Which notices a session produces
+#       is still compared; where in the stream they landed is not.
+#
+#       The history file. bash writes $HOME/.bash_history as an interactive
+#       shell leaves, and HOME is the compared directory, so every bash pty
+#       case differed in its effects and nothing about the program said so.
+#       A normalise callable is only run over stdout and stderr, never over
+#       the effects, so this one is settled in the driver instead: HISTFILE
+#       is empty in the environment it hands the shell, which is bash's own
+#       spelling of "keep no history file", and neither side writes one.
+#
+#       What is left is the program's own output, in its own order.
+# ----------------------------------------------------------------------------
+
+shell_PROMPT_MARKS = re.compile(rb"%mwPS[12]%")
+#       "[1] 4242", "[1]+  Stopped   sleep 5", "[2] - Running  sleep 3": a
+#       job number in brackets, then the current-job mark or a space, then
+#       the notice. A line of the program's own that begins with a bracketed
+#       number and a space is the one shape this cannot tell apart, so the
+#       terminal families do not print one.
+shell_JOB_NOTICE = re.compile(rb"^\[\d+\][-+ ][^\n]*$")
+#       "[1] 4242" is a whole notice whose second word is the pid, however
+#       few digits it happens to have; a pid written inside a longer notice
+#       ("[1]+ 4242 Terminated  sleep 5") is long enough to name by length,
+#       and a length is the only thing that tells it from the 30 in "sleep 30".
+shell_JOB_STARTED = re.compile(rb"^(\[\d+\][-+ ]\s*)\d+$")
+
+
+def shell_terminal_normalize(channel, data):
+    if channel != "stdout" or not data:
+        return data
+    data = shell_PROMPT_MARKS.sub(b"", data)
+    kept, notices = [], []
+    for line in data.split(b"\n"):
+        if shell_JOB_NOTICE.match(line):
+            line = shell_JOB_STARTED.sub(rb"\1<pid>", line)
+            notices.append(re.sub(rb"\b\d{3,}\b", b"<pid>", line))
+        else:
+            kept.append(line)
+    #       Rejoining the kept lines restores the transcript byte for byte,
+    #       one line shorter for each notice lifted out; the driver's last
+    #       byte is the newline after the outcome, so the block that follows
+    #       starts on a line of its own without a trailing-newline guess.
+    plain = b"\n".join(kept)
+    if not notices:
+        return plain
+    return plain + b"[jobs]\n" + b"\n".join(sorted(notices)) + b"\n"
 
 
 def shell_terminal_jobs_script(argv, stdin):
@@ -9374,6 +9467,7 @@ shell_TERMINAL_JOBS = Utility(
     fixture="shell",
     modes=shell_ALL,
     script=shell_terminal_jobs_script,
+    normalize=shell_terminal_normalize,
     valid=shell_terminal_jobs_valid,
     max_flags=4,
     timeout=30.0,
@@ -9491,6 +9585,7 @@ shell_TERMINAL_SESSION = Utility(
     fixture="shell",
     modes=shell_ALL,
     script=shell_terminal_session_script,
+    normalize=shell_terminal_normalize,
     max_flags=4,
     timeout=30.0,
 )
@@ -9541,6 +9636,7 @@ shell_TERMINAL_STARTUP = Utility(
     fixture="shell",
     modes=shell_ALL,
     script=shell_terminal_startup_script,
+    normalize=shell_terminal_normalize,
     max_flags=4,
     timeout=20.0,
 )
@@ -9573,6 +9669,7 @@ shell_TERMINAL_VANISH = Utility(
     fixture="shell",
     modes=shell_ALL,
     script=shell_terminal_vanish_script,
+    normalize=shell_terminal_normalize,
     max_flags=4,
     timeout=20.0,
 )
@@ -11540,6 +11637,401 @@ def shell_lang_onecmd_input(rng):
     return "onecmd-input", shell_ALL, shell_SELF + launch + " 2>/dev/null\necho \"status=$?\"\nrm -f \"./$shell_me\"\n"
 
 
+# ----------------------------------------------------------------------------
+#       Shapes the families above never build: a construct is covered, and
+#       the corner where two of them meet is not. Each of these is one such
+#       meeting -- a process substitution standing where a redirection's word
+#       goes, a trap that has to fire in a subshell of a pipeline, errexit
+#       reaching a function through the one operator that suspends it -- plus
+#       the two value spaces (arithmetic at the edge of the word, a pattern
+#       built out of a bracket expression and a backslash) where the answer
+#       is decided by the last byte rather than by the shape.
+# ----------------------------------------------------------------------------
+
+def shell_lang_process_redirection(rng):
+    """Process substitution where a redirection's word is expected."""
+    shape = rng.choice((
+        "exec-in", "exec-out", "read-from", "loop-both", "two-descriptors",
+        "group-both", "stdin-replaced", "closed-then-open", "append-word",
+        "heredoc-beside", "function-definition", "duplicate-then-read",
+        "operand-and-redirect", "here-string-beside", "nested-redirect",
+        "status-of-word", "clobber", "stderr-word"))
+    if shape == "exec-in":
+        body = ("exec 3< <(printf 'a\\nb\\n')", "read -r one <&3", "read -r two <&3",
+                "printf '<%s><%s>\\n' \"$one\" \"$two\"", "exec 3<&-")
+    elif shape == "exec-out":
+        #       The writer is a process of its own and closing the descriptor
+        #       is not the same as its having finished; wait(1) would not
+        #       return for it, so the file is read after a settle.
+        body = ("exec 3> >(cat > written)", "echo through >&3", "exec 3>&-",
+                "sleep 0.3", "cat written")
+    elif shape == "read-from":
+        body = ("read -r line < <(printf 'only\\n')", "printf '<%s>\\n' \"$line\"")
+    elif shape == "loop-both":
+        body = ("while read -r l; do printf '<%s>' \"$l\"; done < <(printf 'a\\nb\\n') > out",
+                "cat out")
+    elif shape == "two-descriptors":
+        body = ("cat <&3 <&4 3< <(echo three) 4< <(echo four)",)
+    elif shape == "group-both":
+        body = ("{ cat; echo end; } < <(echo x) > out", "cat out")
+    elif shape == "stdin-replaced":
+        body = ("exec < <(printf 'l1\\nl2\\n')", "read -r a", "read -r b",
+                "printf '<%s|%s>\\n' \"$a\" \"$b\"")
+    elif shape == "closed-then-open":
+        body = ("exec 3<&-", "cat <(echo word) <&3", "echo \"after=$?\"")
+    elif shape == "append-word":
+        body = ("echo first > out", "cat <(echo second) >> out", "cat out")
+    elif shape == "heredoc-beside":
+        body = ("cat <(echo sub) <<EOF", "heredoc", "EOF")
+    elif shape == "function-definition":
+        body = ("f() { cat; } < <(echo bound-at-definition)", "f", "f")
+    elif shape == "duplicate-then-read":
+        body = ("exec 4< <(printf 'x\\ny\\n')", "exec 5<&4", "read -r p <&4", "read -r q <&5",
+                "printf '<%s|%s>\\n' \"$p\" \"$q\"", "exec 4<&- 5<&-")
+    elif shape == "operand-and-redirect":
+        body = ("cat <(echo operand) < <(echo redirect)",)
+    elif shape == "here-string-beside":
+        body = ("cat <(echo sub) <<< string",)
+    elif shape == "nested-redirect":
+        body = ("cat < <(cat < <(echo deep))",)
+    elif shape == "status-of-word":
+        body = ("cat < <(exit 7)", "echo \"status=$?\"")
+    elif shape == "clobber":
+        body = ("set -C", "echo kept > out", "cat <(echo new) > out", "echo \"noclobber=$?\"",
+                "cat out")
+    else:
+        body = ("{ echo out; echo err >&2; } 2> >(sed 's/^/E:/' > e.out) > >(sed 's/^/O:/' > o.out)",
+                "sleep 0.3", "cat o.out e.out")
+    return ("process-redirection", shell_BASH,
+            shell_program(*body, "echo \"end=$?\""))
+
+
+def shell_lang_trap_in_pipeline(rng):
+    """A trap that has to fire inside a subshell of a pipeline."""
+    shape = rng.choice((
+        "exit-in-stage", "inherited-exit", "reset-in-stage", "signal-to-self",
+        "signal-in-stage", "function-stage", "last-stage-status", "err-in-stage",
+        "nested-subshell", "trap-and-exit-code", "loop-stage", "both-ends",
+        "subst-in-stage", "ignored-inherited", "trap-p-in-stage", "exit-trap-order"))
+    if shape == "exit-in-stage":
+        body = ("( trap 'echo SUB-EXIT' EXIT; echo body ) | cat", "echo \"status=$?\"")
+    elif shape == "inherited-exit":
+        body = ("trap 'echo TOP-EXIT' EXIT", "( echo body ) | cat", "echo mid")
+    elif shape == "reset-in-stage":
+        body = ("trap 'echo TOP' EXIT", "( trap - EXIT; echo body ) | cat", "echo mid")
+    elif shape == "signal-to-self":
+        body = ("trap 'echo CAUGHT-USR1' USR1", "( kill -USR1 $$; echo after-kill ) | cat",
+                "echo \"status=$?\"")
+    elif shape == "signal-in-stage":
+        body = ("( trap 'echo STAGE-USR1' USR1; kill -USR1 $$; echo after ) | cat",
+                "echo \"status=$?\"")
+    elif shape == "function-stage":
+        body = ("f() { trap 'echo F-EXIT' EXIT; echo in-f; }", "f | cat", "echo after")
+    elif shape == "last-stage-status":
+        body = ("echo feed | ( trap 'echo STAGE-EXIT' EXIT; cat; exit 4 )", "echo \"status=$?\"")
+    elif shape == "err-in-stage":
+        body = ("set -E", "trap 'echo ERR-TRAP' ERR", "( false; echo after ) | cat",
+                "echo \"status=$?\"")
+    elif shape == "nested-subshell":
+        body = ("( ( trap 'echo INNER' EXIT; echo deep ) ; echo outer ) | cat",)
+    elif shape == "trap-and-exit-code":
+        body = ("( trap 'echo T; exit 9' EXIT; exit 3 ) | cat", "echo \"status=$?\"")
+    elif shape == "loop-stage":
+        body = ("printf 'a\\nb\\n' | while read -r l; do trap 'echo W-EXIT' EXIT; echo \"<$l>\"; done",
+                "echo after")
+    elif shape == "both-ends":
+        body = ("( trap 'echo LEFT' EXIT; echo x ) | ( trap 'echo RIGHT' EXIT; cat )",)
+    elif shape == "subst-in-stage":
+        body = ("v=$( trap 'echo SUBST-EXIT' EXIT; echo value )", "printf '<%s>\\n' \"$v\"")
+    elif shape == "ignored-inherited":
+        body = ("trap '' USR1", "( kill -USR1 $$; echo survived ) | cat", "echo \"status=$?\"")
+    elif shape == "trap-p-in-stage":
+        body = ("trap 'echo TOP' USR1", "( trap; echo --; trap -- '' USR2; trap ) | cat")
+    else:
+        body = ("trap 'echo OUTER-EXIT' EXIT",
+                "( trap 'echo INNER-EXIT' EXIT; echo one ) | ( cat; echo two )", "echo three")
+    modes = shell_ALL if shape not in ("err-in-stage", "trap-p-in-stage") else shell_BASH
+    return "trap-in-pipeline", modes, shell_program(*body, "echo \"end=$?\"")
+
+
+def shell_lang_errexit_functions(rng):
+    """set -e reaching a function through the operators that suspend it."""
+    failing = rng.choice(("false", "return 1", "(exit 1)", "! true", "g",
+                          "[ 1 = 2 ]", "command false"))
+    body = rng.choice(("BAD; echo after-bad", "echo before; BAD; echo after-bad",
+                       "BAD", "if BAD; then echo t; fi; BAD; echo after-bad",
+                       "BAD || echo inner-or; BAD; echo after-bad",
+                       "set +e; BAD; echo after-bad",
+                       "local v; v=$(BAD); echo \"v=[$v]\"; echo after-bad"))
+    site = rng.choice(("bare", "or", "and", "not", "if", "while", "until", "subshell",
+                       "substitution", "assignment", "pipeline-left", "pipeline-right",
+                       "nested-call", "condition-of-or"))
+    body = body.replace("BAD", failing)
+    call = "f"
+    if site == "or":
+        call = "f || echo OR-CAUGHT"
+    elif site == "and":
+        call = "f && echo AND-RAN"
+    elif site == "not":
+        call = "! f; echo \"not=$?\""
+    elif site == "if":
+        call = "if f; then echo THEN; else echo ELSE; fi"
+    elif site == "while":
+        call = "while f; do echo LOOP; break; done; echo \"while=$?\""
+    elif site == "until":
+        call = "until f; do echo LOOP; break; done; echo \"until=$?\""
+    elif site == "subshell":
+        call = "( f ); echo \"sub=$?\""
+    elif site == "substitution":
+        call = "v=$(f); printf 'v=[%s]\\n' \"$v\""
+    elif site == "assignment":
+        call = "v=$(f) || echo ASSIGN-CAUGHT; printf 'v=[%s]\\n' \"$v\""
+    elif site == "pipeline-left":
+        call = "f | cat; echo \"pipe=$?\""
+    elif site == "pipeline-right":
+        call = "echo feed | f; echo \"pipe=$?\""
+    elif site == "nested-call":
+        call = "h() { f; echo after-f-in-h; }; h || echo H-CAUGHT"
+    elif site == "condition-of-or":
+        call = "{ f; } || echo GROUP-CAUGHT"
+    lines = ("g() { return 1; }", "set -e", "f() { " + body + "; }", call,
+             "echo \"end=$?\"", "echo REACHED")
+    modes = shell_ALL if "local" not in body else shell_BASH
+    return "errexit-functions", modes, shell_program(*lines)
+
+
+def shell_lang_heredoc_expansion(rng):
+    """A here-document body where an expansion and a quote meet."""
+    delimiter = rng.choice(("EOF", "'EOF'", '"EOF"', "\\EOF", "E\\OF", "EO'F'",
+                            '$EOF', "'$EOF'", "E\"O\"F"))
+    quoted = ("'" in delimiter or '"' in delimiter or "\\" in delimiter)
+    piece = rng.choice((
+        "plain $x and \"$x\" and '$x'",
+        "brace ${x} ${x:-fallback} ${x#a} ${#x}",
+        "command $(printf '%s' inner) and `printf '%s' tick`",
+        "arith $((1 + 2)) $(( ${#x} * 2 ))",
+        "escaped \\$x \\\\ \\` \\\" \\' \\n",
+        "continued line \\\ncarried on",
+        "quote \" alone and ' alone",
+        "dollar at end $",
+        "backtick `echo one` and \"double $x\"",
+        "positional $1 $@ $* $# $?",
+        "tilde ~ and glob *.txt and [ab]",
+        "nested ${x:-$(printf sub)}",
+        "ansi $'a\\tb' and dollar-brace ${!x}",
+        "bare backslash at end \\",
+    ))
+    site = rng.choice(("plain", "quoted-word", "substitution", "pipe", "assignment",
+                       "two-in-a-row", "with-redirect"))
+    #       The delimiter is quote-removed and never expanded, so "$EOF" and
+    #       '$EOF' both end at a line spelling $EOF.
+    end = delimiter.replace("'", "").replace('"', "").replace("\\", "")
+    body = piece + "\n"
+    doc = "cat <<" + delimiter + "\n" + body + end + "\n"
+    if site == "quoted-word":
+        doc = "printf '[%s]\\n' \"$(cat <<" + delimiter + "\n" + body + end + "\n)\"\n"
+    elif site == "substitution":
+        doc = "v=$(cat <<" + delimiter + "\n" + body + end + "\n)\nprintf '<%s>\\n' \"$v\"\n"
+    elif site == "pipe":
+        doc = "cat <<" + delimiter + " | tr a-z A-Z\n" + body + end + "\n"
+    elif site == "assignment":
+        doc = "cat <<" + delimiter + " > held\n" + body + end + "\ncat held\n"
+    elif site == "two-in-a-row":
+        doc = ("cat <<" + delimiter + " <<B\n" + body + end + "\nsecond $x\nB\n")
+    elif site == "with-redirect":
+        doc = "cat 3<<" + delimiter + " <&3\n" + body + end + "\n"
+    prelude = "x='X Y'\nEOF=EOF\nset -- one two\n"
+    modes = shell_BASH if ("$'" in piece or "${!" in piece) else shell_ALL
+    label = "heredoc-expansion-quoted" if quoted else "heredoc-expansion"
+    return label, modes, prelude + doc + "echo \"status=$?\"\n"
+
+
+def shell_lang_arithmetic_edges(rng):
+    """Values at the edge of the word, and the operations that reach them."""
+    portable = (
+        "9223372036854775807", "9223372036854775807 + 1", "-9223372036854775807 - 1",
+        "-9223372036854775807 - 2", "9223372036854775807 * 2", "0 - 9223372036854775808",
+        "-7 / 2", "7 / -2", "-7 % 2", "7 % -2", "-1 >> 1", "-1 >> 63", "-1 >> 64",
+        "1 << 62", "1 << 63", "1 << 64", "1 << -1", "~0", "~-1", "!0", "!5",
+        "0 ? 1 / 0 : 5", "1 ? 5 : 1 / 0", "0 && 1 / 0", "1 || 1 / 0",
+        "010", "0", "-0", "+ +1", "- -1", "1 == 1", "1 != 1", "3 > 2 > 1",
+        "07 + 1", "0 * 9223372036854775807",
+    )
+    bashonly = (
+        "2 ** 62", "2 ** 63", "2 ** 64", "-2 ** 2", "2 ** -1", "0 ** 0",
+        "16#ffffffffffffffff", "2#1111111111111111111111111111111111111111111111111111111111111111",
+        "64#zZ", "1#0", "37#a", "36#z", "8#8", "10#08", "x++ + x++", "x-- - --x",
+        "(x += 9223372036854775807) + (x += 1)", "x = 1, x <<= 62, x <<= 1, x",
+    )
+    fatal = ("1 / 0", "1 % 0", "08", "09", "2#102", "1 +", "x[", "()", "1 ? 2", "'a'")
+    which = rng.choice(("portable", "portable", "bash", "fatal"))
+    if which == "portable":
+        expression, modes = rng.choice(portable), shell_ALL
+    elif which == "bash":
+        expression, modes = rng.choice(bashonly), shell_BASH
+    else:
+        expression, modes = rng.choice(fatal), shell_ALL
+    form = rng.choice(("expansion", "expansion", "assignment", "condition", "index-free"))
+    if form == "assignment":
+        use = "r=$((" + expression + "))\nprintf 'r=<%s> x=<%s>\\n' \"$r\" \"$x\""
+    elif form == "condition":
+        use = ("if [ \"$((" + expression + "))\" -ne 0 ] 2>/dev/null; then echo nonzero; "
+               "else echo \"zero-or-refused=$?\"; fi")
+    elif form == "index-free":
+        use = "printf '<%s>\\n' \"$((" + expression + "))\" \"$((" + expression + "))\""
+    else:
+        use = "printf '<%s>\\n' $((" + expression + "))"
+    return ("arithmetic-edges", modes,
+            shell_program("x=1", "y=2", use + " 2>/dev/null", "echo \"status=$?\""))
+
+
+def shell_lang_read_field_edges(rng):
+    """read with an odd IFS over a line whose last byte is a delimiter."""
+    separator = rng.choice((":", ",", "::", ":,", " ", "\t", " :", ": ", "", "x",
+                            "unset", "\\n", "-"))
+    line = rng.choice((
+        "a:b:", "a:b:c", ":a:b", "a::b:", ":", "::", "a:", ":b", "",
+        "  a  b  ", "a b ", " a", "a\tb\t", "a,b,", "a-b-", "axbx",
+        "one two three four", "a:b:c:d:e", "a\\:b:c", "a\\ b c", "trailing\\",
+    ))
+    names = rng.choice(("v", "a b", "a b c", "a b c d"))
+    flags = rng.choice(("", "-r", "-r", "-r -a arr", "-d ''", "-n 3", "-N 3", "-r -d :"))
+    terminator = rng.choice(("\\n", "", ":\\n"))
+    feed = "printf '%s" + terminator + "' " + shell_quote(line)
+    setup = ["unset IFS"] if separator == "unset" else \
+        ["IFS=" + ("$'\\n'" if separator == "\\n" else shell_quote(separator))]
+    show = ("printf 'status=%s' \"$status\"; for n in " + names +
+            "; do eval 'printf \"<%s>\" \"${'\"$n\"'-UNSET}\"'; done; echo")
+    if "-a arr" in flags:
+        show = ("printf 'status=%s n=%s' \"$status\" \"${#arr[@]}\"; "
+                "printf '<%s>' \"${arr[@]}\"; echo")
+    script = shell_program(*setup, "unset a b c d v arr",
+                           feed + " | { read " + flags + " " + (names if "-a arr" not in flags else "") +
+                           "; status=$?; " + show + "; }")
+    modes = shell_BASH if flags and flags != "-r" else shell_ALL
+    return "read-field-edges", modes, script + "echo \"end=$?\"\n"
+
+
+def shell_lang_nested_parameter(rng):
+    """A parameter expansion whose word is another parameter expansion."""
+    state = rng.choice(("unset", "empty", "value"))
+    inner_name = rng.choice(("y", "z", "1", "#", "@"))
+    inner = rng.choice((
+        "${y}", "${y:-inner}", "${y-inner}", "${y:+set}", "${y#a}", "${y%c}",
+        "${#y}", "${y:1}", "${y:1:2}", "${y/a/A}", "${!y}", "${y^^}",
+        "$(printf sub)", "$((1+1))", "${y:=assigned}", "${z:-${y:-deep}}",
+    ))
+    outer = rng.choice((
+        "${x:-INNER}", "${x-INNER}", "${x:+INNER}", "${x+INNER}", "${x:=INNER}",
+        "${x:?INNER}", "${x#INNER}", "${x##INNER}", "${x%INNER}", "${x%%INNER}",
+        "${x/INNER/R}", "${x//INNER/R}", "${x:INNER}", "${x:INNER:1}",
+        "${#x}INNER", "${x:-\"INNER\"}", "${x:-'INNER'}",
+    ))
+    form = outer.replace("INNER", inner)
+    quoted = rng.choice((False, True))
+    word = '"' + form + '"' if quoted else form
+    setup = ["unset x", "y=abc", "z=", "set -- p1 p2"]
+    if state == "empty":
+        setup[0] = "x="
+    elif state == "value":
+        setup[0] = "x=abcabc"
+    bash_only = any(mark in form for mark in ("/", "^^", "!", ":1:", "${x:1", "${y:1"))
+    modes = shell_BASH if bash_only else shell_ALL
+    script = shell_program(*setup,
+                           "set -- p1 p2",
+                           "printf '<%s>' " + word + " 2>/dev/null; echo \" status=$?\"",
+                           "printf 'x=<%s> y=<%s> z=<%s>\\n' \"${x-U}\" \"${y-U}\" \"${z-U}\"")
+    return "nested-parameter", modes, script
+
+
+def shell_lang_case_classes(rng):
+    """case patterns built out of bracket expressions and backslashes."""
+    pattern = rng.choice((
+        "[[:alpha:]]*", "[[:digit:]][[:digit:]]", "[![:digit:]]*", "[^[:digit:]]*",
+        "[[:alpha:][:digit:]]", "[[:space:]]", "[[:punct:]]", "[[:nosuch:]]*",
+        "[]a]", "[a]]", "[!]a]", "[a-]", "[-a]", "[a\\-c]", "[\\]]", "[\\\\]",
+        "\\*", "\\?", "\\[", "\\\\", "a\\)b", "\\)", "*\\|*", "[|]",
+        "[[=a=]]", "[[.hyphen.]]", "[a[:digit:]b]", "[$v]", "\"[ab]\"", "'[ab]'",
+        "$v", "\"$v\"", "*", "?", "[ab", "a[", "[!a-c]*", "[^a-c]*",
+    ))
+    value = rng.choice((
+        "a", "1", "ab", "12", "]", "[", "-", "\\", "*", "?", "|", ")", " ",
+        "a-c", "a]b", "a\\b", "a)b", "A", ".", "", "[ab]",
+    ))
+    shape = rng.choice(("plain", "leading-paren", "two-patterns", "fallthrough",
+                        "test-next", "esac-word", "in-function", "quoted-value"))
+    subject = "\"$w\"" if shape != "quoted-value" else "$w"
+    arms = "  " + pattern + ") echo MATCH;;\n  *) echo NO;;\n"
+    if shape == "leading-paren":
+        arms = "  (" + pattern + ") echo MATCH;;\n  (*) echo NO;;\n"
+    elif shape == "two-patterns":
+        arms = "  nothing|" + pattern + ") echo MATCH;;\n  *) echo NO;;\n"
+    elif shape == "fallthrough":
+        arms = "  " + pattern + ") echo MATCH;&\n  *) echo NEXT;;\n"
+    elif shape == "test-next":
+        arms = "  " + pattern + ") echo MATCH;;&\n  *) echo ALSO;;\n"
+    elif shape == "esac-word":
+        arms = "  " + pattern + "|esac) echo MATCH;;\n  *) echo NO;;\n"
+    body = "case " + subject + " in\n" + arms + "esac\n"
+    if shape == "in-function":
+        body = "f() {\n" + body + "}\nf\n"
+    modes = shell_BASH if shape in ("fallthrough", "test-next") else shell_ALL
+    return ("case-classes", modes,
+            "v='ab'\nw=" + shell_quote(value) + "\n" + body + "echo \"status=$?\"\n")
+
+
+def shell_lang_personality_split(rng):
+    """Shapes where bash and dash answer differently, so the name matters."""
+    shape = rng.choice((
+        "echo-backslash", "echo-dash-e", "echo-dash-n", "echo-only-dashes",
+        "exit-out-of-range", "kill-l-out-of-range", "printf-b", "printf-percent-q",
+        "read-backslash", "read-no-newline", "export-p", "trap-p",
+        "type-of-builtin", "local-outside", "unset-both", "star-join",
+        "empty-at-in-word", "test-parens", "test-a-o", "shift-too-far",
+        "command-v-forms", "set-dash-dash", "assignment-glob", "colon-status",
+        "hash-forget", "times-shape", "getopts-bad", "wait-no-children",
+        "return-outside", "break-too-many", "dot-with-arguments", "func-name-slash",
+    ))
+    scripts = {
+        "echo-backslash": "echo 'a\\tb\\n' ; echo \"c\\\\d\"",
+        "echo-dash-e": "echo -e 'x\\ty'; echo -E 'x\\ty'",
+        "echo-dash-n": "echo -n one; echo two; echo -n -n three; echo",
+        "echo-only-dashes": "echo --; echo -; echo -x; echo -en",
+        "exit-out-of-range": "( exit 300 ); echo \"$?\"; ( exit -1 ); echo \"$?\"",
+        "kill-l-out-of-range": "kill -l 9; kill -l 143; kill -l 200 2>/dev/null; echo \"$?\"",
+        "printf-b": "printf '%b|%s\\n' 'a\\tb' 'a\\tb'; printf '%b\\n' 'x\\c'; echo after",
+        "printf-percent-q": "printf '%q\\n' \"a b\" \"a'b\" '$x' 2>/dev/null; echo \"$?\"",
+        "read-backslash": "printf 'a\\\\\\nb\\n' | { read v; printf '<%s>' \"$v\"; read w; printf '<%s>' \"$w\"; echo; }",
+        "read-no-newline": "printf 'no-newline' | { read v; printf 'status=%s<%s>\\n' \"$?\" \"$v\"; }",
+        "export-p": "export MW_E=1; export -p | grep MW_E; readonly MW_R=2; readonly -p | grep MW_R",
+        "trap-p": "trap 'echo t' USR1; trap -p USR1 2>/dev/null || trap; echo \"$?\"",
+        "type-of-builtin": "type cd; type -t cd 2>/dev/null; echo \"$?\"",
+        "local-outside": "local v=1 2>/dev/null; echo \"local=$?\"",
+        "unset-both": "v=1; f() { echo F; }; unset -v f; unset -f v; type f 2>/dev/null | head -1; echo \"v=${v-gone}\"",
+        "star-join": "set -- a b c; IFS=-; printf '<%s>\\n' \"$*\"; IFS=; printf '<%s>\\n' \"$*\"; unset IFS; printf '<%s>\\n' \"$*\"",
+        "empty-at-in-word": "set --; printf 'n=%s' \"$#\"; printf '<%s>' x\"$@\"y; echo; set -- ''; printf '<%s>' x\"$@\"y; echo",
+        "test-parens": "[ \\( 1 = 1 \\) ]; echo \"paren=$?\"; [ ! 1 = 2 ]; echo \"not=$?\"",
+        "test-a-o": "[ 1 = 1 -a 2 = 2 ]; echo \"and=$?\"; [ 1 = 2 -o 3 = 3 ]; echo \"or=$?\"",
+        "shift-too-far": "set -- a; shift 3; echo \"shift=$?\"; echo \"n=$#\"",
+        "command-v-forms": "command -v cd; command -V cd 2>&1 | head -1; command -v ./nosuch; echo \"$?\"",
+        "set-dash-dash": "set -- -x -e; printf '<%s>' \"$@\"; echo; set --; echo \"n=$#\"",
+        "assignment-glob": ": > g.txt; v=*.txt; printf '<%s>' $v \"$v\"; echo",
+        "colon-status": ": ; echo \"$?\"; : nosuch; echo \"$?\"; ! : ; echo \"$?\"",
+        "hash-forget": "hash 2>/dev/null; hash cat 2>/dev/null; hash -r 2>/dev/null; echo \"hash=$?\"",
+        "times-shape": "times | sed 's/[0-9]/N/g'",
+        "getopts-bad": "set -- -q; getopts a: o; echo \"o=$o status=$? OPTIND=$OPTIND\"",
+        "wait-no-children": "wait; echo \"wait=$?\"; wait 999999 2>/dev/null; echo \"badpid=$?\"",
+        "return-outside": "return 4 2>/dev/null; echo \"return=$?\"",
+        "break-too-many": "for i in 1 2; do break 5; done 2>/dev/null; echo \"break=$?\"",
+        "dot-with-arguments": ("printf 'echo \"dot:$#:$1\"\\n' > d.sh; . ./d.sh extra 2>/dev/null; "
+                               "echo \"dot=$?\""),
+        "func-name-slash": ("eval 'a/b() { echo slashed; }' 2>/dev/null; echo \"define=$?\"; "
+                            "eval a/b 2>/dev/null; echo \"call=$?\""),
+    }
+    return ("personality-split-" + shape, shell_ALL,
+            shell_program(scripts[shape] + " 2>&1", "echo \"end=$?\""))
+
+
 SHELL_UTILITIES = (
     shell_STARTUP,
     shell_SET,
@@ -11670,6 +12162,15 @@ SHELL_FAMILIES = (
     shell_lang_job_control_script,
     shell_lang_utf8_locale,
     shell_lang_onecmd_input,
+    shell_lang_process_redirection,
+    shell_lang_trap_in_pipeline,
+    shell_lang_errexit_functions,
+    shell_lang_heredoc_expansion,
+    shell_lang_arithmetic_edges,
+    shell_lang_read_field_edges,
+    shell_lang_nested_parameter,
+    shell_lang_case_classes,
+    shell_lang_personality_split,
 )
 
 # ---- domain: text (from spec_text.py) ----

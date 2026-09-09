@@ -1152,6 +1152,21 @@ typedef struct
         bool printable; // Getter and heading are printable ASCII, without newlines.
 } ul_table_column;
 
+/*      How a column list came out: taken, empty (which the reference refuses
+        without a word) or naming something no column is called. */
+#define UL_COLUMNS_OK 0
+#define UL_COLUMNS_EMPTY 1
+#define UL_COLUMNS_UNKNOWN 2
+#define UL_COLUMN_NAME 64
+
+/*      The empty list is the reference's silent refusal; anything else names
+        the column nobody knew. */
+#define ul_columns_refused(program, fault, unknown) \
+        ((fault) == UL_COLUMNS_EMPTY \
+             ? 1 \
+             : string_report(log_error, 1, "%s: unknown column: %s\n", \
+                             (program), (string_address)(unknown)))
+
 #define UL_TABLE_STRING 0
 #define UL_TABLE_NUMBER 1
 #define UL_TABLE_BOOLEAN 2
@@ -1316,13 +1331,52 @@ static const ul_table_column ul_limit_definitions[] = {
     {"UNITS", "UNITS", 0, false, .printable = true},
 };
 
-static bool ul_limit_columns(string_address text, p8 address_to columns,
-                             positive address_to count)
+/*      prlimit reads a column list by the same three rules as the listing
+        tools: empty is a silent refusal, an unknown name is named, and a
+        repeated name is a repeated column. */
+static b32 ul_limit_columns(string_address text, p8 address_to columns,
+                            positive address_to count, p8 address_to unknown)
 {
         address_to count = 0;
-        return name_list_select(
-            text, ul_limit_definitions, sizeof(ul_limit_definitions[0]),
-            UL_LIMIT_COLUMNS, columns, count, UL_LIMIT_COLUMNS, 0);
+        unknown[0] = 0;
+
+        if (!string_get(text))
+                return UL_COLUMNS_EMPTY;
+
+        while (string_get(text))
+        {
+                string_address comma = string_first_of_or_end(text, ',');
+                positive length = (positive)(comma - text);
+                positive found = UL_LIMIT_COLUMNS;
+
+                for (positive i = 0; i < UL_LIMIT_COLUMNS; i++)
+                {
+                        string_address name = ul_limit_definitions[i].name;
+
+                        if (string_length(name) == length &&
+                            !memory_compare_ascii_case(name, text, length))
+                        {
+                                found = i;
+                                break;
+                        }
+                }
+
+                if (found == UL_LIMIT_COLUMNS ||
+                    address_to count == UL_LIMIT_COLUMNS)
+                {
+                        positive kept = min(length, (positive)UL_COLUMN_NAME - 1);
+                        memory_copy_apart(unknown, (address_any)text, kept);
+                        unknown[kept] = 0;
+                        return UL_COLUMNS_UNKNOWN;
+                }
+
+                columns[(address_to count)++] = (p8)found;
+                if (!string_get(comma))
+                        break;
+                text = comma + 1;
+        }
+
+        return address_to count ? UL_COLUMNS_OK : UL_COLUMNS_EMPTY;
 }
 
 static positive ul_limit_text(p64 value, p8 address_to into)
@@ -1463,10 +1517,16 @@ static b32 util_linux_prlimit()
             UL_LIMIT_HARD, UL_LIMIT_UNITS,
         };
         positive column_count = UL_LIMIT_COLUMNS;
-        if (file_option_value(address_of taking, 'o') &&
-            !ul_limit_columns(file_option_value(address_of taking, 'o'),
-                              columns, address_of column_count))
-                return string_report(log_error, 1, "%s: %s\n", "prlimit", "unknown column");
+        p8 unknown[UL_COLUMN_NAME];
+        if (file_option_value(address_of taking, 'o'))
+        {
+                b32 fault = ul_limit_columns(
+                    file_option_value(address_of taking, 'o'), columns,
+                    address_of column_count, unknown);
+
+                if (fault)
+                        return ul_columns_refused("prlimit", fault, unknown);
+        }
 
         ul_limit_row rows[UL_RESOURCES];
         positive shown = 0;
@@ -3457,28 +3517,163 @@ static bool ul_table_column_add(p8 address_to columns, positive address_to count
         return true;
 }
 
-static bool ul_table_column_list(
+/*      Three things every one of these programs does with a column list,
+        which the shared name reader does not: an empty list is refused
+        without a word (the reference exits 1 and says nothing), an
+        unrecognised name is named rather than described, and a name written
+        twice is a column written twice -- `lsns -o TYPE,TYPE` prints TYPE
+        beside TYPE.  The caller supplies UL_COLUMN_NAME bytes to be told
+        which name it was, and reports through its own diagnostic. */
+static b32 ul_table_column_list(
     string_address text, const ul_table_column address_to definitions,
     positive definition_count, const p8 address_to defaults,
-    positive default_count, p8 address_to columns, positive address_to count)
+    positive default_count, p8 address_to columns, positive address_to count,
+    p8 address_to unknown)
 {
         bool append = text && string_is(text, '+');
 
         address_to count = 0;
+        unknown[0] = 0;
         if (!text || append)
         {
                 if (default_count > definition_count)
-                        return false;
+                        return UL_COLUMNS_UNKNOWN;
                 memory_copy_apart(columns, (address_any)defaults, default_count);
                 address_to count = default_count;
                 if (!text)
-                        return true;
+                        return UL_COLUMNS_OK;
                 text++;
         }
-        return name_list_select(
-            text, definitions, sizeof(definitions[0]), definition_count,
-            columns, count, definition_count, NAME_LIST_UNIQUE);
+
+        if (!string_get(text))
+                return UL_COLUMNS_EMPTY;
+
+        while (string_get(text))
+        {
+                string_address comma = string_first_of_or_end(text, ',');
+                positive length = (positive)(comma - text);
+                positive found = definition_count;
+
+                for (positive i = 0; i < definition_count; i++)
+                {
+                        string_address name = definitions[i].name;
+
+                        if (string_length(name) == length &&
+                            !memory_compare_ascii_case(name, text, length))
+                        {
+                                found = i;
+                                break;
+                        }
+                }
+
+                if (found == definition_count ||
+                    address_to count == definition_count)
+                {
+                        positive kept = min(length, (positive)UL_COLUMN_NAME - 1);
+                        memory_copy_apart(unknown, (address_any)text, kept);
+                        unknown[kept] = 0;
+                        return UL_COLUMNS_UNKNOWN;
+                }
+
+                columns[(address_to count)++] = (p8)found;
+                if (!string_get(comma))
+                        break;
+                text = comma + 1;
+        }
+
+        return address_to count ? UL_COLUMNS_OK : UL_COLUMNS_EMPTY;
 }
+
+/*      Two options that cannot be given together are refused while the
+        options are being read, before anything else the program would have
+        said, and the message names them in the order the command line wrote
+        them: `-r -J` is "--raw and --json" and `-J -r` the reverse.  A flag
+        word says only that both were given, so the pair and its order are
+        read back off the arguments.
+*/
+typedef struct
+{
+        p8 letter;
+        string_address name;
+} ul_exclusive;
+
+static b32 ul_refuse_exclusive(file_taking address_to taking,
+                               const ul_exclusive address_to group,
+                               positive count)
+{
+        p8 seen[2] = {0, 0};
+        positive have = 0;
+        positive arguments = (positive)program_argument_count();
+        bool value_next = false;
+
+        for (positive at = 1; at < arguments && have < 2; at++)
+        {
+                string_address word = program_argument((b32)at);
+
+                if (value_next)
+                {
+                        value_next = false;
+                        continue;
+                }
+                if (!word || word[0] != '-' || !word[1])
+                        continue;
+
+                if (word[1] == '-')
+                {
+                        if (!word[2])
+                                break;
+
+                        string_address equals =
+                            string_first_of_or_end(word + 2, '=');
+                        p8 letter = file_long_letter(
+                            taking, word + 2,
+                            (positive)(equals - (word + 2)));
+
+                        for (positive i = 0; i < count && letter; i++)
+                                if (letter == group[i].letter &&
+                                    (!have || seen[0] != letter))
+                                        seen[have++] = letter;
+                        continue;
+                }
+
+                for (positive i = 1; word[i] && have < 2; i++)
+                {
+                        for (positive g = 0; g < count; g++)
+                                if (word[i] == group[g].letter &&
+                                    (!have || seen[0] != word[i]))
+                                {
+                                        seen[have++] = word[i];
+                                        break;
+                                }
+
+                        if (taking->valued &&
+                            string_first_of(taking->valued, word[i]))
+                        {
+                                value_next = !word[i + 1];
+                                break;
+                        }
+                }
+        }
+
+        if (have < 2)
+                return 0;
+
+        string_address one = null;
+        string_address two = null;
+
+        for (positive i = 0; i < count; i++)
+        {
+                if (group[i].letter == seen[0])
+                        one = group[i].name;
+                if (group[i].letter == seen[1])
+                        two = group[i].name;
+        }
+
+        return string_report(log_error, 1,
+                             "%s: options --%s and --%s cannot be combined\n",
+                             taking->program, one, two);
+}
+
 
 static string_address ul_lsns_table_field(address_any row, p8 column,
                                           p8 address_to scratch)
@@ -4212,10 +4407,18 @@ static b32 util_linux_lsclocks()
         positive column_count = 0;
         string_address selected = file_option_value(address_of taking, 'o');
         if (!selected) selected = file_environment("LSCLOCKS_COLUMNS");
-        if (selected && !ul_table_column_list(selected, ul_lsclock_columns,
-                UL_LSCLOCK_COLUMNS, defaults, array_count(defaults), columns,
-                address_of column_count))
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, selected, "unknown output column"));
+        p8 unknown[UL_COLUMN_NAME];
+        b32 fault = selected
+            ? ul_table_column_list(selected, ul_lsclock_columns,
+                                   UL_LSCLOCK_COLUMNS, defaults,
+                                   array_count(defaults), columns,
+                                   address_of column_count, unknown)
+            : UL_COLUMNS_OK;
+        if (fault)
+                return text_done(fault == UL_COLUMNS_EMPTY ? 1
+                    : string_diagnostic(address_of text_diagnostic, 1,
+                                        "unknown column",
+                                        (string_address)unknown));
         if (!selected)
         {
                 positive limit = taking.flags & FILE_FLAG('A')
@@ -4296,15 +4499,19 @@ static b32 util_linux_lsns()
                     address_of answer))
                 return answer;
 
+        static const ul_exclusive lsns_formats[] = {
+            {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
+        b32 clash = ul_refuse_exclusive(address_of taking, lsns_formats,
+                                        array_count(lsns_formats));
+        if (clash)
+                return clash;
+
         if (taking.flags & FILE_FLAG('T'))
                 return string_report(log_error, 1, "%s: %s\n", "lsns", "tree output is not supported");
         if (taking.flags & FILE_FLAG('P'))
                 return string_report(log_error, 1, "%s: %s\n", "lsns", "persistent namespace discovery is not supported");
         if (taking.flags & FILE_FLAG('A'))
                 return string_report(log_error, 1, "%s: %s\n", "lsns", "--output-all is not supported");
-        if ((taking.flags & FILE_FLAG('J')) &&
-            (taking.flags & FILE_FLAG('r')))
-                return string_report(log_error, 1, "%s: %s\n", "lsns", "--json and --raw are mutually exclusive");
 
         positive argument_count = (positive)program_argument_count();
         positive operands = argument_count - taking.first;
@@ -4346,12 +4553,14 @@ static b32 util_linux_lsns()
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
 
-        if (!ul_table_column_list(
-                output, ul_lsns_columns, UL_LSNS_COLUMNS,
-                inode_selected ? inode_defaults : defaults,
-                inode_selected ? array_count(inode_defaults) : array_count(defaults),
-                columns, address_of column_count))
-                return string_report(log_error, 1, "%s: %s\n", "lsns", "unknown output column");
+        p8 unknown[UL_COLUMN_NAME];
+        b32 fault = ul_table_column_list(
+            output, ul_lsns_columns, UL_LSNS_COLUMNS,
+            inode_selected ? inode_defaults : defaults,
+            inode_selected ? array_count(inode_defaults) : array_count(defaults),
+            columns, address_of column_count, unknown);
+        if (fault)
+                return ul_columns_refused("lsns", fault, unknown);
 
         text_begin("lsns");
         text_arena_used = 0;
@@ -4763,11 +4972,14 @@ static b32 util_linux_lslocks()
 
         if (ul_options_done(address_of taking, "[options]", address_of answer))
                 return answer;
-        if (taking.first != (positive)program_argument_count())
-                return string_report(log_error, 1, "%s: %s\n", "lslocks", "unexpected operand");
-        if ((taking.flags & FILE_FLAG('J')) &&
-            (taking.flags & FILE_FLAG('r')))
-                return string_report(log_error, 1, "%s: %s\n", "lslocks", "--json and --raw are mutually exclusive");
+
+        static const ul_exclusive lslocks_formats[] = {
+            {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
+        b32 clash = ul_refuse_exclusive(address_of taking, lslocks_formats,
+                                        array_count(lslocks_formats));
+        if (clash)
+                return clash;
+        /* Operands mean nothing to lslocks and the reference ignores them. */
         if (taking.flags & FILE_FLAG('Q'))
                 return string_report(log_error, 1, "%s: %s\n", "lslocks", "display filters are not supported");
         if (taking.flags & FILE_FLAG('H'))
@@ -4791,10 +5003,12 @@ static b32 util_linux_lslocks()
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
 
-        if (!ul_table_column_list(
-                output, ul_lslocks_columns, UL_LOCKS_COLUMNS, defaults,
-                array_count(defaults), columns, address_of column_count))
-                return string_report(log_error, 1, "%s: %s\n", "lslocks", "unknown output column");
+        p8 unknown[UL_COLUMN_NAME];
+        b32 fault = ul_table_column_list(
+            output, ul_lslocks_columns, UL_LOCKS_COLUMNS, defaults,
+            array_count(defaults), columns, address_of column_count, unknown);
+        if (fault)
+                return ul_columns_refused("lslocks", fault, unknown);
 
         for (positive i = 0; i < column_count; i++)
                 if (columns[i] == UL_LOCKS_HOLDERS)
@@ -5307,10 +5521,12 @@ static b32 util_linux_lsfd()
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
 
-        if (!ul_table_column_list(
-                output, ul_lsfd_columns, UL_LSFD_COLUMNS, defaults,
-                array_count(defaults), columns, address_of column_count))
-                return string_report(log_error, 1, "%s: %s\n", "lsfd", "unknown output column");
+        p8 unknown[UL_COLUMN_NAME];
+        b32 fault = ul_table_column_list(
+            output, ul_lsfd_columns, UL_LSFD_COLUMNS, defaults,
+            array_count(defaults), columns, address_of column_count, unknown);
+        if (fault)
+                return ul_columns_refused("lsfd", fault, unknown);
         positive fields = 0;
         for (positive at = 0; at < column_count; at++)
                 fields |= (positive)1 << columns[at];
@@ -8876,6 +9092,13 @@ static b32 util_linux_wipefs()
         if (ul_options_done(address_of taking, "[options] <device>",
                     address_of answer))
                 return answer;
+        static const ul_exclusive wipefs_pair[] = {
+            {'o', (string_address)"offset"},
+            {'O', (string_address)"output"}};
+        b32 clash = ul_refuse_exclusive(address_of taking, wipefs_pair,
+                                        array_count(wipefs_pair));
+        if (clash)
+                return clash;
         if (taking.flags & (FILE_FLAG('b') | FILE_FLAG('f') |
                             FILE_FLAG('k')))
                 return string_report(log_error, 1, "%s: %s\n", "wipefs", "backup, force and lock modes are not supported");
@@ -8950,10 +9173,13 @@ static b32 util_linux_wipefs()
                 positive column_count = 0;
                 string_address selected = file_option_value(address_of taking, 'O');
 
-                if (!ul_table_column_list(
-                        selected, ul_wipefs_columns, UL_WIPEFS_COLUMNS,
-                        base, base_count, columns, address_of column_count))
-                        return string_report(log_error, 1, "%s: %s\n", "wipefs", "unknown or unsupported output column");
+                p8 unknown[UL_COLUMN_NAME];
+                b32 fault = ul_table_column_list(
+                    selected, ul_wipefs_columns, UL_WIPEFS_COLUMNS,
+                    base, base_count, columns, address_of column_count,
+                    unknown);
+                if (fault)
+                        return ul_columns_refused("wipefs", fault, unknown);
 
                 if (parsable)
                         ul_wipefs_parsable(address_of work, columns,
@@ -10512,11 +10738,13 @@ static b32 util_linux_lscpu()
                 };
                 p8 columns[UL_LSCPU_C_COLUMNS];
                 positive count = 0;
-                if (!ul_table_column_list(selected, ul_lscpu_cache_columns,
-                                          UL_LSCPU_C_COLUMNS, defaults,
-                                          array_count(defaults), columns,
-                                          address_of count))
-                        return string_report(log_error, 1, "%s: %s\n", "lscpu", "unknown cache column");
+                p8 unknown[UL_COLUMN_NAME];
+                b32 fault = ul_table_column_list(
+                    selected, ul_lscpu_cache_columns, UL_LSCPU_C_COLUMNS,
+                    defaults, array_count(defaults), columns,
+                    address_of count, unknown);
+                if (fault)
+                        return ul_columns_refused("lscpu", fault, unknown);
                 ul_table(json ? "caches" : null, ul_lscpu.caches,
                          ul_lscpu.cache_count, ul_lscpu_cache_columns,
                          columns, count, true, raw, ul_lscpu_cache_field);
@@ -10540,11 +10768,12 @@ static b32 util_linux_lscpu()
                                              : array_count(socket_defaults);
                 p8 columns[UL_LSCPU_COLUMNS];
                 positive count = 0;
-                if (!ul_table_column_list(selected, ul_lscpu_columns,
-                                          UL_LSCPU_COLUMNS, defaults,
-                                          default_count, columns,
-                                          address_of count))
-                        return string_report(log_error, 1, "%s: %s\n", "lscpu", "unknown CPU column");
+                p8 unknown[UL_COLUMN_NAME];
+                b32 fault = ul_table_column_list(
+                    selected, ul_lscpu_columns, UL_LSCPU_COLUMNS, defaults,
+                    default_count, columns, address_of count, unknown);
+                if (fault)
+                        return ul_columns_refused("lscpu", fault, unknown);
 
                 if (taking.flags & FILE_FLAG('p'))
                         ul_lscpu_parse(columns, count, !selected, filter);
@@ -10962,6 +11191,19 @@ static b32 util_linux_lsmem()
         b32 answer;
         if (ul_options_done(address_of taking, "[options]", address_of answer))
                 return answer;
+
+        static const ul_exclusive lsmem_formats[] = {
+            {'J', (string_address)"json"}, {'P', (string_address)"pairs"},
+            {'r', (string_address)"raw"}};
+        static const ul_exclusive lsmem_split[] = {
+            {'a', (string_address)"all"}, {'S', (string_address)"split"}};
+        b32 clash = ul_refuse_exclusive(address_of taking, lsmem_formats,
+                                        array_count(lsmem_formats));
+        if (!clash)
+                clash = ul_refuse_exclusive(address_of taking, lsmem_split,
+                                            array_count(lsmem_split));
+        if (clash)
+                return clash;
         if (taking.first != (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "lsmem", "unexpected operand");
         if (taking.flags & FILE_FLAG('P'))
@@ -10983,11 +11225,13 @@ static b32 util_linux_lsmem()
         };
         p8 columns[UL_LSMEM_COLUMNS];
         positive column_count = 0;
-        if (!ul_table_column_list(selected, ul_lsmem_columns,
-                                  UL_LSMEM_COLUMNS, defaults,
-                                  array_count(defaults), columns,
-                                  address_of column_count))
-                return string_report(log_error, 1, "%s: %s\n", "lsmem", "unknown output column");
+        p8 unknown[UL_COLUMN_NAME];
+        b32 fault = ul_table_column_list(selected, ul_lsmem_columns,
+                                         UL_LSMEM_COLUMNS, defaults,
+                                         array_count(defaults), columns,
+                                         address_of column_count, unknown);
+        if (fault)
+                return ul_columns_refused("lsmem", fault, unknown);
 
         positive split = ((positive)1 << UL_LSMEM_STATE) |
                          ((positive)1 << UL_LSMEM_REMOVABLE);
@@ -11002,10 +11246,11 @@ static b32 util_linux_lsmem()
         {
                 p8 split_columns[UL_LSMEM_COLUMNS];
                 positive split_count = 0;
-                if (!ul_table_column_list(splitting, ul_lsmem_columns,
-                                          UL_LSMEM_COLUMNS, null, 0,
-                                          split_columns, address_of split_count))
-                        return string_report(log_error, 1, "%s: %s\n", "lsmem", "unknown split column");
+                b32 split_fault = ul_table_column_list(
+                    splitting, ul_lsmem_columns, UL_LSMEM_COLUMNS, null, 0,
+                    split_columns, address_of split_count, unknown);
+                if (split_fault)
+                        return ul_columns_refused("lsmem", split_fault, unknown);
                 for (positive i = 0; i < split_count; i++)
                 {
                         p8 column = split_columns[i];
@@ -11029,8 +11274,10 @@ static b32 util_linux_lsmem()
             !summary_always)
                 return string_report(log_error, 1, "%s: %s\n", "lsmem", "invalid --summary mode");
         bool json = (taking.flags & FILE_FLAG('J')) != 0;
-        if (json && summary_only)
-                return string_report(log_error, 1, "%s: %s\n", "lsmem", "JSON and summary-only output are incompatible");
+        if (summary_only && (taking.flags & (FILE_FLAG('r') | FILE_FLAG('J') |
+                                            FILE_FLAG('P'))))
+                return string_report(log_error, 1, "%s: %s\n", "lsmem",
+                    "options --{raw,json,pairs} and --summary=only are mutually exclusive");
 
         text_arena_used = 0;
         if (!ul_lsmem_take())
@@ -12061,6 +12308,19 @@ static b32 util_linux_lsblk()
         if (ul_options_done(address_of taking, "[options] [device ...]",
                     address_of answer))
                 return answer;
+        static const ul_exclusive lsblk_formats[] = {
+            {'J', (string_address)"json"}, {'P', (string_address)"pairs"},
+            {'r', (string_address)"raw"}};
+        static const ul_exclusive lsblk_shapes[] = {
+            {'l', (string_address)"list"}, {'P', (string_address)"pairs"},
+            {'r', (string_address)"raw"}};
+        b32 clash = ul_refuse_exclusive(address_of taking, lsblk_formats,
+                                        array_count(lsblk_formats));
+        if (!clash)
+                clash = ul_refuse_exclusive(address_of taking, lsblk_shapes,
+                                            array_count(lsblk_shapes));
+        if (clash)
+                return clash;
         if (taking.flags & (FILE_FLAG('D') | FILE_FLAG('z')))
                 return string_report(log_error, 1, "%s: %s\n", "lsblk", "discard/zoned fields are not supported");
         if (taking.flags & (FILE_FLAG('O') | FILE_FLAG('P')))
@@ -12068,13 +12328,8 @@ static b32 util_linux_lsblk()
         if (file_option_value(address_of taking, 's'))
                 return string_report(log_error, 1, "%s: %s\n", "lsblk", "--sysroot is not supported");
 
-        positive presets = ((taking.flags & FILE_FLAG('f')) != 0) +
-                           ((taking.flags & FILE_FLAG('m')) != 0) +
-                           ((taking.flags & FILE_FLAG('t')) != 0) +
-                           ((taking.flags & FILE_FLAG('S')) != 0);
-        if (presets > 1)
-                return string_report(log_error, 1, "%s: %s\n", "lsblk", "output presets are mutually exclusive");
-
+        /* --fs, --perms, --topology and --scsi are not exclusive: each is a
+           set of default columns and the last one written wins. */
         static const p8 defaults[] = {
             UL_LSBLK_NAME, UL_LSBLK_MAJMIN, UL_LSBLK_RM, UL_LSBLK_SIZE,
             UL_LSBLK_RO, UL_LSBLK_TYPE, UL_LSBLK_MOUNTPOINTS,
@@ -12113,10 +12368,13 @@ static b32 util_linux_lsblk()
         p8 columns[UL_LSBLK_COLUMNS];
         positive column_count = 0;
         string_address selected = file_option_value(address_of taking, 'o');
-        if (!ul_table_column_list(selected, ul_lsblk_columns,
-                                  UL_LSBLK_COLUMNS, chosen, chosen_count,
-                                  columns, address_of column_count))
-                return string_report(log_error, 1, "%s: %s\n", "lsblk", "unknown or unsupported output column");
+        p8 unknown[UL_COLUMN_NAME];
+        b32 fault = ul_table_column_list(selected, ul_lsblk_columns,
+                                         UL_LSBLK_COLUMNS, chosen,
+                                         chosen_count, columns,
+                                         address_of column_count, unknown);
+        if (fault)
+                return ul_columns_refused("lsblk", fault, unknown);
 
         bool scsi = (taking.flags & FILE_FLAG('S')) != 0;
         bool identity = false;
@@ -12811,6 +13069,11 @@ static b32 util_linux_lsipc()
                 return answer;
         if (taking.first != (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "lsipc", "unexpected operand");
+        /* An empty column list is read before any other complaint and is
+           refused without a word, as the reference does. */
+        if (file_option_value(address_of taking, 'o') &&
+            !string_get(file_option_value(address_of taking, 'o')))
+                return 1;
         if (taking.flags &
             (FILE_FLAG('M') | FILE_FLAG('Q') | FILE_FLAG('S') |
              FILE_FLAG('N')))
@@ -12847,10 +13110,13 @@ static b32 util_linux_lsipc()
         if ((taking.flags & FILE_FLAG('c')) &&
             (taking.flags & FILE_FLAG('t')))
                 return string_report(log_error, 1, "%s: %s\n", "lsipc", "--creator and --time are mutually exclusive");
-        if (!ul_table_column_list(output, ul_ipc_columns, UL_IPC_COLUMNS,
-                                  defaults, default_count, columns,
-                                  address_of column_count))
-                return string_report(log_error, 1, "%s: %s\n", "lsipc", "unknown output column");
+        p8 unknown[UL_COLUMN_NAME];
+        b32 fault = ul_table_column_list(output, ul_ipc_columns,
+                                         UL_IPC_COLUMNS, defaults,
+                                         default_count, columns,
+                                         address_of column_count, unknown);
+        if (fault)
+                return ul_columns_refused("lsipc", fault, unknown);
         if (taking.flags & FILE_FLAG('c'))
         {
                 static const p8 creators[] = {
@@ -13515,9 +13781,12 @@ static b32 util_linux_rfkill()
                     "[options] command [identifier ...]",
                     address_of answer))
                 return answer;
-        if ((taking.flags & FILE_FLAG('J')) &&
-            (taking.flags & FILE_FLAG('r')))
-                return string_report(log_error, 1, "%s: %s\n", "rfkill", "--json and --raw are mutually exclusive");
+        static const ul_exclusive rfkill_formats[] = {
+            {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
+        b32 clash = ul_refuse_exclusive(address_of taking, rfkill_formats,
+                                        array_count(rfkill_formats));
+        if (clash)
+                return clash;
 
         positive arguments = (positive)program_argument_count();
         string_address action = taking.first < arguments
@@ -13606,10 +13875,12 @@ static b32 util_linux_rfkill()
         p8 columns[UL_RFKILL_COLUMNS];
         positive column_count = 0;
 
-        if (!ul_table_column_list(
-                selected, ul_rfkill_columns, UL_RFKILL_COLUMNS,
-                base, base_count, columns, address_of column_count))
-                return string_report(log_error, 1, "%s: %s\n", "rfkill", "unknown or unsupported output column");
+        p8 unknown[UL_COLUMN_NAME];
+        b32 fault = ul_table_column_list(
+            selected, ul_rfkill_columns, UL_RFKILL_COLUMNS,
+            base, base_count, columns, address_of column_count, unknown);
+        if (fault)
+                return ul_columns_refused("rfkill", fault, unknown);
 
         ul_table(taking.flags & FILE_FLAG('J') ? "rfkilldevices" : null,
                  ul_rfkill_views, view_count, ul_rfkill_columns,

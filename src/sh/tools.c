@@ -7930,6 +7930,171 @@ static fn dump_add_canonical()
         });
 }
 
+/*
+        od's own numeric arguments -- -j, -N, -S -- are read by coreutils
+        with xstrtoumax and a suffix set of its own: b, then E, G, K, k, M,
+        m, P, T, Y and Z, each of which may be spelled out as B for the
+        decimal step or iB for the binary one. dd's parser is a different
+        one (its x is a product, and c and w are counts), so od gets this.
+
+        The three ways a word can fail are three different sentences in the
+        reference, so the kind is answered rather than a bare false.
+*/
+#define DUMP_OD_NUMBER_OK 0
+#define DUMP_OD_NUMBER_INVALID 1
+#define DUMP_OD_NUMBER_SUFFIX 2
+#define DUMP_OD_NUMBER_LARGE 3
+
+static p8 dump_od_number(string_address text, positive address_to out)
+{
+        string_address at = text;
+        positive value = 0;
+        positive base = 10;
+        bool digits = false;
+        bool large = false;
+
+        if (!text)
+                return DUMP_OD_NUMBER_INVALID;
+
+        while (byte_is_space(string_get(at)))
+                at++;
+
+        if (string_get(at) == '-')
+                return DUMP_OD_NUMBER_INVALID;
+        if (string_get(at) == '+')
+                at++;
+
+        /* strtoumax reads the base off the word: 0x is hexadecimal only
+           when a digit follows it, and a leading zero is octal only when a
+           digit follows that -- so 0x on its own is the number zero with a
+           stray x after it, which is a suffix complaint and not a bad
+           number. */
+        if (string_get(at) == '0' && (at[1] == 'x' || at[1] == 'X') &&
+            byte_is_hexadecimal(at[2]))
+        {
+                base = 16;
+                at += 2;
+        }
+        else if (string_get(at) == '0' && byte_is_digit(at[1]))
+                base = 8;
+
+        for (;; at++)
+        {
+                p8 byte = string_get(at);
+                positive digit;
+
+                if (byte_is_digit(byte))
+                        digit = (positive)(byte - '0');
+                else if (base == 16 && byte >= 'a' && byte <= 'f')
+                        digit = (positive)(byte - 'a') + 10;
+                else if (base == 16 && byte >= 'A' && byte <= 'F')
+                        digit = (positive)(byte - 'A') + 10;
+                else
+                        break;
+
+                if (digit >= base)
+                        break;
+
+                if (value > (positive_max - digit) / base)
+                        large = true;
+                else
+                        value = value * base + digit;
+
+                digits = true;
+        }
+
+        p8 suffix = string_get(at);
+
+        /* A word that is only a suffix counts as one of that unit. */
+        if (!digits)
+        {
+                if (!suffix || !string_first_of("bEGKkMmPTYZ0", suffix))
+                        return DUMP_OD_NUMBER_INVALID;
+                value = 1;
+        }
+
+        if (suffix)
+        {
+                positive multiple = 0;
+                positive power = 0;
+
+                switch (suffix)
+                {
+                case 'b': multiple = 512; break;
+                case 'K': case 'k': power = 1; break;
+                case 'M': case 'm': power = 2; break;
+                case 'G': power = 3; break;
+                case 'T': power = 4; break;
+                case 'P': power = 5; break;
+                case 'E': power = 6; break;
+                case 'Z': power = 7; break;
+                case 'Y': power = 8; break;
+                default: return DUMP_OD_NUMBER_SUFFIX;
+                }
+
+                at++;
+
+                if (power)
+                {
+                        positive step = 1024;
+
+                        if (string_get(at) == 'i' && at[1] == 'B')
+                                at += 2;
+                        else if (string_get(at) == 'B')
+                        {
+                                step = 1000;
+                                at++;
+                        }
+
+                        multiple = 1;
+                        for (positive i = 0; i < power; i++)
+                        {
+                                if (multiple > positive_max / step)
+                                {
+                                        large = true;
+                                        break;
+                                }
+                                multiple *= step;
+                        }
+                }
+
+                if (string_get(at))
+                        return DUMP_OD_NUMBER_SUFFIX;
+
+                if (value && multiple > positive_max / value)
+                        large = true;
+                else
+                        value *= multiple;
+        }
+
+        if (large)
+                return DUMP_OD_NUMBER_LARGE;
+
+        address_to out = value;
+        return DUMP_OD_NUMBER_OK;
+}
+
+/* The three sentences, in the reference's words. The option is named the
+   way it was written on the command line, which for a long spelling is the
+   long one. */
+static bool dump_od_number_refuse(string_address option, string_address value,
+                                  p8 kind)
+{
+        text_flush();
+
+        if (kind == DUMP_OD_NUMBER_SUFFIX)
+                string_format(writer_stderr, "od: invalid suffix in %s argument '%s'\n",
+                              option, value);
+        else if (kind == DUMP_OD_NUMBER_LARGE)
+                string_format(writer_stderr, "od: %s argument '%s' too large\n",
+                              option, value);
+        else
+                string_format(writer_stderr, "od: invalid %s argument '%s'\n",
+                              option, value);
+
+        return false;
+}
+
 /* GNU's byte counts take a 0x prefix for hexadecimal, and the multiplier
    suffixes after it; dd's x is a product there, so hex is read here. */
 static bool dump_number(string_address source, positive address_to value)
@@ -8038,13 +8203,33 @@ static positive dump_od_width(p8 type, positive size)
 /* One -t word can hold several formats (`-t x1c`) and z decorates the
    integer format immediately before it.  Floating point and the named C
    sizes are intentionally refused instead of being interpreted nearly. */
-static bool dump_od_types(string_address word)
+/*
+        -t reads a whole string of specifications, and the reference has a
+        separate sentence for each way one can be wrong: a byte that begins
+        no specification at all, and a width no integral type on this
+        machine has. Which it was is left here for the caller to say.
+*/
+/* --strings' minimum, read where it is written. */
+static positive dump_od_strings;
+
+#define DUMP_OD_TYPE_OK 0
+#define DUMP_OD_TYPE_CHARACTER 1
+#define DUMP_OD_TYPE_SIZE 2
+#define DUMP_OD_TYPE_FLOAT 3
+#define DUMP_OD_TYPE_TOO_MANY 4
+
+static p8 dump_od_type_byte;
+static positive dump_od_type_size;
+
+static p8 dump_od_types(string_address word)
 {
         positive at = 0;
 
-        if (!word || !word[0])
-                return false;
+        if (!word)
+                return DUMP_OD_TYPE_CHARACTER;
 
+        /* An empty string names no format, which leaves od with its
+           default rather than with a complaint. */
         while (word[at])
         {
                 p8 type = word[at++];
@@ -8057,7 +8242,7 @@ static bool dump_od_types(string_address word)
                                 dump_add_character(false);
 
                         if (dump_arguments.failed)
-                                return false;
+                                return DUMP_OD_TYPE_TOO_MANY;
 
                         /* z decorates whatever format stands before it, and
                            the character kinds are no exception. */
@@ -8071,14 +8256,34 @@ static bool dump_od_types(string_address word)
                         continue;
                 }
 
+                /* The reference carries four floating widths this does not,
+                   and says so in its own sentence rather than pretending
+                   the letter is unknown. */
+                if (type == 'f')
+                        return DUMP_OD_TYPE_FLOAT;
+
                 if (type != 'd' && type != 'o' && type != 'u' && type != 'x')
-                        return false;
+                {
+                        dump_od_type_byte = type;
+                        return DUMP_OD_TYPE_CHARACTER;
+                }
 
                 positive size = 4;
 
-                if (word[at] == '1' || word[at] == '2' ||
-                    word[at] == '4' || word[at] == '8')
-                        size = (positive)(word[at++] - '0');
+                if (byte_is_digit(word[at]))
+                {
+                        /* Every digit belongs to the width, so an
+                           unsupported one is named whole rather than read
+                           as a width and a stray byte after it. */
+                        size = 0;
+                        while (byte_is_digit(word[at]))
+                        {
+                                if (size <= positive_max / 16)
+                                        size = size * 10 +
+                                               (positive)(word[at] - '0');
+                                at++;
+                        }
+                }
                 else if (word[at] == 'C' || word[at] == 'S' ||
                          word[at] == 'I' || word[at] == 'L')
                 {
@@ -8089,6 +8294,12 @@ static bool dump_od_types(string_address word)
                                : word[at] == 'I' ? 4
                                                  : 8;
                         at++;
+                }
+
+                if (size != 1 && size != 2 && size != 4 && size != 8)
+                {
+                        dump_od_type_size = size;
+                        return DUMP_OD_TYPE_SIZE;
                 }
 
                 bool printable = word[at] == 'z';
@@ -8104,10 +8315,10 @@ static bool dump_od_types(string_address word)
                                  printable, false);
 
                 if (dump_arguments.failed)
-                        return false;
+                        return DUMP_OD_TYPE_TOO_MANY;
         }
 
-        return true;
+        return DUMP_OD_TYPE_OK;
 }
 
 static const file_long dump_od_longs[] = {
@@ -8163,14 +8374,122 @@ static bool dump_od_row_width()
         return true;
 }
 
+/*
+        Every value od is given is read where it is written, because that is
+        where the reference reads it: getopt hands each option to a case
+        that validates it at once, so two bad values are reported in the
+        order they were typed rather than in the order this program happens
+        to look them up afterwards.
+*/
 static bool dump_od_seen(p8 letter, string_address value)
 {
-        if (letter == 't' && !dump_od_types(value))
-                return string_diagnostic(&text_diagnostic, 0, value, "unsupported output format");
+        if (letter == 't')
+        {
+                p8 kind = dump_od_types(value);
 
-        // -E is --endian, read after the walk; -e is GNU's float alias.
+                if (kind == DUMP_OD_TYPE_FLOAT)
+                        return string_diagnostic(&text_diagnostic, 0, null,
+                                                 "floating point output is unsupported");
+                if (kind == DUMP_OD_TYPE_SIZE)
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                                      "od: invalid type string '%s';\n"
+                                      "this system doesn't provide a %p-byte integral type\n",
+                                      value, dump_od_type_size);
+                        return false;
+                }
+                if (kind == DUMP_OD_TYPE_CHARACTER)
+                {
+                        p8 shown[2] = {dump_od_type_byte, end};
+
+                        text_flush();
+                        string_format(writer_stderr,
+                                      "od: invalid character '%s' in type string '%s'\n",
+                                      shown, value);
+                        return false;
+                }
+                if (kind != DUMP_OD_TYPE_OK)
+                        return string_diagnostic(&text_diagnostic, 0, value,
+                                                 "unsupported output format");
+        }
+
         if (letter == 'E')
+        {
+                if (value && !string_equals(value, "little") &&
+                    !string_equals(value, "big"))
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                                      "od: invalid argument '%s' for '--endian'\n"
+                                      "Valid arguments are:\n  - 'little'\n  - 'big'\n"
+                                      "Try 'od --help' for more information.\n",
+                                      value);
+                        return false;
+                }
+
+                dump_arguments.big_endian = value && string_equals(value, "big");
                 return true;
+        }
+
+        if (letter == 'A' && value)
+        {
+                p8 radix = value[0];
+
+                if (radix == 'n')
+                        dump_arguments.address_none = true;
+                else if (radix == 'd' || radix == 'o' || radix == 'x')
+                {
+                        dump_arguments.address_none = false;
+                        dump_arguments.address_base = radix == 'd'   ? 10
+                                                      : radix == 'o' ? 8
+                                                                     : 16;
+                        dump_arguments.address_width = radix == 'x' ? 6 : 7;
+                }
+                else
+                {
+                        /* The byte is spelled rather than formatted: the
+                           shared formatter carries %s and not %c. */
+                        p8 shown[2] = {radix, end};
+
+                        text_flush();
+                        string_format(writer_stderr,
+                            "od: invalid output address radix '%s'; it must be one character from [doxn]\n",
+                            shown);
+                        return false;
+                }
+
+                return true;
+        }
+
+        if (letter == 'j' || letter == 'N' || letter == 'S')
+        {
+                static p8 named[3][3] = {"-j", "-N", "-S"};
+                positive read = 0;
+                p8 kind;
+
+                /* --strings on its own is a minimum of three. */
+                if (letter == 'S' && !value)
+                {
+                        dump_od_strings = 3;
+                        return true;
+                }
+
+                kind = dump_od_number(value, address_of read);
+                if (kind != DUMP_OD_NUMBER_OK)
+                        return dump_od_number_refuse(
+                            named[letter == 'j' ? 0 : letter == 'N' ? 1 : 2],
+                            value ? value : (string_address) "", kind);
+
+                if (letter == 'j')
+                        dump_arguments.skip = read;
+                else if (letter == 'N')
+                        dump_arguments.limit = read;
+                else
+                        dump_od_strings = read;
+
+                return true;
+        }
 
         if (letter == 'w' && value)
         {
@@ -8648,6 +8967,11 @@ static b32 dump_run(positive first, positive count)
 
                 if (dump_input_is_directory(name))
                 {
+                        /* An input that could not be read leaves od with no
+                           offset to report, and a directory is one of those:
+                           the reference writes no closing address line after
+                           it. */
+                        read_failed = true;
                         text_close();
                         continue;
                 }
@@ -8892,6 +9216,7 @@ static b32 tools_od(void)
         dump_arguments.address_base = 8;
         dump_arguments.address_width = 7;
         dump_arguments.od = true;
+        dump_od_strings = 3;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -8912,56 +9237,9 @@ static b32 tools_od(void)
                 }
         }
 
-        string_address order = file_option_value(address_of taking, 'E');
-
-        if (order)
-        {
-                if (string_equals(order, "big"))
-                        dump_arguments.big_endian = true;
-                else if (!string_equals(order, "little"))
-                {
-                        string_format(writer_stderr,
-                                      "od: invalid argument '%s' for '--endian'\n"
-                                      "Valid arguments are:\n  - 'big'\n  - 'little'\n"
-                                      "Try 'od --help' for more information.\n",
-                                      order);
-                        return text_done(1);
-                }
-        }
-
-        string_address radix = file_option_value(address_of taking, 'A');
-
-        if (radix)
-        {
-                if (radix[0] == 'n')
-                        dump_arguments.address_none = true;
-                else if (radix[0] == 'd' || radix[0] == 'o' ||
-                         radix[0] == 'x')
-                {
-                        dump_arguments.address_base = radix[0] == 'd' ? 10
-                                                      : radix[0] == 'o' ? 8
-                                                                        : 16;
-                        dump_arguments.address_width = radix[0] == 'x' ? 6 : 7;
-                }
-                else
-                {
-                        text_flush();
-                        return text_done(string_report(writer_stderr, 1,
-                            "od: invalid output address radix '%c'; it must be one character from [doxn]\n",
-                            radix[0]));
-                }
-        }
-
-        if ((taking.flags & FILE_FLAG('j')) &&
-            !dump_number(file_option_value(address_of taking, 'j'),
-                         address_of dump_arguments.skip))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'j'), "invalid skip"));
-
-        if ((taking.flags & FILE_FLAG('N')) &&
-            !dump_number(file_option_value(address_of taking, 'N'),
-                         address_of dump_arguments.limit))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'N'), "invalid byte count"));
-
+        /* -A, --endian, -j, -N and -S were read where they were written,
+           in dump_od_seen, because that is where the reference reads
+           them. */
         dump_arguments.duplicates = (taking.flags & FILE_FLAG('v')) != 0;
 
         /* The traditional second form: a last operand beginning with + (or
@@ -9011,18 +9289,7 @@ static b32 tools_od(void)
                             "od: no type may be specified when dumping strings\n"));
                 }
 
-                string_address wanted = file_option_value(address_of taking, 'S');
-                positive minimum = 3;
-
-                if (wanted && !dump_number(wanted, address_of minimum))
-                {
-                        string_format(writer_stderr,
-                                      "od: invalid minimum string length: '%s'\n",
-                                      wanted);
-                        return text_done(1);
-                }
-
-                return dump_strings(taking.first, stop, minimum);
+                return dump_strings(taking.first, stop, dump_od_strings);
         }
 
         if (!dump_arguments.count)
@@ -13366,10 +13633,11 @@ static b32 tools_fincore_main()
         string_address output = file_option_value(address_of taking, 'o');
         if (output && !string_get(output))
                 return 1;
-        if (!ul_table_column_list(
+        p8 unknown[UL_COLUMN_NAME];
+        if (ul_table_column_list(
                 output, tools_fincore_columns, TOOLS_FINCORE_COLUMNS,
                 defaults, array_count(defaults), columns,
-                address_of column_count))
+                address_of column_count, unknown))
                 return string_report(log_error, 1, "%s: %s\n", "fincore", "unknown output column");
 
         text_begin("fincore");

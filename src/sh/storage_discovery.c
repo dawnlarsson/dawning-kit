@@ -563,14 +563,65 @@ static PURE bool storage_mount_options_match(storage_mount address_to mount,
         return true;
 }
 
-static bool storage_columns(string_address list,
-                            storage_findmnt_options address_to options)
+/*      As in the listing tools: an empty list is refused without a word, an
+        unknown name is named, and a name written twice is a column written
+        twice.  `unknown` is left holding the name that was not recognised. */
+#define STORAGE_COLUMN_NAME 64
+#define STORAGE_COLUMNS_OK 0
+#define STORAGE_COLUMNS_EMPTY 1
+#define STORAGE_COLUMNS_UNKNOWN 2
+
+static b32 storage_columns(string_address list,
+                           storage_findmnt_options address_to options,
+                           p8 address_to unknown)
 {
-        options->count = 0;
-        return name_list_select(
-            list, storage_column_table, sizeof(storage_column_table[0]),
-            STORAGE_COLUMN_MAX, options->columns, address_of options->count,
-            STORAGE_COLUMN_MAX, 0);
+        unknown[0] = 0;
+
+        /* A leading + keeps what is already chosen -- the defaults, unless an
+           earlier --output replaced them -- and adds to it. */
+        if (string_is(list, '+'))
+                list++;
+        else
+                options->count = 0;
+
+        if (!string_get(list))
+                return STORAGE_COLUMNS_EMPTY;
+
+        while (string_get(list))
+        {
+                string_address comma = string_first_of_or_end(list, ',');
+                positive length = (positive)(comma - list);
+                positive found = STORAGE_COLUMN_MAX;
+
+                for (positive i = 0; i < STORAGE_COLUMN_MAX; i++)
+                {
+                        string_address name = storage_column_table[i].name;
+
+                        if (string_length(name) == length &&
+                            !memory_compare_ascii_case(name, list, length))
+                        {
+                                found = i;
+                                break;
+                        }
+                }
+
+                if (found == STORAGE_COLUMN_MAX ||
+                    options->count == STORAGE_COLUMN_MAX)
+                {
+                        positive kept = min(length,
+                                            (positive)STORAGE_COLUMN_NAME - 1);
+                        memory_copy_apart(unknown, (address_any)list, kept);
+                        unknown[kept] = 0;
+                        return STORAGE_COLUMNS_UNKNOWN;
+                }
+
+                options->columns[options->count++] = (p8)found;
+                if (!string_get(comma))
+                        break;
+                list = comma + 1;
+        }
+
+        return options->count ? STORAGE_COLUMNS_OK : STORAGE_COLUMNS_EMPTY;
 }
 
 #define storage_column_name(column) storage_column_table[(column)].name
@@ -859,11 +910,25 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                                 diagnostic(str("findmnt: unsupported option\n"));
                         return 1;
                 }
-                else if (!storage_columns(value, address_of options))
+                else
                 {
-                        if (diagnostic)
-                                diagnostic(str("findmnt: unsupported output column\n"));
-                        return 1;
+                        p8 unknown[STORAGE_COLUMN_NAME];
+                        b32 fault = storage_columns(value, address_of options,
+                                                    unknown);
+
+                        if (fault == STORAGE_COLUMNS_EMPTY)
+                                return 1;
+                        if (fault)
+                        {
+                                if (diagnostic)
+                                {
+                                        diagnostic(str("findmnt: unknown column: "));
+                                        diagnostic((address_any)unknown,
+                                                   string_length((string_address)unknown));
+                                        diagnostic(str("\n"));
+                                }
+                                return 1;
+                        }
                 }
         }
 

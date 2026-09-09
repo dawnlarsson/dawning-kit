@@ -5740,11 +5740,18 @@ COLD fn shell_unset(writer write, string_address input)
 
                         if (!shell_valid_name(word, word_length))
                         {
+                                // As above: Bash passes over what it cannot use.
+                                if (shell_bash_compat)
+                                {
+                                        index++;
+                                        continue;
+                                }
+
                                 string_format(log_error, "%s: bad variable name: ", "unset");
                                 log_error(word, word_length);
                                 log_error("\n", 1);
                                 exec_special_error_note();
-                                shell_answer(shell_bash_compat ? 1 : 2);
+                                shell_answer(2);
                                 return;
                         }
 
@@ -5821,11 +5828,21 @@ COLD fn shell_unset(writer write, string_address input)
 
                 if (!shell_valid_name(word, word_length))
                 {
+                        //      Bash steps over a name it cannot use and
+                        //      still answers zero -- "unset - v" forgets v.
+                        //      dash refuses, and being a special builtin
+                        //      takes the script with it.
+                        if (shell_bash_compat)
+                        {
+                                index++;
+                                continue;
+                        }
+
                         string_format(log_error, "%s: bad variable name: ", "unset");
                         log_error(word, word_length);
                         log_error("\n", 1);
                         exec_special_error_note();
-                        shell_answer(shell_bash_compat ? 1 : 2);
+                        shell_answer(2);
                         return;
                 }
 
@@ -5911,6 +5928,19 @@ static positive address_to local_from;
 static positive local_from_room;
 static positive local_depth;
 
+/*
+        `local -` is Bash's spelling of "put the option letters back the way
+        they were when this function was entered". The three words below are
+        the whole of what $- reads, so one copy of each per frame is the
+        whole of what has to be kept; a frame that never asked for it is
+        marked absent and unwinds nothing.
+*/
+#define SHELL_LOCAL_OPTIONS_MAX 64
+static positive local_options_saved[SHELL_LOCAL_OPTIONS_MAX];
+static positive local_options_named_saved[SHELL_LOCAL_OPTIONS_MAX];
+static positive local_options_extra_saved[SHELL_LOCAL_OPTIONS_MAX];
+static bool local_options_kept[SHELL_LOCAL_OPTIONS_MAX];
+
 static PURE bool local_getopts_scope(string_address name, positive length)
 {
         return length == 6 && !memory_compare(name, "OPTIND", 6);
@@ -5966,6 +5996,8 @@ bool shell_local_enter()
                 return string_report(log_error, false, "No room for function locals\n");
 
         local_from[local_depth] = local_count;
+        if (local_depth < SHELL_LOCAL_OPTIONS_MAX)
+                local_options_kept[local_depth] = false;
         local_depth++;
         return true;
 }
@@ -5975,6 +6007,14 @@ fn shell_local_leave()
         if (!local_depth)
                 return;
         local_depth--;
+        if (local_depth < SHELL_LOCAL_OPTIONS_MAX &&
+            local_options_kept[local_depth])
+        {
+                shell_options = local_options_saved[local_depth];
+                shell_options_named = local_options_named_saved[local_depth];
+                shell_extra_state = local_options_extra_saved[local_depth];
+                local_options_kept[local_depth] = false;
+        }
         while (local_count > local_from[local_depth])
         {
                 shell_local_entry address_to entry = local_table + --local_count;
@@ -6600,7 +6640,15 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                         log_error("\n", 1);
                         exec_special_error_note();
                         shell_answer(shell_bash_compat ? 1 : 2);
-                        return;
+
+                        //      Bash names the word it cannot use and carries
+                        //      on down the list, so "declare - v=1" still
+                        //      leaves v set and answers one.
+                        if (!shell_bash_compat)
+                                return;
+
+                        failed = true;
+                        goto next;
                 }
 
                 if (name_end)
@@ -6974,8 +7022,32 @@ COLD fn shell_local(writer write, string_address input)
                 return;
         }
 
-        if (shell_declare_options(address_of state))
-                shell_declare_apply(address_of state, true);
+        if (!shell_declare_options(address_of state))
+                return;
+
+        //      A lone "-" is a name to the walk and an instruction to Bash:
+        //      keep the option letters as they are now and put them back
+        //      when this function returns.
+        while (state.index < shell_argc && word_is(shell_argv[state.index], "-"))
+        {
+                if (local_depth <= SHELL_LOCAL_OPTIONS_MAX &&
+                    !local_options_kept[local_depth - 1])
+                {
+                        local_options_saved[local_depth - 1] = shell_options;
+                        local_options_named_saved[local_depth - 1] =
+                            shell_options_named;
+                        local_options_extra_saved[local_depth - 1] =
+                            shell_extra_state;
+                        local_options_kept[local_depth - 1] = true;
+                }
+
+                state.index++;
+        }
+
+        if (state.index >= shell_argc)
+                return shell_answer(0);
+
+        shell_declare_apply(address_of state, true);
 }
 
 static fn shell_declare(writer write, string_address input)
@@ -7158,6 +7230,7 @@ static COLD fn shell_marked(writer write, p8 mark)
         bool listed = shell_argc < 2;
         bool functions = false;
         bool unmark = false;
+        bool refused = false;
         shell_option_walk walk = {1};
         p8 option;
         positive index;
@@ -7172,8 +7245,14 @@ static COLD fn shell_marked(writer write, p8 mark)
                          mark == DECLARE_EXPORT && walk.direction == '-')
                         unmark = true;
                 else
+                {
+                        //      export and readonly are special builtins, and
+                        //      a special builtin refused its options takes a
+                        //      script with it wherever POSIX says so.
+                        exec_special_error_note();
                         return shell_answer(string_report(log_error, 2, "%s: -%s: invalid option\n",
                                       command, shell_option_spelled(room, option)));
+                }
         }
 
         index = walk.index;
@@ -7254,8 +7333,16 @@ static COLD fn shell_marked(writer write, p8 mark)
                         log_error(word, length);
                         log_error("\n", 1);
                         exec_special_error_note();
-                        shell_answer(shell_bash_compat ? 1 : 2);
-                        return;
+
+                        //      Bash names the word it will not have and goes
+                        //      on to the next one -- "export - v=1" leaves v
+                        //      set to 1 and answers 1. dash stops there, and
+                        //      being a special builtin the script stops too.
+                        if (!shell_bash_compat)
+                                return shell_answer(2);
+
+                        refused = true;
+                        continue;
                 }
 
                 // The name on its own while it is looked up and marked; the
@@ -7297,7 +7384,7 @@ static COLD fn shell_marked(writer write, p8 mark)
                         return shell_answer(string_report(log_error, 2, "%s: no room\n", command));
         }
 
-        shell_answer(0);
+        shell_answer(refused ? 1 : 0);
 }
 
 COLD fn shell_export(writer write, string_address input)
@@ -7809,10 +7896,15 @@ fn shell_test(writer write, string_address input)
         test_stop = shell_argc;
         test_bad = false;
 
+        //      Both references say why they would not read the words, and
+        //      a script that only looks at the status still cares that the
+        //      channel spoke: silence here was the one place test differed
+        //      from every shell it is compared against.
         if (word_is(shell_argv[0], "["))
         {
                 if (shell_argc < 2 || !word_is(shell_argv[shell_argc - 1], "]"))
-                        return shell_answer(2);
+                        return shell_answer(string_report(
+                            log_error, 2, "%s: missing `]'\n", shell_argv[0]));
 
                 test_stop = shell_argc - 1;
         }
@@ -7825,13 +7917,26 @@ fn shell_test(writer write, string_address input)
                 value = test_short(test_at, test_stop, address_of handled);
 
                 if (handled)
-                        return shell_answer(test_bad ? 2 : (value ? 0 : 1));
+                {
+                        if (!test_bad)
+                                return shell_answer(value ? 0 : 1);
+
+                        return shell_answer(string_report(
+                            log_error, 2, "%s: %s: unexpected operator\n",
+                            shell_argv[0], shell_argv[test_at]));
+                }
         }
 
         value = test_expression();
 
         if (test_bad || test_at != test_stop)
-                return shell_answer(2);
+                return shell_answer(string_report(
+                    log_error, 2,
+                    test_bad ? "%s: %s: unexpected operator\n"
+                             : "%s: too many arguments\n",
+                    shell_argv[0],
+                    test_at < test_stop ? shell_argv[test_at]
+                                        : shell_argv[shell_argc - 1]));
 
         shell_answer(value ? 0 : 1);
 }
@@ -9296,8 +9401,10 @@ COLD fn shell_mapfile(writer write, string_address input)
 
         name_length = string_length(name);
 
+        //      Bash calls this "not a valid identifier" and answers one;
+        //      two is what it keeps for an option it does not have.
         if (index < shell_argc || !shell_valid_name(name, name_length))
-                return shell_answer(string_report(log_error, 2, "%s: %s: bad array name\n",
+                return shell_answer(string_report(log_error, 1, "%s: %s: bad array name\n",
                               shell_argv[0], name));
 
         p8 attributes = shell_array_attributes(name, name_length);
@@ -9738,6 +9845,12 @@ COLD fn shell_umask(writer write, string_address input)
                 spoken = true;
                 index++;
         }
+
+        //      A bare "--" ends the options in all three shells, and what
+        //      follows is a mode. Without this it reached umask_symbolic as
+        //      a clause of its own, which read it and set nothing.
+        if (index < shell_argc && word_is(shell_argv[index], "--"))
+                index++;
 
         // The only way to read it is to set it, so it is put straight back.
         mask = system_call_1(syscall(umask), 0);
@@ -10786,33 +10899,67 @@ COLD fn shell_alias(writer write, string_address input)
 
 COLD fn shell_unalias(writer write, string_address input)
 {
-        positive index = 1;
+        // Two bytes: the shared formatter has no %c, so a letter is spelled.
+        p8 room[2];
+        shell_option_walk walk = {1};
+        positive index;
         b32 status = 0;
+        bool all = false;
+        p8 option;
 
-        // Nothing named is a usage error in both references, not a success.
-        if (shell_argc < 2)
-                return shell_answer(string_report(log_error, 2,
-                                                  "unalias: usage: unalias [-a] name [name ...]\n"));
+        //      The options are walked rather than compared word by word, so
+        //      that "--" ends them and a letter that is not -a is refused
+        //      with the status a usage error carries. Reading them by hand
+        //      made "unalias --" ask for an alias called "--".
+        while (shell_option_letter(address_of walk, address_of option))
+        {
+                if (option != 'a')
+                {
+                        string_report(log_error, 2,
+                                      "unalias: -%s: invalid option\n",
+                                      shell_option_spelled(room, option));
+                        return shell_answer(string_report(
+                            log_error, 2,
+                            "unalias: usage: unalias [-a] name [name ...]\n"));
+                }
+
+                all = true;
+        }
+
+        index = walk.index;
+
+        //      -a takes them all and stops. The names behind it are not
+        //      looked for -- there is nothing left to find -- and both
+        //      references answer zero for them.
+        if (all)
+        {
+                positive at;
+
+                for (at = 0; at < alias_count; at++)
+                {
+                        memory_free(alias_table[at].name,
+                                    alias_table[at].name_room);
+                        memory_free(alias_table[at].value,
+                                    alias_table[at].value_room);
+                }
+
+                alias_count = 0;
+                return shell_answer(0);
+        }
+
+        //      Nothing named is a usage error in Bash and a quiet success in
+        //      dash, which was asked for no alias and removed none.
+        if (index >= shell_argc)
+                return shell_answer(
+                    shell_bash_compat
+                        ? string_report(log_error, 2,
+                                        "unalias: usage: unalias [-a] name [name ...]\n")
+                        : 0);
 
         while (index < shell_argc)
         {
                 string_address word = shell_argv[index];
                 positive at;
-
-                if (word_is(word, "-a"))
-                {
-                        for (at = 0; at < alias_count; at++)
-                        {
-                                memory_free(alias_table[at].name,
-                                            alias_table[at].name_room);
-                                memory_free(alias_table[at].value,
-                                            alias_table[at].value_room);
-                        }
-
-                        alias_count = 0;
-                        index++;
-                        continue;
-                }
 
                 at = string_table_find(word, alias_table, sizeof(alias_table[0]),
                                        alias_count);
@@ -10861,6 +11008,33 @@ COLD fn shell_eval(writer write, string_address input)
 
         if (shell_argc < 2 || !run_line)
                 return shell_answer(0);
+
+        //      Bash reads eval's words for options first, so "eval --"
+        //      runs nothing and "eval -x" is a usage error fatal to a
+        //      POSIX script. dash hands every word to the line, which is
+        //      why "eval -x" is a command not found there.
+        if (shell_bash_compat)
+        {
+                // Two bytes: the shared formatter has no %c.
+                p8 room_spelled[2];
+                shell_option_walk walk = {1};
+                p8 option;
+
+                while (shell_option_letter(address_of walk, address_of option))
+                {
+                        exec_special_error_note();
+                        string_report(log_error, 2,
+                                      "eval: -%s: invalid option\n",
+                                      shell_option_spelled(room_spelled, option));
+                        return shell_answer(string_report(
+                            log_error, 2, "eval: usage: eval [arg ...]\n"));
+                }
+
+                index = walk.index;
+
+                if (index >= shell_argc)
+                        return shell_answer(0);
+        }
 
         while (index < shell_argc)
         {
@@ -11510,6 +11684,30 @@ COLD fn shell_dot(writer write, string_address input)
 
         if (first < shell_argc && word_is(shell_argv[first], "--"))
                 first++;
+        //      A word that looks like an option is one, and neither shell
+        //      has any here: this used to reach open() as a filename and
+        //      report that it could not be read.
+        else if (first < shell_argc &&
+                 string_is(shell_argv[first], '-') &&
+                 string_get(shell_argv[first] + 1))
+        {
+                // Two bytes: the shared formatter has no %c.
+                p8 room[2];
+                shell_option_walk walk = {first};
+                p8 option;
+
+                if (shell_option_letter(address_of walk, address_of option))
+                {
+                        exec_special_error_note();
+                        string_report(log_error, 2, "%s: -%s: invalid option\n",
+                                      shell_argv[0],
+                                      shell_option_spelled(room, option));
+                        return shell_answer(string_report(
+                            log_error, 2,
+                            "%s: usage: %s [-p path] filename [arguments]\n",
+                            shell_argv[0], shell_argv[0]));
+                }
+        }
         if (first >= shell_argc)
         {
                 if (shell_bash_compat)
@@ -11899,7 +12097,18 @@ COLD fn shell_let(writer write, string_address input)
         if (shell_argc < 2)
                 return shell_answer(1);
 
-        for (at = 1; at < shell_argc; at++)
+        at = 1;
+
+        //      Bash's let reads a leading "--" as the end of its options.
+        //      Handed to the arithmetic engine it is a decrement with
+        //      nothing to decrement, which is not what was asked.
+        if (word_is(shell_argv[at], "--"))
+                at++;
+
+        if (at >= shell_argc)
+                return shell_answer(1);
+
+        for (; at < shell_argc; at++)
                 if (!exec_arithmetic_value(shell_argv[at], address_of value))
                         return shell_answer(exec_line_aborted() ? 2 : 1);
 
@@ -11915,27 +12124,155 @@ typedef struct
 } shell_command;
 
 /*
-        complete, compopt and bind: taken, and doing nothing.
+        complete, compopt and bind: taken, and doing almost nothing.
 
         Programmable completion needs a terminal and a reader that offers it,
-        and this shell's line editor has neither. A profile that sets a
-        hundred completions must still get to its last line, so the names are
-        here and answer the way Bash answers a shell with no completion loaded.
-        Compopt answers one because no completion is being executed.
+        and this shell's line editor has neither. What these three can still
+        do exactly is read their own words: an option none of them has is
+        refused with the status a usage error carries, and bind says on every
+        call what Bash says -- that there is no line editing to bind to.
+        Everything past that is the completion machinery itself, which is not
+        here and is pinned as absent rather than answered wrongly.
 */
+static bool shell_completion_refused(string_address command,
+                                     string_address usage,
+                                     string_address letters,
+                                     string_address valued,
+                                     positive address_to first)
+{
+        // Two bytes: the shared formatter has no %c.
+        p8 room[2];
+        shell_option_walk walk = {1, null, 0, true};
+        p8 option;
+
+        while (shell_option_letter(address_of walk, address_of option))
+        {
+                if (!string_first_of(letters, option))
+                {
+                        string_report(log_error, 2, "%s: -%s: invalid option\n",
+                                      command,
+                                      shell_option_spelled(room, option));
+                        shell_answer(string_report(log_error, 2, "%s: usage: %s\n",
+                                                   command, usage));
+                        return true;
+                }
+
+                if (string_first_of(valued, option) &&
+                    !shell_option_argument(address_of walk))
+                {
+                        string_report(log_error, 2,
+                                      "%s: -%s: option requires an argument\n",
+                                      command,
+                                      shell_option_spelled(room, option));
+                        shell_answer(string_report(log_error, 2, "%s: usage: %s\n",
+                                                   command, usage));
+                        return true;
+                }
+        }
+
+        address_to first = walk.index;
+        return false;
+}
+
+static COLD fn shell_complete(writer write, string_address input)
+{
+        positive first = 1;
+
+        (void)write;
+        (void)input;
+
+        if (shell_completion_refused(
+                "complete",
+                "complete [-abcdefgjksuv] [-pr] [-DEI] [-o option] [-A action] "
+                "[-G globpat] [-W wordlist] [-F function] [-C command] "
+                "[-X filterpat] [-P prefix] [-S suffix] [name ...]",
+                "abcdefgjksuvprDEIoAGWFCXPS", "oAGWFCXPS", address_of first))
+                return;
+
+        //      -o names one of a closed list, and Bash refuses a word that
+        //      is not on it before it looks at anything else.
+        for (positive at = 1; at + 1 < shell_argc; at++)
+                if (word_is(shell_argv[at], "-o") ||
+                    word_is(shell_argv[at], "+o"))
+                {
+                        string_address named = shell_argv[at + 1];
+
+                        if (!word_is(named, "bashdefault") &&
+                            !word_is(named, "default") &&
+                            !word_is(named, "dirnames") &&
+                            !word_is(named, "filenames") &&
+                            !word_is(named, "noquote") &&
+                            !word_is(named, "nosort") &&
+                            !word_is(named, "nospace") &&
+                            !word_is(named, "plusdirs"))
+                                return shell_answer(string_report(
+                                    log_error, 2,
+                                    "complete: %s: invalid option name\n",
+                                    named));
+                }
+
+        shell_answer(0);
+}
+
+static COLD fn shell_compopt(writer write, string_address input)
+{
+        positive first = 1;
+
+        (void)write;
+        (void)input;
+
+        if (shell_completion_refused("compopt",
+                                     "compopt [-o|+o option] [-DEI] [name ...]",
+                                     "oDEI", "o", address_of first))
+                return;
+
+        //      No completion is being executed and no name has a
+        //      specification, which is the pair of things Bash says here.
+        if (first < shell_argc)
+                return shell_answer(string_report(
+                    log_error, 1, "compopt: %s: no completion specification\n",
+                    shell_argv[first]));
+
+        shell_answer(string_report(
+            log_error, 1,
+            "compopt: not currently executing completion function\n"));
+}
+
+static COLD fn shell_bind(writer write, string_address input)
+{
+        positive first = 1;
+
+        (void)write;
+        (void)input;
+
+        //      Bash says this once per call before it does anything else,
+        //      whatever the words are, when readline was never started.
+        log_error("bind: warning: line editing not enabled\n", 0);
+
+        if (shell_completion_refused(
+                "bind",
+                "bind [-lpsvPSVX] [-m keymap] [-f filename] [-q name] "
+                "[-u name] [-r keyseq] [-x keyseq:shell-command] "
+                "[keyseq:readline-function or readline-command]",
+                "lpsvPSVXmfqurx", "mfqurx", address_of first))
+                return;
+
+        shell_answer(0);
+}
+
 shell_command shell_commands[] = {
     {":", shell_true},
     {".", shell_dot},
     {"[", shell_test},
     {"alias", shell_alias},
     {"bg", shell_bg},
-    {"bind", shell_true},
+    {"bind", shell_bind},
     {"blkid", shell_blkid},
     {"caller", shell_caller},
     {"builtin", shell_builtin_run},
     {"compgen", shell_compgen},
-    {"complete", shell_true},
-    {"compopt", shell_false},
+    {"complete", shell_complete},
+    {"compopt", shell_compopt},
     {"cd", shell_cd},
     {"clear", shell_clear},
     {"command", shell_command_builtin},
@@ -13078,6 +13415,15 @@ fn shell_ulimit(writer write, string_address input)
         {
                 string_address letter = shell_argv[index] + 1;
 
+                //      "--" is the end of the options, not a resource
+                //      called "-": all three shells then report the
+                //      default resource.
+                if (word_is(shell_argv[index], "--"))
+                {
+                        index++;
+                        break;
+                }
+
                 while (string_get(letter))
                 {
                         p8 which = string_get(letter++);
@@ -13271,6 +13617,11 @@ fn shell_ulimit(writer write, string_address input)
 fn shell_builtin_run(writer write, string_address input)
 {
         bool tail = shell_tail_command;
+        // Two bytes: the shared formatter has no %c, so a letter is spelled.
+        p8 room[2];
+        shell_option_walk walk = {1};
+        p8 option;
+        positive index;
 
         (void)write;
         (void)input;
@@ -13278,9 +13629,26 @@ fn shell_builtin_run(writer write, string_address input)
         if (shell_argc < 2)
                 return shell_answer(0);
 
-        memory_copy(shell_argv, shell_argv + 1,
-                    (positive)shell_argc * sizeof(shell_argv[0]));
-        shell_argc--;
+        //      builtin takes no options of its own, so the only word the
+        //      walk can hand back is one it should refuse; "--" ends them
+        //      and the name behind it is the builtin to run.
+        while (shell_option_letter(address_of walk, address_of option))
+        {
+                string_report(log_error, 2, "builtin: -%s: invalid option\n",
+                              shell_option_spelled(room, option));
+                return shell_answer(string_report(
+                    log_error, 2,
+                    "builtin: usage: builtin [shell-builtin [arg ...]]\n"));
+        }
+
+        index = walk.index;
+
+        if (index >= shell_argc)
+                return shell_answer(0);
+
+        memory_copy(shell_argv, shell_argv + index,
+                    (positive)(shell_argc - index + 1) * sizeof(shell_argv[0]));
+        shell_argc -= index;
 
         if (!shell_builtin_disabled(shell_argv[0]) &&
             exec_control_builtin(shell_argv[0], true))
@@ -13528,6 +13896,26 @@ fn shell_compgen(writer write, string_address input)
                         files = true;
                 else if (which == 'd')
                         directories = true;
+                else if (which != 'A' && which != 'W' && which != 'P' &&
+                         which != 'S' && which != 'X' && which != 'F' &&
+                         which != 'C' && which != 'G' && which != 'o' &&
+                         which != 'V' && which != 'e' && which != 'g' &&
+                         which != 'j' && which != 'k' && which != 's' &&
+                         which != 'u')
+                {
+                        // Two bytes: the shared formatter has no %c.
+                        p8 room[2];
+
+                        string_report(log_error, 2,
+                                      "compgen: -%s: invalid option\n",
+                                      shell_option_spelled(room, which));
+                        return shell_answer(string_report(
+                            log_error, 2,
+                            "compgen: usage: compgen [-V varname] [-abcdefgjksuv] "
+                            "[-o option] [-A action] [-G globpat] [-W wordlist] "
+                            "[-F function] [-C command] [-X filterpat] "
+                            "[-P prefix] [-S suffix] [word]\n"));
+                }
 
                 index++;
         }

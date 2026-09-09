@@ -1631,6 +1631,8 @@ fn shell_disown(writer write, string_address input)
 
         if (all || running_only || walk.index >= shell_argc)
         {
+                bool touched = false;
+
                 for (positive at = 0; at < job_count;)
                 {
                         if (running_only &&
@@ -1649,14 +1651,23 @@ fn shell_disown(writer write, string_address input)
 
                         if (keep)
                         {
+                                touched = true;
                                 job_table[at].nohup = true;
                                 at++;
                                 continue;
                         }
 
+                        touched = true;
                         shell_wait_drop(job_table[at].last);
                         job_drop_at(at);
                 }
+
+                //      Nothing named and nothing current: Bash says which
+                //      job it looked for and answers one. -a and -r ask for
+                //      whatever there is and are content with none.
+                if (!all && !running_only && !touched)
+                        return shell_answer(string_report(
+                            log_error, 1, "disown: current: no such job\n"));
 
                 return shell_answer(0);
         }
@@ -2296,7 +2307,18 @@ fn job_wait(writer write, string_address input)
                 {
                         if (!string_digits_exact(word, address_of pid) ||
                             pid > (positive)bipolar_max)
+                        {
+                                //      Bash names it as a job spec it could
+                                //      not read and answers one; dash calls
+                                //      it an illegal number and answers two.
+                                if (shell_bash_compat)
+                                        return shell_answer(string_report(
+                                            log_error, 1,
+                                            "wait: `%s': not a pid or valid job spec\n",
+                                            word));
+
                                 return shell_answer(string_report(log_error, 2, "wait: Illegal number: %s\n", word));
+                        }
 
                         found = job_find(pid, true);
 
@@ -3633,6 +3655,13 @@ fn shell_history(writer write, string_address input)
                 p8 letter = string_get(shell_argv[at] + 1);
                 string_address named = at + 1 < shell_argc ? shell_argv[at + 1]
                                                            : null;
+
+                // "--" ends the options; bash then lists as if bare.
+                if (word_is(shell_argv[at], "--"))
+                {
+                        at++;
+                        break;
+                }
 
                 switch (letter)
                 {
@@ -5875,10 +5904,20 @@ fn shell_caller(writer write, string_address input)
         p8 shown[32];
         positive written;
 
+        //      Nothing called this, so there is nothing to name and the
+        //      words are never read: Bash answers one for "caller x" at the
+        //      top level and refuses the same word inside a function.
+        if (!exec_frame_count)
+        {
+                shell_answer(1);
+                return;
+        }
+
         if (numbered && !string_digits_exact(shell_argv[1], address_of want))
         {
                 string_format(log_error, "caller: %s: invalid number\n",
                               shell_argv[1]);
+                string_format(log_error, "caller: usage: caller [expr]\n");
                 shell_answer(2);
                 return;
         }
