@@ -68,10 +68,39 @@ static bool shell_start_parameters(string_address address_to arguments,
         return shell_parameters_set(shell_argv, count);
 }
 
+/*
+        set -v: what was read, written back before anything is done with it.
+
+        Reading, not running, is what the option is about. A command string
+        is read whole before its first line runs, so turning verbose on
+        inside one echoes nothing more -- the flag is taken once, before the
+        string is walked. A file or a terminal is read a line at a time, so
+        `set -v` in one reaches the line after it, which is why that path
+        asks again for every line.
+*/
+static bool shell_verbose_reading;
+
+static fn shell_verbose_line(string_address line)
+{
+        if (!shell_verbose_reading)
+                return;
+
+        log_error(line, string_length(line));
+        log_error("\n", 1);
+        log_flush();
+}
+
 static positive shell_run_complete_lines(p8 address_to text, positive length,
                                          bool command_string)
 {
         positive at = 0;
+
+        // dash never echoes a command string: it was not read from
+        // anywhere. Bash echoes it, once, as the parser walks it.
+        if (command_string)
+                shell_verbose_reading =
+                    shell_bash_compat &&
+                    (shell_options & SHELL_FLAG('v')) != 0;
 
         while (at < length)
         {
@@ -98,7 +127,14 @@ static positive shell_run_complete_lines(p8 address_to text, positive length,
                         }
 
                         if (history_action == HISTORY_EXPAND_RUN)
+                        {
+                                if (!command_string)
+                                        shell_verbose_reading =
+                                            (shell_options &
+                                             SHELL_FLAG('v')) != 0;
+                                shell_verbose_line(ready);
                                 run_line(ready);
+                        }
                 }
                 at = (positive)(newline - text) + 1;
 
@@ -575,7 +611,13 @@ b32 main()
                    block; only multi-line input needs a writable copy whose
                    newlines are ended in place. */
                 if (!*first_newline)
+                {
+                        shell_verbose_reading =
+                            shell_bash_compat &&
+                            (shell_options & SHELL_FLAG('v')) != 0;
+                        shell_verbose_line(command);
                         run_line(command);
+                }
                 else
                 {
                         positive length = (positive)(first_newline - command) +
@@ -594,7 +636,10 @@ b32 main()
                                     held_command, length, true);
 
                                 if (at < length)
+                                {
+                                        shell_verbose_line(held_command + at);
                                         run_line(held_command + at);
+                                }
                         }
 
                         memory_free(held_command, length + 1);
@@ -723,7 +768,12 @@ b32 main()
                 }
 
                 if (history_action == HISTORY_EXPAND_RUN)
+                {
+                        shell_verbose_reading =
+                            (shell_options & SHELL_FLAG('v')) != 0;
+                        shell_verbose_line(ready);
                         run_line(ready);
+                }
         }
 
 input_finished:

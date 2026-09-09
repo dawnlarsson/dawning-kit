@@ -1261,20 +1261,6 @@ static fn run_line_inner(string_address line)
         string_address waiting = parse_here_open();
         b32 root;
 
-        /*
-                set -v: what was read, before anything is done with it.
-
-                The line as it arrived, unexpanded and including a body line
-                of a here-document -- which is why it is written here, where
-                the reader hands a physical line over, rather than beside the
-                trace of a command about to run.
-        */
-        if (shell_options & SHELL_FLAG('v'))
-        {
-                log_error(line, string_length(line));
-                log_error("\n", 1);
-        }
-
         // What a job made of a loop or a group is listed under: the words are
         // in the parse tree, but only the reader still has the line. And the
         // count of physical lines, which is the only place there is to keep
