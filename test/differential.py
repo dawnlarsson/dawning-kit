@@ -889,10 +889,11 @@ def load_spec(domain):
     spec_<domain>.py module beside this file while a grammar is being written."""
     specs = globals().get("SPECS")
     if specs is not None and domain in specs:
-        utilities, families = specs[domain]
+        utilities, families, checks = specs[domain]
         namespace = type("Spec", (), {})()
         namespace.UTILITIES = utilities
         namespace.FAMILIES = families
+        namespace.CHECKS = checks
         return namespace
     if str(HERE) not in sys.path:
         sys.path.append(str(HERE))
@@ -1607,6 +1608,38 @@ def self_test():
                 globals_["SPECS"] = saved_specs
                 sys.path.remove(str(spec_dir))
                 sys.modules.pop("spec_text", None)
+
+        def test_every_domain_keeps_its_checks_and_grammars(self):
+            """A grammar that stops being registered stops being tested, and
+            says nothing while it happens. Assembling seven spec modules into
+            one file made that possible: two of them spelled CHECKS, the later
+            one won, and 138 util-linux cases quietly went. So every part of
+            every registered domain is asked for by name here."""
+            specs = globals().get("SPECS")
+            if not specs:
+                self.skipTest("the grammars are not inlined into this file")
+            for domain, parts in specs.items():
+                self.assertEqual(len(parts), 3,
+                                 f"{domain} must register utilities, families and checks")
+                spec = load_spec(domain)
+                for part in ("UTILITIES", "FAMILIES", "CHECKS"):
+                    self.assertIs(getattr(spec, part), parts[
+                        ("UTILITIES", "FAMILIES", "CHECKS").index(part)],
+                        f"{domain}.{part} is not what the registry holds")
+                self.assertTrue(getattr(spec, "UTILITIES") or getattr(spec, "FAMILIES"),
+                                f"{domain} has neither a utility nor a family")
+                for check in getattr(spec, "CHECKS"):
+                    self.assertTrue(callable(check), f"{domain} check is not callable")
+            #       And the thing that actually went wrong: a section whose
+            #       grammar is still spelled bare belongs to no domain, so
+            #       nothing walks it. The registry cannot notice -- it is
+            #       looking for the prefixed name -- but a bare one at module
+            #       scope can only be a section that was not renamed.
+            bare = [spelling for spelling in ("UTILITIES", "FAMILIES", "CHECKS")
+                    if spelling in globals()]
+            self.assertEqual(bare, [],
+                             f"{bare} are spelled bare at module scope, so whatever "
+                             f"they hold is registered to no domain and never runs")
 
         def test_tally_is_written_per_program(self):
             tally = self.root / "tally"
@@ -6115,7 +6148,7 @@ def files_column_layout(farm):
     return passed, total, notes
 
 
-CHECKS = (files_column_layout,)
+FILES_CHECKS = (files_column_layout,)
 
 # ---- domain: misc (from spec_misc.py) ----
 
@@ -14063,7 +14096,7 @@ def ul_check_lscpu_summary(farm):
     return 1, 1, []
 
 
-CHECKS = (ul_check_denominator, ul_check_rfkill, ul_check_lscpu_summary)
+UTIL_LINUX_CHECKS = (ul_check_denominator, ul_check_rfkill, ul_check_lscpu_summary)
 
 # ---- harness: standalone checks (from harness.py) ----
 
@@ -17716,13 +17749,13 @@ def harness_entry():
 # ---- registry ----
 
 SPECS = {
-    "awk": (globals().get("AWK_UTILITIES", ()), globals().get("AWK_FAMILIES", ())),
-    "builtins": (globals().get("BUILTINS_UTILITIES", ()), globals().get("BUILTINS_FAMILIES", ())),
-    "files": (globals().get("FILES_UTILITIES", ()), globals().get("FILES_FAMILIES", ())),
-    "misc": (globals().get("MISC_UTILITIES", ()), globals().get("MISC_FAMILIES", ())),
-    "shell": (globals().get("SHELL_UTILITIES", ()), globals().get("SHELL_FAMILIES", ())),
-    "text": (globals().get("TEXT_UTILITIES", ()), globals().get("TEXT_FAMILIES", ())),
-    "util_linux": (globals().get("UTIL_LINUX_UTILITIES", ()), globals().get("UTIL_LINUX_FAMILIES", ())),
+    "awk": (globals().get("AWK_UTILITIES", ()), globals().get("AWK_FAMILIES", ()), globals().get("AWK_CHECKS", ())),
+    "builtins": (globals().get("BUILTINS_UTILITIES", ()), globals().get("BUILTINS_FAMILIES", ()), globals().get("BUILTINS_CHECKS", ())),
+    "files": (globals().get("FILES_UTILITIES", ()), globals().get("FILES_FAMILIES", ()), globals().get("FILES_CHECKS", ())),
+    "misc": (globals().get("MISC_UTILITIES", ()), globals().get("MISC_FAMILIES", ()), globals().get("MISC_CHECKS", ())),
+    "shell": (globals().get("SHELL_UTILITIES", ()), globals().get("SHELL_FAMILIES", ()), globals().get("SHELL_CHECKS", ())),
+    "text": (globals().get("TEXT_UTILITIES", ()), globals().get("TEXT_FAMILIES", ()), globals().get("TEXT_CHECKS", ())),
+    "util_linux": (globals().get("UTIL_LINUX_UTILITIES", ()), globals().get("UTIL_LINUX_FAMILIES", ()), globals().get("UTIL_LINUX_CHECKS", ())),
 }
 
 
