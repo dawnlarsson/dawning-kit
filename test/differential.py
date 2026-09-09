@@ -777,7 +777,7 @@ def _pin_span(text):
 
 
 def load_rows(which):
-    """The pinned rows of one list ("ledger" or "regression") from this file."""
+    """The pinned rows of one list ("ledger", "regression" or "unstable")."""
     if _pins_are_json():
         rows = json.loads(PIN_FILE.read_text() or "[]") if PIN_FILE.exists() else []
         return [row for row in rows if row.get("list") == which]
@@ -797,7 +797,7 @@ def save_rows(which, rows):
     text = PIN_FILE.read_text() if not _pins_are_json() else ""
     begin, end = _pin_span(text) if not _pins_are_json() else (0, 0)
     others = [row for row in load_rows("ledger") + load_rows("regression")
-              if row.get("list") != which]
+              + load_rows("unstable") if row.get("list") != which]
     for row in rows:
         row["list"] = which
     merged = sorted(others + rows,
@@ -987,11 +987,14 @@ def main(argv=None):
     parser.add_argument("--shrink", action="store_true")
     parser.add_argument("--max-failures", type=int, default=12,
                         help="distinct failure classes shown per program")
-    parser.add_argument("--record", choices=("ledger", "regression", "refresh"),
+    parser.add_argument("--record", choices=("ledger", "regression", "refresh", "unstable"),
                         help="write every divergence (ledger) or every agreement of the "
                              "cases run (regression) into the pinned list; refresh brings "
                              "existing rows back in line with the tree after a fix landed "
-                             "somewhere else")
+                             "somewhere else; unstable runs the set --repeat times and "
+                             "records the cases that contradict themselves")
+    parser.add_argument("--repeat", type=int, default=3,
+                        help="passes over the set for --record unstable")
     parser.add_argument("--reason", help="the reason written with --record ledger")
     parser.add_argument("--kind", default="deliberate", choices=("deliberate", "bug"))
     parser.add_argument("--no-pinned", action="store_true", help="skip ledger and regressions")
@@ -1048,6 +1051,8 @@ def main(argv=None):
 
     ledger = [] if args.no_pinned else load_rows("ledger")
     regressions = [] if args.no_pinned else load_rows("regression")
+    unstable_ids = set() if args.no_pinned else {
+        row["id"] for row in load_rows("unstable") if "id" in row}
     pinned = {}
     if not args.no_pinned and not args.replay:
         for row in ledger + regressions:
@@ -1085,6 +1090,7 @@ def main(argv=None):
 
     passed = collections.Counter()
     total = collections.Counter()
+    unstable = collections.Counter()
     absent = collections.Counter()
     invalid = 0
     tiers = collections.Counter()
@@ -1103,15 +1109,61 @@ def main(argv=None):
     with tempfile.TemporaryDirectory(prefix="differential-") as temporary:
         runner = Runner(farm, Path(temporary) / "main", emulator, args.locale)
         payloads = [case.as_dict() for case in cases]
-        if args.jobs > 1 and len(payloads) > 8:
-            executor = concurrent.futures.ProcessPoolExecutor(
-                max_workers=args.jobs, initializer=_worker_init,
-                initargs=(str(farm), temporary, emulator, args.locale, domains))
-            results = executor.map(_worker_run, payloads, chunksize=4)
-        else:
+
+        def sweep():
+            """One pass over every case, in the pool when there is one."""
+            if args.jobs > 1 and len(payloads) > 8:
+                pool = concurrent.futures.ProcessPoolExecutor(
+                    max_workers=args.jobs, initializer=_worker_init,
+                    initargs=(str(farm), temporary, emulator, args.locale, domains))
+                return pool, pool.map(_worker_run, payloads, chunksize=4)
             _worker_init(str(farm), temporary, emulator, args.locale, domains)
-            executor = None
-            results = map(_worker_run, payloads)
+            return None, map(_worker_run, payloads)
+
+        if args.record == "unstable":
+            #       A case that answers differently when asked again is
+            #       neither an agreement nor a divergence: a pseudo-terminal
+            #       interleaves by timing, a namespace is populated as the
+            #       kernel pleases. Ask the whole set --repeat times and
+            #       record by identity the cases that contradict themselves,
+            #       so that afterwards every run counts them the same way
+            #       however they happen to fall. Recording is a pass over the
+            #       pool, not a serial re-ask in this process.
+            first = {}
+            wobbled = {}
+            for number in range(max(2, args.repeat)):
+                pool, results = sweep()
+                for payload, want, got in results:
+                    case = Case(**payload)
+                    key = case.identity()
+                    if want is None:
+                        continue
+                    spec = utilities.get(case.family or case.utility)
+                    mark = signature(want, got, spec.stderr if spec else "loose")
+                    if key in first:
+                        if first[key] != mark:
+                            wobbled.setdefault(key, case)
+                    else:
+                        first[key] = mark
+                if pool is not None:
+                    pool.shutdown()
+                print(f"  pass {number + 1} of {max(2, args.repeat)}: "
+                      f"{len(wobbled)} cases have contradicted themselves")
+            rows = [] if args.no_pinned else load_rows("unstable")
+            already = {row.get("id") for row in rows}
+            for key in sorted(wobbled):
+                if key in already:
+                    continue
+                case = wobbled[key]
+                rows.append({"list": "unstable", "id": key, "domain": case.domain,
+                             "utility": case.family or case.utility,
+                             "reason": args.reason or
+                             "answers differently when the same case is asked again"})
+            save_rows("unstable", rows)
+            print(f"  recorded {len(wobbled)} unstable cases; the list now holds {len(rows)}")
+            return 0
+
+        executor, results = sweep()
         for payload, want, got in results:
             case = Case(**payload)
             key = case.identity()
@@ -1121,6 +1173,13 @@ def main(argv=None):
             tally_key = f"{case.domain}/{name}"
             if want is None:
                 absent[tally_key] += 1
+                continue
+            #       A case whose answer is not determined cannot gate
+            #       anything, and cannot be allowed to move a count either
+            #       way. Recorded by identity, so every run treats it alike
+            #       however it happens to fall this time.
+            if key in unstable_ids:
+                unstable[tally_key] += 1
                 continue
             total[tally_key] += 1
             tiers[case.tier] += 1
@@ -1277,6 +1336,8 @@ def main(argv=None):
 
     for key in sorted(set(total) | set(absent)):
         line = f"  {key:28} {passed[key]} of {total[key]}"
+        if unstable[key]:
+            line += f"  ({unstable[key]} recorded unstable, counted in neither column)"
         if absent[key]:
             line += f"  ({absent[key]} NOT RUN -- no reference or candidate program)"
         print(line)
@@ -1313,7 +1374,8 @@ def main(argv=None):
     distinct = sum(len(v) for v in failures.values())
     print(f"  tiers: " + " ".join(f"{k}={v}" for k, v in sorted(tiers.items())))
     print(f"  differential {all_passed} of {all_total}; failure classes={distinct}, "
-          f"invalid oracles={invalid}, not run={sum(absent.values())}")
+          f"invalid oracles={invalid}, unstable={sum(unstable.values())}, "
+          f"not run={sum(absent.values())}")
     if not all_total:
         print("  differential NOT RUN -- no case had both programs")
         return 2
