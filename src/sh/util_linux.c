@@ -8243,12 +8243,14 @@ static const ul_blockdev_descriptor ul_blockdev_descriptors[] = {
 typedef struct
 {
         const ul_blockdev_descriptor address_to descriptor;
-        positive argument;
+        string_address text;
+        p8 verbosity;
 } ul_blockdev_command;
 
 #define UL_BLOCKDEV_COMMANDS 32
 static ul_blockdev_command ul_blockdev_commands[UL_BLOCKDEV_COMMANDS];
 static positive ul_blockdev_command_count;
+static p8 ul_blockdev_verbosity;
 
 static const ul_blockdev_descriptor address_to ul_blockdev_find(p8 letter)
 {
@@ -8260,6 +8262,13 @@ static const ul_blockdev_descriptor address_to ul_blockdev_find(p8 letter)
 
 static bool ul_blockdev_seen(p8 letter, string_address value)
 {
+        /* Verbosity is a command like any other: it holds from where it
+           stands until the next one changes it. */
+        if (letter == 'q' || letter == 'v')
+        {
+                ul_blockdev_verbosity = letter;
+                return true;
+        }
         const ul_blockdev_descriptor address_to descriptor =
             ul_blockdev_find(letter);
         if (!descriptor)
@@ -8269,16 +8278,10 @@ static bool ul_blockdev_seen(p8 letter, string_address value)
                 string_report(log_error, 1, "%s: %s\n", "blockdev", "too many commands");
                 return false;
         }
-        positive argument = letter == '1' ? 1 : 0;
-        if (value && !ul_unsigned(value, positive_max, address_of argument))
-        {
-                string_format(log_error,
-                              "blockdev: failed to parse command argument: '%s'\n",
-                              value);
-                return false;
-        }
+        /* The argument is read when the command runs, so the commands before
+           it run first, exactly as they were asked to. */
         ul_blockdev_commands[ul_blockdev_command_count++] =
-            (ul_blockdev_command){descriptor, argument};
+            (ul_blockdev_command){descriptor, value, ul_blockdev_verbosity};
         return true;
 }
 
@@ -8294,7 +8297,6 @@ static const file_long ul_blockdev_longs[] = {
     {"help", 'h'}, {"version", 'V'}, {null, 0},
 };
 
-static p8 ul_blockdev_verbosity;
 static const file_supersede ul_blockdev_supersedes[] = {
     {"qv", address_of ul_blockdev_verbosity}, {null, null},
 };
@@ -8352,7 +8354,7 @@ static bipolar ul_blockdev_set_pointer(
         return system_control(handle, descriptor->request, address_of value);
 }
 
-static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
+static b32 ul_blockdev_one(string_address path)
 {
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_CLOEXEC);
@@ -8366,8 +8368,22 @@ static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
                     ul_blockdev_commands + at;
                 const ul_blockdev_descriptor address_to descriptor =
                     command->descriptor;
-                p64 value = command->argument;
+                bool verbose = command->verbosity == 'v';
+                bool quiet = command->verbosity == 'q';
+                positive argument = descriptor->letter == '1' ? 1 : 0;
                 bipolar result;
+
+                if (command->text &&
+                    !ul_unsigned(command->text, positive_max, address_of argument))
+                {
+                        system_close(handle);
+                        log_flush();
+                        return string_report(
+                            log_error, 1,
+                            "blockdev: failed to parse command argument: '%s'\n",
+                            command->text);
+                }
+                p64 value = argument;
 
                 if (descriptor->operation <= UL_BLOCK_QUERY_SIGNED32)
                         result = ul_blockdev_query(handle, descriptor,
@@ -8425,13 +8441,19 @@ typedef struct
         b32 status;
 } ul_blockdev_report_context;
 
-static b32 ul_blockdev_report_one(string_address path)
+static b32 ul_blockdev_report_one(string_address path, bool quiet)
 {
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
+        {
+                /* Reporting every device names none of them: the ones this
+                   user cannot open are simply not in the table. */
+                if (quiet)
+                        return 1;
                 return string_report(log_error, 1, "blockdev: cannot open %s: %s\n",
                               path, file_reason(handle));
+        }
         const p8 letters[] = {'3', 'G', '5', 'B', 'E'};
         p64 values[array_count(letters)];
         for (positive at = 0; at < array_count(letters); at++)
@@ -8473,7 +8495,7 @@ static bool ul_blockdev_report_visit(string_address path, address_any opaque)
 {
         ul_blockdev_report_context address_to context =
             (ul_blockdev_report_context address_to)opaque;
-        context->status |= ul_blockdev_report_one(path);
+        context->status |= ul_blockdev_report_one(path, true);
         return true;
 }
 
@@ -8494,14 +8516,14 @@ static b32 util_linux_blockdev()
 
         bool report = (taking.flags & FILE_FLAG('R')) != 0;
         positive count = (positive)program_argument_count();
-        if (!report && !ul_blockdev_command_count)
+        /* Nothing at all is not enough arguments; anything else that names
+           no device is a device that was not named. */
+        if (count < 2)
                 return ul_usage_error("blockdev", "not enough arguments");
+        if (!report && taking.first == count)
+                return ul_usage_error("blockdev", "no device specified");
         if (report && ul_blockdev_command_count)
                 return string_report(log_error, 1, "%s: %s\n", "blockdev", "--report cannot be combined with commands");
-        if (!report && ul_blockdev_command_count && taking.first == count)
-                return ul_usage_error("blockdev", "no device specified");
-        bool verbose = ul_blockdev_verbosity == 'v';
-        bool quiet = ul_blockdev_verbosity == 'q';
 
         b32 status = 0;
         if (report)
@@ -8518,13 +8540,12 @@ static b32 util_linux_blockdev()
                 else
                         while (taking.first < count)
                                 status |= ul_blockdev_report_one(
-                                    program_argument((b32)taking.first++));
+                                    program_argument((b32)taking.first++), false);
         }
         else
                 while (taking.first < count && !status)
                         status = ul_blockdev_one(
-                            program_argument((b32)taking.first++),
-                            verbose, quiet);
+                            program_argument((b32)taking.first++));
         log_flush();
         return status;
 }
