@@ -1865,7 +1865,8 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
 
                 if (expand_mark[step] == MARK_QUOTED &&
                     ((mode == EXPAND_CAPTURE_PATTERN &&
-                      (value == '*' || value == '?' || value == '[' || value == '\\')) ||
+                      (value == '*' || value == '?' || value == '[' || value == '\\' ||
+                       value == '-' || value == ']')) ||
                      (mode == EXPAND_CAPTURE_REPLACEMENT && value == '&')))
                         room++;
         }
@@ -1891,7 +1892,8 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
 
                 if (expand_mark[step] == MARK_QUOTED &&
                     ((mode == EXPAND_CAPTURE_PATTERN &&
-                      (value == '*' || value == '?' || value == '[' || value == '\\')) ||
+                      (value == '*' || value == '?' || value == '[' || value == '\\' ||
+                       value == '-' || value == ']')) ||
                      (mode == EXPAND_CAPTURE_REPLACEMENT && value == '&')))
                         into[used++] = '\\';
 
@@ -6193,7 +6195,13 @@ static string_address expand_keep_field(positive at, positive stop)
 */
 static inline INLINE bool glob_quoted_special(p8 byte)
 {
+        //      A hyphen and a close bracket are special only inside a bracket
+        //      expression, and that is enough: [a\\-c] is the three members a,
+        //      hyphen and c to both references, and [a-c] is the range. Losing
+        //      the backslash with the rest of the quoting turned the one into
+        //      the other, so the set matched b and not the hyphen.
         return byte == '*' || byte == '?' || byte == '[' || byte == '\\' ||
+               byte == '-' || byte == ']' ||
                (shell_extglob_on && (lex_extended_head(byte) || byte == '(' ||
                                      byte == ')' || byte == '|'));
 }
@@ -6925,6 +6933,14 @@ static CONST bool expand_quoted_metacharacter(p8 value, bool regex)
         const p64 common_low = ((p64)1 << '*') | ((p64)1 << '?');
         const p64 common_high = ((p64)1 << ('[' - 64)) |
                                 ((p64)1 << ('\\' - 64));
+        //      A hyphen and a close bracket are special inside a bracket
+        //      expression and nowhere else, which is enough: [a\\-c] is the
+        //      three members a, hyphen and c to both references where [a-c]
+        //      is the range. They are the pattern language's alone -- a
+        //      backslash before either in an ERE is not defined -- so the
+        //      regex right-hand side does not take them from here.
+        const p64 glob_low = ((p64)1 << '-');
+        const p64 glob_high = ((p64)1 << (']' - 64));
         const p64 regex_low = ((p64)1 << '$') | ((p64)1 << '(') |
                               ((p64)1 << ')') | ((p64)1 << '+') |
                               ((p64)1 << '.');
@@ -6941,6 +6957,9 @@ static CONST bool expand_quoted_metacharacter(p8 value, bool regex)
         bit = (p64)1 << (value & 63);
 
         if (bit & (value < 64 ? common_low : common_high))
+                return true;
+
+        if (!regex && (bit & (value < 64 ? glob_low : glob_high)))
                 return true;
 
         return regex && (bit & (value < 64 ? regex_low : regex_high));
