@@ -767,6 +767,15 @@ b32 main()
                 }
         }
 
+        //      Input ran out, which is a way of leaving like any other,
+        //      and bash says the same "exit" for the end of a terminal's
+        //      input that the builtin says. Not for the end of a script
+        //      named on the command line, though: "bash -i script" is
+        //      interactive and still leaves without a word, because what
+        //      ended is the file and not the session.
+        if (!script_file)
+                shell_interactive_exit_said();
+
 input_finished:
         shell_input_end();
 
@@ -776,14 +785,6 @@ input_finished:
                 exec_script_fd = -1;
         }
 
-        //      Input ran out, which is a way of leaving like any other,
-        //      and bash says the same "exit" for the end of a terminal's
-        //      input that the builtin says. Not for the end of a script
-        //      named on the command line, though: "bash -i script" is
-        //      interactive and still leaves without a word, because what
-        //      ended is the file and not the session.
-        if (!script_file)
-                shell_interactive_exit_said();
         shell_trap_exit();
 
         log_flush();
