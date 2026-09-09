@@ -18774,7 +18774,7 @@ REASONS = {
  "r135": "deliberate: the operating system name is not in struct utsname and is not ours to claim on another system's behalf. This one answers Moonwater, and -a stops at the machine for the same reason.",
  "r136": "-B, -M and -S take a list of directories terminated by -f, which this one reads as a single directory.",
  "r137": "--show-limits reports the environment own bookkeeping rather than an answer, -s beyond the batch is held at the batch, and a child ended by a signal is named without its number in one shape.",
- "r138": "--show-limits reports the environment's own bookkeeping rather than an answer, and -p and --open-tty ask a question of a terminal this suite has none of.",
+ "r138": "--show-limits reports the environment's own bookkeeping rather than an answer, and --open-tty asks a question of a terminal this suite has none of.",
  "r139": "deliberate: long spelling of the unimplemented variable BLAKE2 length.",
  "r14": "recursion deeper than about 1900 levels exhausts the stack the machine gave this process and stops with an error, where gawk's heap-allocated frames go on",
  "r140": "deliberate: variable BLAKE2 digest lengths need the parameter block keyed by output length, which the kernel's blake2b-512 transform does not expose; a truncated 512-bit digest is not the same value.",
@@ -21317,7 +21317,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r54",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "bracket"
  },
  {
@@ -21344,7 +21343,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r54",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "bracket"
  },
  {
@@ -21371,7 +21369,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r54",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "bracket_ext"
  },
  {
@@ -21398,7 +21395,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r54",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "bracket_ext"
  },
  {
@@ -26283,7 +26279,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -26310,7 +26305,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -26683,7 +26677,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -27172,7 +27165,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -27295,7 +27287,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -27418,7 +27409,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -27541,7 +27531,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -27786,7 +27775,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -27871,7 +27859,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -28334,7 +28321,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -28361,7 +28347,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -28420,7 +28405,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r63",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "compgen"
  },
  {
@@ -40370,8 +40354,7 @@ PINNED = r"""
   "id": "2715cc9143ebcfa8",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r55",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a bare export and export -p list every name the shell holds marked for the environment, and the two shells hold different internal names -- an oracle problem, not a behaviour: PS4, BASH_VERSINFO and this shell's own set are not the same list",
   "utility": "export"
  },
  {
@@ -40397,8 +40380,7 @@ PINNED = r"""
   "id": "27352194c4b0ff42",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r55",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a bare export and export -p list every name the shell holds marked for the environment, and the two shells hold different internal names -- an oracle problem, not a behaviour: PS4, BASH_VERSINFO and this shell's own set are not the same list",
   "utility": "export"
  },
  {
@@ -40554,8 +40536,7 @@ PINNED = r"""
   "id": "9f385ff1a1c9dafa",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r55",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a bare export and export -p list every name the shell holds marked for the environment, and the two shells hold different internal names -- an oracle problem, not a behaviour: PS4, BASH_VERSINFO and this shell's own set are not the same list",
   "utility": "export"
  },
  {
@@ -40581,8 +40562,7 @@ PINNED = r"""
   "id": "c8137a9e38cf960e",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r55",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a bare export and export -p list every name the shell holds marked for the environment, and the two shells hold different internal names -- an oracle problem, not a behaviour: PS4, BASH_VERSINFO and this shell's own set are not the same list",
   "utility": "export"
  },
  {
@@ -40608,8 +40588,7 @@ PINNED = r"""
   "id": "e1e14c729d063d59",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r55",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a bare export and export -p list every name the shell holds marked for the environment, and the two shells hold different internal names -- an oracle problem, not a behaviour: PS4, BASH_VERSINFO and this shell's own set are not the same list",
   "utility": "export"
  },
  {
@@ -40635,8 +40614,7 @@ PINNED = r"""
   "id": "e6b0fddcf221ed7a",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r55",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a bare export and export -p list every name the shell holds marked for the environment, and the two shells hold different internal names -- an oracle problem, not a behaviour: PS4, BASH_VERSINFO and this shell's own set are not the same list",
   "utility": "export"
  },
  {
@@ -44263,7 +44241,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44354,7 +44331,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44381,7 +44357,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44440,7 +44415,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44499,7 +44473,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44558,7 +44531,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44617,7 +44589,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44644,7 +44615,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44671,7 +44641,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44730,7 +44699,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_list"
  },
  {
@@ -44765,7 +44733,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_send"
  },
  {
@@ -44824,7 +44791,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r72",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "kill_send"
  },
  {
@@ -75943,7 +75909,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r54",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "test"
  },
  {
@@ -75970,7 +75935,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r54",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "test"
  },
  {
@@ -75997,7 +75961,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r54",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "test_ext"
  },
  {
@@ -76024,7 +75987,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r54",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "test_ext"
  },
  {
@@ -76051,7 +76013,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason": "a function body is written on one line where bash re-indents it over four lines: type and type -a both print the body, and printing it the way bash prints it needs a deparser this shell does not have",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "type"
  },
  {
@@ -76110,7 +76071,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason": "a function body is written on one line where bash re-indents it over four lines: type and type -a both print the body, and printing it the way bash prints it needs a deparser this shell does not have",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "type"
  },
  {
@@ -87354,8 +87314,7 @@ PINNED = r"""
   "id": "1497bc530ff9d89f",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r81",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a mask has no t to set: bash reads g+t through chmod's grammar and changes nothing by it, where this refuses the clause outright, so the mode after it is the one that was there before",
   "utility": "umask"
  },
  {
@@ -87381,8 +87340,7 @@ PINNED = r"""
   "id": "31433d9711864521",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r81",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a mask has no t to set: bash reads g+t through chmod's grammar and changes nothing by it, where this refuses the clause outright, so the mode after it is the one that was there before",
   "utility": "umask"
  },
  {
@@ -87408,8 +87366,7 @@ PINNED = r"""
   "id": "56fb7945e8708c54",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r81",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a mask has no t to set: bash reads g+t through chmod's grammar and changes nothing by it, where this refuses the clause outright, so the mode after it is the one that was there before",
   "utility": "umask"
  },
  {
@@ -87435,8 +87392,7 @@ PINNED = r"""
   "id": "846baa63f12daf02",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r81",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a mask has no t to set: bash reads g+t through chmod's grammar and changes nothing by it, where this refuses the clause outright, so the mode after it is the one that was there before",
   "utility": "umask"
  },
  {
@@ -87462,8 +87418,7 @@ PINNED = r"""
   "id": "cbd4a3b9104eb5c8",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r81",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a mask has no t to set: bash reads g+t through chmod's grammar and changes nothing by it, where this refuses the clause outright, so the mode after it is the one that was there before",
   "utility": "umask"
  },
  {
@@ -87521,8 +87476,7 @@ PINNED = r"""
   "id": "f5aa7063e1e001db",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r81",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason": "a mask has no t to set: bash reads g+t through chmod's grammar and changes nothing by it, where this refuses the clause outright, so the mode after it is the one that was there before",
   "utility": "umask"
  },
  {
@@ -87979,7 +87933,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r83",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "which"
  },
  {
@@ -88070,7 +88023,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r83",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "which"
  },
  {
@@ -90017,7 +89969,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r83",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "which"
  },
  {
@@ -90620,7 +90571,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r83",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "which"
  },
  {
@@ -90743,7 +90693,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r83",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "which"
  },
  {
@@ -91538,7 +91487,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r83",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "which"
  },
  {
@@ -92328,14 +92276,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r86",
-  "utility": "chown"
- },
- {
-  "domain": "files",
-  "kind": "bug",
-  "list": "ledger",
-  "option": "--from",
-  "reason_id": "r88",
   "utility": "chown"
  },
  {
@@ -97399,32 +97339,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    "colors",
-    "colors_quote"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_colors",
-   "utility": "dircolors"
-  },
-  "domain": "files",
-  "id": "07b43b016fdc05de",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r97",
-  "utility": "dircolors"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "dir"
    ],
    "domain": "files",
@@ -97741,32 +97655,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "cd36680307c79503",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r97",
-  "utility": "dircolors"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "colors",
-    "colors_quote"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "dircolors"
-  },
-  "domain": "files",
-  "id": "d87f6b32d13aafd0",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r97",
@@ -111068,33 +110956,6 @@ PINNED = r"""
   "case": {
    "argv": [
     "-i",
-    "x",
-    "c.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "shuf"
-  },
-  "domain": "files",
-  "id": "14459ebdae1f24f6",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r125",
-  "utility": "shuf"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-i",
     "3-9",
     "c.txt"
    ],
@@ -111250,86 +111111,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    "-i",
-    "-1-3",
-    "c.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "shuf"
-  },
-  "domain": "files",
-  "id": "6b2a52100c95bd1b",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r125",
-  "utility": "shuf"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-i",
-    "5-",
-    "c.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "shuf"
-  },
-  "domain": "files",
-  "id": "71b65a69a51dd6a8",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r125",
-  "utility": "shuf"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-i5-",
-    "c.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "shuf"
-  },
-  "domain": "files",
-  "id": "7aca661ef227888a",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r125",
-  "utility": "shuf"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "dir"
    ],
    "domain": "files",
@@ -111368,32 +111149,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "8f740f2b3080bdc7",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r125",
-  "utility": "shuf"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-i9-3",
-    "c.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "shuf"
-  },
-  "domain": "files",
-  "id": "9264896863a98679",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r125",
@@ -111498,32 +111253,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "deb4e58a2b87fee1",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r125",
-  "utility": "shuf"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-ix",
-    "c.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "shuf"
-  },
-  "domain": "files",
-  "id": "ec9d49d093ca055e",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r125",
@@ -111657,59 +111386,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "f204a225ffa958c1",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r125",
-  "utility": "shuf"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-i",
-    "9-3",
-    "c.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "shuf"
-  },
-  "domain": "files",
-  "id": "f92e4512162c5556",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r125",
-  "utility": "shuf"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-i-1-3",
-    "c.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "shuf"
-  },
-  "domain": "files",
-  "id": "fb2bd77fa5041f49",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r125",
@@ -115576,14 +115252,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "option": "--show-limits",
-  "reason_id": "r138",
-  "utility": "xargs"
- },
- {
-  "domain": "files",
-  "kind": "bug",
-  "list": "ledger",
-  "option": "-p",
   "reason_id": "r138",
   "utility": "xargs"
  },
@@ -199403,7 +199071,364 @@ PINNED = r"""
  },
  {
   "domain": "util_linux",
+  "id": "050062cdbe2715ad",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "09245b84988cb14f",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0ba05771c4bb5a40",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0c9e154cad7061ab",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0dde143c13caa395",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "10960345ea03e9ab",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1216001ac2395905",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1b0a8d3b151e7578",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1ec4c284eb91ca5c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1f0449447075993e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "25b1c0b71524b866",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2d93d632336d52bc",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3085dee941e9cc2f",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "30dc56717dac52a6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "37134285c4301223",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3fca36b36683284a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "41b0a22e08ec6568",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "458c225429810b4b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "47d0a02867de272c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4d827a10b8c34789",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "54de5a8f10816177",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "599b6387a2fc21d3",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "5de0f679d13da636",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "5e44e6d55039ff19",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "60186aa3903afe49",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "64c08e3b0939e868",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6ca10f70ebdef1d7",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6f99b3568500139d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "718ba50cbecb2468",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "78a6760bccb1dfc9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7c52fa916c138ecb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "87ae8b2831b2b7a9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "90934a7eb02a2ab5",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "997663263e58a64e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a58b863eb9f8ebaa",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b0764c55a3516ae4",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b27698c014aeea99",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b63a34f6df6bf552",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b9656fee20197a29",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c3a1a975ffeba5eb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c946740401f2848a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "cc7d3e84be877d9c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "cf596d3f46720944",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d5f7be2785645fd0",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d8e165d94032f0a5",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "da45ab2e0f726e47",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ebe2e3331599ad5c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ee3faecd56c4fbfe",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f8b703bdda452db1",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "fcf05f016ed212ad",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
   "id": "1fa6fe3ecc289445",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsclocks"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4ee5bdd96337cdcd",
   "list": "unstable",
   "reason": "answers differently when the same case is asked again",
   "utility": "lsclocks"
@@ -199417,7 +199442,385 @@ PINNED = r"""
  },
  {
   "domain": "util_linux",
+  "id": "bdc918b46db65088",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsclocks"
+ },
+ {
+  "domain": "util_linux",
+  "id": "000a48f968dd8503",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "007d515a26cab5fe",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "013ea05442c8c96b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "047f88af8eab4557",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "04db1d0bacf445f9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "051a666fc4a4984b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "09d596908c133a70",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0cc07868be8fe0f9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0d212b7ae4ef93ee",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0d38d3f5bd401f38",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0d3daa2188a8e159",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
   "id": "0e5b764780589095",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0f2aa1d6d549f7ff",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "12dd8da154c03e83",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "13aff6cbc7e699d6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "13f5682123362b9a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1479b9aba60423a1",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1503579a888dea40",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "15979d02add6fbe1",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "16e541ee9a252b03",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "18647d4e0f83b742",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "19ee2f545daa4a41",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1be3961d3833d434",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1c0a1170f4ab751b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1c6f47ce60f09b72",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1d4a947035b0a12e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1e075890bbdc24ed",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1ec7e99ff3fc79b7",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "211692a8c667e3f2",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2164b8aa039e7734",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "24b252f8a1046b29",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "24f274b1d0b7ed50",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "26678dc19d31c8bf",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "26ea9dee7789fcc1",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "27bf782175329ef4",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2e36b1583fd8b347",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2fa2e8beabe86fee",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2fbdaeb9daf3623b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2fffe745b06d3c9e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3066a896199b383d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "329cf81b7b3a778b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "34092f586eda3dbb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "348dbe43cede29ff",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "34b89d210288975c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "356c5140ee74bf2a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "37ba2bbc989e98ff",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "38946c4a03e120c4",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3a4badbf7bf9ba4a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3b292c3ebb5fa5dd",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3f8f7a44d2868c73",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "42dd8e4d4357351d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "47b54980d4421c01",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4a9e4b37c39da334",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4cddf25e5f448fa6",
   "list": "unstable",
   "reason": "answers differently when the same case is asked again",
   "utility": "lslocks_live"
@@ -199431,10 +199834,759 @@ PINNED = r"""
  },
  {
   "domain": "util_linux",
+  "id": "4e5b3dc83c14ed9c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4ffd495b7a9b5e3b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "510aa3f7a59857f0",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "5701be6e73d2ec11",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "595332f4403d1c84",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "61da7b3ced44bc91",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "644a5260d60b867b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "64cb40bd6d2b236b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "665a47a18de9f9b7",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "68ccc9a85412a425",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6be8590ef1c24ab2",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6c1b4464be04759d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6c5f453f200ec191",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6cc126085ab19766",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6e4293c87ccc26d9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7625322a7ec0790c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7c690d8546e204f8",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7c9d3b8e8b33148a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7dce4117de45b364",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7f5b16b0e69b8d24",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "819614431fbeae78",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "8592ec2916d218d1",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "8d18bba05dd2e8fd",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "8e7f03b55c0d48d8",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "8ed6cfd5f3a7e844",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "90dd6369f09b4e9c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "94edc78f0eb6f87e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "951e4c59358e2814",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "95f92172e573058c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "96d844ffd94efb63",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "977d700289673d45",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "986a9890a608ae24",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "98e8fd99805b9f67",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9903d1af3860e9e8",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "99cfcca6fc3db478",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9adcb5a90d04fad9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9c8186f97e1a1b63",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9cfe8a77a4264200",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9dfe43c71ca88051",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9e690cb6051236dc",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a003d5c2a22df39b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a298e9205f39b32a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a29ca2e5e082da4a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a42dcfbea689f8ce",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a44afd9a681fed9b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a4540b6b00e78519",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a9c171197a234e89",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "aa2accb1f51793e4",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "aac44020ec2a04a6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ac2c58b1f1a01d4d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ae4fb83f0d2d6f0c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "af94dace50da1ed3",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b046bae1491e4e27",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b522168ba3cdc4c5",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b5d2e821363a4c2c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b5de2d6b5128960d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b741f5fc9317f61c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b7d1030d2b1d7304",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b84f471fae5a5eac",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b87e0b5a40c7cda6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b953e62cc14c6981",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bac37bb497e0830b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bb35fd921b0da7e6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bb43fab8ab31ee39",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bd158b4eb27dbde0",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bfa020d25010be5f",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c270ec5d5171c11d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c39504272b59f727",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c6debf715d786696",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c922158c6a530de8",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "cbd62d816909607a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "cdb987d9128fa612",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ce5dae4fc4bd4986",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "cf3dca4a59f2544d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d002ff0ebcb99df8",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d05738f2d1eaf356",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d059a78b9e82c47c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d1d82f55c794cdf2",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d5736ae8e767348b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d60aeaeaac5c70ab",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d63e3d6e7e657bd7",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d660a3c17eea6e46",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d6de5b50fdfae14e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d781570bfe1e38bf",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "da30c31b1ee9a6e5",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "da40708e88934530",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ddb28384e05c6e3f",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "e1489b057ef3d462",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "e4be79b4e33e1e26",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "e4d6e7456e6846f3",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "e5fbb14661233d67",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ed3aa3648190609c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f17c00c30953072a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f21784bb946eef63",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f3a806154cd5e9d9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f43f8e6950ab967d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f4f1047b933aae2c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f5b2a50aa32e7575",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f5c8b5649781a091",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f764c04629f7c05a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f9eed4a66598d872",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "fa1ce81b815a18cf",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "fa1fa066a5063521",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "fa3cf8c365dafe0c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
   "id": "fbf2a80a29652b31",
   "list": "unstable",
   "reason": "answers differently when the same case is asked again",
   "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "fcadbe0a6ddf6eea",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0c0f0728c986601e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7ae06c00e517f20f",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns_live"
  },
  {
   "domain": "util_linux",
@@ -199452,7 +200604,77 @@ PINNED = r"""
  },
  {
   "domain": "util_linux",
+  "id": "dc71114d20587f80",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "fbb44d2e0441ac56",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "00016bc61ef6869b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "042f4cbe60609c0c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "046ae95562b7b594",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "04f26ed1bab89572",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "06ab664675b116ab",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0773fd9c7b7a73a6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0accf8493737b8d0",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
   "id": "0c9778e885e12fc2",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "113ec298b5f73689",
   "list": "unstable",
   "reason": "answers differently when the same case is asked again",
   "utility": "setsid"
@@ -199466,7 +200688,70 @@ PINNED = r"""
  },
  {
   "domain": "util_linux",
+  "id": "1a223baa5cb45751",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1a2a18c863ae9087",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "205f5183104291ba",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "288b98d84f77cd6b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2bec5f9ee0227b4a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2e658c0e75f9ce2a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
   "id": "35518d7d06b1a6b7",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3f8c1e88c7cacef9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "425763ce5353fbd4",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4bfed58f3d30fb66",
   "list": "unstable",
   "reason": "answers differently when the same case is asked again",
   "utility": "setsid"
@@ -199480,10 +200765,269 @@ PINNED = r"""
  },
  {
   "domain": "util_linux",
+  "id": "5464f19d507c8dfb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
   "id": "5acf0dfc2a44123d",
   "list": "unstable",
   "reason": "answers differently when the same case is asked again",
   "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "5fedd9f9110264ba",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "638b6d5b4e856a50",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "64d0ffd7880c26d1",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6710423edb772951",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "69fc04361930b637",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6a7b45b5f501b11e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7839609b13589360",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "835024aff604ee74",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "84b4f387e9f21a5c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "87937ee1f0c2c7ca",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "89c9c0bfbe119f77",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "90766116de51dabb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "908fea8f651f0a89",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "91904050396f2815",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "921b72364d5e242e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "93a64d9d7b79f5f2",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "94669c24735f1dfe",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9a2aa60db5f1e542",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9cfab561ad7cdc72",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9d06f516e42a1e20",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a45e5c71c9311633",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bab768462db4da58",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bb1def30eb4085cb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bca8ee5e6e75ea15",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d14e09eee82a516a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d6063d23da04b15c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "dbd8fc51a8742f72",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "dcfd3d9c012cb912",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "dd61be99244d72fb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "e0e59882b4f45e01",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "e612fb96c7ed6fd5",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f4fd744e10a5756b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f7119ddce2820be6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f87294da86b96764",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ff1458134cd06928",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "03bd60736ace79d9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "unshare"
  }
 ]
 """
