@@ -210,6 +210,24 @@ freestanding()
         return 1
 }
 
+#       The build tool, bootstrapped if this is the first thing to want it.
+#
+#       src/build/build.c is the whole build path -- what kit/build, kit/spark,
+#       kit/asm, kit/config and kit/verify_config used to be -- and lanes reach
+#       it the same way build.sh does, with the one documented command.
+build_tool()
+{
+        if [ ! -x "$root/build" ] ||
+                [ "$root/src/build/build.c" -nt "$root/build" ]
+        then
+                ${CC:-cc} -O2 -static -nostdlib -nostartfiles \
+                        -fno-stack-protector -fno-builtin -w \
+                        -o "$root/build" "$root/src/build/build.c" || return 1
+        fi
+
+        "$root/build" "$@"
+}
+
 #       One section of test/checks.c, which is where every C check lives. The
 #       name selects the section; anything after the architecture goes to the
 #       compiler as well, which is how a variant gets its second definition
@@ -260,124 +278,26 @@ need_shell()
         farm="$work/bin"
 }
 
-#       Compile the whole header at the RISC-V floor it advertises, then read
-#       the ISA attribute back out of the object. A normal rv64 toolchain
-#       defaults to GC, which would let both a compressed instruction and an
-#       extension above the floor enter unnoticed. The explicit march makes
-#       the assembler reject those; the attribute check proves C did not get
-#       put back by a driver default.
+#       The ISA floor, which the build tool proves and this lane reads.
 #
-#       A is part of the public surface because the atomic macros lower to it.
-#       F and D are part of the assembly itself: string_format and fast_sin
-#       use both precisions. get_cpu_time reads the time CSR, so Zicntr and its
-#       Zicsr dependency are explicit too. Software fallbacks for those are a
-#       different implementation, not something this compile check should
-#       pretend exists.
+#       `build floor` compiles the library at the floor its settings name and
+#       reads the ISA attribute back out of the object, because a normal
+#       toolchain defaults to something richer -- rv64gc -- and would let both
+#       a compressed instruction and an extension above the floor in unnoticed.
+#       It answers 2 when nothing here has that back end, which is a skip and
+#       not a pass.
+#
+#       It lives in the tool rather than here because it is a build-time
+#       guarantee about a produced object, not a comparison against a
+#       reference, and because what must be present and what must be absent
+#       are settings there -- so another tree gets the same proof about its own
+#       floor. Which extensions this floor names and why is written beside
+#       those settings.
 riscv_floor()
 {
-        floor_object="$work/riscv-floor.o"
-        floor_probe="$work/riscv-floor-probe.o"
-        floor_error="$work/riscv-floor.err"
-        floor_reader=""
-
-        if command -v riscv64-linux-gnu-gcc > /dev/null 2>&1; then
-                floor_compiler=$(command -v riscv64-linux-gnu-gcc)
-                floor_reader=${floor_compiler%gcc}readelf
-                set -- "$floor_compiler"
-        else
-                floor_compiler=""
-
-                # Apple clang does not carry the RISC-V backend. Try the clang
-                # on PATH, then the two usual package-manager locations; the
-                # empty translation unit separates an unavailable target from
-                # a real failure to compile library.c.
-                for floor_try in "${CLANG:-clang}" \
-                        /opt/homebrew/opt/llvm/bin/clang \
-                        /usr/local/opt/llvm/bin/clang; do
-                        command -v "$floor_try" > /dev/null 2>&1 || continue
-                        if "$floor_try" --target=riscv64-unknown-linux-gnu \
-                                -march=rv64imafd_zicsr_zicntr -mabi=lp64d \
-                                -x c -c \
-                                -o "$floor_probe" /dev/null \
-                                > /dev/null 2>&1
-                        then
-                                floor_compiler=$(command -v "$floor_try")
-                                floor_reader=$(dirname -- "$floor_compiler")/llvm-readelf
-                                set -- "$floor_compiler" \
-                                        --target=riscv64-unknown-linux-gnu
-                                break
-                        fi
-                done
-
-                [ -n "$floor_compiler" ] || {
-                        note "riscv64 floor: NOT RUN -- no compiler with a RISC-V backend"
-                        return 2
-                }
-        fi
-
-        if ! command -v "$floor_reader" > /dev/null 2>&1; then
-                if command -v llvm-readelf > /dev/null 2>&1; then
-                        floor_reader=llvm-readelf
-                elif command -v readelf > /dev/null 2>&1; then
-                        floor_reader=readelf
-                else
-                        note "riscv64 floor: NOT RUN -- no ELF attribute reader"
-                        return 2
-                fi
-        fi
-
-        if ! "$@" -march=rv64imafd_zicsr_zicntr -mabi=lp64d -c -O2 \
-                -DSTANDARD_NO_PLATFORM -ffreestanding -fno-builtin \
-                -fno-stack-protector -w -o "$floor_object" src/library.c \
-                2> "$floor_error"
-        then
-                note "library.c does not compile at the RISC-V floor:"
-                sed 's/^/    /' "$floor_error" | head -20
-                return 1
-        fi
-
-        if ! floor_attributes=$("$floor_reader" -A "$floor_object" \
-                2> "$floor_error")
-        then
-                note "the RISC-V ELF attributes could not be read:"
-                sed 's/^/    /' "$floor_error" | head -10
-                return 1
-        fi
-
-        # GNU readelf calls this Tag_RISCV_arch; llvm-readelf prints an arch
-        # TagName followed by Value. Accept either spelling and inspect the
-        # same canonical ISA string.
-        floor_arch=$(printf '%s\n' "$floor_attributes" | sed -n \
-                -e 's/.*Tag_RISCV_arch: "\([^"]*\)".*/\1/p' \
-                -e 's/^[[:space:]]*Value: \(rv64[^[:space:]]*\).*/\1/p' | \
-                head -1)
-
-        case $floor_arch in
-        rv64i*_m*_a*_f*_d*) ;;
-        *)
-                note "RISC-V ELF floor lacks IMAFD: ${floor_arch:-missing attribute}"
-                return 1
-                ;;
-        esac
-
-        for floor_extension in zicsr zicntr; do
-                if ! printf '%s\n' "$floor_arch" | \
-                        grep -Eq "(^|_)${floor_extension}[0-9]"
-                then
-                        note "RISC-V ELF floor lacks $floor_extension: $floor_arch"
-                        return 1
-                fi
-        done
-
-        if printf '%s\n' "$floor_arch" | \
-                grep -Eq '(^|_)(c|zca|zcb|zcd|zcf|zcmp|zcmt)[0-9]'
-        then
-                note "RISC-V ELF floor unexpectedly requires C: $floor_arch"
-                return 1
-        fi
-
-        return 0
+        build_tool floor riscv64
 }
+
 
 #       A result-only run under qemu cannot prove strict-alignment safety:
 #       qemu-user and Linux may emulate the very access the floor forbids us
@@ -8055,7 +7975,7 @@ bench_shell()
         if [ -z "$subject" ]; then
                 subject=$work/moonwater-shell
                 echo "building $subject" >&2
-                sh kit/build programs/shell.c "$subject"
+                build_tool freestanding programs/shell.c "$subject"
         fi
 
         # shellcheck disable=SC1007
@@ -8311,7 +8231,7 @@ bench_tools()
         if [ -z "$subject" ]; then
                 subject=$work/moonwater
                 echo "building $subject" >&2
-                sh kit/build programs/shell.c "$subject"
+                build_tool freestanding programs/shell.c "$subject"
         fi
 
         # shellcheck disable=SC1007
@@ -8537,7 +8457,7 @@ bench_awk()
 
         if [ -z "$subject" ]; then
                 subject=$work/moonwater
-                sh kit/build programs/shell.c "$subject"
+                build_tool freestanding programs/shell.c "$subject"
         fi
 
         # shellcheck disable=SC1007
@@ -8732,7 +8652,7 @@ bench_find()
         if [ -z "$subject" ]; then
                 subject=$work/moonwater
                 echo "building $subject" >&2
-                sh kit/build programs/shell.c "$subject"
+                build_tool freestanding programs/shell.c "$subject"
         fi
 
         # shellcheck disable=SC1007

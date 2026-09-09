@@ -19,7 +19,7 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 subject=${1:-}
 if [ -z "$subject" ]; then
         subject=$work/shell
-        (cd "$root" && sh kit/build programs/shell.c "$subject")
+        (cd "$root" && ./build freestanding programs/shell.c "$subject")
 fi
 
 command -v perf >/dev/null 2>&1 || {

@@ -14376,7 +14376,7 @@ def harness_core_state(argv):
         geometry += "#undef compose_cells\n"
         geometry += section(drag, "static void bar_move", "/*\n        Filling the screen")
         (work / "canvas-pane.inc").write_text(geometry)
-        # kit/asm supplies the function macros; these empty include files replace
+        # `build asm` supplies the function macros; these empty include files replace
         # only the kernel declarations, never the renderer's assembly bodies.
         (work / "linux").mkdir(exist_ok=True)
         for name in ("export.h", "linkage.h"):
@@ -14384,7 +14384,7 @@ def harness_core_state(argv):
         inputs = ["-DCHECK_canvas_cells", str(root / "test/checks.c")]
         for name in ("glyph", "fill"):
             target = work / f"{name}.S"
-            subprocess.run(["sh", str(root / "kit/asm"), arch,
+            subprocess.run([build_tool(root), "asm", arch,
                             str(root / f"src/canvas/{name}.asm"), str(target)], check=True)
             inputs.append(str(target))
         return inputs
@@ -15374,7 +15374,8 @@ out.write_text("#!/usr/bin/env python3\\n"
         return path
 
     def invoke(self, *args):
-        return subprocess.run(["sh", str(HARNESS_ROOT / "kit/build"), *map(str, args)],
+        return subprocess.run([build_tool(HARNESS_ROOT), "freestanding",
+                               *map(str, args)],
                               cwd=self.work, env=self.env, capture_output=True,
                               text=True, timeout=10)
 
@@ -15415,7 +15416,8 @@ time.sleep(0.1)
 print("changed", flush=True)
 while True: time.sleep(0.05)
 ''')
-        process = subprocess.Popen(["sh", str(HARNESS_ROOT / "kit/build"), "--watch",
+        process = subprocess.Popen([build_tool(HARNESS_ROOT), "freestanding",
+                                    "--watch",
                                     str(source), str(self.work / "out")],
                                    cwd=self.work, env=self.env, start_new_session=True,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -15447,7 +15449,12 @@ while True: time.sleep(0.05)
     def test_image_build_preserves_remote_paths_and_profile_arguments(self):
         remote = self.work / "remote ' $(printf injected) [glob]"
         (remote / "kit").mkdir(parents=True)
-        (remote / "kit/common").write_text((HARNESS_ROOT / "kit/common").read_text())
+        # A remote that has been built on has the tool, because build.sh over
+        # there compiled it. The image query asks that tool, not a shell.
+        tool = remote / "build"
+        tool.write_text('#!/bin/sh\n'
+                        'sed -n "s|^#> $2 ||p" artifacts/.config\n')
+        tool.chmod(0o755)
         (remote / "artifacts").mkdir()
         (remote / "artifacts/.config").write_text("#> kernel_export dist/image space.efi\n")
         (remote / "dist").mkdir()
@@ -15517,6 +15524,20 @@ import json, os, pathlib, sys
         self.assertEqual(ran.stdout, "")
         self.assertEqual(json.loads((self.work / "remote-args").read_text()),
                          ["test/run", hostile])
+
+
+def build_tool(root):
+    """The build tool, bootstrapped once with the one documented command."""
+    tool = pathlib.Path(root) / "build"
+    source = pathlib.Path(root) / "src/build/build.c"
+
+    if not tool.exists() or source.stat().st_mtime > tool.stat().st_mtime:
+        subprocess.run([os.environ.get("CC_BOOTSTRAP", "cc"), "-O2", "-static",
+                        "-nostdlib", "-nostartfiles", "-fno-stack-protector",
+                        "-fno-builtin", "-w", "-o", str(tool), str(source)],
+                       check=True)
+
+    return str(tool)
 
 
 def harness_build_tools(argv):

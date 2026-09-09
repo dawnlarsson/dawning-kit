@@ -41597,7 +41597,7 @@ b32 main(void)
 
         Built as an ordinary freestanding binary it proves these things of
         the ELF loader, which is what test/run does with it. The same
-        source built with kit/spark and placed in the image would prove them
+        source built with `build spark` and placed in the image would prove them
         of the spark loader and let the spawn mode reach /dev/spark, and
         nothing builds it that way yet: the boot lane covers the spark loader
         only by the kernel exec'ing the shell as /init and the shell
@@ -44595,7 +44595,7 @@ int main(void)
 
 #ifdef CHECK_lexer_spans
 /* Counted lexer views borrow input; parser text must survive its reuse.
-   Build with kit/build or the shell lane's freestanding-checks runner. */
+   Build with `build freestanding` or the shell lane's freestanding-checks runner. */
 #include "../src/compiler_memory.c"
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
@@ -44815,7 +44815,7 @@ b32 main(void)
 
         Six are not in test/run's catalogue, because nothing on this side of
         the machine can run them: BENCH_exec, BENCH_network_spawn,
-        BENCH_shell_document and BENCH_tiny are built by kit/spark and run
+        BENCH_shell_document and BENCH_tiny are built by `build spark` and run
         inside the booted image, BENCH_startup_empty is the host-kernel floor
         they subtract, and BENCH_one is one function at one length for
         kit/insns, which picks which with -DWHICH -DLENGTH -DROUNDS.
@@ -53042,8 +53042,8 @@ b32 main(void)
 // It needs /dev/spark and the two images beside it, so it runs inside the
 // booted image:
 //
-//     SPARK_CPPFLAGS=-DBENCH_tiny sh kit/spark test/checks fs/tiny.spark
-//     SPARK_CPPFLAGS=-DBENCH_exec sh kit/spark test/checks fs/bench
+//     SPARK_CPPFLAGS=-DBENCH_tiny ./build spark test/checks fs/tiny.spark
+//     SPARK_CPPFLAGS=-DBENCH_exec ./build spark test/checks fs/bench
 
 #define CLOCK_MONOTONIC 1
 
@@ -53479,7 +53479,7 @@ b32 main()
 
         Build into a Moonwater image and run there:
 
-                SPARK_CPPFLAGS=-DBENCH_network_spawn sh kit/spark test/checks \
+                SPARK_CPPFLAGS=-DBENCH_network_spawn ./build spark test/checks \
                         fs/bench-network-spawn
 
         `ip link` exits, unlike `ip watch`, but enters the same multicall image

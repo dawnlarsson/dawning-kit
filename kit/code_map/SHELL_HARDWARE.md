@@ -260,7 +260,7 @@ The frozen source/build manifests, scripts, rejected candidates, diagnostics,
 all benchmark samples and exact results live under
 [the retained artifact root](../../artifacts/shell-hardware-2026-09-09/).
 The final stock reproduces the isolated accepted glob candidate byte-for-byte.
-A normal Linux build is `sh kit/build programs/shell.c /tmp/moonwater-after`.
+A normal Linux build is `./build freestanding programs/shell.c /tmp/moonwater-after`.
 The maintained shell-only replay is:
 
 ```sh

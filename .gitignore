@@ -10,7 +10,7 @@
 /linux/
 /dev/
 
-# kit/asm writes a .S beside each .asm and kbuild assembles it there, because
+# `build asm` writes a .S beside each .asm and kbuild assembles it there, because
 # src/ is symlinked into the kernel tree as kernel/moonwater.
 /src/*.S
 /src/*.asm_tmp
@@ -39,3 +39,9 @@ __pycache__/
 
 # Agent worktrees and local session state.
 .claude/
+
+# The build tool, compiled from src/build/build.c by build.sh.
+/build
+
+# Working files: nothing here is part of the tree.
+scratch/

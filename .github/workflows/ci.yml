@@ -46,21 +46,29 @@ jobs:
 
       - name: Parse POSIX scripts with dash
         run: |
-          for f in kit/bit.sh kit/emit.sh \
-                   kit/build kit/spark kit/asm kit/common \
-                   kit/config kit/verify_config kernel/replace/apply \
+          for f in kit/bit.sh kit/emit.sh kit/common \
+                   kit/onbox kit/profile_shell \
+                   kernel/patch/apply kernel/replace/apply \
                    test/run build.sh; do
             echo "dash -n $f"
             dash -n "$f"
           done
+
+      # The build path is one C program now. It has to compile with nothing
+      # but a compiler, which is the claim its banner and the README make.
+      - name: Bootstrap the build tool
+        run: |
+          cc -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
+             -fno-builtin -w -o build src/build/build.c
+          ./build --help > /dev/null
 
       # Every script in the repo is shellcheck clean at -S warning; keep it that way.
       - name: shellcheck
         run: |
           shellcheck -S warning \
             kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh \
-            kit/build kit/spark kit/asm kit/common \
-            kit/config kit/verify_config kernel/replace/apply \
+            kit/common kit/onbox kit/profile_shell \
+            kernel/patch/apply kernel/replace/apply \
             test/run build.sh
 
   suite:

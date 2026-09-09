@@ -60,7 +60,7 @@ set -u
 #       strnchr on both, and memchr on riscv, which are still
 #       running the byte loop in lib/string.c today.
 #
-#       The spellings below are the ones kit/asm normalizes, so
+#       The spellings below are the ones `build asm` normalizes, so
 #       a profile is free to say arm64 or aarch64 and mean the
 #       same machine here as it does there.
 #
