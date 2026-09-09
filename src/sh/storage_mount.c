@@ -623,6 +623,9 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         storage_mount_options options;
         positive operands = 0;
         bool all = false;
+        /*  --no-canonicalize keeps the target as it was written, in what is
+            done and in what --verbose says was done. */
+        bool canonical = true;
         argument_cursor taking = {.argc = argc, .argv = argv, .at = 1};
         string_address value;
         b32 option;
@@ -694,6 +697,8 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                         options.flags |= STORAGE_MS_MOVE;
                         options.mentioned |= STORAGE_MS_MOVE;
                 }
+                else if (option == 'c')
+                        canonical = false;
                 else if (option == 't')
                         type = value;
                 else if (option == 'o')
@@ -930,9 +935,10 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                             the relative word that was written. */
                         positive shown_room = 0;
                         p8 address_to shown = null;
-                        bipolar target_handle = system_open_at(
-                            AT_FDCWD, operand[1],
-                            STORAGE_OPEN_PATH | O_CLOEXEC);
+                        bipolar target_handle = canonical
+                            ? system_open_at(AT_FDCWD, operand[1],
+                                             STORAGE_OPEN_PATH | O_CLOEXEC)
+                            : -1;
 
                         if (target_handle >= 0)
                         {
@@ -1064,7 +1070,8 @@ static b32 storage_umount_one(writer diagnostic, string_address program,
 
 static b32 storage_umount_recursive(writer diagnostic, string_address program,
                                     storage_mount_table address_to table,
-                                    string_address root, string_address types,
+                                    string_address root, string_address shown,
+                                    string_address types,
                                     positive flags, bool read_only, bool verbose,
                                     bool quiet, bool fake)
 {
@@ -1121,7 +1128,15 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                 }
         }
         if (!found)
-                return string_report(diagnostic, 1, "%s: %s: not found\n", program, root);
+        {
+                /*  The recursive walk says "not mounted" without the stop
+                    the single form puts after it, and --quiet is about this
+                    sentence as it is about the other. */
+                if (!quiet)
+                        string_format(diagnostic, "%s: %s: not mounted\n",
+                                      program, shown);
+                return 1;
+        }
         return failed;
 }
 
@@ -1294,6 +1309,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                    relative or symlinked target names the same mount. */
                 positive resolved_room = 0;
                 p8 address_to resolved = null;
+                b32 unreachable = 0;
                 {
                         /* The table holds absolute targets, so a relative
                            word is made absolute even under
@@ -1310,6 +1326,8 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                                                            address_of resolved_room);
                                 system_close(handle);
                         }
+                        else
+                                unreachable = (b32)-handle;
                 }
                 string_address asked = resolved ? (string_address)resolved
                                                 : operand[i];
@@ -1363,22 +1381,48 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         if (!found && asked != operand[i])
                                 found = storage_umount_target(address_of table,
                                                               operand[i]);
-                        string_address target = found ? found->target : asked;
-                        /*  A path the table does not hold is named as it was
-                            written; one it holds is named by the table's own
-                            spelling, which is how the reference names it. */
-                        if (!found)
-                                target = operand[i];
+                        /*  A path the table does not hold is named to the
+                            kernel as it was written; one it holds is named by
+                            the table's own spelling, which is how the
+                            reference names it. */
+                        string_address target = found ? found->target
+                                                      : operand[i];
                         if (recursive)
                                 failed |= storage_umount_recursive(
                                     diagnostic, (string_address)"umount",
-                                    address_of table, target, types, flags,
-                                    read_only, verbose, quiet, fake);
+                                    address_of table,
+                                    found ? found->target : asked, operand[i],
+                                    types, flags, read_only, verbose, quiet,
+                                    fake);
+                        else if (!found && !bypass && !fake)
+                        {
+                                /*  The table alone can say a path is not a
+                                    mount point, and then umount(2) is never
+                                    reached: that answer is 1 and names the
+                                    path the way canonicalisation left it,
+                                    while a path that could not be reached at
+                                    all is named as it was written, with the
+                                    reason the kernel gave. */
+                                if (!quiet)
+                                {
+                                        if (resolved)
+                                                string_format(
+                                                    diagnostic,
+                                                    "umount: %s: not mounted.\n",
+                                                    asked);
+                                        else
+                                                string_format(
+                                                    diagnostic, "umount: %s: %s\n",
+                                                    operand[i],
+                                                    strerror(unreachable));
+                                }
+                                failed |= 1;
+                        }
                         else
                                 failed |= storage_umount_one(
                                     diagnostic, (string_address)"umount", target,
                                     found ? found->type : null, flags, read_only,
-                                    !found && !bypass, verbose, quiet, fake);
+                                    false, verbose, quiet, fake);
                 }
                 if (resolved)
                         memory_free(resolved, resolved_room);
