@@ -1674,6 +1674,28 @@ def self_test():
                              f"{bare} are spelled bare at module scope, so whatever "
                              f"they hold is registered to no domain and never runs")
 
+        def test_every_lane_is_named_defined_and_described(self):
+            """A lane that leaves the list stops running and says nothing,
+            which is the same silence as a grammar that stops being
+            registered. The three spellings must agree: the walk's list, the
+            function it calls, and the line that says what it does."""
+            import re
+            runner = Path(__file__).resolve().parent / "run"
+            if not runner.is_file():
+                self.skipTest("test/run is not beside this file")
+            text = runner.read_text()
+            listed = re.search(r'^lanes="([^"]*)"', text, re.M)
+            self.assertIsNotNone(listed, "test/run has no lanes= list")
+            named = listed.group(1).split()
+            defined = set(re.findall(r"^lane_(\w+)\(\)", text, re.M))
+            described = set(re.findall(r'^\s*(\w+)\)\s+echo "', text, re.M))
+            self.assertEqual([n for n in named if n not in defined], [],
+                             "named in lanes= with no lane_<name> to run")
+            self.assertEqual(sorted(defined - set(named)), [],
+                             "a lane_<name> exists that lanes= never runs")
+            self.assertEqual([n for n in named if n not in described], [],
+                             "a lane nothing says the purpose of")
+
         def test_no_definition_in_this_file_shadows_another(self):
             """The same hazard from the other side. Assembling modules into
             one file lets a name arrive twice, and the later one wins in
