@@ -94,6 +94,35 @@ keeping the general utility surface. When the shell and utilities are enabled,
 launcher scripts. Disabled registry roots are discarded by the section linker,
 so these settings reduce the compiled payload as well as the installed names.
 
+## The tests
+
+One command, and everything is under `test/`:
+
+```
+sh test/run                     every lane
+sh test/run shell text          named lanes only
+sh test/run bench               the benchmarks instead
+sh test/run bench --list        what there is to measure
+```
+
+Three files, and no more: `test/run` is the command, `test/checks.c` holds
+every C check and benchmark as a `CHECK_<name>` or `BENCH_<name>` section, and
+`test/differential.py` is the engine, the grammars and the pinned rows.
+
+Nobody writes cases. Each program is declared as a grammar -- its options, the
+values they take, the operand shapes, the inputs worth feeding it -- and the
+engine walks that surface, running the system's tool and ours in the same
+recreated directory and comparing the exit status, standard output, the effect
+on the directory and the diagnostic. Agreeing is passing; there is no separate
+idea of a right answer. New coverage goes into a grammar, never into a new
+file.
+
+Where we answer differently on purpose, a pinned row says so and says why, and
+fails if the difference ever disappears. Where a case has no determined answer
+-- a terminal transcript interleaved by timing, a namespace the kernel fills
+as it pleases -- it is recorded by name and counted in neither column, so it
+cannot move a result either way.
+
 ## Bowl
 
 Bowl runs Debian, Arch, or another Linux userspace directly on the Moonwater
