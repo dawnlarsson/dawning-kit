@@ -10060,6 +10060,8 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
 
 static const file_long chown_longs[] = {
     {(string_address) "changes", 'c'},
+    {(string_address) "no-preserve-root", 'N'},
+    {(string_address) "preserve-root", 'N'},
     {(string_address) "dereference", 'd'},
     {(string_address) "no-dereference", 'h'},
     {(string_address) "quiet", 'f'},
@@ -10088,7 +10090,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
         file_taking taking = {
             .program = program,
-            .allowed = (string_address) "HLPRcfhv",
+            .allowed = (string_address) "HLPRcfhvN",
             .valued = (string_address) "e",
             .longs = chown_longs,
             .supersedes = chown_supersedes,
@@ -12237,6 +12239,18 @@ static b32 file_pathchk()
 
 // mkdir ------------------------------------------------------------
 // mkdir [-p] [-m MODE] DIRECTORY...
+// -Z asks for the default label and --context=VALUE for a named one; a
+// kernel with no labels at all ignores the second and says so.
+static fn file_context_warned(string_address program, file_taking address_to taking,
+                              p8 letter)
+{
+        if (file_option_value(taking, letter))
+                string_format(file_fail,
+                              "%s: warning: ignoring --context; it requires an "
+                              "SELinux/SMACK-enabled kernel\n",
+                              program);
+}
+
 static const file_long mkdir_longs[] = {
     {(string_address) "context", 'Z'},
     {(string_address) "mode", 'm'},
@@ -12258,6 +12272,8 @@ static b32 file_mkdir()
 
         if (!file_take(address_of taking))
                 return 1;
+
+        file_context_warned((string_address) "mkdir", address_of taking, 'Z');
 
         positive index = taking.first;
         positive mode = 0777;
@@ -19236,9 +19252,25 @@ typedef struct
         positive flags;
 } seq_format;
 
+// Which of the three ways a format can be wrong it was: a second
+// conversion, a conversion this one cannot render, or a % at the end.
+enum
+{
+        SEQ_FORMAT_GOOD,
+        SEQ_FORMAT_MANY,
+        SEQ_FORMAT_UNKNOWN,
+        SEQ_FORMAT_ENDS
+};
+
+static p8 seq_format_wrong;
+static p8 seq_format_letter;
+
 static bool seq_format_read(string_address text, seq_format address_to format)
 {
         bool found = false;
+
+        seq_format_wrong = SEQ_FORMAT_GOOD;
+        seq_format_letter = 0;
 
         memory_fill(format, 0, sizeof(*format));
         format->text = text;
@@ -19255,7 +19287,10 @@ static bool seq_format_read(string_address text, seq_format address_to format)
                 }
 
                 if (found)
+                {
+                        seq_format_wrong = SEQ_FORMAT_MANY;
                         return false;
+                }
 
                 found = true;
                 format->directive = at++;
@@ -19265,7 +19300,11 @@ static bool seq_format_read(string_address text, seq_format address_to format)
                 // The former pre-digit limit of 100000 admits one final digit.
                 if (parsed.stars || parsed.overflow || parsed.field[0] > 1000009 ||
                     parsed.field[1] > 1000009)
+                {
+                        seq_format_wrong = SEQ_FORMAT_UNKNOWN;
+                        seq_format_letter = string_get(text + at);
                         return false;
+                }
                 format->flags = parsed.flags;
                 format->width = parsed.field[0];
                 format->precision = parsed.fields == 2 ? parsed.field[1] : 6;
@@ -19276,8 +19315,18 @@ static bool seq_format_read(string_address text, seq_format address_to format)
                 if (text[at] == 'L')
                         at++;
 
-                if (text[at] != 'f' && text[at] != 'F')
+                if (!text[at])
+                {
+                        seq_format_wrong = SEQ_FORMAT_ENDS;
                         return false;
+                }
+
+                if (text[at] != 'f' && text[at] != 'F')
+                {
+                        seq_format_wrong = SEQ_FORMAT_UNKNOWN;
+                        seq_format_letter = text[at];
+                        return false;
+                }
 
                 format->after = at + 1;
         }
@@ -19351,17 +19400,32 @@ static b32 file_seq()
                 return 1;
         }
 
-        if (pad && format_text)
+        seq_format format = {.text = "", .flags = CONVERSION_FLAG_ZERO};
+
+        // A format is read before it is weighed against -w, because the
+        // reference reports a format it cannot read whatever else was asked.
+        if (format_text && !seq_format_read(format_text, address_of format))
         {
-                file_fail("seq: a format cannot be combined with equal width\n", 0);
+                p8 named[2] = {seq_format_letter, end};
+
+                if (seq_format_wrong == SEQ_FORMAT_MANY)
+                        string_format(file_fail,
+                                      "seq: format '%s' has too many %% directives\n",
+                                      format_text);
+                else if (seq_format_wrong == SEQ_FORMAT_ENDS)
+                        string_format(file_fail, "seq: format '%s' ends in %%\n", format_text);
+                else
+                        string_format(file_fail,
+                                      "seq: format '%s' has unknown %%%s directive\n",
+                                      format_text, named);
+
                 return 1;
         }
 
-        seq_format format = {.text = "", .flags = CONVERSION_FLAG_ZERO};
-
-        if (format_text && !seq_format_read(format_text, address_of format))
+        if (pad && format_text)
         {
-                file_fail("seq: format needs exactly one %f conversion\n", 0);
+                file_fail("seq: format string may not be specified"
+                          " when printing equal width strings\n", 0);
                 return 1;
         }
 

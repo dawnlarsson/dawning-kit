@@ -37867,5 +37867,797 @@
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "utility": "xargs"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-v",
+  "reason": "the vertical layout, week numbers, a chosen column count, colour and the Julian reform are each a second renderer or a second calendar over the month blocks this one draws.",
+  "utility": "cal"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--vertical",
+  "reason": "the vertical layout, week numbers, a chosen column count, colour and the Julian reform are each a second renderer or a second calendar over the month blocks this one draws.",
+  "utility": "cal"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-w",
+  "reason": "the vertical layout, week numbers, a chosen column count, colour and the Julian reform are each a second renderer or a second calendar over the month blocks this one draws.",
+  "utility": "cal"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--week",
+  "reason": "the vertical layout, week numbers, a chosen column count, colour and the Julian reform are each a second renderer or a second calendar over the month blocks this one draws.",
+  "utility": "cal"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-c",
+  "reason": "the vertical layout, week numbers, a chosen column count, colour and the Julian reform are each a second renderer or a second calendar over the month blocks this one draws.",
+  "utility": "cal"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--columns",
+  "reason": "the vertical layout, week numbers, a chosen column count, colour and the Julian reform are each a second renderer or a second calendar over the month blocks this one draws.",
+  "utility": "cal"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--reform",
+  "reason": "the vertical layout, week numbers, a chosen column count, colour and the Julian reform are each a second renderer or a second calendar over the month blocks this one draws.",
+  "utility": "cal"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--color",
+  "reason": "the vertical layout, week numbers, a chosen column count, colour and the Julian reform are each a second renderer or a second calendar over the month blocks this one draws.",
+  "utility": "cal"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-b",
+  "reason": "-b is a second suffix format language; the names here are the prefix and a fixed count of digits.",
+  "utility": "csplit"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--suffix-format",
+  "reason": "-b is a second suffix format language; the names here are the prefix and a fixed count of digits.",
+  "utility": "csplit"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-f",
+  "reason": "-f reads a file of dates, --resolution and --debug report on the clock and on the parse rather than a time, and --rfc-3339 is a third output protocol beside -R and -I.",
+  "utility": "date"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--file",
+  "reason": "-f reads a file of dates, --resolution and --debug report on the clock and on the parse rather than a time, and --rfc-3339 is a third output protocol beside -R and -I.",
+  "utility": "date"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--resolution",
+  "reason": "-f reads a file of dates, --resolution and --debug report on the clock and on the parse rather than a time, and --rfc-3339 is a third output protocol beside -R and -I.",
+  "utility": "date"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--debug",
+  "reason": "-f reads a file of dates, --resolution and --debug report on the clock and on the parse rather than a time, and --rfc-3339 is a third output protocol beside -R and -I.",
+  "utility": "date"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--rfc-3339",
+  "reason": "-f reads a file of dates, --resolution and --debug report on the clock and on the parse rather than a time, and --rfc-3339 is a third output protocol beside -R and -I.",
+  "utility": "date"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-H",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-B",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--block-size",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--output",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-t",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--type",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-x",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--exclude-type",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--total",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--sync",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--no-sync",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-l",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--local",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--si",
+  "reason": "-H, -B and --si are a second size renderer, --output a column chooser, -t and -x a filesystem-type filter, --total a summary row and --sync a mount walk; this one prints the fixed table.",
+  "utility": "df"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--time",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--time-style",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--inodes",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--files0-from",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-D",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--dereference-args",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-B",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--block-size",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-X",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--exclude-from",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-t",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--threshold",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--si",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-0",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--null",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-P",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--no-dereference",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-H",
+  "reason": "a time column, inode counts, a file of names, a block size, an exclusion file, a threshold and the dereference pair are each a separate walk or renderer over what -a, -s, -c, -h, -k, -m, -b, -l, -L, -x, -S, -d and --exclude already ask for.",
+  "utility": "du"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--default-signal",
+  "reason": "the signal options set a disposition the child inherits, which needs the signal mask this freestanding exec does not carry, and -v traces the parse rather than answering with an environment.",
+  "utility": "env"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--ignore-signal",
+  "reason": "the signal options set a disposition the child inherits, which needs the signal mask this freestanding exec does not carry, and -v traces the parse rather than answering with an environment.",
+  "utility": "env"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--block-signal",
+  "reason": "the signal options set a disposition the child inherits, which needs the signal mask this freestanding exec does not carry, and -v traces the parse rather than answering with an environment.",
+  "utility": "env"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--list-signal-handling",
+  "reason": "the signal options set a disposition the child inherits, which needs the signal mask this freestanding exec does not carry, and -v traces the parse rather than answering with an environment.",
+  "utility": "env"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-v",
+  "reason": "the signal options set a disposition the child inherits, which needs the signal mask this freestanding exec does not carry, and -v traces the parse rather than answering with an environment.",
+  "utility": "env"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--debug",
+  "reason": "the signal options set a disposition the child inherits, which needs the signal mask this freestanding exec does not carry, and -v traces the parse rather than answering with an environment.",
+  "utility": "env"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-fstype",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "utility": "find"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-context",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "utility": "find"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-ls",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "utility": "find"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-fls",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "utility": "find"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-files0-from",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "utility": "find"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-y",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--method",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--reflink",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--skip-reflinks",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-X",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--respect-xattrs",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-O",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--keep-oldest",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-F",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--prioritize-trees",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--mount",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--exclude-subtree",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-i",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--include",
+  "reason": "the digest methods, the reflink modes, the xattr and owner policies, the include and exclude patterns and the tree priorities are each a policy over which files may be joined; this one compares contents and joins the ones that are identical.",
+  "utility": "hardlink"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--debug",
+  "reason": "--debug names the copy method the kernel chose for the transfer, --strip-program and -s run a second program over the result, and the context options need a security label this kernel does not carry.",
+  "utility": "install"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--strip-program",
+  "reason": "--debug names the copy method the kernel chose for the transfer, --strip-program and -s run a second program over the result, and the context options need a security label this kernel does not carry.",
+  "utility": "install"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-s",
+  "reason": "--debug names the copy method the kernel chose for the transfer, --strip-program and -s run a second program over the result, and the context options need a security label this kernel does not carry.",
+  "utility": "install"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--preserve-context",
+  "reason": "--debug names the copy method the kernel chose for the transfer, --strip-program and -s run a second program over the result, and the context options need a security label this kernel does not carry.",
+  "utility": "install"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-Z",
+  "reason": "--debug names the copy method the kernel chose for the transfer, --strip-program and -s run a second program over the result, and the context options need a security label this kernel does not carry.",
+  "utility": "install"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--context",
+  "reason": "--debug names the copy method the kernel chose for the transfer, --strip-program and -s run a second program over the result, and the context options need a security label this kernel does not carry.",
+  "utility": "install"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--exchange",
+  "reason": "--exchange is an atomic swap flag the rename here does not pass on.",
+  "utility": "mv"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-I",
+  "reason": "-I and --interactive with a word are a second prompting policy over the one -i asks for, and --preserve-root with a word names a second root.",
+  "utility": "rm"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--interactive",
+  "reason": "-I and --interactive with a word are a second prompting policy over the one -i asks for, and --preserve-root with a word names a second root.",
+  "utility": "rm"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--preserve-root",
+  "reason": "-I and --interactive with a word are a second prompting policy over the one -i asks for, and --preserve-root with a word names a second root.",
+  "utility": "rm"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--random-source",
+  "reason": "kernel randomness is mandatory here, so --random-source is refused; and a name is not overwritten before it is unlinked, so the wiping removals are refused rather than pretended.",
+  "utility": "shred"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--remove",
+  "reason": "kernel randomness is mandatory here, so --random-source is refused; and a name is not overwritten before it is unlinked, so the wiping removals are refused rather than pretended.",
+  "utility": "shred"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--random-source",
+  "reason": "kernel-seeded randomness is mandatory here, so --random-source is refused; --repeat draws with replacement from a source that would have to be kept whole.",
+  "utility": "shuf"
+ },
+ {
+  "domain": "files",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--repeat",
+  "reason": "kernel-seeded randomness is mandatory here, so --random-source is refused; --repeat draws with replacement from a source that would have to be kept whole.",
+  "utility": "shuf"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-e",
+  "reason": "-e elides empty pieces, -u writes without buffering and --filter runs a program for each piece; each changes what a piece is or where it goes.",
+  "utility": "split"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--elide-empty-files",
+  "reason": "-e elides empty pieces, -u writes without buffering and --filter runs a program for each piece; each changes what a piece is or where it goes.",
+  "utility": "split"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-u",
+  "reason": "-e elides empty pieces, -u writes without buffering and --filter runs a program for each piece; each changes what a piece is or where it goes.",
+  "utility": "split"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--unbuffered",
+  "reason": "-e elides empty pieces, -u writes without buffering and --filter runs a program for each piece; each changes what a piece is or where it goes.",
+  "utility": "split"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--filter",
+  "reason": "-e elides empty pieces, -u writes without buffering and --filter runs a program for each piece; each changes what a piece is or where it goes.",
+  "utility": "split"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-t",
+  "reason": "-t is a second layout and --printf a second escape policy over -c; --cached names a coherency this statx call does not ask for.",
+  "utility": "stat"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--terse",
+  "reason": "-t is a second layout and --printf a second escape policy over -c; --cached names a coherency this statx call does not ask for.",
+  "utility": "stat"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--cached",
+  "reason": "-t is a second layout and --printf a second escape policy over -c; --cached names a coherency this statx call does not ask for.",
+  "utility": "stat"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--printf",
+  "reason": "-t is a second layout and --printf a second escape policy over -c; --cached names a coherency this statx call does not ask for.",
+  "utility": "stat"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--show-limits",
+  "reason": "--show-limits reports the environment's own bookkeeping rather than an answer, and -p and --open-tty ask a question of a terminal this suite has none of.",
+  "utility": "xargs"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-p",
+  "reason": "--show-limits reports the environment's own bookkeeping rather than an answer, and -p and --open-tty ask a question of a terminal this suite has none of.",
+  "utility": "xargs"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--open-tty",
+  "reason": "--show-limits reports the environment's own bookkeeping rather than an answer, and -p and --open-tty ask a question of a terminal this suite has none of.",
+  "utility": "xargs"
+ },
+ {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "--from",
+  "reason": "--from restricts a change to the files that already have a named owner, which needs the owner read before every change.",
+  "utility": "chown"
  }
 ]

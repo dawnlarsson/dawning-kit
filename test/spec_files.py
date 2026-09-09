@@ -598,6 +598,35 @@ def files_date_valid(argv):
     return any(word.startswith(("-d", "--date", "-r", "--reference", "-f", "--file")) for word in argv)
 
 
+def files_truncate_valid(argv):
+    """-o counts the size in io blocks, so a size meant as bytes becomes
+    thousands of times larger and asks for a file past the size limit this
+    harness runs under; the reference is killed for it rather than
+    answering. Only the small counts are walked with -o."""
+    if not any(word in ("-o", "--io-blocks") for word in argv):
+        return True
+
+    for index, word in enumerate(argv):
+        value = None
+
+        if word == "-s" and index + 1 < len(argv):
+            value = argv[index + 1]
+        elif word.startswith("-s") and not word.startswith("--"):
+            value = word[2:]
+        elif word.startswith("--size="):
+            value = word[len("--size="):]
+
+        if value is None:
+            continue
+
+        digits = value.lstrip("+-<>/%")
+
+        if not digits.isdigit() or int(digits) > 32:
+            return False
+
+    return True
+
+
 def files_shred_valid(argv):
     """Random passes leave random bytes, which no two runs share; the final
     state is compared where a zero pass, a removal or no pass leaves it
@@ -957,7 +986,7 @@ UTILITIES = (
             operands=(("a.txt",), ("made",), ("a.txt", "b.txt", "made"), ("dir",), ("link",), ("dangling",), ("missing/x",),
                       ("unreadable",), (), ("two words",), ("a.txt", "-s", "8"), ("shut/inside",), ("twin",), ("hollow",),
                       ("-",), ("empty",), ("binary",)),
-            stdin=("empty",), fixture="files", stderr="exact"),
+            stdin=("empty",), fixture="files", stderr="exact", valid=files_truncate_valid),
     Utility("shred", options=(Option("-f"), Option("-u"), Option("-v"), Option("-x"), Option("-z"), Option("--force"),
                               Option("--verbose"), Option("--exact"), Option("--zero"), Option("--remove"),
                               Option("--remove", ("unlink", "wipe", "wipesync", "bogus"), True),
@@ -1222,11 +1251,15 @@ UTILITIES = (
                              Option("--signal", ("TERM", "0"), True), Option("-l"), Option("-l", ("9", "15", "TERM", "x", "0", "64", "-1", "128"), True),
                              Option("--list"), Option("--list", ("9",), True), Option("-L"), Option("--table"), Option("-p"),
                              Option("--verbose"), Option("-a"), Option("-q", ("1", "x"), None), Option("--queue", ("1",), True),
-                             Option("--timeout", ("1000", "x"), True), Option("-0"), Option("-9"), Option("-TERM"), Option("-KILL"),
-                             Option("-SIGTERM"), Option("-bogus")),
+                             Option("--timeout", ("1000", "x"), True)),
             operands=(("999999",), ("1",), ("abc",), ("",), (), ("999999", "999998"), ("-", "999999"), ("999999999999",), ("+1",),
                       ("--", "999999"), ("999999", "abc")),
-            stdin=("empty",), fixture="files", stderr="exact"),
+            stdin=("empty",), fixture="files", stderr="exact",
+            extra=(("-0", "999999"), ("-9", "999999"), ("-TERM", "999999"), ("-KILL", "999999"),
+                   ("-SIGTERM", "999999"), ("-bogus", "999999"), ("-sterm", "999999"),
+                   ("-s0", "999999"), ("-l15", "999999"), ("-q1", "999999"), ("-lx", "999999"),
+                   ("-9", "abc"), ("-TERM", "+1"), ("-0", ""), ("-RT1", "999999"),
+                   ("-l", "RTMIN"), ("-l", "SIGKILL"), ("-L", "999999"))),
     Utility("stty", options=(Option("-a"), Option("-g"), Option("--all"), Option("--save"),
                              Option("-F", ("/dev/null", "missing", "a.txt", "dir"), None), Option("--file", ("/dev/null",), True)),
             operands=(("size",), ("speed",), ("sane",), ("-echo",), ("echo",), ("raw",), ("cols", "80"), ("rows", "24"), ("cs8",), ("bogus",),
