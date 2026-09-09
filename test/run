@@ -2776,7 +2776,7 @@ lane_audit()
         freestanding_checks_lane audit-builtin audit_builtin_regressions
 }
 
-lane_regex() { freestanding_checks_lane regex test/regex_fixed.c; }
+lane_regex() { freestanding_checks_lane regex regex; }
 
 
 lane_slurp()
