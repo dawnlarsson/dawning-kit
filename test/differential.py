@@ -1149,14 +1149,18 @@ def self_test():
             self.script(self.system / "effect", "#!/bin/sh\nprintf y > a.txt\n")
             self.old_path = os.environ.get("PATH")
             os.environ["PATH"] = f"{self.system}:/usr/bin:/bin"
-            # The inner runs must not write their rows into the suite's tally.
+            # The inner runs must not write their rows into the suite's tally,
+            # nor read the caller's pinned rows in place of their own fixtures.
             self.old_tally = os.environ.pop("TEST_TALLY", None)
+            self.old_pins = os.environ.pop("MW_PINS", None)
             self.runner = Runner(self.farm, self.root / "run")
 
         def tearDown(self):
             os.environ["PATH"] = self.old_path
             if self.old_tally is not None:
                 os.environ["TEST_TALLY"] = self.old_tally
+            if self.old_pins is not None:
+                os.environ["MW_PINS"] = self.old_pins
             self.temporary.cleanup()
 
         def script(self, path, text):
