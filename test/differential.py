@@ -50,6 +50,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import concurrent.futures
 
 # Run as a script this module is __main__, so a spec's "from differential
@@ -450,6 +451,14 @@ def _limits():
 
 
 def write_fixture(directory, fixture):
+    """Entries: bytes, ("link", target[, stamp]), ("dir"[, mode[, stamp]]),
+    ("mode", bytes, mode[, stamp]) or ("hard", source). A stamp is an epoch
+    or an (atime, mtime) pair, so a listing's dates and a walk's ages are the
+    same on both runs; "." names the directory itself. Stamps and directory
+    modes are applied last, deepest first: making an entry moves its
+    directory's time, and a directory without search permission hides what
+    is below it."""
+    later = []
     for name, contents in FIXTURES[fixture].items():
         path = directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -457,18 +466,31 @@ def write_fixture(directory, fixture):
             kind = contents[0]
             if kind == "link":
                 path.symlink_to(contents[1])
+                later.append((path, None, contents[2] if len(contents) > 2 else None))
             elif kind == "dir":
                 path.mkdir(exist_ok=True)
+                later.append((path, contents[1] if len(contents) > 1 else None,
+                              contents[2] if len(contents) > 2 else None))
             elif kind == "mode":
                 path.write_bytes(contents[1])
                 path.chmod(contents[2])
+                later.append((path, None, contents[3] if len(contents) > 3 else None))
+            elif kind == "hard":
+                os.link(directory / contents[1], path)
         else:
             path.write_bytes(contents)
             path.chmod(0o644)
+    for path, mode, stamp in sorted(later, key=lambda item: -len(item[0].parts)):
+        if stamp is not None:
+            times = (stamp, stamp) if isinstance(stamp, int) else tuple(stamp)
+            os.utime(path, times, follow_symlinks=False)
+        if mode is not None:
+            path.chmod(mode)
 
 
 def effects(directory):
     result = {}
+    now = time.time()
     for path in sorted(directory.rglob("*")):
         name = str(path.relative_to(directory))
         try:
@@ -476,18 +498,23 @@ def effects(directory):
         except OSError:
             continue
         mode = stat.S_IMODE(info.st_mode)
+        # A modification time far from now was set on purpose (touch -d,
+        # cp -p, a stamped fixture kept or moved) and is part of the effect;
+        # one near now is only when the run happened.
+        stamp = int(info.st_mtime)
+        deliberate = [stamp] if abs(stamp - now) > 60 else []
         if stat.S_ISLNK(info.st_mode):
-            result[name] = ["link", os.readlink(path)]
+            result[name] = ["link", os.readlink(path)] + deliberate
         elif stat.S_ISDIR(info.st_mode):
-            result[name] = ["directory", mode]
+            result[name] = ["directory", mode] + deliberate
         elif stat.S_ISREG(info.st_mode):
             try:
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
             except OSError:
                 digest = "unreadable"
-            result[name] = ["file", mode, info.st_size, digest]
+            result[name] = ["file", mode, info.st_size, digest] + deliberate
         else:
-            result[name] = ["special", info.st_mode]
+            result[name] = ["special", info.st_mode] + deliberate
     return result
 
 
