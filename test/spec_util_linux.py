@@ -118,6 +118,7 @@ case $mode in
 echo) printf 'ran:%s\n' "$*" ;;
 exit7) exit 7 ;;
 signal) kill -TERM $$ ;;
+child) sh -c 'kill -TERM $$'; printf 'child:%s\n' "$?" ;;
 affinity) grep Cpus_allowed_list /proc/self/status ;;
 sched) chrt -p $$ | sed 's/pid [0-9]*/pid PID/g' ;;
 io) ionice -p $$ ;;
@@ -167,7 +168,7 @@ UL_SMALL = {
 FIXTURES["ul"] = UL_SMALL
 FIXTURES["ul_images"] = {
     **UL_SMALL,
-    "swap.img": ul_swap_image(),
+    "swap.img": ("mode", ul_swap_image(), 0o600),
     "ext4.img": ul_ext4_image(),
     "iso.img": ul_iso_image(),
     "multi.img": ul_multi_image(),
@@ -423,8 +424,26 @@ def ul_needs_pid(argv):
 
 
 def ul_waitpid_valid(argv):
+    """A live pid needs a timeout that expires, or neither tool ever
+    returns and the case has no oracle."""
     live = any(word in ("1", "1:1", "+1", " 1") for word in argv)
-    return not live or ul_has(argv, "-t", "--timeout")
+    if not live:
+        return True
+    for index, word in enumerate(argv):
+        value = None
+        if word in ("-t", "--timeout") and index + 1 < len(argv):
+            value = argv[index + 1]
+        elif word.startswith("-t") and len(word) > 2:
+            value = word[2:]
+        elif word.startswith("--timeout="):
+            value = word[len("--timeout="):]
+        if value is not None:
+            try:
+                if float(value) > 0:
+                    return True
+            except ValueError:
+                return True
+    return False
 
 
 def ul_lsns_live_valid(argv):
@@ -474,7 +493,9 @@ def ul_prlimit_options():
                Option("--noheadings"), Option("--raw"), Option("--verbose")]
     for short, long in resources:
         options.append(Option(short))
-        values = ("100:200", "-1", "bad")
+        # A limit small enough to kill the process running under it has no
+        # oracle: upstream dies of SIGXFSZ, or of its own stack.
+        values = ("100000000:200000000", "-1", "bad")
         if long == "--nofile":
             values = ("100:200", "100", "-1", ":200", "", "bad", ":", "unlimited:unlimited", "200:100")
         options.append(Option(long, values, True))
@@ -815,14 +836,14 @@ UTILITIES = (
                                 Option("-S", ("0", "1000", "bad"), False), Option("-G", ("0", "1000"), False),
                                 Option("-l", ("data",), False),
                                 Option("--monotonic", ("7", "-1", "bad", "0"), True), Option("--boottime", ("-3", "2"), True)),
-            operands=((), (UL_OBS, "ids"), (UL_OBS, "ns"), (UL_OBS, "exit7"), (UL_OBS, "signal"), (UL_OBS, "pwd"),
+            operands=((), (UL_OBS, "ids"), (UL_OBS, "ns"), (UL_OBS, "exit7"), (UL_OBS, "child"), (UL_OBS, "pwd"),
                       (UL_OBS, "time"), ("missing",), (UL_OBS, "echo", "x")),
             stdin=("empty", "text"), fixture="ul", max_flags=4, env=(("SHELL", "/bin/false"),),
             extra=(("-Ur", UL_OBS, "ids"), ("-Uc", UL_OBS, "ids"), ("-U", "--map-user=7", "--map-group=8", UL_OBS, "ids"),
                    ("-Urc", UL_OBS, "ids"), ("-Ucr", UL_OBS, "ids"), ("-Ur", "--map-user=7", UL_OBS, "ids"),
                    ("-U", "--map-user=7", "-r", UL_OBS, "ids"), ("-U", "--map-user=2147483648", UL_OBS, "ids"),
                    ("-U", "--setgroups=deny", UL_OBS, "ids"), ("-Urnm", "--propagation", "unchanged", UL_OBS, "ns"),
-                   ("-Urpf", UL_OBS, "ns"), ("-Urf", UL_OBS, "exit7"), ("-Urf", UL_OBS, "signal"),
+                   ("-Urpf", UL_OBS, "ns"), ("-Urf", UL_OBS, "exit7"), ("-Urf", UL_OBS, "child"),
                    ("-UrTf", "--monotonic", "7", "--boottime", "-3", UL_OBS, "time"), ("-Ur", "--wd", "dir", UL_OBS, "pwd"),
                    ("--user", "--map-root-user", "--net", "--propagation", "unchanged", UL_OBS, "ns"),
                    ("-Um", "--propagation", "impossible", UL_OBS, "echo"), ("--monotonic", "1", UL_OBS, "echo"),

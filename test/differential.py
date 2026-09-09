@@ -353,9 +353,14 @@ def grammar_cases(domain, utility, budget, rng):
     if budget == "singles":
         return
     # Triples only where the covering array stays tractable: past two dozen
-    # parameters the strength-3 rows cost minutes each to choose, and the
-    # full budget's deeper random tier already reaches those grammars.
-    strength = 3 if budget == "full" and len(parameters) <= 24 else 2
+    # parameters, or where the three largest of them multiply past a few
+    # thousand, choosing strength-3 rows costs minutes each. The full
+    # budget's deeper random tier already reaches those grammars.
+    widest = sorted((len(values) for values in parameters), reverse=True)[:3]
+    product = 1
+    for size in widest:
+        product *= size
+    strength = 3 if budget == "full" and len(parameters) <= 24 and product <= 4000 else 2
     for row in covering_array(parameters, strength, random.Random(rng.random())):
         argv, stdin = assemble(utility, row, parameters)
         yield from emit(argv, stdin, "pairs" if strength == 2 else "triples")
