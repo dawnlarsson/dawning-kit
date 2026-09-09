@@ -6259,7 +6259,9 @@ static b32 file_nice()
 
                 if (string_is(word, '-') && !string_is(word + 1, end))
                 {
-                        string_format(file_fail, "nice: invalid option '%s'\n", word);
+                        p8 named[2] = {string_get(word + 1), end};
+
+                        string_format(file_fail, "nice: invalid option -- '%s'\n", named);
                         return 125;
                 }
 
@@ -10509,10 +10511,15 @@ static bool file_simple_operands(string_address program, positive wanted)
         if (file_simple_operand_count == wanted)
                 return true;
 
-        string_format(file_fail, "%s: %s\n", program,
-                      file_simple_operand_count < wanted
-                          ? (string_address)"missing operand"
-                          : (string_address)"too many operands");
+        if (file_simple_operand_count > wanted)
+                string_format(file_fail, "%s: extra operand '%s'\n", program,
+                              file_simple_operand_list[wanted]);
+        else if (file_simple_operand_count)
+                string_format(file_fail, "%s: missing operand after '%s'\n", program,
+                              file_simple_operand_list[file_simple_operand_count - 1]);
+        else
+                string_format(file_fail, "%s: missing operand\n", program);
+
         return false;
 }
 
@@ -12191,13 +12198,23 @@ static b32 file_pathchk()
 
 // mkdir ------------------------------------------------------------
 // mkdir [-p] [-m MODE] DIRECTORY...
+static const file_long mkdir_longs[] = {
+    {(string_address) "context", 'Z'},
+    {(string_address) "mode", 'm'},
+    {(string_address) "parents", 'p'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
 static b32 file_mkdir()
 {
         positive count = (positive)program_argument_count();
         file_taking taking = {
             .program = (string_address) "mkdir",
-            .allowed = (string_address) "mp",
+            .allowed = (string_address) "mpvZ",
             .valued = (string_address) "m",
+            .long_optional = (string_address) "Z",
+            .longs = mkdir_longs,
         };
 
         if (!file_take(address_of taking))
@@ -12207,14 +12224,18 @@ static b32 file_mkdir()
         positive mode = 0777;
         bool parents = (taking.flags & FILE_FLAG('p')) != 0;
         bool given_mode = (taking.flags & FILE_FLAG('m')) != 0;
+        bool loud = (taking.flags & FILE_FLAG('v')) != 0;
 
-        // -m is read against a=rwx the way the reference mkdir reads it,
-        // with a clause that names no class filtered through the umask.
+        // -m is read against a=rwx the way the reference mkdir reads it: a
+        // clause that names no class is filtered through the umask, and so
+        // is every bit no clause mentions at all.
         if (given_mode &&
-            !file_mode_masked(file_option_value(address_of taking, 'm'), 0777, true,
-                              file_umask(), address_of mode))
+            !file_mode_masked(file_option_value(address_of taking, 'm'),
+                              0777 & ~file_umask(), true, file_umask(),
+                              address_of mode))
         {
-                file_fail("mkdir: bad mode\n", 0);
+                string_format(file_fail, "mkdir: invalid mode '%s'\n",
+                              file_option_value(address_of taking, 'm'));
                 return 1;
         }
 
@@ -12243,6 +12264,9 @@ static b32 file_mkdir()
                         if (given_mode)
                                 system_change_mode_at(AT_FDCWD, path, mode);
 
+                        if (loud)
+                                string_format(log, "mkdir: created directory '%s'\n", path);
+
                         continue;
                 }
 
@@ -12254,7 +12278,10 @@ static b32 file_mkdir()
                                       path, file_reason(made));
                         status = 1;
                 }
-                else if (given_mode)
+                else if (loud)
+                        string_format(log, "mkdir: created directory '%s'\n", path);
+
+                if (made >= 0 && given_mode)
                         // mkdirat applies the umask; -m names the mode after
                         // it, as the -p branch above already does.
                         system_change_mode_at(AT_FDCWD, path, mode);
@@ -16710,13 +16737,21 @@ static b32 file_dircolors()
 // rmdir ------------------------------------------------------------
 // rmdir [-p] DIRECTORY..., where -p goes on removing the parents while they
 // are empty too.
+static const file_long rmdir_longs[] = {
+    {(string_address) "ignore-fail-on-non-empty", 'I'},
+    {(string_address) "parents", 'p'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
 static b32 file_rmdir()
 {
         positive count = (positive)program_argument_count();
         file_taking taking = {
             .program = (string_address) "rmdir",
-            .allowed = (string_address) "p",
+            .allowed = (string_address) "pvI",
             .valued = (string_address) "",
+            .longs = rmdir_longs,
         };
 
         if (!file_take(address_of taking))
@@ -16738,14 +16773,27 @@ static b32 file_rmdir()
 
                 while (1)
                 {
+                        if (flags & FILE_FLAG('v'))
+                                string_format(log, "rmdir: removing directory, '%s'\n", path);
+
                         bipolar gone = system_remove_at(AT_FDCWD, path,
                                                          AT_REMOVEDIR);
 
                         if (gone < 0)
                         {
+                                if ((flags & FILE_FLAG('I')) && gone == -ERROR_NOT_EMPTY)
+                                        break;
+
+                                // A name that ends in a slash and is a link
+                                // named a directory that was never followed.
+                                positive length = string_length(path);
+
                                 string_format(file_fail,
-                                              "rmdir: failed to remove '%s': %s\n",
-                                              path, file_reason(gone));
+                                              "rmdir: failed to remove '%s': %s\n", path,
+                                              gone == -ERROR_NOT_DIRECTORY && length &&
+                                                      path[length - 1] == '/'
+                                                  ? (string_address) "Symbolic link not followed"
+                                                  : file_reason(gone));
                                 status = 1;
                                 break;
                         }
@@ -18223,11 +18271,13 @@ static b32 file_touch()
         if (from)
         {
                 file_facts facts;
+                bipolar looked = file_look_code(AT_FDCWD, from, 0, address_of facts);
 
-                if (!file_look_at(from, address_of facts))
+                if (looked < 0)
                 {
                         string_format(file_fail,
-                                      "touch: failed to get attributes of '%s'\n", from);
+                                      "touch: failed to get attributes of '%s': %s\n", from,
+                                      file_reason(looked));
                         return 1;
                 }
 
@@ -18478,8 +18528,20 @@ static b32 file_sleep()
         for (positive i = 1; i < count; i++)
         {
                 p64 wanted[2] = {0, 0};
+                string_address word = program_argument((b32)i);
 
-                if (!sleep_read(program_argument((b32)i), address_of wanted[0],
+                // sleep takes no options, so a word that begins with a dash
+                // is one the option reader refuses rather than an interval.
+                if (string_is(word, '-') && string_get(word + 1) &&
+                    !string_equals(word, "--"))
+                {
+                        p8 named[2] = {string_get(word + 1), end};
+
+                        string_format(file_fail, "sleep: invalid option -- '%s'\n", named);
+                        return 1;
+                }
+
+                if (!sleep_read(word, address_of wanted[0],
                                 address_of wanted[1]))
                 {
                         string_format(file_fail, "sleep: invalid time interval '%s'\n",
