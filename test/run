@@ -51,7 +51,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl reuse_shell audit slurp wait writer native probe checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl reuse_shell audit regex slurp wait writer native probe checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
 
 describe()
 {
@@ -70,6 +70,7 @@ describe()
         fixed) echo "exact decimal records, rounding and bounded batches on three machines" ;;
         bowl) echo "Bowl root and launcher parsing without mounts or process launches" ;;
         audit) echo "the verified builtin repairs, as pure-state regressions" ;;
+        regex) echo "fixed-graph searches against their VM fallback, with captures and resource limits on three machines" ;;
         reuse_shell) echo "shared utility formatting, bounded sinks and skip edge policies" ;;
         table) echo "shared table escaping, field widths and multiline boundaries on three machines" ;;
         leaving)  echo "what a program writes on the way out, and what a child must not write twice" ;;
@@ -2775,6 +2776,8 @@ lane_audit()
         freestanding_checks_lane audit-builtin audit_builtin_regressions
 }
 
+lane_regex() { freestanding_checks_lane regex test/regex_fixed.c; }
+
 
 lane_slurp()
 {
@@ -3311,8 +3314,9 @@ lane_util_linux() { differential_domain util_linux; }
 lane_shell()
 {
         need_shell || return 1
+        freestanding_checks_lane lexer_spans test/lexer_spans.c || return 1
         python3 test/shell_functions.py --shell "$shell_binary" || return 1
-        differential_domain shell
+        sh test/shell.sh "$shell_binary"
 }
 lane_builtins()   { differential_domain builtins; }
 lane_awk()        { differential_domain awk; }

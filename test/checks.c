@@ -8610,7 +8610,8 @@ fn check_reverse()
         {
                 static const positive page_sizes[] = {
                     0, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33,
-                    63, 64, 65, 255, 256, 257, 4095, 4096, 4097,
+                    63, 64, 65, 255, 256, 257, 2047, 2048, 2049,
+                    4095, 4096, 4097,
                 };
                 positive base = (positive)(address_any)reverse_got;
                 positive edge_offset = ((base + 4095) & ~(positive)4095) - base +
@@ -8650,6 +8651,122 @@ fn check_reverse()
         reference_reverse(reverse_large_want + 37, 1 << 20);
         same_bytes("memory_reverse", "one megabyte double reverse",
                    reverse_large_got, reverse_large_want, REVERSE_LARGE);
+}
+
+/*
+        Call the assembly entry even for compile-time small sizes. Disjoint
+        maps cover every byte value and noninjective maps; aliased maps retain
+        the original four-byte load-all-then-store-all contract.
+*/
+fn check_translate()
+{
+        static const positive sizes[] = {
+            0, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 65, 127, 128,
+            129, 255, 256, 257, 511, 512, 513, 4095, 4096,
+        };
+        static const bipolar deltas[] = {
+            -512, -257, -256, -255, -128, -64, -1, 0, 1, 63, 64,
+            127, 128, 255, 256, 257, 511, 512,
+        };
+        static p8 want[4096], palette[256];
+        p8 address_to pages = memory(3 * 4096);
+        p8 address_to tables = memory(3 * 4096);
+        bool mapped = (bipolar)(positive)pages > 0 &&
+                      (bipolar)(positive)tables > 0;
+
+        same("memory_translate", "guard mappings", mapped, 1);
+        if (!mapped)
+        {
+                if ((bipolar)(positive)pages > 0) memory_free(pages, 3 * 4096);
+                if ((bipolar)(positive)tables > 0) memory_free(tables, 3 * 4096);
+                return;
+        }
+        bool protected =
+            system_call_3(syscall(mprotect), (positive)pages, 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)tables, 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)(tables + 8192), 4096, 0) == 0;
+        same("memory_translate", "guard pages protected", protected, 1);
+        if (!protected)
+        {
+                memory_free(pages, 3 * 4096);
+                memory_free(tables, 3 * 4096);
+                return;
+        }
+        p8 address_to got = pages + 4096;
+#if X64
+        p8 avx2 = cpu_has_avx2, avx512 = cpu_has_avx512;
+        p8 vbmi = cpu_has_avx512_vbmi;
+        positive tiers = 4;
+#else
+        positive tiers = 1;
+#endif
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+#if X64
+                cpu_has_avx2 = tier < 3 ? avx2 : 0;
+                cpu_has_avx512 = tier < 2 ? avx512 : 0;
+                cpu_has_avx512_vbmi = tier < 1 ? vbmi : 0;
+#endif
+                same("memory_translate", "null zero-sized return",
+                     (positive)(memory_translate)(null, 0, null), 0);
+                same("memory_translate", "inaccessible zero-sized return",
+                     (positive)(memory_translate)(pages, 0, tables),
+                     (positive)pages);
+                for (positive s = 0; s < array_count(sizes); s++)
+                        for (positive residue = 0; residue <= 64; residue++)
+                        {
+                                positive size = sizes[s];
+                                positive offset = residue == 64 || size + residue > 4096
+                                                      ? 4096 - size : residue;
+                                p8 address_to table = residue == 64
+                                    ? tables + 8192 - 256
+                                    : tables + 4096 + ((residue * 17 + s) & 63);
+                                for (positive i = 0; i < 256; i++)
+                                        table[i] = palette[i] = (p8)(i * (s & 1 ? 197 : 128) + s);
+                                for (positive i = 0; i < 4096; i++)
+                                        got[i] = want[i] = (p8)(i * 197 + residue);
+                                for (positive i = 0; i < size; i++)
+                                        want[offset + i] = palette[want[offset + i]];
+                                same("memory_translate", "returned original address",
+                                     (positive)(memory_translate)(got + offset, size, table),
+                                     (positive)(got + offset));
+                                same_bytes("memory_translate", "sizes, residues, page bounds",
+                                           got, want, 4096);
+                                same_bytes("memory_translate", "table remains unchanged",
+                                           table, palette, 256);
+                        }
+                for (positive s = 0; s < array_count(sizes) - 2; s++)
+                        for (positive d = 0; d < array_count(deltas); d++)
+                        {
+                                positive size = sizes[s], i = 0;
+                                for (positive at = 0; at < 4096; at++)
+                                        got[at] = want[at] = (p8)((at * 37) ^ (at >> 3));
+                                p8 address_to block = want + 1024;
+                                p8 address_to table = block + deltas[d];
+                                for (; i + 4 <= size; i += 4)
+                                {
+                                        p8 a = table[block[i]], b = table[block[i + 1]];
+                                        p8 c = table[block[i + 2]], e = table[block[i + 3]];
+                                        block[i] = a; block[i + 1] = b;
+                                        block[i + 2] = c; block[i + 3] = e;
+                                }
+                                for (; i < size; i++) block[i] = table[block[i]];
+                                same("memory_translate", "aliased return address",
+                                     (positive)(memory_translate)(got + 1024, size,
+                                                                 got + 1024 + deltas[d]),
+                                     (positive)(got + 1024));
+                                same_bytes("memory_translate", "aliased four-byte ordering",
+                                           got, want, 4096);
+                        }
+        }
+#if X64
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+        cpu_has_avx512_vbmi = vbmi;
+#endif
+        memory_free(pages, 3 * 4096);
+        memory_free(tables, 3 * 4096);
 }
 
 fn check_checksums()
@@ -15930,8 +16047,21 @@ fn check_first_of_page_end()
 
         //      The third page taken away, so a string ending on the last
         //      byte of the second has nothing readable after it.
-        system_call_3(syscall(mprotect), (positive)(pages + 2 * 4096), 4096,
-                      PAGE_END_PROT_NONE);
+        bipolar protected = system_call_3(
+            syscall(mprotect), (positive)(pages + 2 * 4096), 4096,
+            PAGE_END_PROT_NONE);
+        same("memory_first_of", "guard page protected", protected, 0);
+        if (protected < 0)
+        {
+                memory_free(pages, 3 * 4096);
+                return;
+        }
+
+        // Exercise the routine even when the compiler knows the zero count.
+        same("memory_first_of", "zero count null",
+             (positive)(memory_first_of)(null, 'z', 0), 0);
+        same("memory_first_of", "zero count inaccessible",
+             (positive)(memory_first_of)(pages + 2 * 4096, 'z', 0), 0);
 
         p8 address_to last = pages + 2 * 4096 - 1;
 
@@ -17619,6 +17749,7 @@ b32 main()
         check_exchange();
         check_frob();
         check_reverse();
+        check_translate();
         check_checksums();
         check_move();
         check_copy_fast_end();

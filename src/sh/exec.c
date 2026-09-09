@@ -1972,11 +1972,16 @@ fn shell_kill(writer write, string_address input)
 
         if (!job_kill_specified())
         {
-                positive2 named = string_hash_33_length(shell_argv[0]);
+                string_address address_to saved = program_argument_list();
+                b32 saved_count = program_argument_count();
 
-                if (!shell_tool_run_hashed(shell_argv[0], named))
-                        shell_answer(127);
-
+                // This builtin shares the utility parser, but needs no helper
+                // process. Handlers only mark pending traps until argv is back.
+                log_flush();
+                program_arguments_use(shell_argv, (b32)shell_argc);
+                answer = file_kill();
+                program_arguments_use(saved, saved_count);
+                shell_answer(answer);
                 return;
         }
 
@@ -6321,7 +6326,8 @@ static bool exec_assign_value(string_address word, positive name_length,
         }
         else
         {
-                string_address bracket = string_first_of(word, '[');
+                string_address bracket = name_length && word[name_length - 1] == ']'
+                    ? memory_first_of(word, '[', name_length) : null;
                 positive base = bracket ? (positive)(bracket - word) : name_length;
                 if (bracket)
                         *bracket = end;
@@ -6473,10 +6479,9 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
 
         kept->promoted = false;
         kept->detached = false;
-        bracket = string_first_of(word, '[');
-
-        if (bracket && (positive)(bracket - word) >= length)
-                bracket = null;
+        // Valid names carry a closing bracket only for an explicit subscript.
+        bracket = length && word[length - 1] == ']' ?
+            memory_first_of(word, '[', length) : null;
 
         // Resolve an explicit subscript once and retain that concrete key.
         if (bracket)
@@ -7484,8 +7489,8 @@ static b32 exec_simple(b32 index)
                 b32 word_index = EXEC_WORD(at);
                 p8 flags = parse_word_flags[word_index];
                 string_address word = parse_words[word_index];
-                if (!assignments_only && memory_first_of(word, '[',
-                        parse_word_name_lengths[word_index]))
+                if (!assignments_only &&
+                    word[parse_word_name_lengths[word_index] - 1] == ']')
                 {
                         shell_argv[at] = word;
                         string_format(log_error, "%.*s: not a valid identifier\n",

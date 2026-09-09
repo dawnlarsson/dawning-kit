@@ -2586,18 +2586,25 @@ static b32 parse_keep_reserve(positive arena, b32 count, b32 floor)
                 return 0;
         b8 address_to occupied = parse_kept_arenas[arena].occupied;
         b32 room = parse_kept_arenas[arena].room;
-        b32 chosen = -1;
-        for (b32 at = floor; at < room;)
+        for (b32 at = room; at - floor >= count;)
         {
-                at += memory_span_without_byte(occupied + at, 0, room - at);
-                b32 free = memory_span_byte(occupied + at, 0, room - at);
-                if (free >= count)
-                        chosen = at + free - count;
-                at += free;
+                b8 address_to last = memory_last_of(occupied + floor, 0, at - floor);
+                if (!last)
+                        break;
+                at = (b32)(last - occupied) + 1;
+                if (at - floor < count)
+                        break;
+                b32 chosen = at - count;
+                b8 address_to used = memory_first_of(occupied + chosen, 1, count);
+                if (!used)
+                {
+                        memory_fill(occupied + chosen, 1, count);
+                        return chosen;
+                }
+                // Every higher candidate includes this occupied byte.
+                at = (b32)(used - occupied);
         }
-        if (chosen >= 0)
-                memory_fill(occupied + chosen, 1, count);
-        return chosen;
+        return -1;
 }
 
 static string_address parse_keep_text(b32 address_to cursor, string_address text,
