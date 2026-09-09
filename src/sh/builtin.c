@@ -13184,6 +13184,12 @@ fn shell_enable(writer write, string_address input)
 static string_address compgen_prefix;
 static positive compgen_prefix_length;
 static positive compgen_shown;
+//      -X is the filter, -P and -S the two ends written around whatever
+//      survives it. A leading ! in the filter keeps the matches instead of
+//      dropping them, which is the one place compgen spells a negation.
+static string_address compgen_reject;
+static string_address compgen_before;
+static string_address compgen_after;
 
 static COLD fn compgen_offer(writer write, string_address name)
 {
@@ -13194,7 +13200,20 @@ static COLD fn compgen_offer(writer write, string_address name)
              memory_compare(name, compgen_prefix, compgen_prefix_length)))
                 return;
 
+        if (compgen_reject && string_get(compgen_reject))
+        {
+                bool keep = string_is(compgen_reject, '!');
+                bool hit = shell_match(compgen_reject + keep, name);
+
+                if (hit != keep)
+                        return;
+        }
+
+        if (compgen_before)
+                write(compgen_before, string_length(compgen_before));
         write(name, length);
+        if (compgen_after)
+                write(compgen_after, string_length(compgen_after));
         write("\n", 1);
         compgen_shown++;
 }
@@ -13237,6 +13256,9 @@ fn shell_compgen(writer write, string_address input)
         compgen_prefix = null;
         compgen_prefix_length = 0;
         compgen_shown = 0;
+        compgen_reject = null;
+        compgen_before = null;
+        compgen_after = null;
 
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
                string_get(shell_argv[index] + 1))
@@ -13281,6 +13303,12 @@ fn shell_compgen(writer write, string_address input)
                 }
                 else if (which == 'W')
                         words = value;
+                else if (which == 'P')
+                        compgen_before = value;
+                else if (which == 'S')
+                        compgen_after = value;
+                else if (which == 'X')
+                        compgen_reject = value;
                 else if (which == 'v')
                         variables = true;
                 else if (which == 'b')
@@ -13301,30 +13329,6 @@ fn shell_compgen(writer write, string_address input)
         {
                 compgen_prefix = shell_argv[index];
                 compgen_prefix_length = string_length(compgen_prefix);
-        }
-
-        if (words)
-        {
-                p8 held[1024];
-                positive at = 0;
-
-                while (string_get(words))
-                {
-                        if (string_is(words, ' ') || string_is(words, '\t'))
-                        {
-                                words++;
-                                continue;
-                        }
-
-                        at = 0;
-
-                        while (string_get(words) && string_not(words, ' ') &&
-                               string_not(words, '\t') && at + 1 < sizeof(held))
-                                held[at++] = string_get(words++);
-
-                        held[at] = end;
-                        compgen_offer(write, held);
-                }
         }
 
         if (functions || commands)
@@ -13373,6 +13377,32 @@ fn shell_compgen(writer write, string_address input)
 
                 if (directory >= 0)
                         system_close(directory);
+        }
+
+        //      The word list is generated after every other source, which
+        //      is the order Bash writes them in when both were asked for.
+        if (words)
+        {
+                p8 held[1024];
+                positive at = 0;
+
+                while (string_get(words))
+                {
+                        if (string_is(words, ' ') || string_is(words, '\t'))
+                        {
+                                words++;
+                                continue;
+                        }
+
+                        at = 0;
+
+                        while (string_get(words) && string_not(words, ' ') &&
+                               string_not(words, '\t') && at + 1 < sizeof(held))
+                                held[at++] = string_get(words++);
+
+                        held[at] = end;
+                        compgen_offer(write, held);
+                }
         }
 
         shell_answer(compgen_shown ? 0 : 1);
