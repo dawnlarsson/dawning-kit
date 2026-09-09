@@ -5331,7 +5331,18 @@ static b32 tools_numfmt()
         if (numfmt.grouping && numfmt.have_format)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "--grouping cannot be combined with --format"));
         if (numfmt.grouping && numfmt.to != NUMFMT_SCALE_NONE)
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--grouping cannot be combined with --to"));
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "numfmt: grouping cannot be combined with --to\n"));
+        }
+        if (numfmt.have_format && numfmt.format.grouping &&
+            numfmt.to != NUMFMT_SCALE_NONE)
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "numfmt: grouping cannot be combined with --to\n"));
+        }
 
         value = file_option_value(address_of taking, 'd');
         if (flags & FILE_FLAG('d'))
@@ -7271,9 +7282,21 @@ static b32 tools_dd(void)
                         {
                                 if (dd_refused)
                                         return 1;
+
+                                // Digits alone that overflow the word are
+                                // the kernel type's limit, not a misspelling.
+                                string_address at = value;
+                                positive digits = 0;
+
+                                while (byte_is_digit(string_get(at + digits)))
+                                        digits++;
+
                                 text_flush();
                                 return string_report(writer_stderr, 1,
-                                    "dd: invalid number: '%s'\n", value);
+                                    digits && digits > 19
+                                        ? (string_address)"dd: invalid number: '%s': Value too large for defined data type\n"
+                                        : (string_address)"dd: invalid number: '%s'\n",
+                                    value);
                         }
                         if (numbers[n].seen)
                                 *numbers[n].seen = true;
@@ -7469,7 +7492,9 @@ static b32 tools_dd(void)
                 if (short_of_it && dd_status_level != DD_STATUS_NONE)
                 {
                         text_flush();
-                        string_format(writer_stderr, "dd: %s: cannot skip to specified offset\n",
+                        string_format(writer_stderr,
+                            input ? (string_address)"dd: %s: cannot skip to specified offset\n"
+                                  : (string_address)"dd: '%s': cannot skip to specified offset\n",
                                       input ? input : (string_address)"standard input");
                 }
         }

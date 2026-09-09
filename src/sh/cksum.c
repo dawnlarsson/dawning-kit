@@ -431,6 +431,7 @@ static const file_long cksum_longs[] = {
     {(string_address) "raw", 'R'},
     {(string_address) "base64", 'B'},
     {(string_address) "zero", 'z'},
+    {(string_address) "length", 'l'},
     {null, 0},
 };
 
@@ -464,8 +465,8 @@ static b32 cksum_main()
 {
         file_taking taking = {
             .program = (string_address) "cksum",
-            .allowed = (string_address) "aUTRBz",
-            .valued = (string_address) "a",
+            .allowed = (string_address) "aUTRBzl",
+            .valued = (string_address) "al",
             .longs = cksum_longs,
             .operand = text_file_add,
             .seen = cksum_option_seen,
