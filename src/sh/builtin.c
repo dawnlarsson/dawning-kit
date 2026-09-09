@@ -1349,8 +1349,13 @@ fn shell_env_init(string_address address_to process_environment)
         }
 
         // Programs live at the root of the image, so it is on the path.
+        // IFS is a variable and not only a splitting policy: a script may
+        // read it, save it and put it back, and under set -u one that is
+        // absent rather than defaulted is an error where every other shell
+        // hands over the three bytes.
         string_address defaults[] = {"PATH=/bin:/usr/bin:/bowls/bin:/",
                                      "SHELL=/bin/sh",
+                                     "IFS= \t\n",
                                      "OPTIND=1", null};
 
         positive i = 0;

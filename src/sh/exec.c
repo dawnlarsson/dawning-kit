@@ -767,7 +767,22 @@ static positive job_started(bipolar address_to children, positive count,
 
         entry = job_table + job_count++;
 
-        entry->number = ++job_numbered;
+        /* The lowest number no listed job holds: a finished job that has
+           been reported gives its number back, so the next job after [2]
+           is gone is [2] again, as bash and dash both say. */
+        entry->number = 0;
+        for (positive candidate = 1; !entry->number; candidate++)
+        {
+                positive taken = 0;
+
+                while (taken < job_count - 1 &&
+                       job_table[taken].number != candidate)
+                        taken++;
+                if (taken == job_count - 1)
+                        entry->number = candidate;
+        }
+        if (entry->number > job_numbered)
+                job_numbered = entry->number;
         entry->last = children[count - 1];
         entry->group = group;
         entry->state = JOB_RUNNING;
@@ -1161,6 +1176,9 @@ static string_address job_mark_of(job_entry address_to entry)
 static fn job_line(writer write, job_entry address_to entry, bool detailed)
 {
         p8 status[64];
+        string_address text = entry->text ? (string_address)entry->text
+                                          : (string_address) "";
+        bool ampersand = entry->state == JOB_RUNNING && entry->background;
 
         string_format(write, "[%p]%s", entry->number, job_mark_of(entry));
 
@@ -1172,10 +1190,71 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
         job_status_text(entry, detailed, status);
         string_to_field(write, status, JOB_STATUS_WIDTH, ' ', true);
 
-        string_format(write, "%s", entry->text ? (string_address)entry->text
-                                               : (string_address) "");
+        /*
+                A pipeline's detail is one line per process, as bash prints
+                it: the first stage beside the status, every later one under
+                it behind its own pid and a bar. The stages are the text cut
+                at its bars, which is how the job's rendering joined them; a
+                text that does not cut into as many pieces as the job has
+                processes stays on one line.
+        */
+        if (detailed)
+        {
+                positive processes = 0;
+                positive stages = 1;
+                string_address bar = text;
 
-        if (entry->state == JOB_RUNNING && entry->background)
+                for (positive at = 0; at < shell_wait_count; at++)
+                        if (shell_wait_table[at].job == entry->last)
+                                processes++;
+
+                while ((bar = string_search(bar, " | ")))
+                {
+                        stages++;
+                        bar += 3;
+                }
+
+                if (processes > 1 && processes == stages)
+                {
+                        positive written = 0;
+                        string_address stage = text;
+
+                        for (positive at = 0; at < shell_wait_count; at++)
+                        {
+                                string_address next;
+
+                                if (shell_wait_table[at].job != entry->last)
+                                        continue;
+
+                                next = string_search(stage, " | ");
+                                if (written)
+                                {
+                                        string_format(write, "\n     %b ",
+                                                      shell_wait_table[at].pid);
+                                        string_to_field(write, (string_address) "",
+                                                        JOB_STATUS_WIDTH - 2, ' ', true);
+                                        string_format(write, "| ");
+                                }
+                                if (next)
+                                        write(stage, (positive)(next - stage));
+                                else
+                                        string_format(write, "%s", stage);
+                                written++;
+                                if (next)
+                                        stage = next + 3;
+                        }
+
+                        if (ampersand)
+                                string_format(write, " &");
+
+                        string_format(write, "\n");
+                        return;
+                }
+        }
+
+        string_format(write, "%s", text);
+
+        if (ampersand)
                 string_format(write, " &");
 
         string_format(write, "\n");
@@ -4520,26 +4599,22 @@ static bool exec_redirect_apply(b32 index)
                         Saving after the open therefore recorded the file that
                         had just arrived as "what was there before", and put it
                         back instead of closing it.
+
+                        Put aside, not closed. `cat </dev/stdin` names
+                        /proc/self/fd/0, so closing descriptor zero first
+                        deleted the file the redirect was about to open --
+                        every /dev/stdin, /dev/stdout and /dev/fd/N redirect
+                        failed. The open lands wherever it lands and the dup3
+                        below moves it, which is the order bash uses and the
+                        only one under which those names exist.
                 */
                 if (both)
                 {
                         if (!exec_save_fd(1, node) || !exec_save_fd(2, node))
                                 return false;
-
-                        system_close(1);
-                        system_close(2);
                 }
-                else
-                {
-                        if (!exec_save_fd(want->fd, node))
-                                return false;
-
-                        // Descriptor duplication lands with dup3 below, so
-                        // its target stays live until that atomic replacement.
-                        // This also preserves the source == target no-op.
-                        if (want->op != OP_GREATAND && want->op != OP_LESSAND)
-                                system_close(want->fd);
-                }
+                else if (!exec_save_fd(want->fd, node))
+                        return false;
 
                 if (want->op == OP_DLESS)
                 {

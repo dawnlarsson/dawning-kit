@@ -1768,7 +1768,13 @@ static bool expand_push_parameter_as(expand_reference reference, bool quoted,
                 if (shell_options & ((positive)1 << ('u' - 'a')))
                 {
                         string_format(writer_stderr_once, "%s: parameter not set\n", expand_reference_text(reference));
-                        expand_fatal_status((shell_bash_compat || (mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
+                        // A command string that dies of nounset leaves 127,
+                        // the same status the other unset-parameter path
+                        // already gives; only the two spellings differed.
+                        expand_fatal_status(
+                            shell_bash_compat
+                                ? (string_is(shell_option_flags, 'c') ? 127 : 1)
+                                : (mode & EXPAND_PARAMETER_INDIRECT) ? 1 : 2);
                 }
 
                 return false;
@@ -3258,7 +3264,9 @@ static bool expand_substitution_remember(b32 descriptor, bipolar child)
 // the same reason: a body is a script and not a line.
 static fn expand_substitution_body(string_address command, bool capture)
 {
-        exec_child_began();
+        // parse_reset_all below announces the child. Announcing it here as
+        // well counted this one fork twice, so $BASH_SUBSHELL inside a
+        // command substitution read one deeper than the shell had gone.
         expand_in_substitution = true;
         /* Only Bash command capture clears errexit by default; process
            substitutions and dash inherit it. POSIX mode enables the same

@@ -68,10 +68,37 @@ static bool shell_start_parameters(string_address address_to arguments,
         return shell_parameters_set(shell_argv, count);
 }
 
+/*
+        set -v: what was read, written back before anything is done with it.
+
+        Reading, not running, is what the option is about, so the echo sits
+        where the reader hands a physical line over and the option is asked
+        about again for each one: `set -v` halfway through reaches the line
+        after it, in a file and in bash's command string alike. dash echoes
+        no command string at all, because a string was not read from
+        anywhere, and that is the whole of the difference between the two.
+*/
+static bool shell_verbose_from_string;
+
+static fn shell_verbose_line(string_address line)
+{
+        if (shell_verbose_from_string && !shell_bash_compat)
+                return;
+
+        if (!(shell_options & SHELL_FLAG('v')))
+                return;
+
+        log_error(line, string_length(line));
+        log_error("\n", 1);
+        log_flush();
+}
+
 static positive shell_run_complete_lines(p8 address_to text, positive length,
                                          bool command_string)
 {
         positive at = 0;
+
+        shell_verbose_from_string = command_string;
 
         while (at < length)
         {
@@ -98,7 +125,10 @@ static positive shell_run_complete_lines(p8 address_to text, positive length,
                         }
 
                         if (history_action == HISTORY_EXPAND_RUN)
+                        {
+                                shell_verbose_line(ready);
                                 run_line(ready);
+                        }
                 }
                 at = (positive)(newline - text) + 1;
 
@@ -575,7 +605,11 @@ b32 main()
                    block; only multi-line input needs a writable copy whose
                    newlines are ended in place. */
                 if (!*first_newline)
+                {
+                        shell_verbose_from_string = true;
+                        shell_verbose_line(command);
                         run_line(command);
+                }
                 else
                 {
                         positive length = (positive)(first_newline - command) +
@@ -594,7 +628,10 @@ b32 main()
                                     held_command, length, true);
 
                                 if (at < length)
+                                {
+                                        shell_verbose_line(held_command + at);
                                         run_line(held_command + at);
+                                }
                         }
 
                         memory_free(held_command, length + 1);
@@ -607,6 +644,22 @@ b32 main()
         }
 
         positive held = 0;
+
+        /*
+                A script on standard input shares that descriptor with every
+                command it runs.
+
+                Reading ahead in four kilobyte lumps handed `read`, and the
+                commands after it, an input the shell had already swallowed:
+                `read x` in a piped script read nothing, and the line meant
+                for it was run as a command. dash and bash read a pipe a byte
+                at a time and leave a regular file's offset at the end of the
+                line being run, so a child sees exactly the bytes the script
+                has not reached yet. A terminal already hands over one line
+                per read, so it keeps the wider read.
+        */
+        bool shared_input = !script_file && !shell_interactive();
+        bool seekable_input = shared_input && system_seek(input, 0, 1) >= 0;
 
         while (1)
         {
@@ -628,7 +681,8 @@ b32 main()
                 if (script_file)
                         input = exec_script_fd;
                 got = system_read_once(input, shell_buffer + held,
-                                       shell_buffer_room - 1 - held);
+                                       shared_input && !seekable_input
+                                          ? 1 : shell_buffer_room - 1 - held);
 
                 if (got < 0 && script_file && shell_bash_compat)
                 {
@@ -642,6 +696,35 @@ b32 main()
                         break;
 
                 total = held + (positive)got;
+
+                if (shared_input)
+                {
+                        p8 address_to newline = memory_first_of(
+                            shell_buffer + held, '\n', (positive)got);
+
+                        // Nothing to run yet; keep collecting the line.
+                        if (!newline)
+                        {
+                                held = total;
+                                continue;
+                        }
+
+                        // Only the line that ended is run. What was read
+                        // past it is given back to the file, where the next
+                        // command to read standard input expects to find it.
+                        if (seekable_input)
+                        {
+                                positive line_end =
+                                    (positive)(newline - shell_buffer) + 1;
+
+                                if (line_end < total)
+                                        system_seek(input,
+                                                    -(bipolar)(total - line_end),
+                                                    1);
+                                total = line_end;
+                        }
+                }
+
                 at = shell_run_complete_lines(shell_buffer, total, false);
 
                 if (at && shell_onecmd_on() && !shell_reading_more())
@@ -677,7 +760,11 @@ b32 main()
                 }
 
                 if (history_action == HISTORY_EXPAND_RUN)
+                {
+                        shell_verbose_from_string = false;
+                        shell_verbose_line(ready);
                         run_line(ready);
+                }
         }
 
 input_finished:
