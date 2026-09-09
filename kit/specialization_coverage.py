@@ -395,11 +395,15 @@ cover('folds_already', 'value', 'decimal_to_string',
 cover('folds_already', 'input', 'path_basename',
       'a literal path folds the answer to a constant string, and no caller '
       'has one; the routine exists for a path read at run time')
-cover('folds_already', 'format', 'string_format',
+cover('folds_already', 'format', 'string_format string_report',
       'the format is a literal at nearly every call site and this is the '
       'largest thing here that cannot be built: expanding it means turning '
       'one variadic call into a sequence of per-conversion calls, and C has '
       'no construct that walks a literal and emits calls against __VA_ARGS__')
+cover('folds_already', 'sink', 'string_diagnostic',
+      'the descriptor selects writer, optional preflush and live prefix; '
+      'literal selection still needs the shared formatter and callbacks, '
+      'so expansion would duplicate reporting policy at every caller')
 cover('folds_already', 'x', 'fast_sin',
       'a polynomial with no branch in it; folding the angle folds the answer, '
       'and no caller has a literal angle')
@@ -455,7 +459,7 @@ cover('folds_already', 'want', 'memory_growth memory_reserve',
 cover('folds_already', 'unit', 'memory_release',
       'a free and three stores; the unit is foldable and removes nothing')
 cover('folds_already', 'length', '''
-buffered_write buffered_write_deferred_equal log log_direct log_error
+buffered_write buffered_write_deferred_equal log log_direct log_error writer_stderr writer_stderr_once
 ''', 'a literal length is common and the work is the copy into the buffer, '
      'which memory_copy_apart already expands from inside these')
 cover('folds_already', 'length', 'system_write_all system_write_all_checked',

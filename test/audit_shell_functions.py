@@ -48,7 +48,8 @@ static void memory_fill(void *p, int value, positive n) { memset(p,value,n); }
 static void memory_copy(void *to, const void *from, positive n) { memcpy(to,from,n); }
 static void memory_copy_end(char *to, const char *from, positive n) { memcpy(to,from,n);to[n]=0; }
 static positive memory_span_byte(const void *p, int byte, positive n) { const unsigned char *s=p;positive i=0;while(i<n&&s[i]==byte)i++;return i; }
-static positive memory_span_without_byte(const void *p, int byte, positive n) { const unsigned char *s=p;positive i=0;while(i<n&&s[i]!=byte)i++;return i; }
+static void *memory_first_of(const void *p, int byte, positive n) { return memchr(p,byte,n); }
+static void *memory_last_of(const void *p, int byte, positive n) { const unsigned char *s=p;while(n) { n--;if(s[n]==byte)return (void *)(s+n); }return NULL; }
 static b32 injected_failure=-1;
 '''
 state=r'''
@@ -103,7 +104,29 @@ static void empty(void) {
     for(size_t a=0;a<array_count(parse_kept_arenas);a++)CHECK(memory_span_byte(parse_kept_arenas[a].occupied,0,parse_kept_arenas[a].room)==(positive)parse_kept_arenas[a].room);
     for(int i=0;i<PARSE_NODES;i++)CHECK(!parse_kept_bodies[i].references);
 }
+static void reserve_bitmap_cases(void) {
+    unsigned char expected[PARSE_NODES];
+    for (int n=0;n<=10;n++)
+        for (unsigned bits=0;bits<(1u<<n);bits++)
+            for (int low=0;low<=n;low++)
+                for (int count=0;count<=n+1;count++) {
+                    memset(parse_node_kept,1,sizeof(parse_node_kept));
+                    for (int j=0;j<n;j++)parse_node_kept[PARSE_NODES-n+j]=(bits>>j)&1;
+                    memcpy(expected,parse_node_kept,sizeof expected);
+                    int floor=PARSE_NODES-n+low,wanted=count? -1:0;
+                    for (int at=floor;count&&at<=PARSE_NODES-count;at++) {
+                        int free=1;
+                        for (int j=0;j<count;j++)if(expected[at+j])free=0;
+                        if(free)wanted=at;
+                    }
+                    if(count&&wanted>=0)memset(expected+wanted,1,count);
+                    CHECK(parse_keep_reserve(0,count,floor)==wanted);
+                    CHECK(!memcmp(expected,parse_node_kept,sizeof expected));
+                }
+    memset(parse_node_kept,0,sizeof(parse_node_kept));
+}
 int main(void) {
+    reserve_bitmap_cases();
     prepare(1,3,1);int old=parse_keep(1,0);CHECK(old);check_body(old,1,3,1);
     for(injected_failure=0;injected_failure<4;injected_failure++) {
         prepare(2,4,1);uint64_t held=snapshot();int n=parse_keep(1,old);

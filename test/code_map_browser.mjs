@@ -59,11 +59,11 @@ try {
   if(width===1200||width===360)await screenshot(`detail-${width}-${theme}`);
   for(const v of ['files','similarity','method']){await click(`[data-view="${v}"]`);l=await layout();check(`${v} layout ${width} ${theme}`,!l.overflow,l);if(v==='files'&&((width===1200&&theme==='light')||(width===360&&theme==='dark'))){await evaluate("document.getElementById('files-view').scrollIntoView({block:'start'})");await screenshot(`files-${width}-${theme}`);}}
  }
- // Pinned to the counted-regex refresh and the two unused shell functions
- // removed by the general tidy. Production files and support are unchanged.
+ // Pinned to the diagnostic fold: one shared assembly entry and five
+ // additional support functions; the production C inventory is unchanged.
  // Scope values are an independently specified integration contract.
  await reset();await click('[data-view="functions"]');
- const scopeCounts={production:4244,c:3895,assembly:349,support:1570,all:5814};
+ const scopeCounts={production:4191,c:3838,assembly:353,support:1580,all:5771};
  for(const [scope,want] of Object.entries(scopeCounts)){
   await select('scope',scope);const got=await meta();check('scope '+scope,got.count===want,{expected:want,...got});
  }

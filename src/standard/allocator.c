@@ -106,7 +106,7 @@
             under 100%, for one extra shift in the lookup and 52 free list
             heads instead of 22.
 
-          - awk calls awk_out_of_memory and exits. A library returns null.
+          - awk reports allocation failure and exits. A library returns null.
 
           - awk abandons whatever is left of a chunk when the next request
             does not fit. Here the remainder is cut into the largest classes

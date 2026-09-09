@@ -8610,7 +8610,8 @@ fn check_reverse()
         {
                 static const positive page_sizes[] = {
                     0, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33,
-                    63, 64, 65, 255, 256, 257, 4095, 4096, 4097,
+                    63, 64, 65, 255, 256, 257, 2047, 2048, 2049,
+                    4095, 4096, 4097,
                 };
                 positive base = (positive)(address_any)reverse_got;
                 positive edge_offset = ((base + 4095) & ~(positive)4095) - base +
@@ -8650,6 +8651,122 @@ fn check_reverse()
         reference_reverse(reverse_large_want + 37, 1 << 20);
         same_bytes("memory_reverse", "one megabyte double reverse",
                    reverse_large_got, reverse_large_want, REVERSE_LARGE);
+}
+
+/*
+        Call the assembly entry even for compile-time small sizes. Disjoint
+        maps cover every byte value and noninjective maps; aliased maps retain
+        the original four-byte load-all-then-store-all contract.
+*/
+fn check_translate()
+{
+        static const positive sizes[] = {
+            0, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 65, 127, 128,
+            129, 255, 256, 257, 511, 512, 513, 4095, 4096,
+        };
+        static const bipolar deltas[] = {
+            -512, -257, -256, -255, -128, -64, -1, 0, 1, 63, 64,
+            127, 128, 255, 256, 257, 511, 512,
+        };
+        static p8 want[4096], palette[256];
+        p8 address_to pages = memory(3 * 4096);
+        p8 address_to tables = memory(3 * 4096);
+        bool mapped = (bipolar)(positive)pages > 0 &&
+                      (bipolar)(positive)tables > 0;
+
+        same("memory_translate", "guard mappings", mapped, 1);
+        if (!mapped)
+        {
+                if ((bipolar)(positive)pages > 0) memory_free(pages, 3 * 4096);
+                if ((bipolar)(positive)tables > 0) memory_free(tables, 3 * 4096);
+                return;
+        }
+        bool protected =
+            system_call_3(syscall(mprotect), (positive)pages, 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)tables, 4096, 0) == 0 &&
+            system_call_3(syscall(mprotect), (positive)(tables + 8192), 4096, 0) == 0;
+        same("memory_translate", "guard pages protected", protected, 1);
+        if (!protected)
+        {
+                memory_free(pages, 3 * 4096);
+                memory_free(tables, 3 * 4096);
+                return;
+        }
+        p8 address_to got = pages + 4096;
+#if X64
+        p8 avx2 = cpu_has_avx2, avx512 = cpu_has_avx512;
+        p8 vbmi = cpu_has_avx512_vbmi;
+        positive tiers = 4;
+#else
+        positive tiers = 1;
+#endif
+        for (positive tier = 0; tier < tiers; tier++)
+        {
+#if X64
+                cpu_has_avx2 = tier < 3 ? avx2 : 0;
+                cpu_has_avx512 = tier < 2 ? avx512 : 0;
+                cpu_has_avx512_vbmi = tier < 1 ? vbmi : 0;
+#endif
+                same("memory_translate", "null zero-sized return",
+                     (positive)(memory_translate)(null, 0, null), 0);
+                same("memory_translate", "inaccessible zero-sized return",
+                     (positive)(memory_translate)(pages, 0, tables),
+                     (positive)pages);
+                for (positive s = 0; s < array_count(sizes); s++)
+                        for (positive residue = 0; residue <= 64; residue++)
+                        {
+                                positive size = sizes[s];
+                                positive offset = residue == 64 || size + residue > 4096
+                                                      ? 4096 - size : residue;
+                                p8 address_to table = residue == 64
+                                    ? tables + 8192 - 256
+                                    : tables + 4096 + ((residue * 17 + s) & 63);
+                                for (positive i = 0; i < 256; i++)
+                                        table[i] = palette[i] = (p8)(i * (s & 1 ? 197 : 128) + s);
+                                for (positive i = 0; i < 4096; i++)
+                                        got[i] = want[i] = (p8)(i * 197 + residue);
+                                for (positive i = 0; i < size; i++)
+                                        want[offset + i] = palette[want[offset + i]];
+                                same("memory_translate", "returned original address",
+                                     (positive)(memory_translate)(got + offset, size, table),
+                                     (positive)(got + offset));
+                                same_bytes("memory_translate", "sizes, residues, page bounds",
+                                           got, want, 4096);
+                                same_bytes("memory_translate", "table remains unchanged",
+                                           table, palette, 256);
+                        }
+                for (positive s = 0; s < array_count(sizes) - 2; s++)
+                        for (positive d = 0; d < array_count(deltas); d++)
+                        {
+                                positive size = sizes[s], i = 0;
+                                for (positive at = 0; at < 4096; at++)
+                                        got[at] = want[at] = (p8)((at * 37) ^ (at >> 3));
+                                p8 address_to block = want + 1024;
+                                p8 address_to table = block + deltas[d];
+                                for (; i + 4 <= size; i += 4)
+                                {
+                                        p8 a = table[block[i]], b = table[block[i + 1]];
+                                        p8 c = table[block[i + 2]], e = table[block[i + 3]];
+                                        block[i] = a; block[i + 1] = b;
+                                        block[i + 2] = c; block[i + 3] = e;
+                                }
+                                for (; i < size; i++) block[i] = table[block[i]];
+                                same("memory_translate", "aliased return address",
+                                     (positive)(memory_translate)(got + 1024, size,
+                                                                 got + 1024 + deltas[d]),
+                                     (positive)(got + 1024));
+                                same_bytes("memory_translate", "aliased four-byte ordering",
+                                           got, want, 4096);
+                        }
+        }
+#if X64
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+        cpu_has_avx512_vbmi = vbmi;
+#endif
+        memory_free(pages, 3 * 4096);
+        memory_free(tables, 3 * 4096);
 }
 
 fn check_checksums()
@@ -9842,8 +9959,169 @@ fn check_clock()
         checks += (spin == 0);
 }
 
+static b32 report_nested_status;
+
+static fn report_nested_writer(address_any data, positive length)
+{
+        catch_writer(data, length);
+        if (caught_calls == 1)
+                report_nested_status = string_report(
+                    catch_writer, -9, "<%s:%p>", "inner", (positive)99);
+}
+
+fn check_report()
+{
+        static b32 results[] = {0, 1, 2, 125, -1, -2147483647 - 1, 2147483647};
+        static string_address endings[] = {"", "plain", "%%", "before%", "%qafter"};
+        b8 expected[sizeof caught];
+        for (positive i = 0; i < array_count(results); i++)
+        {
+                b32 result = results[i];
+                for (positive j = 0; j < array_count(endings); j++)
+                {
+                        catch_reset();
+                        string_format(catch_writer, endings[j]);
+                        positive length = caught_length, calls = caught_calls;
+                        memory_copy(expected, caught, length + 1);
+                        catch_reset();
+                        same("string_report", "early-exit result",
+                             (positive)(bipolar)string_report(
+                                 catch_writer, result, endings[j]),
+                             (positive)(bipolar)result);
+                        same("string_report", "writer calls", caught_calls, calls);
+                        same_bytes("string_report", "early-exit bytes",
+                                   caught, expected, length + 1);
+                }
+
+                // Exhaust GP registers and interleave stack integers with more
+                // than eight FP arguments. The extra fixed result argument
+                // changes only the GP cursor, never the FP/overflow ordering.
+#define REPORT_MIX "%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%s:%b"
+#define REPORT_VALUES (positive)1, 1.25, (positive)2, 2.5, \
+        (positive)3, 3.75, (positive)4, 4.0, (positive)5, 5.25, \
+        (positive)6, 6.5, (positive)7, 7.75, (positive)8, 8.0, \
+        (positive)9, 9.25, "last", -37
+                catch_reset();
+                string_format(catch_writer, REPORT_MIX, REPORT_VALUES);
+                positive length = caught_length, calls = caught_calls;
+                memory_copy(expected, caught, length + 1);
+                catch_reset();
+                same("string_report", "mixed result",
+                     (positive)(bipolar)string_report(catch_writer, result,
+                                                    REPORT_MIX, REPORT_VALUES),
+                     (positive)(bipolar)result);
+                same("string_report", "mixed calls", caught_calls, calls);
+                same("string_report", "mixed length", caught_length, length);
+                same_bytes("string_report", "mixed bytes", caught, expected, length + 1);
+#undef REPORT_VALUES
+#undef REPORT_MIX
+                catch_reset();
+                same("string_report", "integer spill result",
+                     (positive)(bipolar)string_report(catch_writer, result,
+                         "%p %p %p %p %p %p %p %p %p %s", (positive)1,
+                         (positive)2, (positive)3, (positive)4, (positive)5,
+                         (positive)6, (positive)7, (positive)8, (positive)9, "end"),
+                     (positive)(bipolar)result);
+                same("string_report", "integer spill bytes",
+                     string_compare(caught, "1 2 3 4 5 6 7 8 9 end"), 0);
+                catch_reset();
+                same("string_report", "nested outer result",
+                     (positive)(bipolar)string_report(report_nested_writer, result,
+                                                    "A%s", "B"),
+                     (positive)(bipolar)result);
+                same("string_report", "nested inner result",
+                     (positive)(bipolar)report_nested_status, (positive)(bipolar)-9);
+                same("string_report", "nested bytes",
+                     string_compare(caught, "A<inner:99>B"), 0);
+        }
+}
+
+static string_address diagnostic_name = "early";
+static positive diagnostic_before_calls;
+
+static fn diagnostic_before()
+{
+        diagnostic_before_calls++;
+        catch_writer("!", 1);
+        diagnostic_name = "late";
+}
+
+fn check_diagnostic()
+{
+        const diagnostic sink = {catch_writer, diagnostic_before, &diagnostic_name};
+        const diagnostic plain = {catch_writer, null, &diagnostic_name};
+        static b32 results[] = {0, 1, -1, -2147483647 - 1, 2147483647};
+        static string_address subjects[] = {null, "", "subject%"};
+        b8 expected[256];
+        for (positive i = 0; i < array_count(results); i++)
+                for (positive j = 0; j < array_count(subjects); j++)
+                {
+                        catch_reset();
+                        catch_writer("!", 1);
+                        string_format(catch_writer,
+                            subjects[j] ? "%s: %s: %s\n" : "%s: %s\n",
+                            "late", subjects[j] ? subjects[j] : (string_address)"reason%", "reason%");
+                        positive length = caught_length, calls = caught_calls;
+                        memory_copy(expected, caught, length + 1);
+                        catch_reset();
+                        diagnostic_name = "early";
+                        diagnostic_before_calls = 0;
+                        same("string_diagnostic", "result survives before and writes",
+                            (positive)(bipolar)string_diagnostic(&sink, results[i], subjects[j], "reason%"),
+                            (positive)(bipolar)results[i]);
+                        same("string_diagnostic", "one before call", diagnostic_before_calls, 1);
+                        same("string_diagnostic", "writer call count", caught_calls, calls);
+                        same("string_diagnostic", "output length", caught_length, length);
+                        same_bytes("string_diagnostic", "prefix read after before",
+                                   caught, expected, length + 1);
+                        catch_reset();
+                        same("string_diagnostic", "optional before",
+                            (positive)(bipolar)string_diagnostic(&plain, results[i], subjects[j], "reason%"),
+                            (positive)(bipolar)results[i]);
+                        same("string_diagnostic", "no before call", diagnostic_before_calls, 1);
+                        same_bytes("string_diagnostic", "plain output", caught, expected + 1, length);
+                }
+
+        b32 pipes[2];
+        bipolar saved = system_call_1(syscall(dup), 2);
+        bipolar opened = system_call_2(syscall(pipe2), (positive)pipes, 2048);
+        same("stderr writers", "pipe setup", opened, 0);
+        if (opened < 0 || saved < 0)
+        {
+                if (saved >= 0) system_call_1(syscall(close), saved);
+                if (opened == 0)
+                {
+                        system_call_1(syscall(close), pipes[0]);
+                        system_call_1(syscall(close), pipes[1]);
+                }
+                return;
+        }
+        bipolar rebound = system_call_3(syscall(dup3), pipes[1], 2, 0);
+        same("stderr writers", "stderr binding", rebound, 2);
+        if (rebound == 2)
+        {
+                positive buffered = log_writer_buffer_length;
+                writer_stderr("alpha", 0);
+                writer_stderr_once("x\0z", 3);
+                writer_stderr("", 0);
+                writer_stderr_once("", 0);
+                same("stderr writers", "no implicit flush", log_writer_buffer_length, buffered);
+        }
+        system_call_3(syscall(dup3), saved, 2, 0);
+        system_call_1(syscall(close), saved);
+        system_call_1(syscall(close), pipes[1]);
+        b8 bytes[16];
+        bipolar read = system_call_3(syscall(read), pipes[0], (positive)bytes, sizeof bytes);
+        same("stderr writers", "exact and terminated spans", read, 8);
+        if (read == 8)
+                same_bytes("stderr writers", "embedded NUL", bytes, "alphax\0z", 8);
+        system_call_1(syscall(close), pipes[0]);
+}
+
 fn check_format()
 {
+        check_report();
+        check_diagnostic();
         // string_format drives most of what anything here prints, so the check
         // is over what it emits rather than over a return value it has none of.
         catch_reset();
@@ -15769,8 +16047,21 @@ fn check_first_of_page_end()
 
         //      The third page taken away, so a string ending on the last
         //      byte of the second has nothing readable after it.
-        system_call_3(syscall(mprotect), (positive)(pages + 2 * 4096), 4096,
-                      PAGE_END_PROT_NONE);
+        bipolar protected = system_call_3(
+            syscall(mprotect), (positive)(pages + 2 * 4096), 4096,
+            PAGE_END_PROT_NONE);
+        same("memory_first_of", "guard page protected", protected, 0);
+        if (protected < 0)
+        {
+                memory_free(pages, 3 * 4096);
+                return;
+        }
+
+        // Exercise the routine even when the compiler knows the zero count.
+        same("memory_first_of", "zero count null",
+             (positive)(memory_first_of)(null, 'z', 0), 0);
+        same("memory_first_of", "zero count inaccessible",
+             (positive)(memory_first_of)(pages + 2 * 4096, 'z', 0), 0);
 
         p8 address_to last = pages + 2 * 4096 - 1;
 
@@ -17400,7 +17691,18 @@ fn check_formatters()
 
 b32 main()
 {
-#if defined(VERIFY_FORMATTERS_ONLY)
+#if defined(VERIFY_REPORTS_ONLY)
+        check_format();
+        check_format_deep();
+        check_format_decimals();
+#if X64
+        cpu_has_avx2 = 0;
+        cpu_has_avx512 = 0;
+        check_format();
+        check_format_deep();
+        check_format_decimals();
+#endif
+#elif defined(VERIFY_FORMATTERS_ONLY)
         // A small cross-machine lane for the shared numeric core. It avoids
         // making a formatter change wait on unrelated platform tests when a
         // target is available only through a minimal linker and qemu-user.
@@ -17447,6 +17749,7 @@ b32 main()
         check_exchange();
         check_frob();
         check_reverse();
+        check_translate();
         check_checksums();
         check_move();
         check_copy_fast_end();

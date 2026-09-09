@@ -22137,7 +22137,7 @@
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
+   "status": -11,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {

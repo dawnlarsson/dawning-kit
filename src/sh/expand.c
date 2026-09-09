@@ -177,7 +177,7 @@ fn shell_input_end();
 fn parse_reset_all();
 fn shell_trap_exit();
 fn exec_child_began();
-COLD fn exec_expand_fatal();
+static COLD fn exec_abort_line(b32 status);
 COLD fn exec_expand_input_error();
 string_address shell_flags_current();
 bool shell_tool_only_here(string_address name, positive2 named);
@@ -452,14 +452,6 @@ bool shell_expand_literal(string_address word, positive length)
            expansion is provably the identity operation for that one byte. */
         return string_span_max(word, length, expand_literal_set) == length ||
                (length == 1 && string_is(word, '['));
-}
-
-static COLD fn expand_complain(address_any data, positive length)
-{
-        if (length == 0)
-                length = string_length(data);
-
-        system_write_once(standard_error_descriptor, data, length);
 }
 
 #define expand_name_character(value) (byte_is_alnum(value) || (value) == '_')
@@ -1717,9 +1709,7 @@ static string_address expand_value_of(expand_reference reference, p8 address_to 
         }
 }
 
-static COLD fn expand_fatal();
 static COLD fn expand_fatal_status(b32 status);
-static COLD fn expand_fatal_mode(b32 parameter_mode);
 static string_address expand_tilde(string_address step, bool assignment);
 
 /*
@@ -1777,8 +1767,8 @@ static bool expand_push_parameter_as(expand_reference reference, bool quoted,
         {
                 if (shell_options & ((positive)1 << ('u' - 'a')))
                 {
-                        string_format(expand_complain, "%s: parameter not set\n", expand_reference_text(reference));
-                        expand_fatal_mode(mode);
+                        string_format(writer_stderr_once, "%s: parameter not set\n", expand_reference_text(reference));
+                        expand_fatal_status((shell_bash_compat || (mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
                 }
 
                 return false;
@@ -1970,13 +1960,13 @@ static bipolar arith_store(expand_reference reference, bipolar value)
         {
                 string_address name = expand_reference_text(reference);
                 arith_bad = true;
-                string_format(expand_complain,
+                string_format(writer_stderr_once,
                               env_readonly(name) ? "%s: is read only\n"
                                                  : "%s: cannot assign\n",
                               name);
 
                 if (!arith_bash_mode)
-                        expand_fatal();
+                        expand_fatal_status(2);
 
                 return arith_bash_mode ? 0 : value;
         }
@@ -2564,16 +2554,15 @@ static bipolar arith_power()
         return arith_power_of(value, arith_power());
 }
 
-/* Every left-associative arithmetic level has the same cursor loop. Keep
-   the operator grammar and calculation visible to the compiler; only logical
-   levels below change arith_active while parsing their right operand. */
+/* arith_power returns past trailing whitespace. Every higher production
+   preserves that cursor invariant, including recursive right operands, so
+   precedence levels inspect each operator without rescanning the same span. */
 #define ARITH_LEVEL(name, lower, matches, width, result)                      \
         static bipolar name()                                               \
         {                                                                   \
                 bipolar value = lower();                                    \
                 while (true)                                                \
                 {                                                           \
-                        arith_space();                                      \
                         p8 op = string_get(arith_at);                        \
                         p8 next = op ? string_get(arith_at + 1) : 0;        \
                         if (!(matches))                                     \
@@ -2618,7 +2607,6 @@ ARITH_LEVEL(arith_bit_or, arith_bit_xor,
                                                                              \
                 while (true)                                                 \
                 {                                                            \
-                        arith_space();                                        \
                         if (!string_is(arith_at, (byte)) ||                  \
                             string_get(arith_at + 1) != (byte))              \
                                 return value;                                \
@@ -2652,7 +2640,6 @@ static bipolar arith_choose()
         bipolar left;
         bool active;
 
-        arith_space();
 
         if (!string_is(arith_at, '?'))
                 return value;
@@ -2682,13 +2669,11 @@ static bipolar arith_choose()
 static bipolar arith_expression()
 {
         bipolar value = arith_choose();
-        arith_space();
 
         while (arith_bash_mode && string_is(arith_at, ','))
         {
                 arith_at++;
                 value = arith_choose();
-                arith_space();
         }
 
         return value;
@@ -3352,7 +3337,7 @@ static string_address expand_process(string_address step, p8 mark)
 
         if (system_pipe(address_of channel, 0) < 0)
         {
-                expand_fatal();
+                expand_fatal_status(2);
                 return stop + 1;
         }
 
@@ -3399,7 +3384,7 @@ static string_address expand_process(string_address step, p8 mark)
         if (child < 0 || !expand_substitution_remember(ours, child))
         {
                 system_close(ours);
-                expand_fatal();
+                expand_fatal_status(2);
                 return stop + 1;
         }
 
@@ -3417,7 +3402,7 @@ static COLD fn expand_fatal_status(b32 status)
         if (shell_is_interactive)
         {
                 expand_failed = true;
-                exec_expand_fatal();
+                exec_abort_line(shell_status);
                 return;
         }
 
@@ -3428,37 +3413,6 @@ static COLD fn expand_fatal_status(b32 status)
 
         log_flush();
         system_call_1(syscall(exit_group), status);
-}
-
-static COLD fn expand_fatal()
-{
-        expand_fatal_status(2);
-}
-
-// An indirect ${!name} that fails is Bash's, and Bash leaves with 1 where
-// POSIX's own expansion errors leave with 2. Five places choose between the
-// two, and this is the one spelling of that choice.
-static COLD fn expand_fatal_mode(b32 parameter_mode)
-{
-        if (shell_bash_compat ||
-            (parameter_mode & EXPAND_PARAMETER_INDIRECT))
-                expand_fatal_status(1);
-        else
-                expand_fatal();
-}
-
-/*
-        The word did not fit, so nothing that depends on it can go on.
-
-        Eight places at the bottom of this file notice a full store, and every
-        one of them said this sentence and then called that fatal, in that
-        order. Both halves matter: the sentence names the word, and the fatal
-        is what stops a script rather than letting it act on a truncated one.
-*/
-static COLD fn expand_too_long(string_address word)
-{
-        string_format(expand_complain, "Expansion too long: %s\n", word);
-        expand_fatal();
 }
 
 static string_address expand_arithmetic(string_address step, bool quoted)
@@ -3501,9 +3455,9 @@ static string_address expand_arithmetic(string_address step, bool quoted)
 
                 if (arith_bad)
                 {
-                        string_format(expand_complain,
+                        string_format(writer_stderr_once,
                                       "arithmetic: %s\n", ready);
-                        expand_fatal();
+                        expand_fatal_status(2);
 
                         return stop + 2;
                 }
@@ -3957,7 +3911,7 @@ static COLD fn expand_slice_error()
 {
         if (!shell_bash_compat)
         {
-                expand_fatal();
+                expand_fatal_status(2);
                 return;
         }
 
@@ -3983,7 +3937,7 @@ static bool expand_slice_number(string_address text, bipolar address_to value)
 
         if (arith_bad)
         {
-                string_format(expand_complain, "arithmetic: %s\n", ready);
+                string_format(writer_stderr_once, "arithmetic: %s\n", ready);
                 expand_slice_error();
                 return false;
         }
@@ -4021,8 +3975,8 @@ static bool expand_slice_bounds(expand_reference reference, string_address expre
         }
         else if (!separator)
         {
-                string_format(expand_complain, "%s: bad substitution\n", expand_reference_text(reference));
-                expand_fatal_mode(0);
+                string_format(writer_stderr_once, "%s: bad substitution\n", expand_reference_text(reference));
+                expand_fatal_status(shell_bash_compat ? 1 : 2);
                 return false;
         }
 
@@ -4062,7 +4016,7 @@ static bool expand_slice_bounds(expand_reference reference, string_address expre
 
                 if (kind || back > origin - address_to begin)
                 {
-                        string_format(expand_complain,
+                        string_format(writer_stderr_once,
                                       "%s: substring expression < 0\n", expand_reference_text(reference));
                         expand_slice_error();
                         return false;
@@ -4125,8 +4079,8 @@ static fn expand_substring(expand_reference reference, string_address expression
         {
                 if (!shell_bash_compat)
                 {
-                        string_format(expand_complain, "%s: bad substitution\n", name);
-                        expand_fatal_mode(parameter_mode);
+                        string_format(writer_stderr_once, "%s: bad substitution\n", name);
+                        expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
                         return;
                 }
                 expand_positional_slice(name, expression, quoted);
@@ -4672,9 +4626,9 @@ static COLD string_address expand_subscript_key(string_address base,
 
                 if (arith_bad || index < 0)
                 {
-                        string_format(expand_complain,
+                        string_format(writer_stderr_once,
                                       "%s: bad array subscript\n", base);
-                        expand_fatal();
+                        expand_fatal_status(2);
                         return null;
                 }
 
@@ -4874,25 +4828,6 @@ done:
         path a scalar takes, and the buffer it needs was in that reader's
         frame for every ${x} in every script that has no array in it.
 */
-static COLD fn expand_parameter_unset_error(string_address name,
-                                             string_address said,
-                                             b32 parameter_mode)
-{
-        string_format(expand_complain, "%s: %s\n", name,
-                      said[0] ? said : (string_address) "parameter not set");
-        /* Bash reserves 1 for an invalid indirection source. Once a real
-           parameter reaches ?, a -c command terminates with 127, while a
-           script or standard-input reader reports 1 at its input boundary.
-           Dash keeps 2. shell_option_flags is already the entry-source mark
-           used by $- and diagnostics; no second execution-mode state is
-           needed here. */
-        if (shell_bash_compat)
-                expand_fatal_status(string_is(shell_option_flags, 'c')
-                                        ? 127 : 1);
-        else
-                expand_fatal_mode(parameter_mode);
-}
-
 static COLD fn expand_array_form(string_address name, positive length,
                                  p8 form, bool want_length, p8 operation,
                                  bool doubled, string_address word,
@@ -4934,7 +4869,11 @@ static COLD fn expand_array_form(string_address name, positive length,
                 if (expand_failed)
                         return;
 
-                expand_parameter_unset_error(name, said, parameter_mode);
+                string_format(writer_stderr_once, "%s: %s\n", name,
+                              said[0] ? said : (string_address)"parameter not set");
+                expand_fatal_status(shell_bash_compat
+                    ? (string_is(shell_option_flags, 'c') ? 127 : 1)
+                    : (parameter_mode & EXPAND_PARAMETER_INDIRECT) ? 1 : 2);
         }
         else if (operation != '+')
                 expand_array_sequence(name, length, form, 0, false, word,
@@ -5039,9 +4978,9 @@ static string_address expand_braced(string_address step, bool quoted)
 
                 if (!shut || shut >= close)
                 {
-                        string_format(expand_complain,
+                        string_format(writer_stderr_once,
                                       "%s: bad substitution\n", expand_reference_text(reference));
-                        expand_fatal_mode(parameter_mode);
+                        expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
                         return close + 1;
                 }
 
@@ -5154,8 +5093,8 @@ static string_address expand_braced(string_address step, bool quoted)
             (!operation && step != close) ||
             (want_length && (operation || name_list)))
         {
-                string_format(expand_complain, "%s: bad substitution\n", expand_reference_text(reference));
-                expand_fatal_mode(parameter_mode);
+                string_format(writer_stderr_once, "%s: bad substitution\n", expand_reference_text(reference));
+                expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
 
                 return close + 1;
         }
@@ -5213,7 +5152,7 @@ static string_address expand_braced(string_address step, bool quoted)
 
                         if (first < '0' || first > '9')
                         {
-                                string_format(expand_complain,
+                                string_format(writer_stderr_once,
                                               "%s: invalid indirect expansion\n",
                                               expand_reference_text(reference));
                                 expand_fatal_status(1);
@@ -5234,7 +5173,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 }
                 else if (!expand_parameter_name(name, target_length))
                 {
-                        string_format(expand_complain,
+                        string_format(writer_stderr_once,
                                       "%s: invalid variable name\n", name);
                         expand_fatal_status(1);
                         return close + 1;
@@ -5280,9 +5219,9 @@ static string_address expand_braced(string_address step, bool quoted)
                 {
                         if (shell_options & ((positive)1 << ('u' - 'a')))
                         {
-                                string_format(expand_complain,
+                                string_format(writer_stderr_once,
                                               "%s: parameter not set\n", expand_reference_text(reference));
-                                expand_fatal_mode(parameter_mode);
+                                expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
                                 return close + 1;
                         }
 
@@ -5302,9 +5241,9 @@ static string_address expand_braced(string_address step, bool quoted)
                 if (!which || string_get(word + 1) ||
                     !string_first_of((string_address)"QEULua", which))
                 {
-                        string_format(expand_complain,
+                        string_format(writer_stderr_once,
                                       "%s: bad substitution\n", expand_reference_text(reference));
-                        expand_fatal_mode(parameter_mode);
+                        expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
                         return close + 1;
                 }
         }
@@ -5351,7 +5290,7 @@ static string_address expand_braced(string_address step, bool quoted)
                                     !expand_assignable_name(name))
                                 {
                                         string_format(
-                                            expand_complain,
+                                            writer_stderr_once,
                                             "%s: invalid indirect expansion\n",
                                             name);
                                         expand_fatal_status(1);
@@ -5368,12 +5307,12 @@ static string_address expand_braced(string_address step, bool quoted)
                                 {
                                         name = expand_reference_text(reference);
                                         string_format(
-                                            expand_complain,
+                                            writer_stderr_once,
                                             env_readonly(name)
                                                 ? "%s: is read only\n"
                                                 : "%s: cannot assign\n",
                                             name);
-                                        expand_fatal();
+                                        expand_fatal_status(2);
                                         return close + 1;
                                 }
                                 expand_push_string(made, mark);
@@ -5405,8 +5344,11 @@ static string_address expand_braced(string_address step, bool quoted)
                                 if (expand_failed)
                                         return close + 1;
 
-                                expand_parameter_unset_error(
-                                    expand_reference_text(reference), said, parameter_mode);
+                                string_format(writer_stderr_once, "%s: %s\n", expand_reference_text(reference),
+                                              said[0] ? said : (string_address)"parameter not set");
+                                expand_fatal_status(shell_bash_compat
+                                    ? (string_is(shell_option_flags, 'c') ? 127 : 1)
+                                    : (parameter_mode & EXPAND_PARAMETER_INDIRECT) ? 1 : 2);
 
                                 return close + 1;
                         }
@@ -5497,8 +5439,8 @@ static string_address expand_dollar(string_address step, bool quoted)
         // thing that would notice.
         if (expand_depth >= EXPAND_DEPTH)
         {
-                string_format(expand_complain, "Expansion nested too deeply\n");
-                expand_fatal();
+                string_format(writer_stderr_once, "Expansion nested too deeply\n");
+                expand_fatal_status(2);
                 return step + 1;
         }
 
@@ -5936,7 +5878,7 @@ static bool expand_word_ready(string_address word)
         if (!expand_overflow)
                 return true;
 
-        expand_too_long(word);
+        expand_fatal_status(string_report(writer_stderr_once, 2, "Expansion too long: %s\n", word));
         return false;
 }
 
@@ -6142,15 +6084,20 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                 }
                 memory_copy_apart(prefix + used, named, run);
 
+                // A final matching directory entry needs no second lookup.
+                // Keep the old recursion-limit failure for ordinary patterns.
+                if (!string_get(rest) && (star || depth + 1 < GLOB_DEPTH))
+                {
+                        prefix[out] = end;
+                        glob_add(prefix);
+                        if (!star)
+                                continue;
+                }
+
                 if (!star)
                         glob_walk(prefix, out, rest, depth + 1);
                 else
                 {
-                        if (!string_get(rest))
-                        {
-                                prefix[out] = end;
-                                glob_add(prefix);
-                        }
                         // Unknown directory types are resolved by
                         // the recursive open; symlinks are not followed.
                         bool link_directory = entry->d_type == 10 &&
@@ -6385,7 +6332,7 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                 */
                 if (shell_shopt_on(FAILGLOB))
                 {
-                        string_format(expand_complain, "no match: %s\n",
+                        string_format(writer_stderr_once, "no match: %s\n",
                                       pattern);
                         expand_fatal_status(1);
                         return false;
@@ -6430,6 +6377,16 @@ static positive expand_split(shell_words address_to out)
                 if (expand_quoted_seen)
                         expand_emit(0, 0, out);
 
+                return out->count;
+        }
+
+        // A wholly quoted nonempty field can neither split nor glob. Keep
+        // it directly instead of constructing an unused escaped pattern.
+        if (memory_span_byte(expand_mark, MARK_QUOTED, expand_length) == expand_length)
+        {
+                string_address kept = expand_keep_bytes(expand_text, expand_length);
+                if (expand_failed || !shell_words_add(out, kept))
+                        expand_fail_state();
                 return out->count;
         }
 
@@ -6844,7 +6801,7 @@ positive shell_expand_fields(string_address word, shell_words address_to out)
 
         if (expand_overflow)
         {
-                expand_too_long(word);
+                expand_fatal_status(string_report(writer_stderr_once, 2, "Expansion too long: %s\n", word));
         }
 
         return count;
@@ -6869,7 +6826,7 @@ RETURNS_NONNULL string_address shell_expand_word(string_address word)
 
         if (expand_overflow)
         {
-                expand_too_long(word);
+                expand_fatal_status(string_report(writer_stderr_once, 2, "Expansion too long: %s\n", word));
                 return (string_address) "";
         }
 
@@ -6935,7 +6892,7 @@ RETURNS_NONNULL string_address shell_expand_assignment(string_address word, posi
 
         if (expand_overflow)
         {
-                expand_too_long(word);
+                expand_fatal_status(string_report(writer_stderr_once, 2, "Expansion too long: %s\n", word));
                 return (string_address) "";
         }
 
@@ -7016,7 +6973,7 @@ static RETURNS_NONNULL string_address shell_expand_quoted(
             !(result = shell_store_take(address_of expand_store, room)))
         {
                 expand_overflow = true;
-                expand_too_long(word);
+                expand_fatal_status(string_report(writer_stderr_once, 2, "Expansion too long: %s\n", word));
                 return (string_address) "";
         }
 

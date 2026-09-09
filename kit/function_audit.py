@@ -45,7 +45,6 @@ GENERATORS = {
     ('src/sh/snapshot.c', 'SYSTEM_FIELD'): ('{}',),
     ('src/sh/builtin.c', 'STORAGE_ADAPTER'):
         ('shell_{}', 'storage_program_{}'),
-    ('src/sh/builtin.c', 'SHELL_ASSIGNER'): ('{}',),
     ('src/sh/builtin.c', 'TEST_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/storage_discovery.c', 'STORAGE_TABLE_RELEASE'): ('{}',),
     ('src/sh/tools.c', 'PS_TAKE'): ('{}',),

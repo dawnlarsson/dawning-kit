@@ -1041,6 +1041,12 @@ done
 compare 'od hex all bytes' od -An -t x1z -v "$work/dump-all-bytes"
 if command -v hexdump > /dev/null 2>&1; then
         compare 'hexdump hex all bytes' hexdump -Cv "$work/dump-all-bytes"
+        # Canonical rows reserve output space before formatting; exercise
+        # repeated flushes and a short final row.
+        head -c 65537 /dev/zero | tr '\0' x > "$work/dump-flush"
+        printf '\001\n' >> "$work/dump-flush"
+        compare 'hexdump canonical flush' hexdump -Cv "$work/dump-flush"
+        compare 'hexdump folded flush' hexdump -C "$work/dump-flush"
 fi
 # A directory opens and then refuses to be read, and the reference has no
 # offset to close a dump it never began.

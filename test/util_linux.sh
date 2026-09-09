@@ -2404,8 +2404,10 @@ compare 'path and reordered columns' lsns \
         'target=$$; "$TOOL" -p "$target" -n -r -o TYPE,PATH'
 compare 'json projection' lsns \
         'target=$$; "$TOOL" -p "$target" -J -o NS,TYPE'
+# Inode operands emit one identity row per task. Membership can change between
+# invocations; this assertion checks the selected namespace, not a task count.
 compare 'namespace inode operand' lsns \
-        'inode=$(stat -Lc %i /proc/$$/ns/mnt); "$TOOL" -l -n -r -o NS,TYPE "$inode"'
+        'inode=$(stat -Lc %i /proc/$$/ns/mnt); rows=$("$TOOL" -l -n -r -o NS,TYPE "$inode") || exit; printf "%s\n" "$rows" | sort -u'
 compare 'unknown namespace type' lsns '"$TOOL" -t impossible'
 compare 'unknown output column' lsns '"$TOOL" -o IMPOSSIBLE'
 subject 'default rows unique and aggregated' lsns \

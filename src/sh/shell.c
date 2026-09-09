@@ -1132,13 +1132,6 @@ bool shell_builtin(string_address arguments, positive2 named)
         static positive remembered_length;
         shell_command address_to command = null;
 
-        /* A slash is already a complete answer: neither a builtin nor an
-           in-process utility has one in its name.  Direct executable paths
-           are the startup-sensitive case and used to build both static name
-           indexes only to prove two guaranteed misses. */
-        if (string_first_of(shell_argv[0], '/'))
-                return false;
-
         if (!arguments && shell_command_name_stable &&
             shell_argv[0] == shell_command_name_address && remembered &&
             !shell_disabled[remembered - shell_commands] &&
@@ -1148,6 +1141,10 @@ bool shell_builtin(string_address arguments, positive2 named)
                 command = remembered;
         else
         {
+                /* A cache hit already proves this name has no slash. Other
+                   paths still bypass both builtin and utility indexes. */
+                if (memory_first_of(shell_argv[0], '/', named.y))
+                        return false;
                 command = shell_command_named_hashed(shell_argv[0], named);
 
                 if (!arguments && shell_command_name_stable &&
@@ -1282,7 +1279,7 @@ static fn run_line_inner(string_address line)
                 parse_here_line(line);
         else if (!parse_feed(line))
         {
-                string_format(exec_error, "Command line too long\n");
+                log_error(str("Command line too long\n"));
                 parse_reset();
                 shell_more = false;
                 return;
@@ -1306,7 +1303,7 @@ static fn run_line_inner(string_address line)
 
         if (parse_state)
         {
-                string_format(exec_error, "Syntax error\n");
+                log_error(str("Syntax error\n"));
                 shell_status = 2;
                 parse_reset();
 
@@ -1442,7 +1439,7 @@ fn run_lines(string_address text)
         if (length == positive_max ||
             !shell_array_room(copy, room, length + 1))
         {
-                string_format(exec_error, "No room to run lines\n");
+                log_error(str("No room to run lines\n"));
                 shell_status = 2;
                 return;
         }
@@ -1497,7 +1494,7 @@ fn shell_input_end()
         */
         if (parse_here_open())
         {
-                string_format(exec_error,
+                string_format(log_error,
                               "Warning: here-document ended by end of input"
                               " (wanted %s)\n",
                               parse_here_open());
@@ -1519,7 +1516,7 @@ fn shell_input_end()
                         return;
         }
 
-        string_format(exec_error, "Syntax error: unexpected end of input\n");
+        log_error(str("Syntax error: unexpected end of input\n"));
         bool word_eof = parse_pending_used &&
                         lex_unfinished(parse_pending) == LEX_OPEN_WORD;
         parse_reset();
