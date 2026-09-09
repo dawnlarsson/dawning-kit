@@ -6530,6 +6530,43 @@
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "--color",
+    "--perl-regexp",
+    "--files-without-match",
+    "--line-buffered",
+    "-m-1",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "grep"
+  },
+  "domain": "text",
+  "id": "0b2e132b91fb70af",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bug: more than one thing is wrong with this argv and grep names a different first cause from the reference's, so the two exit with different statuses.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "d0e2dc251487ad59e5c424e50e6eca692455b36cdbec2e047fc929a5ba02aa25"
+  },
+  "utility": "grep"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
    "stdout": "e96cafe9c4d60cb4544af663d4a66e878570817d76312232f7346c1016bdf5f6"
   },
   "case": {
@@ -23792,6 +23829,45 @@
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "183549fb0e1c95d1e794533c675c762be85a420ee8f8fbdded703b77573d18ba"
+  },
+  "case": {
+   "argv": [
+    "-R",
+    "-t",
+    "--ignore-case",
+    "--word-regexp=[a-z][a-z]*",
+    "-b",
+    "missing",
+    "-f",
+    "ptx_src",
+    "ptx_refs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "02ef249f823f2d65",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -24120,6 +24196,97 @@
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "6cfc8fabf90c29f2707e94e1c440f65cb8536631d17a4545dfe6c8052a8f70cd"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--auto-reference",
+    "-F",
+    "/",
+    "--flag-truncation=++",
+    "-M",
+    "",
+    "-R",
+    "-S",
+    "\\n",
+    "-b",
+    "missing",
+    "--break-file=ptx_breaks",
+    "-f",
+    "-g",
+    "20",
+    "--ignore-file=ptx_ignore",
+    "-optx_only",
+    "--references",
+    "--typeset-mode",
+    "-w",
+    "24",
+    "ptx_refs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "157b22db9ef9fe99",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "94fb05abc9ec44b9b729509c738cfd712c8e5ede6bdf0767d0d63dbcb29c8a1e"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-w32",
+    "-Sx",
+    "-o",
+    "empty",
+    "--references",
+    "-M",
+    "",
+    "--width=40",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fmt",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "17033792c405d091",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "utility": "ptx"
  },
@@ -24595,6 +24762,45 @@
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--typeset-mode",
+    "-W[a-z][a-z]*",
+    "-b",
+    "missing",
+    "-w",
+    "24",
+    "--only-file=ptx_only",
+    "--ignore-case",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "237a4267b27e65f9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "60362c94c019f103a00a145e5329c89f770b5212f67f28bb102156670f1d9025"
   },
   "case": {
@@ -24618,6 +24824,46 @@
   },
   "domain": "text",
   "id": "2556bc7718da3388",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "95d152aabd4a7505e27a38483d8f4605863eaf7b234ee1d13e89a3d7c234496e"
+  },
+  "case": {
+   "argv": [
+    "-W",
+    "[A-Za-z]+",
+    "--width=40",
+    "--break-file=ptx_breaks",
+    "--macro-name=yy",
+    "-r",
+    "-b",
+    "missing",
+    "ptx_src",
+    "ptx_refs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "27a98d2851509194",
   "kind": "deliberate",
   "list": "ledger",
   "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
@@ -24961,6 +25207,135 @@
  {
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "86bf2dde3700c9f09e6ad77ff401b049f8e04ff126a2fbb84549b1ab66130611"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "ptx_breaks",
+    "--right-side-refs",
+    "--references",
+    "--auto-reference",
+    "-r",
+    "-f",
+    "para"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_ptx_refs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "355bb4c43cbc43d0",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "reference quirk: GNU ptx stops when its sentence expression can match the empty string. The planner here consumes a character at such a match instead, which ends and produces the index.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--auto-reference",
+    "-F",
+    "--flag-truncation=++",
+    "-Myy",
+    "--right-side-refs",
+    "-S[.?!]",
+    "--sentence-regexp=\\n",
+    "-W[a-z][a-z]*",
+    "--word-regexp=[a-z][a-z]*",
+    "-f",
+    "--ignore-case",
+    "-g",
+    "20",
+    "-i",
+    "empty",
+    "-o",
+    "missing",
+    "--only-file=ptx_only",
+    "-r",
+    "-t",
+    "-w",
+    "10",
+    "ptx_refs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "36751cdfc1a9b407",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "da232414ec074b7f528d4988cc297dcc907a25950d61f613aa3b47e2ee35e38e"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--references",
+    "-o",
+    "empty",
+    "--auto-reference",
+    "-f",
+    "-R",
+    "--flag-truncation=++",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "3834b6815682bd3f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "4546074da1f2f7bd689644f2b588d6472f5705db8cc06acc10f19c689d0a8d94"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -25008,6 +25383,43 @@
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "bec5ceeff9e1e0c84e0f59cc7de6f9884b43c1f120fc3ed89a32a72fc82c065e"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--typeset-mode",
+    "--ignore-case",
+    "-iptx_ignore",
+    "--sentence-regexp=\\n",
+    "--right-side-refs",
+    "--references",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "3a1c7c1c2c978987",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "utility": "ptx"
  },
@@ -25775,6 +26187,61 @@
    "argv": [
     "--auto-reference",
     "-F",
+    "/",
+    "-M",
+    "-T",
+    "--right-side-refs",
+    "-S",
+    "\\n",
+    "--sentence-regexp=\\n",
+    "-W",
+    "x",
+    "--word-regexp=[a-z][a-z]*",
+    "-bptx_breaks",
+    "-g",
+    "1",
+    "--gap-size=2",
+    "-i",
+    "missing",
+    "--ignore-file=ptx_ignore",
+    "-r",
+    "--typeset-mode",
+    "-w",
+    "72",
+    "--width=40",
+    "ptx_refs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "4f4cc6908a07d687",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "3718f87a7bf86bb20a6ef9b34a8cb78051694bc6027b17262e9651aaddbab8a6"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--auto-reference",
+    "-F",
     "--flag-truncation=++",
     "-M",
     "--macro-name=yy",
@@ -25944,6 +26411,44 @@
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "393ae79cfe31e61bfe6837112ab4c6e70dc2527ea305d0035e9cecd859795dd6"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "ca2171cf26e3e5e6f39fa627c84ca465bfcb3e0e489b81b9cc7d1b5734f8cdcb"
+  },
+  "case": {
+   "argv": [
+    "--typeset-mode",
+    "-t",
+    "-r",
+    "-M",
+    "--gap-size=2",
+    "-bempty",
+    "ptx_src",
+    "ptx_refs"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_random_lines",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "547925209dd770b2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "utility": "ptx"
  },
@@ -26126,6 +26631,57 @@
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "7363949d9020e8bad325e3e237cdff24a9d1f8bddffa95e8f81f46afb37f8c78"
+  },
+  "case": {
+   "argv": [
+    "-A",
+    "--auto-reference",
+    "-F/",
+    "--flag-truncation=++",
+    "-Myy",
+    "--macro-name=yy",
+    "--right-side-refs",
+    "-Sx",
+    "--sentence-regexp=\\n",
+    "-W",
+    "[a-z][a-z]*",
+    "--word-regexp=[a-z][a-z]*",
+    "-bptx_breaks",
+    "-g1",
+    "--gap-size=2",
+    "-i",
+    "ptx_ignore",
+    "--ignore-file=ptx_ignore",
+    "-t",
+    "-w32",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "56608a1712943603",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "d285e6d6560e9e7f52a6606a2ec4218b918ff34197c909f5e80f4aaf1777fb6f"
   },
   "utility": "ptx"
  },
@@ -26561,6 +27117,63 @@
   },
   "case": {
    "argv": [
+    "--auto-reference",
+    "-F",
+    "",
+    "--flag-truncation=++",
+    "-M",
+    "yy",
+    "--macro-name=yy",
+    "--right-side-refs",
+    "-S\\n",
+    "--sentence-regexp=\\n",
+    "-W",
+    "\\w+",
+    "--word-regexp=[a-z][a-z]*",
+    "-bempty",
+    "--break-file=ptx_breaks",
+    "-f",
+    "-imissing",
+    "--ignore-file=ptx_ignore",
+    "-o",
+    "empty",
+    "--only-file=ptx_only",
+    "-r",
+    "--references",
+    "--typeset-mode",
+    "-w24",
+    "--width=40",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_fmt",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "6ef700a335a8f418",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-A",
     "--auto-reference",
     "-F",
@@ -26727,6 +27340,45 @@
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sentence-regexp=\\n",
+    "-r",
+    "-W",
+    "[A-Za-z]+",
+    "-w",
+    "10",
+    "--references",
+    "--auto-reference",
+    "words"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_ptx_refs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "7b175001affb0c59",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "319b5ae27a42a009ec6467f08ad62c57c153162806588d40661587d07e866c3a"
   },
   "utility": "ptx"
  },
@@ -27043,6 +27695,44 @@
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "2a27748cf8f4f1cfe9639f97af80750d9324506ba6d4a14785417b9b9d13a6b2"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "++",
+    "--typeset-mode",
+    "--references",
+    "--ignore-case",
+    "-Sx",
+    "--ignore-file=ptx_ignore",
+    "empty"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "864b248f5800d7dd",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "utility": "ptx"
  },
@@ -27419,6 +28109,56 @@
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "682ac29ce93f8538dba20c5591edc7faddd40e7d84ae8b52d1a91f4e0a7a6f92"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--auto-reference",
+    "--flag-truncation=++",
+    "-M",
+    "yy",
+    "--macro-name=yy",
+    "-S",
+    "\\n",
+    "-Wx",
+    "--word-regexp=[a-z][a-z]*",
+    "-bmissing",
+    "--break-file=ptx_breaks",
+    "-g",
+    "1",
+    "-iempty",
+    "--references",
+    "--typeset-mode",
+    "-w",
+    "24",
+    "--width=40",
+    "ptx_src"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "962e24fa494dc23f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "42c760c80cb8eeae1d6347cd0577048766b654f81ff325991360f1f89c096d35"
   },
   "utility": "ptx"
  },
@@ -28679,6 +29419,43 @@
   },
   "case": {
    "argv": [
+    "-R",
+    "--right-side-refs",
+    "-iempty",
+    "--references",
+    "-S",
+    "-Myy",
+    "para"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "b5d5849acfd63a10",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "60ab84b3e36b0bb71a72fa41975e39bf344e3c00014a25008c84c20b547ddda4"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--ignore-case",
     "-M",
     "--right-side-refs",
@@ -29447,6 +30224,44 @@
   },
   "case": {
    "argv": [
+    "--word-regexp=[a-z][a-z]*",
+    "-R",
+    "--break-file=ptx_breaks",
+    "-M",
+    "yy",
+    "-Sx",
+    "--references",
+    "ptx_src"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_ptx_refs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "d56f524c1b1c5953",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "180588c11c89f7cedbfb066e6c9e65df0d7d69fe0266dab3b26eba1f714f30d4"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--typeset-mode",
     "--right-side-refs",
     "--sentence-regexp=\\n",
@@ -29615,6 +30430,45 @@
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "672ee35133a15de4dd11408500bb04c1fb24c2e750d1583220a94815d617ff38"
+  },
+  "case": {
+   "argv": [
+    "--width=40",
+    "-w",
+    "32",
+    "--right-side-refs",
+    "--auto-reference",
+    "-S",
+    "",
+    "-iempty",
+    "-"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "e0043637bed18b50",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "fd6bf9997e8bdd0d7882aa922b6b597d9fc213da727ffe50e3d9be51282fd1b0"
   },
   "utility": "ptx"
  },
@@ -30246,6 +31100,55 @@
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
+   "stdout": "58cb8a3102e34b811b385b40d6fd4352c98b6ce28bcff5ab396a12bee5c2c075"
+  },
+  "case": {
+   "argv": [
+    "-A",
+    "-F",
+    "++",
+    "-M",
+    "-S\\n",
+    "-W[a-z][a-z]*",
+    "--word-regexp=[a-z][a-z]*",
+    "-b",
+    "empty",
+    "--break-file=ptx_breaks",
+    "-f",
+    "-g1",
+    "-i",
+    "empty",
+    "-r",
+    "--typeset-mode",
+    "-w",
+    "50",
+    "--width=40"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "tabs",
+   "tier": "pinned",
+   "utility": "ptx"
+  },
+  "domain": "text",
+  "id": "f7a62b51eeadaf5e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: --references reads the first field of a line as a reference and --sentence-regexp changes what a line is; together they need the reference's two-pass input model, and the pair is refused rather than answered with one of the two readings.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "6913f8a4072eebf2343a875e84d10a6e23dc30d2857e867dabdc6df2622fd060"
+  },
+  "utility": "ptx"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "9f5ef5b563b35398252fe7e0fb2a2af838ad026f16a5ebff57560d821d5ec925"
   },
   "case": {
@@ -30570,6 +31473,22 @@
    "status": 0,
    "stdout": "ff23130c623d5b24045951ce9541d314aebe101a6f8976c26b39cf54716743fc"
   },
+  "utility": "ptx"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--format=roff",
+  "reason": "deliberate: the roff and TeX outputs are macro languages with their own quoting and truncation markers, and -G changes the option grammar as well as the output. ptx rejects them rather than emitting the plain index under their names.",
+  "utility": "ptx"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--format=tex",
+  "reason": "deliberate: the roff and TeX outputs are macro languages with their own quoting and truncation markers, and -G changes the option grammar as well as the output. ptx rejects them rather than emitting the plain index under their names.",
   "utility": "ptx"
  },
  {
@@ -44962,6 +45881,43 @@
   },
   "case": {
    "argv": [
+    "--parallel=1",
+    "-c",
+    "-u",
+    "--check",
+    "--random-sort",
+    "--ignore-case",
+    "a.txt"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text_sort_month",
+   "tier": "pinned",
+   "utility": "sort"
+  },
+  "domain": "text",
+  "id": "4f3a91ac37e72036",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bug: more than one thing is wrong with this argv and sort names a different first cause from the reference's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sort"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--unique",
     "--field-separator=:",
     "--zero-terminated",
@@ -45508,6 +46464,43 @@
   "reference": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sort"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--check",
+    "-R",
+    "-V",
+    "-d",
+    "-z",
+    "-r",
+    "unsorted"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "repeats",
+   "tier": "pinned",
+   "utility": "sort"
+  },
+  "domain": "text",
+  "id": "e8a5e6f72f504a51",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bug: more than one thing is wrong with this argv and sort names a different first cause from the reference's.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "utility": "sort"

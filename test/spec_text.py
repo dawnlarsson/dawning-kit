@@ -562,6 +562,14 @@ def text_pr_normalize(channel, data):
     return re.sub(rb"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", b"<DATE>", data)
 
 
+def text_ptx_valid(argv):
+    # ptx 9.11 never returns from a roff or TeX format asked for beside the
+    # traditional grammar; there is no answer to compare against.
+    traditional = any(word in ("-G", "--traditional") for word in argv)
+    typeset = any(word in ("-O", "-T", "--format=roff", "--format=tex") for word in argv)
+    return not (traditional and typeset)
+
+
 def text_column_valid(argv):
     table = any(word in ("-t", "--table", "-J", "--json", "-K", "--table-header-as-columns")
                 for word in argv)
@@ -946,7 +954,8 @@ UTILITIES = (
                       ("words",), ("wide",), ("para",)),
             stdin=("text_ptx", "text_ptx_refs", "text", "empty", "nonl", "words", "wide_words", "text_fmt",
                    "text_random_lines", "high", "tabs"),
-            fixture="text", extra=(("--nosuchflag",), ("-Q",), ("-f", "-i", "ptx_ignore"), ("-i", "ptx_ignore", "-o", "ptx_only"),
+            fixture="text", valid=text_ptx_valid,
+            extra=(("--nosuchflag",), ("-Q",), ("-f", "-i", "ptx_ignore"), ("-i", "ptx_ignore", "-o", "ptx_only"),
                                    ("-A", "-R"), ("-r", "-R", "ptx_refs"), ("-f", "-W", "[a-z][a-z]*"), ("-g", "5", "-w", "50"),
                                    ("-F", "++", "-w", "32"), ("-A", "ptx_src", "ptx_refs"))),
     Utility("rev",
