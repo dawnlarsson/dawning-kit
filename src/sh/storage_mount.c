@@ -924,11 +924,32 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                       (operand[1]) ? (operand[1]) : (string_address)"none",
                                       strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
                 else if (options.verbose)
+                {
+                        /*  The reference names the target it actually
+                            mounted on, which is the canonical path and not
+                            the relative word that was written. */
+                        positive shown_room = 0;
+                        p8 address_to shown = null;
+                        bipolar target_handle = system_open_at(
+                            AT_FDCWD, operand[1],
+                            STORAGE_OPEN_PATH | O_CLOEXEC);
+
+                        if (target_handle >= 0)
+                        {
+                                shown = storage_fd_path(target_handle,
+                                                        address_of shown_room);
+                                system_close(target_handle);
+                        }
                         string_format(write,
                                       options.flags & STORAGE_MS_BIND
                                           ? "mount: %s bound on %s.\n"
                                           : "mount: %s mounted on %s.\n",
-                                      operand[0], operand[1]);
+                                      operand[0],
+                                      shown ? (string_address)shown
+                                            : operand[1]);
+                        if (shown)
+                                memory_free(shown, shown_room);
+                }
                 status = answer ? 32 : 0;
                 goto done;
         }

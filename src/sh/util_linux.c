@@ -792,8 +792,10 @@ static b32 ul_exec_words(string_address address_to words,
 {
         log_flush();
         bipolar answer = file_exec_path_try(words);
-        string_format(log_error, "%s: %s: %s\n", program, words[0],
-                      file_reason(answer));
+        /*      Every one of these programs says the same sentence when the
+                command it was asked to run will not start. */
+        string_format(log_error, "%s: failed to execute %s: %s\n", program,
+                      words[0], file_reason(answer));
         return answer == -ERROR_NO_ENTRY ? 127 : 126;
 }
 
@@ -2385,10 +2387,16 @@ static b32 util_linux_flock()
                 return answer;
         }
 
-        log_flush();
+        /*      The reference writes its own progress through stdio, which
+                is fully buffered down a pipe, so the command's output comes
+                out first and flock's lines only when flock exits.  Keeping
+                our buffer over the fork gives the same order; the child
+                drops the copy it inherits so the lines are not written
+                twice. */
         bipolar child = system_fork();
         if (child == 0)
         {
+                log_writer_buffer_length = 0;
                 if (close_child)
                         system_close(handle);
                 system_call_1(syscall(exit), ul_flock_exec(words));
@@ -2407,6 +2415,7 @@ static b32 util_linux_flock()
         answer = system_wait4_retry(child, address_of status, 0, null) < 0
                    ? 1 : wait_status_code(status);
         system_close(handle);
+        log_flush();
         return answer;
 }
 
