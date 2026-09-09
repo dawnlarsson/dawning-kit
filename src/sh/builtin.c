@@ -8991,8 +8991,13 @@ COLD fn shell_read(writer write, string_address input)
                 {
                         positive length = string_length(shell_argv[name]);
 
+                        //      An operand that is not a name is a usage
+                        //      error to the Debian shell and a plain
+                        //      failure to Bash, which answers 1.
                         if (!shell_valid_name(shell_argv[name], length))
-                                return shell_answer(string_report(log_error, 2, "read: bad variable name: %s\n",
+                                return shell_answer(string_report(log_error,
+                                              shell_bash_compat ? 1 : 2,
+                                              "read: bad variable name: %s\n",
                                               shell_argv[name]));
 
                 }
