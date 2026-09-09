@@ -9786,6 +9786,30 @@ COLD fn shell_getopts(writer write, string_address input)
         anyway, and a copied class is what the mask allowed before the
         command rather than what the clauses so far have made.
 */
+//      "u+r," and "," name a clause with nothing in it. Bash refuses both;
+//      dash reads what came before the comma and is content.
+static PURE bool umask_clause_empty(string_address step)
+{
+        bool empty = true;
+
+        while (string_get(step))
+        {
+                if (string_is(step, ','))
+                {
+                        if (empty)
+                                return true;
+
+                        empty = true;
+                }
+                else
+                        empty = false;
+
+                step++;
+        }
+
+        return empty;
+}
+
 bool umask_symbolic(string_address step, positive address_to mask)
 {
         positive allowed;
@@ -9851,21 +9875,30 @@ fn umask_spoken(writer write, positive mask)
 
 COLD fn shell_umask(writer write, string_address input)
 {
-        positive index = 1;
+        // Two bytes: the shared formatter has no %c.
+        p8 room[2];
+        shell_option_walk walk = {1};
+        positive index;
         bool spoken = false;
+        //      -p asks for a line that can be typed back in. It is Bash's
+        //      alone; dash calls the letter an illegal option.
+        bool reproducible = false;
+        p8 option;
         positive mask;
 
-        while (index < shell_argc && word_is(shell_argv[index], "-S"))
+        while (shell_option_letter(address_of walk, address_of option))
         {
-                spoken = true;
-                index++;
+                if (option == 'S')
+                        spoken = true;
+                else if (option == 'p' && shell_bash_compat)
+                        reproducible = true;
+                else
+                        return shell_answer(string_report(
+                            log_error, 2, "umask: -%s: invalid option\n",
+                            shell_option_spelled(room, option)));
         }
 
-        //      A bare "--" ends the options in all three shells, and what
-        //      follows is a mode. Without this it reached umask_symbolic as
-        //      a clause of its own, which read it and set nothing.
-        if (index < shell_argc && word_is(shell_argv[index], "--"))
-                index++;
+        index = walk.index;
 
         // The only way to read it is to set it, so it is put straight back.
         mask = system_call_1(syscall(umask), 0);
@@ -9873,6 +9906,9 @@ COLD fn shell_umask(writer write, string_address input)
 
         if (index >= shell_argc)
         {
+                if (reproducible)
+                        string_format(write, spoken ? "umask -S " : "umask ");
+
                 if (spoken)
                         umask_spoken(write, mask);
                 else
@@ -9883,6 +9919,9 @@ COLD fn shell_umask(writer write, string_address input)
 
         {
                 string_address word = shell_argv[index];
+                //      Bash answers one for a mode it cannot read; dash and
+                //      POSIX answer two.
+                b32 refused = shell_bash_compat ? 1 : 2;
 
                 if (string_get(word) >= '0' && string_get(word) <= '7')
                 {
@@ -9893,26 +9932,33 @@ COLD fn shell_umask(writer write, string_address input)
                         word += used;
 
                         if (string_get(word))
-                        {
-                                shell_answer(2);
-
-                                return string_format(log_error,
-                                                     "umask: Illegal mode: %s\n",
-                                                     shell_argv[index]);
-                        }
+                                return shell_answer(string_report(
+                                    log_error, refused,
+                                    "umask: Illegal mode: %s\n",
+                                    shell_argv[index]));
 
                         mask = value;
                 }
-                else if (!umask_symbolic(word, address_of mask))
-                {
-                        shell_answer(2);
-
-                        return string_format(log_error,
-                                             "umask: Illegal mode: %s\n", word);
-                }
+                //      An empty clause -- a lone comma, or one on the end --
+                //      is a mode operator Bash will not have. dash reads the
+                //      trailing one and stops, which is where these two part.
+                else if ((shell_bash_compat && umask_clause_empty(word)) ||
+                         !umask_symbolic(word, address_of mask))
+                        return shell_answer(string_report(
+                            log_error, refused, "umask: Illegal mode: %s\n",
+                            word));
         }
 
         system_call_1(syscall(umask), mask);
+
+        //      Bash writes the new mask out when -S was asked for as well as
+        //      setting it; dash sets in silence. -p on its own is silent in
+        //      both, which is where the two options differ.
+        if (spoken && shell_bash_compat)
+        {
+                mask = system_call_1(syscall(umask), mask);
+                umask_spoken(write, mask);
+        }
 
         shell_answer(0);
 }
@@ -9934,21 +9980,25 @@ typedef struct
         bipolar children_system;
 } shell_clocks;
 
-// Six places after the point, which is what a %f with nothing said about it
-// writes and so what the reference shell prints. Only the first two of them
-// can ever be anything but zero at a hundred ticks to the second.
+// Dash writes six places after the point, which is what a %f with nothing
+// said about it writes; bash writes three. Only the first two of either can
+// ever be anything but zero at a hundred ticks to the second, so the places
+// past them are the personality's spelling and nothing else.
 #define CLOCK_PLACES 1000000
+#define CLOCK_PLACES_BASH 1000
 
 fn shell_time_written(writer write, bipolar ticks)
 {
         positive seconds;
         positive fraction;
+        positive places = shell_bash_compat ? 3 : 6;
+        positive scale = shell_bash_compat ? CLOCK_PLACES_BASH : CLOCK_PLACES;
 
         if (ticks < 0)
                 ticks = 0;
 
         seconds = (positive)ticks / CLOCK_TICKS;
-        fraction = ((positive)ticks % CLOCK_TICKS) * (CLOCK_PLACES / CLOCK_TICKS);
+        fraction = ((positive)ticks % CLOCK_TICKS) * (scale / CLOCK_TICKS);
 
         positive_to_string(write, seconds / 60);
         write("m", 1);
@@ -9957,7 +10007,7 @@ fn shell_time_written(writer write, bipolar ticks)
 
         p8 fraction_text[6];
         positive fraction_length =
-            positive_into_padded(fraction_text, fraction, 6, '0');
+            positive_into_padded(fraction_text, fraction, places, '0');
 
         write(fraction_text, fraction_length);
 
@@ -12804,7 +12854,17 @@ static COLD fn shell_command_kind_written(writer write, string_address name,
         if (style == SHELL_KIND_TERSE)
                 string_format(write, "%s\n", kind);
         else if (style == SHELL_KIND_LONG)
-                string_format(write, "%s is a shell %s\n", name, kind);
+        {
+                //      "cd is a shell builtin" and "if is a shell keyword"
+                //      are spelled the same by both references; a function
+                //      is not. Bash says "f is a function" and dash says
+                //      "f is a shell function", so the word "shell" is the
+                //      personality's and not the kind's.
+                if (shell_bash_compat && word_is(kind, "function"))
+                        string_format(write, "%s is a function\n", name);
+                else
+                        string_format(write, "%s is a shell %s\n", name, kind);
+        }
         else
                 string_format(write, "%s\n", name);
 }
