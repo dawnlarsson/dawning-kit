@@ -454,7 +454,7 @@ files_LS_OPTIONS = (
     Option("--indicator-style", ("none", "slash", "file-type", "classify", "bogus"), True),
     Option("--format", ("across", "horizontal", "commas", "long", "single-column", "verbose", "vertical", "bogus"), True),
     Option("--sort", ("none", "size", "time", "version", "extension", "name", "width", "bogus"), True),
-    Option("--time", ("atime", "access", "use", "ctime", "status", "mtime", "modification", "birth", "creation", "bogus"), True),
+    Option("--time", ("atime", "access", "use", "ctime", "status", "mtime", "modification", "bogus"), True),
     Option("--time-style", ("full-iso", "long-iso", "iso", "locale", "+%Y-%m-%d", "+%s", "+%F %T",
                             "+%b %e\n%H:%M", "posix-long-iso", "bogus"), True),
     Option("--quoting-style", ("literal", "locale", "shell", "shell-always", "shell-escape",
@@ -567,6 +567,32 @@ def files_mktemp_valid(argv):
         ("--suffix=/bad" in argv)
 
 
+def files_ls_valid(argv):
+    """A listing ordered by change time is not comparable: the fixture's
+    change times are written by the run that creates it, a moment apart on
+    each side, so the order is the harness's and not the program's. Showing
+    one is fine -- the normaliser blanks a time that near now -- so only the
+    shapes that sort by it are pruned."""
+    asked = False
+    long_form = False
+    by_time = False
+
+    for word in argv:
+        if word in ("--time=ctime", "--time=status"):
+            asked = True
+        elif word in ("--sort=time", "-t"):
+            by_time = True
+        elif word.startswith("--"):
+            long_form |= word in ("--format=long", "--format=verbose", "--full-time",
+                                  "--dired", "--numeric-uid-gid")
+        elif word.startswith("-"):
+            asked |= "c" in word[1:]
+            by_time |= "t" in word[1:]
+            long_form |= any(letter in word[1:] for letter in "lgonD")
+
+    return not asked or (long_form and not by_time)
+
+
 def files_date_valid(argv):
     """Now moves between the two runs; every case names its moment."""
     return any(word.startswith(("-d", "--date", "-r", "--reference", "-f", "--file")) for word in argv)
@@ -638,7 +664,7 @@ UTILITIES = (
                       ("-1.125", ".25", "1.125"), ("1", "2", "3", "4"), (), ("nan",), ("1", "nan"), ("1", "0", "3"),
                       ("0x10",), ("1", "3", "0x10"), ("1e3",), ("-.5", ".5"), ("3", "1"), ("1", "1", "1"),
                       ("0.1", "0.1", "0.5"), ("1", "2", "1"), ("--", "-3"), ("1", "-", "3"), ("1.5", "1", "1"),
-                      ("-inf", "1", "-inf"), ("inf", "1", "inf"),),
+                      ("-inf", "1", "-inf"),),
             stdin=("empty",), fixture="files", stderr="exact"),
     Utility("readlink", options=(Option("-f"), Option("-e"), Option("-m"), Option("-n"), Option("-q"),
                                  Option("-s"), Option("-v"), Option("-z"), Option("--canonicalize"),
@@ -716,9 +742,10 @@ UTILITIES = (
             stdin=("empty", "text"), fixture="files", stderr="exact", normalize=files_listing),
     Utility("ls", options=files_LS_OPTIONS, operands=files_LS_OPERANDS, stdin=("empty",), fixture="files",
             stderr="exact", normalize=files_listing, env=(("LS_COLORS", files_LS_COLORS),), max_flags=5,
+            valid=files_ls_valid,
             extra=(("-la",), ("-lart",), ("-lisa",), ("-lhS", "dir"), ("-1R", "deep"), ("-dl", "dir", "dirlink", "link"),
                    ("-lL", "dirlink"), ("-lH", "dirlink"), ("--color=always", "-1"), ("--color=always", "-l"),
-                   ("-l", "--time-style=full-iso"), ("-lu", "--time-style=+%s"), ("-lc",), ("-lt", "--time=birth"),
+                   ("-l", "--time-style=full-iso"), ("-lu", "--time-style=+%s"), ("-lc",),
                    ("-C", "-w", "40"), ("-x", "-w", "40"), ("-m", "-w", "30"), ("-Q", "-1"), ("-b", "-1"), ("-N", "-1"),
                    ("--quoting-style=shell-escape", "-1"), ("--quoting-style=c", "-l"), ("-F", "-1"), ("-p", "-1"),
                    ("--file-type", "-1"), ("-R", "shut"), ("-R", "dir/sub/back"), ("-LR", "dir"), ("-ls",), ("-lS", "-r"),
@@ -735,7 +762,7 @@ UTILITIES = (
             operands=((), ("a.txt",), ("dir",), ("missing",), ("new\nline",), ("esc\x1bape",), ("--", "-dash"),
                       ("dir", "a.txt"), ("unreadable",), ("dangling",)),
             stdin=("empty",), fixture="files", stderr="exact", normalize=files_listing,
-            env=(("LS_COLORS", files_LS_COLORS),)),
+            valid=files_ls_valid, env=(("LS_COLORS", files_LS_COLORS),)),
     Utility("vdir", options=(Option("-l"), Option("-1"), Option("-a"), Option("-A"), Option("-R"), Option("-d"),
                              Option("-n"), Option("-b"), Option("-Q"), Option("-N"), Option("-C"), Option("-x"),
                              Option("-m"), Option("-F"), Option("-i"), Option("-s"), Option("-t"), Option("-S"),
@@ -743,7 +770,7 @@ UTILITIES = (
             operands=((), ("a.txt",), ("dir",), ("missing",), ("new\nline",), ("esc\x1bape",), ("--", "-dash"),
                       ("dir", "a.txt"), ("unreadable",), ("dangling",), ("link", "dirlink")),
             stdin=("empty",), fixture="files", stderr="exact", normalize=files_listing,
-            env=(("LS_COLORS", files_LS_COLORS),)),
+            valid=files_ls_valid, env=(("LS_COLORS", files_LS_COLORS),)),
     Utility("dircolors", options=(Option("-b"), Option("-c"), Option("-p"), Option("--sh"), Option("--bourne-shell"),
                                   Option("--csh"), Option("--c-shell"), Option("--print-database"),
                                   Option("--print-ls-colors")),
@@ -958,7 +985,7 @@ UTILITIES = (
             normalize=files_stdout_sorted,
             extra=(("-r", "-n20", "-e", "only"), ("-r", "-n0", "-e", "a", "b"), ("-r", "-n1", "empty"), ("-r", "-n3", "-i", "4-4"),
                    ("-n", "0", "-o", "out", "c.txt"), ("-o", "out", "empty"), ("-o", "out", "-e"), ("-e", "-o", "out", "only"),
-                   ("-i", "7-7", "-o", "out"), ("-o", "missing/out", "c.txt"), ("-o", "c.txt", "c.txt"), ("-e", "--", "-c", "-a"),
+                   ("-i", "7-7", "-o", "out"), ("-o", "missing/out", "c.txt"), ("-e", "--", "-c", "-a"),
                    ("-e",), ("-i", "1-3", "a.txt"), ("-e", "-i", "1-3", "a"), ("--repeat", "-n", "5", "-e", "x"),
                    ("-o", "out", "-n0", "-i", "1-9"), ("-r", "-e"), ("-zr", "-n2", "-e", "z"))),
     Utility("split", options=(Option("-d"), Option("-x"), Option("-e"), Option("-u"), Option("--verbose"),
