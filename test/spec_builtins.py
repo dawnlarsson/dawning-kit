@@ -1427,6 +1427,45 @@ def builtins_test_forms(rng):
     return "builtins-test-forms", ALL, body + "\n"
 
 
+
+
+def builtins_allexport(rng):
+    """set -a: which builtins' assignments reach a child's environment."""
+    body = rng.choice((
+        "unset READV; set -a; printf 'value\\n' | { read READV; /bin/sh -c 'echo \"$READV\"'; }",
+        "unset OPTION OPTARG; OPTIND=1; set -a; set -- -x value; getopts x: OPTION; "
+        "/bin/sh -c 'echo \"$OPTION:$OPTARG:$OPTIND\"'",
+        "/bin/mkdir -p target; unset PWD OLDPWD; set -a; cd target; "
+        "/bin/sh -c 'echo \"${PWD##*/}:${OLDPWD##*/}\"'",
+        "unset FIXED; set -a; readonly FIXED=value; /bin/sh -c 'echo \"$FIXED\"'",
+        "unset V; set -a; V=plain; /bin/sh -c 'echo \"$V\"'",
+        "unset V; set -a; set +a; V=plain; /bin/sh -c 'echo \"${V-unset}\"'",
+        "unset V; set -a; unset V; V=late; /bin/sh -c 'echo \"$V\"'",
+    ))
+    return "builtins-allexport", ALL, body + "\n"
+
+
+def builtins_history_file(rng):
+    """The history store as files: read, write, append, add and clear."""
+    total = rng.choice((0, 1, 3, 7))
+    keep = rng.choice((0, 1, 2, 7, 100))
+    steps = rng.choice((
+        "history -r initial; history",
+        "history -r initial; history -w saved; /bin/cat saved",
+        "history -r initial; history -a appended; /bin/cat appended",
+        "history -r initial; history -s added; history",
+        "history -r initial; history -c; history; printf 'cleared:%s\\n' \"$?\"",
+        "history -r initial; history -d 1 2>/dev/null; history",
+        "history -r initial; history -n initial; history",
+        "history -r missing12345 2>/dev/null; printf 'missing:%s\\n' \"$?\"",
+    ))
+    make = ("/usr/bin/awk 'BEGIN { for (i = 1; i <= " + str(total) +
+            "; i++) print \"old-\" i }' > initial\n")
+    script = ("set -o history 2>/dev/null\nHISTFILE=$PWD/hist\nHISTSIZE=" +
+              str(keep) + "\n" + make + "history -c\n" + steps + "\n")
+    return "builtins-history-file", ("bash", "posix"), script
+
+
 FAMILIES = (
     builtins_listing, builtins_query_namespaces, builtins_declaration_lifecycle,
     builtins_inventory_state, builtins_read_fields, builtins_read_ifs_snapshot,
@@ -1437,4 +1476,5 @@ FAMILIES = (
     builtins_getopts_scope, builtins_array_machinery, builtins_nameref,
     builtins_scope_snapshot, builtins_readonly_scope, builtins_pipestatus,
     builtins_dynamic_variables, builtins_umask_symbolic, builtins_test_forms,
+    builtins_allexport, builtins_history_file,
 )
