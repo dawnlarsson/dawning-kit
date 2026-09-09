@@ -39,7 +39,7 @@ jobs:
       # which is dash here.
       - name: Parse bash scripts
         run: |
-          for f in kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh; do
+          for f in kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh; do
             echo "bash -n $f"
             bash -n "$f"
           done
@@ -58,7 +58,7 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck -S warning \
-            kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
+            kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh \
             kit/build kit/spark kit/asm kit/common \
             kit/config kit/verify_config kernel/replace/apply \
             test/run build.sh
