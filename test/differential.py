@@ -51,6 +51,13 @@ import concurrent.futures
 
 HERE = Path(__file__).resolve().parent
 PIN_FILE = Path(__file__).resolve()
+
+# A spec says `from differential import INPUTS, FIXTURES` and adds its own
+# shapes to them. Run as a script this file is the module __main__ (and a pool
+# worker's copy is __mp_main__), so without this alias the spec would import
+# a second copy of this file and its additions would land in the other one:
+# a fixture it declared is not found, and an input it named feeds nothing.
+sys.modules.setdefault("differential", sys.modules[__name__])
 PIN_BEGIN = "# ---- pinned rows begin (written by --record; never by hand) ----"
 PIN_END = "# ---- pinned rows end ----"
 OUTPUT_LIMIT = 1 << 20
@@ -345,6 +352,13 @@ def grammar_cases(domain, utility, budget, rng):
     if budget == "singles":
         return
     strength = 3 if budget == "full" else 2
+    # Strength 3 over a program with a long operand or input list is a
+    # covering array of tens of thousands of rows, which the greedy builder
+    # takes hours over; such a program keeps its pairs and the deeper random
+    # tier instead. The three largest parameters decide.
+    sizes = sorted(len(values) for values in parameters)
+    if strength == 3 and len(sizes) >= 3 and sizes[-1] * sizes[-2] * sizes[-3] > 4000:
+        strength = 2
     for row in covering_array(parameters, strength, random.Random(rng.random())):
         argv, stdin = assemble(utility, row, parameters)
         yield from emit(argv, stdin, "pairs" if strength == 2 else "triples")

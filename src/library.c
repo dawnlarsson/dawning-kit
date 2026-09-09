@@ -3266,8 +3266,11 @@ __asm__(
     //      ten instructions on every call to a routine whose count is often
     //      under a word. arm64 and riscv64 already did it this way here.
     //
-    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
+    // Short spans skip feature dispatch; the scalar entry handles zero.
+    // Kernel builds reach that entry directly and never read feature bytes.
+    "xor %eax, %eax\n"
     ASM_USERSPACE_WIDE(
+        "cmp $32, %rdx\n   jb 5f\n"
         WIDE_PICK_MAX
         WIDE_MEMORY(AVX512_WIDTH, AVX512_BROADCAST, "", AVX512_HUNT,
                     AVX512_HUNT_QUAD, AVX512_HUNT_QUAD_WHICH, AVX512_LEAVE, "7f")
