@@ -6089,14 +6089,6 @@ static bool shell_declare_options(shell_declare_state address_to state)
                 if (attribute == SHELL_ARRAY_ASSOCIATIVE && direction == '-')
                         associative_told = true;
 
-                if (indexed_told && associative_told)
-                {
-                        string_format(log_error, "%s: -a: invalid option\n",
-                                      shell_argv[0]);
-                        shell_answer(2);
-                        return false;
-                }
-
                 // Upper and lower fold in opposite directions and an array
                 // has one kind, so asking for one of a pair withdraws the
                 // other rather than leaving a name that is both.
@@ -6124,6 +6116,19 @@ static bool shell_declare_options(shell_declare_state address_to state)
                         state->set |= flag;
                 else
                         state->clear |= flag;
+        }
+
+        //      Asking for both array kinds at once is refused, and Bash
+        //      names -a whichever order the two arrived in. Weighed after
+        //      the walk and not inside it, because -p may still arrive:
+        //      "declare -A -a -p v" is a listing to Bash, which reads the
+        //      attributes it holds rather than the pair it was handed.
+        if (indexed_told && associative_told && !(state->set & DECLARE_PRINT))
+        {
+                string_format(log_error, "%s: -a: invalid option\n",
+                              shell_argv[0]);
+                shell_answer(2);
+                return false;
         }
 
         state->index = walk.index;
@@ -6653,7 +6658,8 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                                   : global_meta ? global_meta->attributes : shell_variable_attributes(word, length);
 
                 if ((state->attributes_set & SHELL_ARRAY_NAMEREF) &&
-                    (held_attributes & SHELL_ARRAY_EITHER))
+                    ((held_attributes & SHELL_ARRAY_EITHER) ||
+                     (scoped && (state->attributes_set & SHELL_ARRAY_EITHER))))
                 {
                         string_format(log_error, "%s: %s: reference variable cannot be an array\n",
                                       shell_argv[0], word);
@@ -8871,6 +8877,7 @@ COLD fn shell_read(writer write, string_address input)
         bool quieted = false;
         terminal_modes quiet_held;
         b32 descriptor = 0;
+        string_address prompt = null;
         string_address ifs;
         p8 ifs_default[] = " \t\n";
 
@@ -8907,7 +8914,16 @@ COLD fn shell_read(writer write, string_address input)
                         array_name = value;
                 }
                 else if (which == 'p')
-                        log_error(value, 0);
+                {
+                        //      A prompt is for someone to read, so it is
+                        //      held until the descriptor is known and
+                        //      written only when that descriptor is a
+                        //      terminal. Bash is silent down a pipe, and
+                        //      writing it anyway put the prompt in the
+                        //      error stream of every script that read a
+                        //      file.
+                        prompt = value;
+                }
                 else if (which == 'i')
                 {
                         // The editor would put it in front of what is
@@ -8948,6 +8964,14 @@ COLD fn shell_read(writer write, string_address input)
                 }
         }
         index = options.index;
+
+        if (prompt)
+        {
+                p8 settings[64];
+
+                if (system_control(descriptor, BUILTIN_TCGETS, settings) == 0)
+                        log_error(prompt, 0);
+        }
 
         names = index;
 
