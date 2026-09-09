@@ -16998,6 +16998,9 @@ static b32 text_sed()
         for (b32 i = 0; i < inputs && leaving < 0; i++)
         {
                 string_address name = text_file_name(i);
+                // What F prints is the name as it was given: following a
+                // link changes which file is edited, not what it is called.
+                string_address called = name;
                 p8 resolved[TEXT_PATH_MAX];
                 p8 temporary[TEXT_PATH_MAX];
                 bipolar written = -1;
@@ -17196,7 +17199,7 @@ static b32 text_sed()
                                         goto cycle_done;
                                 case 'F':
                                         sed_output_start();
-                                        text_put_string(name ? name : (string_address) "-");
+                                        text_put_string(called ? called : (string_address) "-");
                                         text_put_character('\n');
                                         break;
                                 case 'n':
