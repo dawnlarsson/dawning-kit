@@ -2365,7 +2365,11 @@ def shell_lang_ifs_splitting(rng):
                         "a,b:c", "xay", "a\\nb\\nc", "", "*", "a.txt b.txt", "$y", "one\\ntwo"))
     form = rng.choice(("$x", "\"$x\"", "${x}", "${x-D E}", "${x:-a:b}", "$x\"$x\"", "pre${x}post", "$(printf '%s' \"$x\")",
                        "$*", "\"$*\"", "$@", "\"$@\"", "${@#a}", "\"${*}\"", "$((1+1))$x", "~", "'$x'"))
-    context = rng.choice(("observe", "for", "set", "read", "case", "assign"))
+    #       "resplit" changes IFS between splits of one value: a quoted field
+    #       must leave the separator that follows it current. It came from a
+    #       hand-written case this grammar replaced, and the shapes above set
+    #       IFS once and never move it.
+    context = rng.choice(("observe", "for", "set", "read", "case", "assign", "resplit"))
     setup = ["x=" + shell_quote(value).replace("\\n", "\n") if "\\n" in value else "x=" + shell_quote(value),
              "y='Y  Z'", "set -- 'p q' '' r"]
     if ifs == "unset":
@@ -2382,6 +2386,9 @@ def shell_lang_ifs_splitting(rng):
         use = "printf '%s\\n' " + shell_quote(value) + " | { read -r a b c; printf '<%s>' \"$a\" \"$b\" \"$c\"; echo; }"
     elif context == "case":
         use = "case " + form + " in a) echo a;; *) echo other;; esac"
+    elif context == "resplit":
+        use = ("printf '<%s>\\n' \"$x\" \"\" $x; IFS=,; printf '<%s>\\n' \"$x\" \"\" $x; "
+               "IFS=''; printf '<%s>\\n' \"$x\" \"\" $x")
     else:
         use = "z=" + form + "; printf '<%s>\\n' \"$z\""
     modes = shell_ALL if ("\\n" not in str(ifs)) else shell_BASH
@@ -3305,7 +3312,15 @@ def shell_lang_aliases(rng):
     shape = rng.choice(("define-run", "trailing-space", "keyword", "recursion", "self", "in-function", "same-line", "quoted-word",
                         "multi-word", "unalias", "redirect-after", "newline-in-alias", "assignment-before",
                         "expand_aliases-off", "posix-mode", "alias-to-builtin", "cycle-through-assignment", "comment-in-alias",
-                        "heredoc-in-alias"))
+                        "heredoc-in-alias",
+                        #       The four below came from hand-written cases that
+                        #       this grammar replaced. They are storage shapes a
+                        #       random walk does not reach: an alias table slot
+                        #       reused rather than freed has to keep the operand,
+                        #       the spelling a defined function retained, and a
+                        #       held document, across a redefinition.
+                        "wrapped-redefinition", "reuse-keeps-function-spelling",
+                        "heredoc-survives-replacement"))
     enable = "shopt -s expand_aliases 2>/dev/null; "
     if shape == "define-run":
         script = "alias a='echo aliased'; a"
@@ -3345,9 +3360,24 @@ def shell_lang_aliases(rng):
         script = "alias a='x=1 a'; a 2>/dev/null; echo \"$?\""
     elif shape == "comment-in-alias":
         script = "alias a='echo one # tail'; a two"
+    elif shape == "wrapped-redefinition":
+        # A slot reused instead of freed must still carry the operand, and the
+        # wrappers must not consume the definition on the way through.
+        script = ("f() { builtin alias a=echo; command alias a=printf; alias a; }\n"
+                  "f\nf")
+    elif shape == "reuse-keeps-function-spelling":
+        # A retained function keeps the words it was defined with, whatever the
+        # alias becomes afterwards.
+        script = ("alias a='echo before'\nf() { a; }\nalias a='echo later'\n"
+                  "g() { a; }\nalias a=:\nf; g")
+    elif shape == "heredoc-survives-replacement":
+        # The document is held inside a substitution and carries an unbalanced
+        # parenthesis; the alias is run twice and then redefined.
+        script = ("alias a='printf \"<%s>\\n\" \"$(cat <<EOF\n"
+                  "inside ) text\nEOF\n)\"'\na\na\nalias a='echo changed'\na")
     else:
         script = "alias a='cat <<EOF'; a\nbody\nEOF"
-    modes = shell_BASH if shape in ("expand_aliases-off", "posix-mode") else shell_ALL
+    modes = shell_BASH if shape in ("expand_aliases-off", "posix-mode", "wrapped-redefinition") else shell_ALL
     return "aliases-" + shape, modes, shell_program(enable + script, "echo \"end=$?\"")
 
 
