@@ -89,6 +89,23 @@ static CONST unsigned int key_character(unsigned int code, unsigned int modifier
 }
 
 /*
+        Whether a key is somebody typing.
+
+        A modifier on its own is not. It has no character and no sequence, so
+        term_key_modified emits nothing for it and nothing reaches the program
+        -- and it is what one hand holds while the other works the wheel or
+        the bar, which must not be read as a reason to leave where they were
+        reading.
+*/
+static PURE _Bool key_typed(unsigned int code, unsigned int flags)
+{
+        if (!(flags & WINDOW_KEY_DOWN))
+                return false;
+
+        return code >= KEY_TABLE || !key_map[code][2];
+}
+
+/*
         Called by the input core, so no lock and no sleeping. Which window has
         focus is decided under desktop.lock and the window can be freed, so
         this records what happened and the thread hands it over.
@@ -201,7 +218,7 @@ static void keyboard_event(struct input_handle *handle, unsigned int code, int v
 static void keys_deliver(void)
 {
         struct pane *pane = desktop.focused;
-        unsigned int head, tail;
+        unsigned int head, tail, at;
 
         head = (unsigned int)atomic_read(&desktop.key_head);
         tail = (unsigned int)atomic_read(&desktop.key_tail);
@@ -209,13 +226,42 @@ static void keys_deliver(void)
         if (head == tail)
                 return;
 
+        smp_rmb();
+
+        /*
+                Typing puts the window back at the end.
+
+                What was typed lands at the bottom, and a view left where the
+                hand put it shows none of it -- nor anything the program says
+                about it, because nothing scrolled back is drawn at all. So a
+                window read back through and then typed into looked like one
+                that had stopped listening, when every key had in fact arrived.
+
+                Before the handover rather than after: this pass is what draws
+                the answer, and the frame it asks for is the same one the keys
+                will have been read by.
+        */
+        for (at = tail; at != head; at++)
+        {
+                const struct window_key *key = &desktop.key_ring[at % WINDOW_KEYS];
+
+                if (!key_typed(key->code, key->flags))
+                        continue;
+
+                // The wheel goes to the window under the pointer and this to
+                // the one with focus, so an unfocused window is not snapped
+                // out from under the hand reading it.
+                if (pane && pane_view_live(pane))
+                        atomic_set(&desktop.frame_pending, 1);
+
+                break;
+        }
+
         if (!pane || !pane->shared)
         {
                 atomic_set(&desktop.key_tail, (int)head);
                 return;
         }
-
-        smp_rmb();
 
         /*
                 Every one is consumed here whether or not it lands.

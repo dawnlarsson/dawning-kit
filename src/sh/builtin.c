@@ -9913,6 +9913,16 @@ bool trap_debug_here;
         or a name in either case with or without SIG in front, as the
         reference shell reads it.
 */
+//      A condition nobody can use, in the words of the shell being run:
+//      Bash calls it an invalid signal specification, dash a bad trap.
+static fn trap_refused(string_address word)
+{
+        string_format(log_error, shell_bash_compat
+                                     ? "trap: %s: invalid signal specification\n"
+                                     : "trap: %s: bad trap\n",
+                      word);
+}
+
 bipolar trap_number(string_address word)
 {
         if (!word)
@@ -10227,6 +10237,7 @@ COLD fn shell_trap(writer write, string_address input)
         string_address action;
         b32 answer = 0;
         bool print = false;
+        bool bare = false;
 
         bool listing = false;
 
@@ -10265,6 +10276,15 @@ COLD fn shell_trap(writer write, string_address input)
                                 continue;
                         }
 
+                        //      -P writes the action by itself, for scripts
+                        //      that want the line and not the command that
+                        //      would set it again.
+                        if (at[0] == 'P')
+                        {
+                                bare = true;
+                                continue;
+                        }
+
                         //      Bash names the letter and prints how it is
                         //      called; the word is never read as an operand,
                         //      so `trap -x INT` sets nothing.
@@ -10293,8 +10313,59 @@ COLD fn shell_trap(writer write, string_address input)
                 return shell_answer(0);
         }
 
+        //      A usage error from a special builtin ends the script in
+        //      POSIX mode, so the listing after it never runs.
+        if (print && bare)
+        {
+                string_format(log_error, "trap: cannot specify both -p and -P\n");
+
+                if (shell_posix_on())
+                        exec_special_error_note();
+
+                return shell_answer(2);
+        }
+
         if (index < shell_argc && word_is(shell_argv[index], "--"))
                 index++;
+
+        if (bare)
+        {
+                //      Nothing to write the action of, which Bash refuses
+                //      rather than treating as every condition.
+                if (index >= shell_argc)
+                {
+                        string_format(log_error,
+                            "trap: -P requires at least one signal name\n");
+
+                        if (shell_posix_on())
+                                exec_special_error_note();
+
+                        return shell_answer(2);
+                }
+
+                while (index < shell_argc)
+                {
+                        bipolar number = trap_number(shell_argv[index++]);
+                        string_address recorded;
+
+                        if (number < 0 || number > TRAP_CONDITION_MAX)
+                        {
+                                trap_refused(shell_argv[index - 1]);
+                                answer = 1;
+                                continue;
+                        }
+
+                        recorded = trap_action((positive)number);
+
+                        if (recorded)
+                        {
+                                write(recorded, string_length(recorded));
+                                write("\n", 1);
+                        }
+                }
+
+                return shell_answer(answer);
+        }
 
         if (print)
         {
@@ -10347,9 +10418,7 @@ COLD fn shell_trap(writer write, string_address input)
                                 if (number < 0 ||
                                     number > TRAP_CONDITION_MAX)
                                 {
-                                        string_format(log_error,
-                                                      "trap: invalid signal: %s\n",
-                                                      shell_argv[index - 1]);
+                                        trap_refused(shell_argv[index - 1]);
                                         answer = 1;
                                         continue;
                                 }
@@ -10440,12 +10509,17 @@ COLD fn shell_trap(writer write, string_address input)
                 //      script.
                 if (only < 0 || only > TRAP_CONDITION_MAX)
                 {
-                        if (shell_posix_on())
+                        //      Bash answers a word it cannot use with how
+                        //      trap is called, and in its POSIX mode that
+                        //      ends the script; dash names the word instead.
+                        if (shell_bash_compat)
                         {
                                 string_format(log_error,
                                     "trap: usage: trap [-Plp] "
                                     "[[action] signal_spec ...]\n");
-                                exec_special_error_note();
+
+                                if (shell_posix_on())
+                                        exec_special_error_note();
 
                                 return shell_answer(2);
                         }
@@ -10453,7 +10527,7 @@ COLD fn shell_trap(writer write, string_address input)
                         string_format(log_error, "trap: %s: bad trap\n",
                                       shell_argv[index]);
 
-                        return shell_answer(shell_bash_compat ? 2 : 1);
+                        return shell_answer(1);
                 }
 
                 action = null;
@@ -10475,8 +10549,7 @@ COLD fn shell_trap(writer write, string_address input)
 
                 if (number < 0 || number > TRAP_CONDITION_MAX)
                 {
-                        string_format(log_error, "trap: invalid signal: %s\n",
-                                      shell_argv[index - 1]);
+                        trap_refused(shell_argv[index - 1]);
                         answer = 1;
                         continue;
                 }

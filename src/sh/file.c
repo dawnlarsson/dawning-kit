@@ -96,6 +96,8 @@ static TEXT_ARENA_GROW bool text_arena_grow(
 #define ERROR_ILLEGAL_SEEK 29
 #define ERROR_NO_SYSTEM_CALL 38
 #define ERROR_NAME_TOO_LONG 36
+#define ERROR_LOOP 40
+#define ERROR_EXEC_FORMAT 8
 #define ERROR_NOT_EMPTY 39
 #define ERROR_INPUT_OUTPUT 5
 #define ERROR_AGAIN 11
@@ -6130,9 +6132,101 @@ static bipolar file_exec_path_try(string_address address_to words)
 }
 
 // Replaces this process, and only ever called in a child of it.
+//      Why a command could not be run, in the words the reference uses.
+//      Only what an exec can answer with is here; anything else keeps the
+//      commonest reading, which is the one a missing command gives.
+static string_address file_exec_refusal(bipolar answer)
+{
+        switch (-answer)
+        {
+        case ERROR_ACCESS:
+                return "Permission denied";
+        case ERROR_NOT_DIRECTORY:
+                return "Not a directory";
+        case ERROR_IS_DIRECTORY:
+                return "Is a directory";
+        case ERROR_ARGUMENT_LIST:
+                return "Argument list too long";
+        case ERROR_NAME_TOO_LONG:
+                return "File name too long";
+        case ERROR_NO_MEMORY:
+                return "Cannot allocate memory";
+        case ERROR_LOOP:
+                return "Too many levels of symbolic links";
+        case ERROR_EXEC_FORMAT:
+                return "Exec format error";
+        }
+
+        return "No such file or directory";
+}
+
+/*
+        A name inside a diagnostic, quoted the way the reference quotes it:
+        single quotes around it, and a backslash in front of a backslash or
+        an apostrophe so the quoting cannot be walked out of. A control byte
+        is written as the escape it is known by, or as its octal, so a name
+        carrying a newline stays on one line.
+*/
+static fn file_quoted_name(string_address name)
+{
+        log_error("'", 1);
+
+        for (string_address at = name; at[0]; at++)
+        {
+                p8 byte = (p8)at[0];
+                string_address escape = null;
+
+                switch (byte)
+                {
+                case '\\': escape = "\\\\"; break;
+                case '\'': escape = "\\'"; break;
+                case '\a': escape = "\\a"; break;
+                case '\b': escape = "\\b"; break;
+                case '\f': escape = "\\f"; break;
+                case '\n': escape = "\\n"; break;
+                case '\r': escape = "\\r"; break;
+                case '\t': escape = "\\t"; break;
+                case '\v': escape = "\\v"; break;
+                }
+
+                if (escape)
+                {
+                        log_error(escape, 2);
+                        continue;
+                }
+
+                if (byte < ' ' || byte == 127)
+                {
+                        p8 octal[4] = {'\\', (p8)('0' + ((byte >> 6) & 7)),
+                                       (p8)('0' + ((byte >> 3) & 7)),
+                                       (p8)('0' + (byte & 7))};
+
+                        log_error(octal, 4);
+                        continue;
+                }
+
+                log_error(at, 1);
+        }
+
+        log_error("'", 1);
+}
+
 static fn file_exec_path(string_address address_to words)
 {
         bipolar answer = file_exec_path_try(words);
+
+        /*
+                The child says why, because only the child knows: back in the
+                parent all that survives is an exit status, and a command
+                that merely exits 127 of its own accord looks the same as one
+                that was never there. find's -exec reports each command it
+                could not run and carries on, which is what the reference
+                does.
+        */
+        log_error("find: ", 6);
+        file_quoted_name(words[0]);
+        string_format(log_error, ": %s\n", file_exec_refusal(answer));
+        log_flush();
 
         exit(answer == -ERROR_ACCESS ? 126 : 127);
 }
@@ -7038,25 +7132,52 @@ static b32 find_parse_primary()
                              : find_is(word, "-okdir")  ? 'O'
                                                         : 0;
                 node->number = (b64)find_at;
-                while (find_at < find_count && !find_is(find_word(), ";") &&
-                       !find_is(find_word(), "+"))
+
+                /*
+                        A semicolon always closes the command. A plus closes
+                        it only where {} stands immediately in front, and is
+                        an ordinary word anywhere else -- which is how
+                        `-exec echo + ;` prints a plus for every entry, and
+                        why `-exec echo +` runs off the end looking for a
+                        terminator it never finds.
+                */
+                while (find_at < find_count)
+                {
+                        if (find_is(find_word(), ";"))
+                                break;
+
+                        if (find_is(find_word(), "+") &&
+                            (b64)find_at > node->number &&
+                            find_is(program_argument((b32)(find_at - 1)), "{}"))
+                                break;
+
                         find_at++;
+                }
                 if (find_at >= find_count)
                 {
-                        log_error("find: -exec has no ending ; or +\n", 0);
+                        string_format(log_error,
+                                      "find: missing argument to `%s'\n", word);
                         goto bad;
                 }
                 node->extra = (b64)find_at;
                 node->comparison = find_is(find_word(), "+") ? '+' : ';';
                 find_at++;
+                /*
+                        Nothing at all between the option and its semicolon.
+                        The reference names the terminator as the argument it
+                        was handed where a command belonged. This used to
+                        build an empty command and run it once per entry,
+                        which on two hundred files took sixteen seconds to do
+                        nothing.
+                */
+                if (node->extra == node->number)
+                {
+                        string_format(log_error,
+                            "find: invalid argument `;' to `%s'\n", word);
+                        goto bad;
+                }
                 if (node->comparison == '+')
                 {
-                        if (node->extra == node->number ||
-                            !find_is(program_argument((b32)(node->extra - 1)), "{}"))
-                        {
-                                log_error("find: -exec ... + needs {} just before the +\n", 0);
-                                goto bad;
-                        }
                         node->extra--;
                         if (!array_store_reserve(
                                 find_batches, find_batch_room, find_batch_have,

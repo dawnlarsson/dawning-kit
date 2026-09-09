@@ -5238,6 +5238,13 @@ files_FIND_BROKEN = (
     (".", "-exec", "echo", "{}"), (".", "-name"), (".", "-name", "a.txt", "dir"), (".", "-o", "-name", "a.txt"),
     (".", "-name", "a.txt", "-a"), (".", "!"), (".", "(", ")"), (".", "-type"), (".", "-size", ""),
     (".", "-maxdepth"), (".", "-newer"), (".", "-printf"), (".", "-exec"), (".", "-exec", ";"),
+    (".", "-exec", "+"), (".", "-execdir", ";"), (".", "-execdir", "+"), (".", "-ok", ";"),
+    (".", "-okdir", ";"), (".", "-execdir"), (".", "-ok"), (".", "-exec", "{}", "+"),
+    #       A plus closes the command only behind a {}, and is an ordinary
+    #       word anywhere else.
+    (".", "-exec", "echo", "+"), (".", "-exec", "echo", "+", ";"),
+    (".", "-exec", "echo", "+", "{}", "+"), (".", "-exec", "{}", ";"),
+    (".", "-exec", "echo", "{}", "+"), (".", "-exec", "nosuchcmd", ";"),
     (".", "-name", "a.txt", "-maxdepth", "1"), ("-L", "-P", ".", "-type", "l"), ("-H", "-L", "link", "-type", "f"),
     ("-P", "-H", "link", "-type", "f"), (".", "-name", "*.txt", "-o"), (".", "-depth", "-prune", "-o", "-print"),
     (".", "-delete", "-name", "a.txt"), (".", "-name", "a.txt", "-delete", "-prune"),
@@ -54902,33 +54909,6 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    ".",
-    "-exec",
-    ";"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "261f0c9f5b9d2e04",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
    "stdout": "35f785c80995e363fc0b7006207a7934090d6a21b8d05f446e75896250e36e0f"
   },
   "case": {
@@ -55089,39 +55069,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "30910e13f0e581aa",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "hollow",
-    "-nogroup",
-    "-exec",
-    "./exe",
-    "{}",
-    ";",
-    "-exec",
-    "echo",
-    "{}"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "316dce0eda9a711a",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
@@ -55411,32 +55358,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "3be5c5a9f7bd481f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    ".",
-    "-exec"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "3c8d095025f310cd",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
@@ -56323,38 +56244,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "68da8afc472607cc",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "dirlink/",
-    "-nowarn",
-    "-size",
-    "+0",
-    "-exec",
-    "missing-command",
-    "{}",
-    ";"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "6b82fa54de44edf7",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
@@ -58951,34 +58840,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "f65c84d1f8dc2f9f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    ".",
-    "-exec",
-    "echo",
-    "{}"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "f76bc2b5a1a98a04",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",

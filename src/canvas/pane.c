@@ -415,6 +415,26 @@ static _Bool pane_scroll(struct pane *pane, int lines)
 }
 
 /*
+        Back to following the end, wherever the view had been left.
+
+        Separate from pane_scroll because it is not a distance: a keystroke
+        does not move the view by so many lines, it says the end is where the
+        interesting part is again. Answers whether anything moved, so a window
+        already at the end costs no frame.
+*/
+static _Bool pane_view_live(struct pane *pane)
+{
+        if (!pane->cells || pane->view == PANE_LIVE)
+                return false;
+
+        pane->view = PANE_LIVE;
+        pane->view_skip = 0;
+        pane->view_moved = true;
+
+        return true;
+}
+
+/*
         A window, of pixels or of cells.
 
         An owned one is the compositor's own: nothing maps it, so there is no
@@ -961,10 +981,21 @@ static void desktop_refresh_panes(void)
                 pane_frame(pane, &fx, &fy, &fw, &fh);
                 pane_refresh(pane);
 
-                // The wheel moved the view, which changes every row of it.
+                /*
+                        The wheel or a keystroke moved the view, which changes
+                        every row of it.
+
+                        Both rectangles, because pane_refresh has run since fx
+                        was taken and the program may have moved the window in
+                        the same pass. Damaging only where it was left the rows
+                        it moved to undrawn, which is the trail the reshaped
+                        path below damages twice to avoid.
+                */
                 if (pane->view_moved)
                 {
                         pane->view_moved = false;
+                        desktop_damage(fx, fy, fw, fh);
+                        pane_frame(pane, &fx, &fy, &fw, &fh);
                         desktop_damage(fx, fy, fw, fh);
                         continue;
                 }
