@@ -4929,41 +4929,6 @@
  {
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "--quiet",
-    "--status",
-    "-w",
-    "dir"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "nul",
-   "tier": "pinned",
-   "utility": "sha512sum"
-  },
-  "domain": "misc",
-  "id": "dfdb5f710fd52362",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "bug (shared): the read failure is reported by text.c as Read error where coreutils writes read error, and this verifier adds nothing further; the wording belongs to the shared reader.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "sha512sum"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 125,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
