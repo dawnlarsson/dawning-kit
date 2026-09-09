@@ -329,6 +329,9 @@ static text_reader text_input;
    diagnostic.  Keep that policy at the shared reader boundary so its merge
    cursors do not grow a second open path. */
 static bool text_quiet_open;
+/* sed reads a script file, and R a line at a time, without a word about a
+   file that will not open or read -- as GNU passes over both. */
+static bool text_quiet_read;
 /* One sentinel slot is used while a sed script file is turned into text. */
 static p8 text_line[TEXT_LINE_MAX + 1];
 static positive text_line_length;
@@ -420,7 +423,8 @@ static bool text_reader_fill_amount(text_reader address_to reader,
 
                 if (got < 0)
                 {
-                        string_diagnostic(&text_diagnostic, 0, reader->name, "Read error");
+                        if (!text_quiet_read)
+                                string_diagnostic(&text_diagnostic, 0, reader->name, "Read error");
                         reader->failed = true;
                 }
 
@@ -686,6 +690,7 @@ static fn text_begin(string_address name)
 {
         /* A shell may run several built-in tools in one process. */
         text_out_used = 0;
+        text_quiet_read = false;
         text_out_handle = 1;
         text_out_failed = false;
         text_status = 0;
@@ -4599,6 +4604,11 @@ static bool head_tail_seen(p8 letter, string_address value)
 
                 text_count_last = letter;
 
+                // tail keeps a sign it was once given; head's belongs to the
+                // option that carried it, measured on both.
+                if (!text_count_tail)
+                        text_count_marked = false;
+
                 if (!text_count_parse(value, text_count_tail ? '+' : '-',
                                       address_of text_count_marked, address_of count))
                         return string_diagnostic(&text_diagnostic, 0, value,
@@ -4854,6 +4864,7 @@ static b32 text_tee()
                 return text_done(1);
 
         bool append = (taking.flags & FILE_FLAG('a')) != 0;
+        bool leave = false;
 
         if (taking.flags & FILE_FLAG('O'))
         {
@@ -4886,10 +4897,10 @@ static b32 text_tee()
                                         chosen = i;
                                 }
 
-                        (void)chosen;
-
                         if (matches != 1)
                                 return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --output-error"));
+
+                        leave = chosen >= 2;
                 }
         }
 
@@ -4917,6 +4928,12 @@ static b32 text_tee()
                 {
                         string_diagnostic(&text_diagnostic, 0, name, file_reason(target));
                         text_status = 1;
+
+                        // An exit mode stops tee opening what is left, and
+                        // still copies to standard output and to the
+                        // destinations already open.
+                        if (leave)
+                                break;
 
                         continue;
                 }
@@ -15131,6 +15148,87 @@ typedef struct
 static sed_file sed_files[SED_FILES_MAX];
 static b32 sed_file_count;
 
+/*
+        R reads one line each time it runs, from a file it keeps open across
+        the cycles; a file that ends, or was never there, simply appends
+        nothing more. The readers are named the same way w's files are.
+*/
+static fn sed_output_start();
+
+static text_reader sed_readers[SED_FILES_MAX];
+static b32 sed_reader_names[SED_FILES_MAX];
+static bool sed_reader_open[SED_FILES_MAX];
+static b32 sed_reader_count;
+static p8 sed_line_scratch[TEXT_PATH_MAX];
+
+static b32 sed_reader_of(p8 address_to name, positive length)
+{
+        for (b32 i = 0; i < sed_reader_count; i++)
+        {
+                string_address had = sed_text + sed_reader_names[i];
+
+                if (!string_compare_max(had, name, length) && !had[length])
+                        return i;
+        }
+
+        if (sed_reader_count >= SED_FILES_MAX)
+        {
+                sed_broken = true;
+                return 0;
+        }
+
+        b32 which = sed_reader_count++;
+
+        sed_reader_names[which] = sed_text_add(name, length);
+        sed_reader_open[which] = false;
+        return which;
+}
+
+// The next line of what R names, appended where the cycle's output stands.
+static fn sed_put_reader_line(b32 which)
+{
+        text_reader address_to reader = sed_readers + which;
+
+        if (!sed_reader_open[which])
+        {
+                bool quiet = text_quiet_open;
+
+                sed_reader_open[which] = true;
+                text_quiet_open = true;
+
+                if (!text_reader_open(reader, sed_text + sed_reader_names[which]))
+                {
+                        text_quiet_open = quiet;
+                        reader->finished = true;
+                        reader->failed = false;
+                        text_status = 0;
+                        return;
+                }
+
+                text_quiet_open = quiet;
+        }
+
+        text_quiet_read = true;
+
+        if (reader->finished && reader->position >= reader->filled)
+                return;
+
+        positive length = 0;
+        bool ended = false;
+
+        bool spilled = text_reader_spill(reader, '\n', sed_line_scratch,
+                                         address_of length, address_of ended, null);
+
+        text_quiet_read = false;
+
+        if (!spilled)
+                return;
+
+        sed_output_start();
+        text_put(sed_line_scratch, length);
+        text_put_character('\n');
+}
+
 static b32 sed_file_of(p8 address_to name, positive length)
 {
         for (b32 i = 0; i < sed_file_count; i++)
@@ -15156,6 +15254,8 @@ static b32 sed_file_of(p8 address_to name, positive length)
 
 static bool sed_extended;
 static bool sed_separate;
+// How wide l breaks its line: -l, or seventy when nobody said.
+static positive sed_wrap = 70;
 
 /*
         Whether a space has room for more bytes. The pattern and hold spaces
@@ -15773,7 +15873,7 @@ static fn sed_parse()
                         continue;
                 }
 
-                if (kind == 'r' || kind == 'w')
+                if (kind == 'r' || kind == 'w' || kind == 'R' || kind == 'W')
                 {
                         p8 name[TEXT_PATH_MAX];
                         positive have = sed_rest_of_line(name, sizeof(name));
@@ -15784,11 +15884,35 @@ static fn sed_parse()
                                 return;
                         }
 
-                        if (kind == 'w')
+                        if (kind == 'w' || kind == 'W')
                                 command->writer = sed_file_of(name, have);
+                        else if (kind == 'R')
+                                command->writer = sed_reader_of(name, have);
                         else
                                 command->text = sed_text_add(name, have);
 
+                        sed_command_count++;
+                        continue;
+                }
+
+                // l wraps at the width -l gave, or at seventy; a width of
+                // zero never wraps, and a width written here wins for this
+                // one command.
+                if (kind == 'l')
+                {
+                        sed_skip_blanks();
+                        command->which = byte_is_digit(sed_peek())
+                                             ? sed_number_at() + 1
+                                             : 0;
+                        sed_command_count++;
+                        continue;
+                }
+
+                // v asks for a version at least as new as the word after it,
+                // which this always is.
+                if (kind == 'v')
+                {
+                        sed_label_of(sed_line_scratch, sizeof(sed_line_scratch));
                         sed_command_count++;
                         continue;
                 }
@@ -15812,7 +15936,7 @@ static fn sed_parse()
                 if (kind == 'p' || kind == 'P' || kind == 'd' || kind == 'D' ||
                     kind == '=' || kind == 'n' || kind == 'N' || kind == 'h' ||
                     kind == 'H' || kind == 'g' || kind == 'G' || kind == 'x' ||
-                    kind == 'F')
+                    kind == 'F' || kind == 'z')
                 {
                         sed_command_count++;
                         continue;
@@ -16008,6 +16132,95 @@ static fn sed_write_space(b32 which)
                 if (system_write_all((positive)sed_files[which].handle,
                                      address_of mark, 1) != 1)
                         sed_io_failed = true;
+}
+
+// W writes what P would print: the pattern space up to its first newline.
+static fn sed_write_first_line(b32 which)
+{
+        p8 address_to newline = memory_first_of(sed_pattern.bytes, '\n',
+                                                sed_pattern.length);
+        positive keep = sed_pattern.length;
+        bool ended = sed_pattern.ended;
+
+        if (newline)
+        {
+                sed_pattern.length = (positive)(newline - sed_pattern.bytes);
+                sed_pattern.ended = true;
+        }
+
+        sed_write_space(which);
+        sed_pattern.length = keep;
+        sed_pattern.ended = ended;
+}
+
+/*
+        l, which is the pattern space made visible: a backslash for itself,
+        the letters for the escapes that have them, three octal digits for
+        every other byte that would not show, and a dollar at the end. The
+        line is broken with a backslash at the width -l gave, seventy by
+        default, and a width of zero never breaks it.
+*/
+static fn sed_put_listing(positive wrap)
+{
+        p8 shown[8];
+        positive column = 0;
+
+        sed_output_start();
+
+        for (positive at = 0; at <= sed_pattern.length; at++)
+        {
+                positive width = 0;
+
+                if (at == sed_pattern.length)
+                {
+                        text_put_character('$');
+                        text_put_character('\n');
+                        return;
+                }
+
+                p8 character = sed_pattern.bytes[at];
+                p8 letter = character == '\\'  ? '\\'
+                            : character == 7    ? 'a'
+                            : character == '\b' ? 'b'
+                            : character == '\f' ? 'f'
+                            : character == '\n' ? 'n'
+                            : character == '\r' ? 'r'
+                            : character == '\t' ? 't'
+                            : character == 11   ? 'v'
+                                                : 0;
+
+                if (letter)
+                {
+                        shown[0] = '\\';
+                        shown[1] = letter;
+                        width = 2;
+                }
+                else if (character < 32 || character >= 127)
+                {
+                        shown[0] = '\\';
+                        shown[1] = (p8)('0' + (character >> 6));
+                        shown[2] = (p8)('0' + ((character >> 3) & 7));
+                        shown[3] = (p8)('0' + (character & 7));
+                        width = 4;
+                }
+                else
+                {
+                        shown[0] = character;
+                        width = 1;
+                }
+
+                // The break goes before what will not fit, and the backslash
+                // that marks it takes the last column of the line.
+                if (wrap && column + width > wrap - 1)
+                {
+                        text_put_character('\\');
+                        text_put_character('\n');
+                        column = 0;
+                }
+
+                text_put(shown, width);
+                column += width;
+        }
 }
 
 // What r names, whole, wherever the cycle's output had reached. A name that
@@ -16268,12 +16481,19 @@ static bool sed_option_seen(p8 letter, string_address value)
                 return false;
         }
 
+        text_quiet_read = true;
+
         while (text_line_next())
         {
                 text_line[text_line_length] = '\0';
                 sed_script_add(text_line);
         }
 
+        // A script that opened and would not read -- a directory -- is an
+        // empty script to GNU rather than a failure.
+        text_quiet_read = false;
+        text_input.failed = false;
+        text_status = 0;
         text_close();
         sed_have_script = true;
 
@@ -16284,10 +16504,24 @@ static bool sed_option_seen(p8 letter, string_address value)
    leave the input alone; a failed replacement must leave its data recoverable.
    linkat restores a moved input only if its pathname is still absent, keeping
    the backup even when another writer or the filesystem prevents recovery. */
+/* An edited file keeps the mode it had: the temporary is created private
+   so nothing can read a half-written file, and takes the input's mode just
+   before it replaces it. */
+static fn sed_keep_mode(string_address name, string_address temporary)
+{
+        file_facts facts;
+
+        if (file_look_at(name, address_of facts))
+                system_change_mode_at(AT_FDCWD, temporary,
+                                      facts.mode & 07777);
+}
+
 static bool sed_commit(string_address name, string_address temporary)
 {
         p8 kept[TEXT_PATH_MAX];
         bool backup = sed_in_place[0] != '\0';
+
+        sed_keep_mode(name, temporary);
 
         if (backup)
         {
@@ -16353,6 +16587,7 @@ static b32 text_sed()
         sed_option_status = 1;
         sed_broken = false;
         sed_io_failed = false;
+        sed_reader_count = 0;
 
         if (!file_take(address_of taking))
                 return text_done(sed_option_status);
@@ -16365,6 +16600,13 @@ static b32 text_sed()
 
         sed_quiet = (flags & FILE_FLAG('n')) != 0;
         sed_extended = (flags & (FILE_FLAG('r') | FILE_FLAG('E'))) != 0;
+        sed_wrap = 70;
+
+        if ((flags & FILE_FLAG('l')) &&
+            !text_unsigned_option(file_option_value(address_of taking, 'l'),
+                                  false, address_of sed_wrap))
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'l'),
+                                                  "invalid line length"));
         sed_separate = (flags & FILE_FLAG('s')) != 0;
         sed_null_data = (flags & FILE_FLAG('z')) != 0;
         sed_follow_symlinks = (flags & FILE_FLAG('F')) != 0;
@@ -16406,6 +16648,11 @@ static b32 text_sed()
                 p8 resolved[TEXT_PATH_MAX];
                 p8 temporary[TEXT_PATH_MAX];
                 bipolar written = -1;
+
+                // A file named "-" is that file when sed is editing in
+                // place: there is no standard input to rewrite.
+                if (sed_in_place && name && string_equals(name, "-"))
+                        name = (string_address)"./-";
 
                 if (sed_in_place && sed_follow_symlinks)
                 {
@@ -16508,12 +16755,28 @@ static b32 text_sed()
                                 case 'w':
                                         sed_write_space(command->writer);
                                         break;
+                                case 'W':
+                                        sed_write_first_line(command->writer);
+                                        break;
+                                case 'v':
+                                        break;
+                                case 'z':
+                                        sed_pattern.length = 0;
+                                        break;
+                                case 'l':
+                                        sed_put_listing(command->which
+                                                            ? command->which - 1
+                                                            : sed_wrap);
+                                        break;
+                                case 'R':
                                 case 'r':
                                 case 'a':
                                         if (append_count < SED_APPENDS_MAX)
                                         {
                                                 append_kind[append_count] = kind;
-                                                append_which[append_count++] = command->text;
+                                                append_which[append_count++] =
+                                                    kind == 'R' ? command->writer
+                                                                : command->text;
                                         }
                                         break;
                                 case 'b':
@@ -16646,6 +16909,12 @@ cycle_done:
 
                         for (b32 c = 0; c < append_count; c++)
                         {
+                                if (append_kind[c] == 'R')
+                                {
+                                        sed_put_reader_line((b32)append_which[c]);
+                                        continue;
+                                }
+
                                 if (append_kind[c] == 'r')
                                 {
                                         sed_put_file(sed_text + append_which[c]);
@@ -16699,6 +16968,11 @@ cycle_done:
                 if (sed_files[c].handle >= 0)
                         if (system_close(sed_files[c].handle) < 0)
                                 sed_io_failed = true;
+
+        for (b32 c = 0; c < sed_reader_count; c++)
+                if (sed_reader_open[c])
+                        text_close_handle(address_of sed_readers[c].opened,
+                                          sed_readers[c].handle);
 
         if (sed_io_failed)
                 return text_done(string_diagnostic(&text_diagnostic, 4, null, "write error"));
