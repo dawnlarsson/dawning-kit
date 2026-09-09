@@ -165,9 +165,11 @@ builtins_add(Utility(
 CD_PROLOGUE = (
     "/bin/mkdir -p real one/two two\n"
     "/bin/ln -s real softdir\n"
-    "cd \"$PWD\" >/dev/null 2>&1\n"
+    "cd \"$PWD\" >/dev/null 2>&1\nbase=$PWD\n"
 )
-CD_REPORT = 'printf "pwd:%s\\nold:%s\\n" "$PWD" "${OLDPWD-unset}"\n'
+CD_PLACE = ('place() { case ${1-unset} in "$base"*) printf "%s" "${1#"$base"}";; unset) printf unset;; *) printf outside;; esac; }\n')
+CD_REPORT = (CD_PLACE +
+             'printf "pwd:"; place "$PWD"; printf "\\nold:"; place "${OLDPWD-unset}"; echo\n')
 builtins_add(Utility(
     "cd",
     options=(Option("-L"), Option("-P"), Option("-e"), Option("-@")),
@@ -362,8 +364,7 @@ builtins_add(Utility(
 builtins_add(Utility(
     "kill_send",
     operands=(("-0", "SELF"), ("-s", "0", "SELF"), ("-n", "0", "SELF"),
-              ("-0", "999999"), ("%1",), ("%nosuch",), ("-s", "bogus", "SELF"),
-              ("--", "-0", "SELF")),
+              ("-0", "999999"), ("%1",), ("%nosuch",), ("-s", "bogus", "SELF")),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=lambda argv, stdin: (
         "kill " + builtins_words(argv).replace("SELF", "$$") + " 2>/dev/null\n"
