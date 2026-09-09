@@ -3868,6 +3868,7 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                        ul_table_field field_of)
 {
         positive widths[64];
+        bool filled[64];
         bool multiline = false;
 
         if (!count || definition_count > array_count(widths))
@@ -3876,7 +3877,8 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
         for (positive i = 0; i < column_count; i++)
         {
                 p8 column = columns[i];
-                widths[column] = definitions[column].width;
+                widths[column] = 0;
+                filled[column] = false;
                 multiline |= definitions[column].multiline;
         }
 
@@ -3904,9 +3906,26 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                                     ? string_length(value)
                                     : ul_table_safe_width(value, definitions[column].multiline);
 
+                                if (length)
+                                        filled[column] = true;
                                 if (length > widths[column])
                                         widths[column] = length;
                         }
+
+        /*      A heading sets a column's least width where there is one.
+                Where there is none the column's own declared least width
+                stands in -- except for a column that holds nothing at all in
+                any row, which takes no room, as SIZE does in a listing of
+                whole-file locks. */
+        if (!headings && !raw)
+                for (positive i = 0; i < column_count; i++)
+                {
+                        p8 column = columns[i];
+
+                        if (filled[column] &&
+                            definitions[column].width > widths[column])
+                                widths[column] = definitions[column].width;
+                }
 
         for (positive row = 0; row < count + (headings ? 1 : 0); row++)
         {
@@ -4737,7 +4756,7 @@ enum
 };
 
 static ul_table_column ul_lslocks_columns[] = {
-    {(string_address)"command", (string_address)"COMMAND", 0, false, UL_TABLE_STRING},
+    {(string_address)"command", (string_address)"COMMAND", 15, false, UL_TABLE_STRING},
     {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER},
     {(string_address)"type", (string_address)"TYPE", 5, true, UL_TABLE_STRING},
     {(string_address)"size", (string_address)"SIZE", 4, true, UL_TABLE_NULL_STRING},
@@ -4745,8 +4764,8 @@ static ul_table_column ul_lslocks_columns[] = {
     {(string_address)"maj:min", (string_address)"MAJ:MIN", 7, false, UL_TABLE_STRING},
     {(string_address)"mode", (string_address)"MODE", 5, false, UL_TABLE_STRING},
     {(string_address)"m", (string_address)"M", 1, true, UL_TABLE_BOOLEAN, .decimal = true},
-    {(string_address)"start", (string_address)"START", 5, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"end", (string_address)"END", 3, true, UL_TABLE_NUMBER, .decimal = true},
+    {(string_address)"start", (string_address)"START", 0, true, UL_TABLE_NUMBER, .decimal = true},
+    {(string_address)"end", (string_address)"END", 0, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"path", (string_address)"PATH", 0, false, UL_TABLE_NULL_STRING},
     {(string_address)"blocker", (string_address)"BLOCKER", 7, true, UL_TABLE_NULL_NUMBER},
     {(string_address)"holders", (string_address)"HOLDERS", 0, false, UL_TABLE_NULL_STRING},
@@ -10912,7 +10931,7 @@ enum
 
 static const ul_table_column ul_lsmem_columns[] = {
     {"range", "RANGE", 0, false, UL_TABLE_STRING},
-    {"size", "SIZE", 0, true, UL_TABLE_STRING},
+    {"size", "SIZE", 5, true, UL_TABLE_STRING},
     {"state", "STATE", 0, true, UL_TABLE_STRING},
     {"removable", "REMOVABLE", 0, true, UL_TABLE_BOOLEAN},
     {"block", "BLOCK", 0, true, UL_TABLE_STRING},
@@ -11445,11 +11464,11 @@ static bool ul_lsblk_paths;
     X(UL_LSBLK_PATH, TEXT, device->path, \
       "path", "PATH", 0, false, UL_TABLE_STRING) \
     X(UL_LSBLK_MAJMIN, CUSTOM, 0, \
-      "maj:min", "MAJ:MIN", 0, false, UL_TABLE_STRING) \
+      "maj:min", "MAJ:MIN", 7, false, UL_TABLE_STRING) \
     X(UL_LSBLK_RM, BOOLEAN, device->removable, \
       "rm", "RM", 0, true, UL_TABLE_BOOLEAN, .decimal = true) \
     X(UL_LSBLK_SIZE, CUSTOM, 0, \
-      "size", "SIZE", 4, true, UL_TABLE_STRING) \
+      "size", "SIZE", 5, true, UL_TABLE_STRING) \
     X(UL_LSBLK_RO, BOOLEAN, device->read_only, \
       "ro", "RO", 0, true, UL_TABLE_BOOLEAN, .decimal = true) \
     X(UL_LSBLK_TYPE, NULL_TEXT, device->type, \
