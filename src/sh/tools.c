@@ -7411,7 +7411,9 @@ static bool dd_refused;
 static b32 dd_complain(string_address message, string_address value)
 {
         text_flush();
-        string_format(writer_stderr, "dd: %s: '%s'\n", message, value);
+        string_format(writer_stderr,
+                      "dd: %s: '%s'\nTry 'dd --help' for more information.\n",
+                      message, value);
         return 1;
 }
 
@@ -7515,11 +7517,13 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
                         !dd_word(address_of value, words[word].name)))
                         word++;
                 if (word == array_count(words))
+                {
                         dd_complain(group == 0 ? (string_address)"invalid conversion" :
                                     group == 1 ? (string_address)"invalid input flag" :
                                                  (string_address)"invalid output flag",
                                     value);
                         return false;
+                }
                 *flags |= words[word].flag;
         } while (*value);
         return true;
