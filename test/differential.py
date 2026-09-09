@@ -86,7 +86,7 @@ DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "default",
 DOMAIN_FLOOR = {
     #       domain: (cases that agreed, cases run) when the floor was set.
     #       An entry is absent once its domain agrees on everything.
-    "shell": (10689, 19217),
+    "shell": (10690, 19217),
     "util_linux": (16550, 17551),
     "misc": (18071, 19912),
 }
