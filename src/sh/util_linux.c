@@ -2142,11 +2142,24 @@ static b32 util_linux_flock()
 
         bool timed = file_option_value(address_of taking, 'w') != null;
         positive timeout = 0;
-        if (timed && !file_duration_read(file_option_value(address_of taking, 'w'), false,
-                                  address_of timeout))
+        if (timed)
         {
-                string_report(log_error, 1, "%s: %s\n", "flock", "invalid timeout");
-                return 64;
+                string_address text = file_option_value(address_of taking, 'w');
+                while (byte_is_space(string_get(text)))
+                        text++;
+                /* util-linux hands a negative timeout to the timer, which
+                   refuses it: an operating system error, not a usage one. */
+                if (string_is(text, '-') && text[1] >= '0' && text[1] <= '9')
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock",
+                                      "cannot set up timer: Invalid argument");
+                        return 71;
+                }
+                if (!file_duration_read(text, false, address_of timeout))
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock", "invalid timeout");
+                        return 64;
+                }
         }
 
         bool fcntl = (taking.flags & FILE_FLAG('L')) ||
@@ -2187,7 +2200,12 @@ static b32 util_linux_flock()
         {
                 if (!ul_signed(target, b32_min, b32_max,
                                address_of descriptor_number))
+                {
+                        string_format(log_error,
+                                      "flock: bad file descriptor: '%s'\n",
+                                      target);
                         return 64;
+                }
                 descriptor = true;
         }
         b32 handle;

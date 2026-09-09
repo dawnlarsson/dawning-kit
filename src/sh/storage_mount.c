@@ -599,6 +599,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
             STORAGE_ARGUMENT("internal-only", 'i'),
             STORAGE_ARGUMENT("sloppy", 's'),
             STORAGE_ARGUMENT("fake", 'f'),
+            STORAGE_ARGUMENT("show-labels", 'l'),
         };
         string_address type = null;
         string_address fstab = (string_address)"/etc/fstab";
@@ -618,7 +619,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         memory_fill(address_of options, 0, sizeof(options));
 
         while ((option = storage_argument_next(
-                    address_of taking, (string_address)"arwBRMvncistofTLU",
+                    address_of taking, (string_address)"arwBRMvncistoflTLU",
                     (string_address)"toTLUSX", arguments,
                     array_count(arguments), address_of value)) !=
                ARGUMENT_END)
@@ -836,9 +837,22 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         else
         {
                 bipolar answer;
+                p8 tag_path[4096];
 
                 /* util-linux answers 32 for a mount(2) that failed, 1 for
-                   an invocation it could not make sense of. */
+                   an invocation it could not make sense of, such as a tag
+                   no device carries. */
+                if ((storage_prefix(operand[0], "UUID=") ||
+                     storage_prefix(operand[0], "LABEL=") ||
+                     storage_prefix(operand[0], "PARTUUID=") ||
+                     storage_prefix(operand[0], "PARTLABEL=")) &&
+                    !storage_resolve_tag(operand[0], tag_path, sizeof(tag_path)))
+                {
+                        string_format(diagnostic, "mount: %s: can't find %s.\n",
+                                      operand[1], operand[0]);
+                        status = 1;
+                        goto done;
+                }
                 answer = storage_mount_one(operand[0], operand[1], type,
                                            address_of options);
                 if (answer)
@@ -875,18 +889,18 @@ static bool storage_path_below(string_address path, string_address root)
         return (length == 1 && root[0] == '/') || path[length] == '/';
 }
 
-/* The mounted target a spelling names, or null when the table has none. */
-static PURE string_address storage_umount_target(storage_mount_table address_to table,
-                                            string_address asked)
+/* The mount a spelling names, or null when the table has none. */
+static PURE storage_mount address_to storage_umount_target(
+    storage_mount_table address_to table, string_address asked)
 {
-        string_address found = null;
+        storage_mount address_to found = null;
 
         /* Last wins: stacked mounts are unmounted from the top. */
         for (positive at = 0; at < table->count; at++)
                 if (table->entry[at].target &&
                     (storage_word(table->entry[at].source, asked) ||
                      storage_word(table->entry[at].target, asked)))
-                        found = table->entry[at].target;
+                        found = table->entry + at;
         return found;
 }
 
@@ -895,8 +909,9 @@ static PURE string_address storage_umount_target(storage_mount_table address_to 
    an unknown spelling still reaches the kernel, which resolves relative
    paths, and only its "not a mount" answers count as unmounted. */
 static b32 storage_umount_one(writer diagnostic, string_address program,
-                             string_address target, positive flags,
-                             bool read_only, bool known)
+                             string_address target, string_address type,
+                             positive flags, bool read_only, bool known,
+                             bool verbose)
 {
         bipolar answer = system_call_2(syscall(umount2), (positive)target, flags);
 
@@ -922,13 +937,16 @@ static b32 storage_umount_one(writer diagnostic, string_address program,
                         return 1;
                 return 32;
         }
+        if (verbose)
+                string_format(diagnostic, "%s: %s (%s) unmounted\n", program,
+                              target, type ? type : (string_address)"none");
         return 0;
 }
 
 static b32 storage_umount_recursive(writer diagnostic, string_address program,
                                     storage_mount_table address_to table,
                                     string_address root, string_address types,
-                                    positive flags, bool read_only)
+                                    positive flags, bool read_only, bool verbose)
 {
         b32 failed = 0;
         positive longest = positive_max;
@@ -974,8 +992,9 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                         {
                                 found = true;
                                 failed |= storage_umount_one(diagnostic, program,
-                                                             record->target, flags,
-                                                             read_only, true);
+                                                             record->target,
+                                                             record->type, flags,
+                                                             read_only, true, verbose);
                                 record->target = null;
                         }
                 }
@@ -999,6 +1018,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
             STORAGE_ARGUMENT("no-mtab", 'n'),
             STORAGE_ARGUMENT("no-canonicalize", 'c'),
             STORAGE_ARGUMENT("internal-only", 'i'),
+            STORAGE_ARGUMENT("all-targets", 'A'),
         };
         positive flags = STORAGE_UMOUNT_NOFOLLOW;
         string_address types = null;
@@ -1006,8 +1026,11 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         positive operand_room = 0;
         positive operands = 0;
         bool all = false;
+        bool all_targets = false;
         bool recursive = false;
         bool read_only = false;
+        bool verbose = false;
+        bool canonical = true;
         argument_cursor taking = {.argc = argc, .argv = argv, .at = 1};
         string_address value;
         b32 option;
@@ -1017,7 +1040,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
 
         (void)write;
         while ((option = storage_argument_next(
-                    address_of taking, (string_address)"alfRrvncit",
+                    address_of taking, (string_address)"alfRrvncitA",
                     (string_address)"t", arguments, array_count(arguments),
                     address_of value)) != ARGUMENT_END)
         {
@@ -1051,6 +1074,8 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                 }
                 else if (option == 'a')
                         all = true;
+                else if (option == 'A')
+                        all_targets = true;
                 else if (option == 'l')
                         flags |= STORAGE_MNT_DETACH;
                 else if (option == 'f')
@@ -1059,6 +1084,10 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         recursive = true;
                 else if (option == 'r')
                         read_only = true;
+                else if (option == 'v')
+                        verbose = true;
+                else if (option == 'c')
+                        canonical = false;
                 else if (option == 't')
                         types = value;
         }
@@ -1090,24 +1119,74 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                             storage_type_match(types, record->type))
                                 failed |= storage_umount_one(
                                     diagnostic, (string_address)"umount",
-                                    record->target, flags, read_only, true);
+                                    record->target, record->type, flags,
+                                    read_only, true, verbose);
                 }
         }
 
         for (positive i = 0; i < operands; i++)
         {
-                string_address found = storage_umount_target(address_of table,
-                                                              operand[i]);
-                string_address target = found ? found : operand[i];
-                if (recursive)
-                        failed |= storage_umount_recursive(diagnostic,
-                                                           (string_address)"umount",
-                                                           address_of table, target,
-                                                           types, flags, read_only);
+                /* util-linux looks a spelling up by its canonical path, so a
+                   relative or symlinked target names the same mount. */
+                positive resolved_room = 0;
+                p8 address_to resolved = null;
+                if (canonical)
+                {
+                        bipolar handle = system_open_at(AT_FDCWD, operand[i],
+                                                       STORAGE_OPEN_PATH | O_CLOEXEC);
+                        if (handle >= 0)
+                        {
+                                resolved = storage_fd_path(handle,
+                                                           address_of resolved_room);
+                                system_close(handle);
+                        }
+                }
+                string_address asked = resolved ? (string_address)resolved
+                                                : operand[i];
+                if (all_targets)
+                {
+                        bool matched = false;
+                        for (positive at = table.count; at; at--)
+                        {
+                                storage_mount address_to record = table.entry + at - 1;
+                                if (!record->target ||
+                                    (!storage_word(record->source, asked) &&
+                                     !storage_word(record->source, operand[i])))
+                                        continue;
+                                matched = true;
+                                failed |= storage_umount_one(
+                                    diagnostic, (string_address)"umount",
+                                    record->target, record->type, flags,
+                                    read_only, true, verbose);
+                        }
+                        if (!matched)
+                        {
+                                string_format(diagnostic, "umount: %s: not mounted\n",
+                                              operand[i]);
+                                failed |= 1;
+                        }
+                }
                 else
-                        failed |= storage_umount_one(
-                            diagnostic, (string_address)"umount", target,
-                            flags, read_only, found != null);
+                {
+                        storage_mount address_to found =
+                            storage_umount_target(address_of table, asked);
+                        if (!found && asked != operand[i])
+                                found = storage_umount_target(address_of table,
+                                                              operand[i]);
+                        string_address target = found ? found->target : asked;
+                        if (recursive)
+                                failed |= storage_umount_recursive(
+                                    diagnostic, (string_address)"umount",
+                                    address_of table, target, types, flags,
+                                    read_only, verbose);
+                        else
+                                failed |= storage_umount_one(
+                                    diagnostic, (string_address)"umount", target,
+                                    found ? found->type : null, flags, read_only,
+                                    found != null, verbose);
+                }
+                if (resolved)
+                        memory_free(resolved, resolved_room);
         }
 
         storage_mount_table_release(address_of table);
