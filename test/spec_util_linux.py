@@ -1273,6 +1273,11 @@ static positive text_arena_used;
 static bool ul_lscpu_failed;
 static positive fixture_errors;
 static void text_error(void *unused, const char *message) { (void)unused; (void)message; fixture_errors++; }
+typedef struct { writer write; fn(address_to before)(void); string_address const address_to prefix; } diagnostic;
+static const diagnostic text_diagnostic = { NULL, NULL, NULL };
+static b32 string_diagnostic(diagnostic const address_to sink, b32 result,
+                             string_address about, string_address reason)
+{ (void)sink; (void)about; (void)reason; fixture_errors++; return result; }
 static void *memory(positive bytes) { (void)bytes; abort(); }
 static bool system_failed(positive value) { return value >= positive_max-4095; }
 static positive positive_into_string(p8 *p,positive n) { return (positive)sprintf((char *)p,"%llu",(unsigned long long)n); }
@@ -1433,7 +1438,15 @@ def ul_check_lscpu_summary(farm):
             flags += ["-fsanitize=address,undefined"]
         build = subprocess.run([compiler, *flags, str(c_path), "-o", str(binary)], capture_output=True, text=True)
         if build.returncode:
-            return 0, 1, ["compile failed: " + build.stderr.strip().splitlines()[-1][:200]]
+            kept = Path(farm).parent / "ul-lscpu-summary.c"
+            log = Path(farm).parent / "ul-lscpu-summary.log"
+            try:
+                kept.write_text(program)
+                log.write_text(build.stderr)
+            except OSError:
+                return 0, 1, ["compile failed: " + build.stderr.strip()[-400:]]
+            return 0, 1, [f"compile failed, source at {kept} and log at {log}: "
+                          + build.stderr.strip().splitlines()[-1][:200]]
         try:
             run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60)
         except subprocess.TimeoutExpired:
