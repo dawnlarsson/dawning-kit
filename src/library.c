@@ -2855,7 +2855,7 @@ __asm__(
 //      cache line: the words leave the cursor thirty two bytes into a line,
 //      and a sixty four byte load that straddles two lines takes two load
 //      slots, which on a machine that issues two a cycle halves the loop.
-//      Measured with kit/floor.c on a 9950X, a four kilobyte string cost 164
+//      Measured with BENCH_floor on a 9950X, a four kilobyte string cost 164
 //      ticks a call against the floor's 70 before this step and 121 after;
 //      the same is done after every page edge, because an edge on the second
 //      string leaves the first wherever it happened to be.
@@ -2866,7 +2866,7 @@ __asm__(
 //      answer. The loop itself runs within a seventh of the floor a page --
 //      82 ticks against 72 on that machine, each vector instruction a third
 //      of a tick a turn -- and at sixty four kilobytes and a megabyte the
-//      call is memory bound and within a tenth of it. The rows kit/floor.c
+//      call is memory bound and within a tenth of it. The rows BENCH_floor
 //      prints, two runs each, before and after:
 //
 //          string_compare        64      floor / floor    floor / floor
@@ -3149,7 +3149,7 @@ __asm__(
     //
     //      The body this replaces read one ymm a turn and asked the page
     //      question of both pointers before every one of them. Against
-    //      kit/floor.c, which reads both streams four vectors a turn at the
+    //      BENCH_floor, which reads both streams four vectors a turn at the
     //      widest load and answers nothing, it measured on a 9950X 5.1x
     //      slower at four kilobytes, 2.1x at sixty four and 1.4x at a
     //      megabyte; this one 1.55x, 1.1x and 1.07x. WIDE_COMPARE says
@@ -3622,7 +3622,7 @@ __asm__(
     //       below is half the machine on one that does: a 9950X issues two
     //       loads a cycle whatever their width, so its eight ymm loads read
     //       a hundred and twenty eight bytes in the time eight zmm loads
-    //       read two hundred and fifty six. Against kit/floor.c, which reads
+    //       read two hundred and fifty six. Against BENCH_floor, which reads
     //       both streams at the widest load and answers nothing, the ymm
     //       round measured 2.0x slower at four kilobytes on that machine.
     //
@@ -6507,7 +6507,7 @@ ASM_FUNC(positive_to_string)
     //       expensive conversion without making the writer API copy its
     //       scratch a second time.
     //
-    //       kit/bench_numbers.c measures the public call against the scalar
+    //       BENCH_numbers measures the public call against the scalar
     //       loop it replaced. On a 9950X the assembly took 51%, 40%, and 26%
     //       of the scalar time for small, mixed, and full-width distributions;
     //       on native arm64 Linux it took 51%, 52%, and 24%. RISC-V under qemu
@@ -8117,8 +8117,8 @@ __asm__(
     //
     //       Counted and not timed on purpose: qemu wall time is the
     //       emulator's work and not the machine's, and the instruction count
-    //       is the part of it that carries over to a real board. kit/bench
-    //       times the same comparison and agrees on the shape.
+    //       is the part of it that carries over to a real board. The
+    //       benchmarks time the same comparison and agree on the shape.
     //
     //       The word loop is level with the byte loop at four bytes and at eight,
     //       and from sixteen up it is the only one of the two worth running: at
@@ -8170,8 +8170,8 @@ __asm__(
     //
     //       Counted and not timed on purpose: qemu wall time is the
     //       emulator's work and not the machine's, and the instruction count
-    //       is the part of it that carries over to a real board. kit/bench
-    //       times the same comparison and agrees on the shape.
+    //       is the part of it that carries over to a real board. The
+    //       benchmarks time the same comparison and agree on the shape.
     //
     //       Ahead at every length, four bytes included. The byte loop it replaces
     //       walks two pointers rather than one and tests both of them for a
@@ -8303,8 +8303,8 @@ __asm__(
     //
     //       Counted and not timed on purpose: qemu wall time is the
     //       emulator's work and not the machine's, and the instruction count
-    //       is the part of it that carries over to a real board. kit/bench
-    //       times the same comparison and agrees on the shape.
+    //       is the part of it that carries over to a real board. The
+    //       benchmarks time the same comparison and agree on the shape.
     //
     //       Two instructions behind at four bytes and ahead at everything from
     //       eight up. Four bytes is what the broadcast costs -- the byte being
@@ -12102,8 +12102,8 @@ __asm__(
     //
     //       Counted and not timed on purpose: qemu wall time is the
     //       emulator's work and not the machine's, and the instruction count
-    //       is the part of it that carries over to a real board. kit/bench
-    //       times the same comparison and agrees on the shape.
+    //       is the part of it that carries over to a real board. The
+    //       benchmarks time the same comparison and agree on the shape.
     //
     //       Behind at four bytes and at eight, level at twelve, and ahead from
     //       sixteen up to three times at four thousand and ninety six.
@@ -12191,8 +12191,8 @@ __asm__(
     //
     //       Counted and not timed on purpose: qemu wall time is the
     //       emulator's work and not the machine's, and the instruction count
-    //       is the part of it that carries over to a real board. kit/bench
-    //       times the same comparison and agrees on the shape.
+    //       is the part of it that carries over to a real board. The
+    //       benchmarks time the same comparison and agree on the shape.
     //
     //       Ahead at every length, four bytes included, for the reason arm64's is:
     //       two pointers walked a byte at a time is twice the work for one word
@@ -12288,8 +12288,8 @@ __asm__(
     //
     //       Counted and not timed on purpose: qemu wall time is the
     //       emulator's work and not the machine's, and the instruction count
-    //       is the part of it that carries over to a real board. kit/bench
-    //       times the same comparison and agrees on the shape.
+    //       is the part of it that carries over to a real board. The
+    //       benchmarks time the same comparison and agree on the shape.
     //
     //       Behind up to eight bytes, level at sixteen, ahead from thirty two up
     //       to twice at four thousand and ninety six.

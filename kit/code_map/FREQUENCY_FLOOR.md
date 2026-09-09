@@ -109,7 +109,8 @@ the reported values are self-cycle shares, without call-graph attribution.
 Every workload first matched host-tool output, status and stderr. The regular
 file used for timed output was also hashed against validated output. An initial
 `/dev/null` trial was rejected: grep detects discarded output and short-circuits.
-`kit/bench_tools` now uses a regular file for both validation and timing too.
+`sh test/run bench tools` now uses a regular file for both validation and
+timing too.
 
 The cases are resident synthetic workloads, not a measured distribution of
 user activity. CPU affinity does not isolate the SMT sibling. One machine and

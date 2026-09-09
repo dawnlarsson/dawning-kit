@@ -60,8 +60,10 @@ bodies and gains one C proof constructor (3,841 C entries total).
 
 ## Before/after
 
-The maintained `kit/bench_engines.py` ran 37 stack cases at 16 MiB and 41 engine
-cases at 4 MiB, two warmups and eleven alternating/reversed rounds. Every timed
+The maintained engines harness -- `python3 test/differential.py --harness
+engines`, which was kit/bench_engines.py -- ran 37 stack cases at 16 MiB
+and 41 engine cases at 4 MiB, two warmups and eleven alternating/reversed
+rounds. Every timed
 run checks exact status, stderr and stdout SHA-256, with hashing outside the
 measurement. Output is a real seekable file, not `/dev/null`. Deadlines use
 SIGALRM around blocking communication, avoiding Python timed-wait polling.

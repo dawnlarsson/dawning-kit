@@ -38,9 +38,9 @@ def git(*args):
 
 def area(path):
     if path.startswith('test/'):
-        return 'Tests'
+        return 'Tests and benchmarks'
     if path.startswith('kit/'):
-        return 'Benchmarks and development tooling'
+        return 'Development tooling'
     if path == 'src/library.c':
         return 'Assembly library'
     if path.startswith('src/platform/'):

@@ -3,16 +3,16 @@
 #       Guest instructions per call, for the assembly in library.c against the
 #       C byte loop it replaced.
 #
-#       kit/bench times the same comparison, but a qemu tick is the emulator's
-#       work and not the machine's -- it counts translation, page walks and
-#       whatever else the host was doing. An instruction count is the part that
-#       carries over to a real board, so this is what the tables in library.c
-#       quote and kit/bench is what confirms the shape.
+#       sh test/run bench times the same comparison, but a qemu tick is the
+#       emulator's work and not the machine's -- it counts translation, page
+#       walks and whatever else the host was doing. An instruction count is the
+#       part that carries over to a real board, so this is what the tables in
+#       library.c quote and the benchmarks are what confirm the shape.
 #
-#       kit/bench_one.c is one function at one length, chosen at compile time.
-#       It is run twice, once with one call and once with a thousand and one,
-#       and the difference divided by a thousand is the cost of a call with
-#       every bit of startup cancelled out exactly.
+#       BENCH_one in test/checks.c is one function at one length, chosen at
+#       compile time. It is run twice, once with one call and once with a
+#       thousand and one, and the difference divided by a thousand is the cost
+#       of a call with every bit of startup cancelled out exactly.
 #
 #       Needs qemu built with plugin support and qemu-plugin.h installed, which
 #       is where kit/insn.c is compiled from.
@@ -39,7 +39,8 @@ one() { # compiler runner which length rounds
            -O2 -static -nostdlib -nostartfiles -fno-stack-protector -fno-builtin \
            -T kit/spark.ld -Wl,-e,_start -Wl,--build-id=none \
            -Wl,--no-warn-rwx-segments \
-           -DWHICH=$3 -DLENGTH=$4 -DROUNDS=$5 -o "$work/one" kit/bench_one.c
+           -DBENCH_one -DWHICH=$3 -DLENGTH=$4 -DROUNDS=$5 \
+           -o "$work/one" test/checks.c
         $2 -plugin "$work/insn.so" "$work/one" 2>&1 >/dev/null
 }
 

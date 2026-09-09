@@ -264,7 +264,8 @@ A normal Linux build is `sh kit/build programs/shell.c /tmp/moonwater-after`.
 The maintained shell-only replay is:
 
 ```sh
-python3 kit/bench_engines.py --suite shell --bytes 4194304 --rounds 11 --cpu 15 \
+python3 test/differential.py --harness engines \
+  --suite shell --bytes 4194304 --rounds 11 --cpu 15 \
   --binary before=/path/to/c6ae6d5-shell --binary after=/tmp/moonwater-after \
   --time-reference --json shell-results.json
 ```
