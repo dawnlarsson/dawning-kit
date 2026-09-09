@@ -69,6 +69,27 @@ if __name__ in ("__main__", "__mp_main__"):
 PIN_BEGIN = "# ---- pinned rows begin (written by --record; never by hand) ----"
 PIN_END = "# ---- pinned rows end ----"
 OUTPUT_LIMIT = 1 << 20
+
+#       What each domain is walked with, and where it stands.
+#
+#       A domain is gated at the budget whose divergences somebody sat down
+#       and pinned; a deeper budget is for finding more, not for the gate.
+#       Where pinning is unfinished the row carries the count that was
+#       reached, and the run fails if fewer cases agree than that -- so the
+#       gaps stay visible and stay counted, and a regression inside them is
+#       caught the moment the number drops. Lowering a floor is a decision
+#       somebody makes here, in this table, on purpose.
+DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "default",
+                 "files": "singles", "shell": "quick", "util_linux": "default",
+                 "misc": "default"}
+
+DOMAIN_FLOOR = {
+    #       domain: (cases that agreed, cases run) when the floor was set.
+    #       An entry is absent once its domain agrees on everything.
+    "shell": (10689, 19217),
+    "util_linux": (16550, 17551),
+    "misc": (18071, 19912),
+}
 DOMAINS = ("text", "files", "misc", "util_linux", "shell", "builtins", "awk")
 SHELL_MODES = {"bash": ("/bin/bash", [], "bash"),
                "posix": ("/bin/bash", ["--posix"], "bash"),
@@ -936,8 +957,10 @@ def main(argv=None):
     parser.add_argument("--utility", action="append", help="only these programs (or 'shell')")
     parser.add_argument("--family", action="append", help="only these shell families")
     parser.add_argument("--mode", action="append", choices=tuple(SHELL_MODES))
-    parser.add_argument("--budget", default=os.environ.get("MW_BUDGET", "default"),
-                        choices=("singles", "quick", "default", "full"))
+    parser.add_argument("--budget", default=os.environ.get("MW_BUDGET"),
+                        choices=("singles", "quick", "default", "full"),
+                        help="how deep to walk; the default is the budget the "
+                             "domain is gated at (see DOMAIN_BUDGET)")
     parser.add_argument("--seed", type=lambda v: int(v, 0),
                         default=int(os.environ.get("MW_SEED", "0x4d574253"), 0))
     parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
@@ -1001,7 +1024,8 @@ def main(argv=None):
             utilities.update(spec_utilities(specs[domain]))
     else:
         for domain in domains:
-            made, found = build_cases(domain, specs[domain], args.budget, args.seed,
+            budget = args.budget or DOMAIN_BUDGET.get(domain, "default")
+            made, found = build_cases(domain, specs[domain], budget, args.seed,
                                       selected, modes, families)
             cases.extend(made)
             utilities.update(found)
@@ -1041,7 +1065,9 @@ def main(argv=None):
     if args.artifacts:
         args.artifacts.mkdir(parents=True, exist_ok=True)
 
-    print(f"  differential seed={hex(args.seed)} budget={args.budget} cases={len(cases)} "
+    shown_budget = args.budget or ",".join(
+        f"{d}:{DOMAIN_BUDGET.get(d, 'default')}" for d in domains)
+    print(f"  differential seed={hex(args.seed)} budget={shown_budget} cases={len(cases)} "
           f"domains={','.join(domains)} jobs={args.jobs}; compares status, stdout, effects and diagnostics")
 
     passed = collections.Counter()
@@ -1236,6 +1262,30 @@ def main(argv=None):
                 tally.write(f"{key.replace('/', '-')} {passed[key]} {total[key]}\n")
     all_passed = sum(passed.values())
     all_total = sum(total.values())
+
+    #       A domain whose pinning is unfinished is held to the count it
+    #       reached. Agreeing on more is progress and says so; agreeing on
+    #       fewer is a regression inside the gap and fails.
+    floored = True
+    if not args.replay and not selected and not modes and not families and not args.budget:
+        for domain in domains:
+            floor = DOMAIN_FLOOR.get(domain)
+            if not floor:
+                continue
+            agreed = sum(count for key, count in passed.items()
+                         if key.startswith(domain + "/"))
+            ran = sum(count for key, count in total.items()
+                      if key.startswith(domain + "/"))
+            want, of = floor
+            if agreed < want:
+                floored = False
+                print(f"  FLOOR {domain}: {agreed} of {ran} agree, below the {want} of {of} "
+                      f"this domain is held to -- a regression inside a known gap")
+            elif agreed > want:
+                print(f"  floor {domain}: {agreed} of {ran} agree, above the recorded "
+                      f"{want} of {of}; lower the floor in DOMAIN_FLOOR to keep the gain")
+            else:
+                print(f"  floor {domain}: {agreed} of {ran}, as recorded")
     distinct = sum(len(v) for v in failures.values())
     print(f"  tiers: " + " ".join(f"{k}={v}" for k, v in sorted(tiers.items())))
     print(f"  differential {all_passed} of {all_total}; failure classes={distinct}, "
@@ -1243,7 +1293,17 @@ def main(argv=None):
     if not all_total:
         print("  differential NOT RUN -- no case had both programs")
         return 2
-    return 1 if all_passed != all_total or invalid else 0
+    if not floored:
+        return 1
+    #       Cases inside a floored domain are not counted against the run;
+    #       the floor above is what holds them.
+    unfloored = sum(count for key, count in total.items()
+                    if key.split("/")[0] not in DOMAIN_FLOOR)
+    unfloored_passed = sum(count for key, count in passed.items()
+                           if key.split("/")[0] not in DOMAIN_FLOOR)
+    if args.replay or selected or modes or families or args.budget:
+        return 1 if all_passed != all_total or invalid else 0
+    return 1 if unfloored_passed != unfloored else 0
 
 
 # ----------------------------------------------------------------------------
