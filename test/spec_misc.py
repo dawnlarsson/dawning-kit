@@ -608,13 +608,22 @@ def misc_script_valid(argv):
 
 
 def misc_dd_valid(argv):
-    # The runner's standard input is an O_TMPFILE; GNU dd re-sets the input
-    # flags for a byte-suffixed quantity and the kernel refuses the inherited
-    # O_DIRECTORY bit (ENOTDIR). Byte quantities therefore always name if=.
-    if any(word.startswith("if=") for word in argv):
-        return True
-    return not any(word.startswith(("count=", "skip=", "seek=", "iseek=", "oseek=")) and word.endswith("B")
-                   for word in argv)
+    # The runner's standard input and output are unnamed temporary files, and
+    # dd re-sets the open flags of a side whenever a byte-suffixed quantity or
+    # an iflag/oflag names it; the kernel refuses that on an O_TMPFILE with
+    # ENOTDIR, which is the harness rather than dd. Those cases name a file.
+    named_input = any(word.startswith("if=") for word in argv)
+    named_output = any(word.startswith("of=") for word in argv)
+    for word in argv:
+        if word.startswith("iflag=") and not named_input:
+            return False
+        if word.startswith("oflag=") and not named_output:
+            return False
+        if word.startswith(("count=", "skip=", "iseek=")) and word.endswith("B") and not named_input:
+            return False
+        if word.startswith(("seek=", "oseek=")) and word.endswith("B") and not named_output:
+            return False
+    return True
 
 
 def misc_last_normalize(channel, data):

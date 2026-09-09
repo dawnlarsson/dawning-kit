@@ -1443,6 +1443,8 @@ static b32 process_timeout()
         if (escalate)
                 process_timeout_duration(file_option_value(address_of taking, 'k'),
                                          address_of kill_after);
+        // Zero disables the second signal, as it disables the first.
+        escalate = escalate && kill_after;
 
         bool foreground = (taking.flags & FILE_FLAG('f')) != 0;
         bool preserve = (taking.flags & FILE_FLAG('p')) != 0;

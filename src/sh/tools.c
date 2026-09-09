@@ -5343,13 +5343,6 @@ static b32 tools_numfmt()
 
                 while (!numfmt.stop && text_line_next())
                 {
-                        // With NUL records a newline is ordinary blank space
-                        // and comes out as a space, as GNU has it.
-                        if (text_delimiter == '\0')
-                                for (positive at = 0; at < text_line_length; at++)
-                                        if (text_line[at] == '\n')
-                                                text_line[at] = ' ';
-
                         if (records++ < numfmt.header)
                                 text_put(text_line, text_line_length);
                         else
@@ -7087,6 +7080,8 @@ static b32 tools_dd(void)
 {
         string_address input = null;
         string_address output = null;
+        string_address input_size = (string_address) "512";
+        string_address output_size = (string_address) "512";
         positive ibs = 512;
         positive obs = 512;
         positive bs = 0;
@@ -7556,7 +7551,12 @@ static b32 tools_dd(void)
                 positive wrote = dd_output(out_handle, output, obuf, held, true);
 
                 if (wrote)
-                        dd_out_partial++;
+                {
+                        if (held == obs)
+                                dd_out_full++;
+                        else
+                                dd_out_partial++;
+                }
 
                 if (wrote != held)
                         result = 1;
@@ -8745,12 +8745,24 @@ static b32 tools_od(void)
         positive stop = (positive)text_argument_count;
         positive operands = stop - taking.first;
 
+        bool traditional = (taking.flags & FILE_FLAG('T')) != 0;
+
+        if (traditional && operands > 2)
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "od: extra operand '%s'\nod: compatibility mode supports at most one file\n"
+                    "Try 'od --help' for more information.\n",
+                    program_argument((b32)(taking.first + 1))));
+        }
+
         if (operands >= 1 && operands <= 2)
         {
                 string_address last = program_argument((b32)(stop - 1));
 
                 if (string_is(last, '+') ||
-                    (operands == 2 && byte_is_digit(string_get(last))))
+                    (traditional && operands == 2 &&
+                     byte_is_digit(string_get(last))))
                 {
                         positive offset;
 
@@ -11548,7 +11560,7 @@ static bool ps_format_list(string_address list,
                 {
                         string_address header_from = ++item.at;
                         positive header_length = string_span_without_set(
-                            item.at, (string_address) ",");
+                            item.at, (string_address) ", ");
 
                         item.at += header_length;
                         p8 address_to made =
@@ -11657,6 +11669,14 @@ static b32 tools_ps(void)
                 if (option == ARGUMENT_END)
                         break;
                 bool long_option = option == ARGUMENT_LONG;
+                if (option == ARGUMENT_OPERAND && byte_is_digit(*cursor.word))
+                {
+                        // An undashed number is the historical PID selector.
+                        if (!ps_pid_list(cursor.word, &pids, true))
+                                return text_done(string_diagnostic(&text_diagnostic, 1,
+                                    cursor.word, "invalid process id list"));
+                        continue;
+                }
                 if (option == ARGUMENT_OPERAND && *cursor.word && *cursor.word != '-')
                 {
                         // BSD option letters are undashed; their C does not
