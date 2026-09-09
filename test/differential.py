@@ -1085,6 +1085,7 @@ def main(argv=None):
 
     passed = collections.Counter()
     total = collections.Counter()
+    unstable = collections.Counter()
     absent = collections.Counter()
     invalid = 0
     tiers = collections.Counter()
@@ -1183,6 +1184,17 @@ def main(argv=None):
                 if args.record == "regression" and key not in regression_ids:
                     to_record.append((case, want, got))
                 continue
+            #       A case whose answer is not determined cannot gate
+            #       anything. Ask it again before calling it a divergence: a
+            #       terminal transcript interleaved by timing, or a namespace
+            #       the kernel populates differently, answers differently the
+            #       second time and belongs in neither column.
+            again, again_got = runner.pair(case, spec)
+            if again is not None and (
+                    signature(again, again_got, policy) != signature(want, got, policy)):
+                unstable[tally_key] += 1
+                total[tally_key] -= 1
+                continue
             if key in regression_ids:
                 diff = diff + ("regression",)
             sig = (want["status"], got["status"], diff)
@@ -1277,6 +1289,8 @@ def main(argv=None):
 
     for key in sorted(set(total) | set(absent)):
         line = f"  {key:28} {passed[key]} of {total[key]}"
+        if unstable[key]:
+            line += f"  ({unstable[key]} unstable, answered differently when asked twice)"
         if absent[key]:
             line += f"  ({absent[key]} NOT RUN -- no reference or candidate program)"
         print(line)
@@ -1313,7 +1327,8 @@ def main(argv=None):
     distinct = sum(len(v) for v in failures.values())
     print(f"  tiers: " + " ".join(f"{k}={v}" for k, v in sorted(tiers.items())))
     print(f"  differential {all_passed} of {all_total}; failure classes={distinct}, "
-          f"invalid oracles={invalid}, not run={sum(absent.values())}")
+          f"invalid oracles={invalid}, unstable={sum(unstable.values())}, "
+          f"not run={sum(absent.values())}")
     if not all_total:
         print("  differential NOT RUN -- no case had both programs")
         return 2
