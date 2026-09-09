@@ -648,15 +648,48 @@ static string_address checksum_quoted_name(string_address name, p8 address_to in
         if (!checksum_filename_special(name))
                 return name;
 
-        positive length = string_length(name);
+        positive made = 0;
+        string_address at = name;
 
-        if (length + 3 > room)
-                return name;
+        while (string_get(at) && made + 8 < room)
+        {
+                string_address stop = at;
 
-        into[0] = '\'';
-        memory_copy_apart(into + 1, name, length);
-        into[length + 1] = '\'';
-        into[length + 2] = end;
+                while (string_get(stop) && string_get(stop) >= ' ' &&
+                       string_get(stop) != 127)
+                        stop++;
+
+                if (stop > at)
+                {
+                        // An ordinary run is one quoted word.
+                        positive span = (positive)(stop - at);
+
+                        if (made + span + 3 >= room)
+                                break;
+                        into[made++] = '\'';
+                        memory_copy_apart(into + made, at, span);
+                        made += span;
+                        into[made++] = '\'';
+                        at = stop;
+                }
+
+                while (string_get(at) && (string_get(at) < ' ' || string_get(at) == 127) &&
+                       made + 8 < room)
+                {
+                        // A control byte is a $'..' word of its own.
+                        p8 byte = string_get(at++);
+                        p8 escaped[4];
+                        positive length = ls_escape_byte(byte, escaped, false);
+
+                        into[made++] = '$';
+                        into[made++] = '\'';
+                        memory_copy_apart(into + made, escaped, length);
+                        made += length;
+                        into[made++] = '\'';
+                }
+        }
+
+        into[made] = end;
         return (string_address)into;
 }
 
@@ -790,6 +823,24 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         failed = true;
                         continue;
                 }
+
+                file_facts kind;
+                if (file_look(text_input.handle, (string_address)"", AT_EMPTY_PATH,
+                              address_of kind) &&
+                    (kind.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                {
+                        p8 quoted[FILE_PATH_MAX + 64];
+
+                        text_flush();
+                        string_format(log_error, "%s: %s: read error\n",
+                                      algorithm->command,
+                                      checksum_quoted_name(manifest ? manifest
+                                          : (string_address)"standard input",
+                                          quoted, sizeof(quoted)));
+                        text_close();
+                        failed = true;
+                        continue;
+                }
                 if (!manifest || (manifest[0] == '-' && !manifest[1]))
                         manifest = (string_address) "standard input";
 
@@ -819,7 +870,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                                 {
                                         text_flush();
                                      {
-                                        p8 quoted[FILE_PATH_MAX + 4];
+                                        p8 quoted[FILE_PATH_MAX + 64];
 
                                         string_format(log_error, "%s: %s: %p: improperly formatted %s checksum line\n",
                                                       algorithm->command,
@@ -898,7 +949,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
 
                 if (!verified && !unreadable && !read_failed)
                 {
-                        p8 quoted[FILE_PATH_MAX + 4];
+                        p8 quoted[FILE_PATH_MAX + 64];
 
                         failed = true;
                         if (!status || !formatted)
