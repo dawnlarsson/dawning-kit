@@ -10208,6 +10208,11 @@ static b32 file_chgrp()
         return file_chown_common((string_address) "chgrp", true);
 }
 
+// The backup a destination gets before it is written over, shared by cp,
+// mv, ln and install and defined where the copying is.
+static bool file_backup_made(string_address program, string_address destination);
+static bool file_backup_taken(file_taking address_to taking, string_address program);
+
 // ln ------------------------------------------------------------
 // ln [-s] [-f] TARGET [NAME], and ln [-s] [-f] TARGET... DIRECTORY.
 static bool ln_symbolic;
@@ -10290,6 +10295,9 @@ static bool ln_make(string_address target, string_address name)
             !file_ask((string_address) "ln", (string_address) "replace", name))
                 return false;
 
+        if (!file_backup_made((string_address) "ln", name))
+                return false;
+
         /*
                 A hard link needs its source to be there before the
                 destination is given up: unlinking first and linking second
@@ -10354,7 +10362,9 @@ static bool ln_make(string_address target, string_address name)
 }
 
 static const file_long ln_longs[] = {
+    {(string_address) "backup", 'B'},
     {(string_address) "force", 'f'},
+    {(string_address) "suffix", 'S'},
     {(string_address) "interactive", 'i'},
     {(string_address) "logical", 'L'},
     {(string_address) "no-dereference", 'n'},
@@ -10375,13 +10385,17 @@ static b32 file_ln()
 
         file_taking taking = {
             .program = (string_address) "ln",
-            .allowed = (string_address) "fiLnPrstTv",
-            .valued = (string_address) "t",
+            .allowed = (string_address) "bfiLnPrsStTv",
+            .valued = (string_address) "tS",
+            .long_optional = (string_address) "B",
             .longs = ln_longs,
             .supersedes = ln_supersedes,
         };
 
         if (!file_take(address_of taking))
+                return 1;
+
+        if (!file_backup_taken(address_of taking, (string_address) "ln"))
                 return 1;
 
         positive flags = taking.flags;
@@ -16833,6 +16847,8 @@ static b32 file_rmdir()
         copies the links inside it as links, which is what a tree is. -P, -d
         and -a hold to the second everywhere and -L to the first.
 */
+static bool cp_attributes_only;
+static bool cp_replace;
 static bool cp_recursive;
 static bool cp_preserve;
 static bool cp_force;
@@ -16869,6 +16885,158 @@ static positive cp_umask;
         and none insisted on, because an owner that cannot be given is not a
         reason to leave the copy unmade.
 */
+/*
+        -b and --backup: what happens to what was already there.
+
+        none    nothing is kept
+        simple  one backup, under the suffix -S names, ~ by default
+        numbered  name.~1~, ~2~ and so on, however many are already there
+        existing  numbered when a numbered one is already there, simple when
+                  it is not, which is what -b means on its own
+
+        The name is moved rather than copied, so a backup costs nothing and
+        the file that was there keeps its inode.
+*/
+static p8 file_backup_kind;
+static string_address file_backup_suffix;
+
+static bool file_backup_control(string_address program, string_address word)
+{
+        if (!word || !string_compare(word, "existing") || !string_compare(word, "nil"))
+                file_backup_kind = 'e';
+        else if (!string_compare(word, "none") || !string_compare(word, "off"))
+                file_backup_kind = 0;
+        else if (!string_compare(word, "simple") || !string_compare(word, "never"))
+                file_backup_kind = 's';
+        else if (!string_compare(word, "numbered") || !string_compare(word, "t"))
+                file_backup_kind = 'n';
+        else
+        {
+                string_format(file_fail,
+                              "%s: invalid argument '%s' for 'backup type'\n"
+                              "Valid arguments are:\n"
+                              "  - 'none', 'off'\n"
+                              "  - 'simple', 'never'\n"
+                              "  - 'existing', 'nil'\n"
+                              "  - 'numbered', 't'\n",
+                              program, word);
+                return false;
+        }
+
+        return true;
+}
+
+// The numbered backups already beside a name say whether the next one is
+// numbered too, and which number it takes.
+static positive file_backup_number(string_address destination)
+{
+        p8 candidate[FILE_PATH_MAX];
+        positive at = 1;
+
+        for (;;)
+        {
+                if (string_length(destination) + 16 >= FILE_PATH_MAX)
+                        return 0;
+
+                positive length = string_length(destination);
+
+                memory_copy_apart(candidate, destination, length);
+                candidate[length++] = '.';
+                candidate[length++] = '~';
+                length += positive_into_string(candidate + length, at);
+                candidate[length++] = '~';
+                candidate[length] = end;
+
+                if (!file_exists(AT_FDCWD, candidate))
+                        return at;
+
+                at++;
+        }
+}
+
+static bool file_backup_made(string_address program, string_address destination)
+{
+        p8 kept[FILE_PATH_MAX];
+        positive length = string_length(destination);
+
+        if (!file_backup_kind || !file_exists(AT_FDCWD, destination))
+                return true;
+
+        p8 kind = file_backup_kind;
+
+        if (kind == 'e')
+                kind = file_backup_number(destination) > 1 ? 'n' : 's';
+
+        if (kind == 'n')
+        {
+                positive at = file_backup_number(destination);
+                positive used = length;
+
+                if (length + 16 >= FILE_PATH_MAX)
+                        return true;
+
+                memory_copy_apart(kept, destination, length);
+                kept[used++] = '.';
+                kept[used++] = '~';
+                used += positive_into_string(kept + used, at);
+                kept[used++] = '~';
+                kept[used] = end;
+        }
+        else
+        {
+                positive suffix = string_length(file_backup_suffix);
+
+                if (length + suffix >= FILE_PATH_MAX)
+                        return true;
+
+                memory_copy_apart(kept, destination, length);
+                memory_copy_apart_end(kept + length, file_backup_suffix, suffix);
+        }
+
+        bipolar moved = system_rename_at(AT_FDCWD, destination, AT_FDCWD, kept, 0);
+
+        if (moved < 0)
+        {
+                string_format(file_fail, "%s: cannot backup '%s': %s\n", program,
+                              destination, file_reason(moved));
+                return false;
+        }
+
+        return true;
+}
+
+// Every program that takes -b reads it the same way, so the reading is
+// here rather than four times over.
+static bool file_backup_taken(file_taking address_to taking, string_address program)
+{
+        file_backup_kind = 0;
+        file_backup_suffix = file_option_value(taking, 'S');
+
+        if (!file_backup_suffix)
+        {
+                file_backup_suffix = file_environment((string_address) "SIMPLE_BACKUP_SUFFIX");
+
+                if (!file_backup_suffix || !string_get(file_backup_suffix))
+                        file_backup_suffix = (string_address) "~";
+        }
+
+        if (taking->flags & FILE_FLAG('b'))
+                file_backup_kind = 'e';
+
+        if (taking->flags & FILE_FLAG('B'))
+        {
+                string_address control = file_option_value(taking, 'B');
+
+                if (!control)
+                        control = file_environment((string_address) "VERSION_CONTROL");
+
+                if (!file_backup_control(program, control))
+                        return false;
+        }
+
+        return true;
+}
+
 static fn file_keep(string_address destination, file_facts address_to facts)
 {
         p64 times[4];
@@ -17109,6 +17277,23 @@ static bool file_copy_one(string_address source, string_address destination,
                 goto copied;
         }
 
+        if (!moving && cp_attributes_only && kind != MODE_DIRECTORY)
+        {
+                bipolar made = system_open_at_mode(AT_FDCWD, destination,
+                                                   FILE_WRITE & ~O_TRUNC,
+                                                   facts.mode & 07777);
+
+                if (made < 0)
+                {
+                        string_format(file_fail, "cp: cannot create regular file '%s': %s\n",
+                                      destination, file_reason(made));
+                        return false;
+                }
+
+                system_close(made);
+                goto copied;
+        }
+
         if (kind != MODE_DIRECTORY)
         {
                 // The open creates a file with the source's mode under the
@@ -17231,12 +17416,33 @@ copied:
 // pair it hands over is a named one at full depth.
 static fn cp_pair(string_address source, string_address destination)
 {
+        if (!file_backup_made((string_address) "cp", destination))
+        {
+                cp_status = 1;
+                return;
+        }
+
+        if (cp_replace)
+                system_remove_at(AT_FDCWD, destination, 0);
+
         if (!file_copy_one(source, destination, FILE_MAX_DEPTH, true, false))
                 cp_status = 1;
 }
 
 static const file_long cp_longs[] = {
     {(string_address) "archive", 'a'},
+    {(string_address) "attributes-only", 'A'},
+    {(string_address) "backup", 'B'},
+    {(string_address) "copy-contents", 'C'},
+    {(string_address) "no-preserve", 'N'},
+    {(string_address) "one-file-system", 'x'},
+    {(string_address) "parents", 'e'},
+    {(string_address) "reflink", 'k'},
+    {(string_address) "remove-destination", 'D'},
+    {(string_address) "sparse", 'z'},
+    {(string_address) "strip-trailing-slashes", 'w'},
+    {(string_address) "suffix", 'S'},
+    {(string_address) "update", 'u'},
     {(string_address) "dereference", 'L'},
     {(string_address) "force", 'f'},
     {(string_address) "interactive", 'i'},
@@ -17262,14 +17468,21 @@ static b32 file_cp()
 
         file_taking taking = {
             .program = (string_address) "cp",
-            .allowed = (string_address) "aHLPRdfilnprstTuv",
-            .valued = (string_address) "t",
+            .allowed = (string_address) "aAbCdDefHiklLnNprRsStTuvwxzZ",
+            .valued = (string_address) "tSNz",
+            .long_optional = (string_address) "BkupZ",
             .longs = cp_longs,
             .supersedes = cp_supersedes,
         };
 
         if (!file_take(address_of taking))
                 return 1;
+
+        if (!file_backup_taken(address_of taking, (string_address) "cp"))
+                return 1;
+
+        cp_attributes_only = (taking.flags & FILE_FLAG('A')) != 0;
+        cp_replace = (taking.flags & FILE_FLAG('D')) != 0;
 
         positive flags = taking.flags;
         positive first = taking.first;
@@ -17328,7 +17541,10 @@ static bool install_loud;
 static b32 install_status;
 
 static const file_long install_longs[] = {
+    {(string_address) "backup", 'B'},
+    {(string_address) "compare", 'C'},
     {(string_address) "create-leading-directories", 'D'},
+    {(string_address) "suffix", 'S'},
     {(string_address) "directory", 'd'},
     {(string_address) "group", 'g'},
     {(string_address) "mode", 'm'},
@@ -17502,8 +17718,9 @@ static b32 file_install()
         positive count = (positive)program_argument_count();
         file_taking taking = {
             .program = (string_address) "install",
-            .allowed = (string_address) "DcdgmopTtv",
-            .valued = (string_address) "gmot",
+            .allowed = (string_address) "bCDcdgmopSTtv",
+            .valued = (string_address) "gmotS",
+            .long_optional = (string_address) "B",
             .longs = install_longs,
         };
 
@@ -17581,6 +17798,7 @@ static b32 file_install()
         renameat2 rather than renameat, because riscv64 never had renameat and
         this tree builds for it; a flags word of zero is the same operation.
 */
+static bool mv_newer_only;
 static b32 mv_status;
 static bool mv_ask;
 static bool mv_never_clobber;
@@ -17616,6 +17834,23 @@ static fn mv_one(string_address source, string_address destination)
 {
         if (!mv_allowed(destination))
                 return;
+
+        if (mv_newer_only)
+        {
+                file_facts from;
+                file_facts to;
+
+                if (file_look_at(source, address_of from) &&
+                    file_look_at(destination, address_of to) &&
+                    from.modified.seconds <= to.modified.seconds)
+                        return;
+        }
+
+        if (!file_backup_made((string_address) "mv", destination))
+        {
+                mv_status = 1;
+                return;
+        }
 
         file_facts from;
         file_facts to;
@@ -17690,7 +17925,13 @@ static fn mv_one(string_address source, string_address destination)
 }
 
 static const file_long mv_longs[] = {
+    {(string_address) "backup", 'B'},
+    {(string_address) "debug", 'v'},
     {(string_address) "force", 'f'},
+    {(string_address) "no-copy", 'c'},
+    {(string_address) "strip-trailing-slashes", 'w'},
+    {(string_address) "suffix", 'S'},
+    {(string_address) "update", 'u'},
     {(string_address) "interactive", 'i'},
     {(string_address) "no-clobber", 'n'},
     {(string_address) "no-target-directory", 'T'},
@@ -17707,14 +17948,20 @@ static b32 file_mv()
 
         file_taking taking = {
             .program = (string_address) "mv",
-            .allowed = (string_address) "finTtv",
-            .valued = (string_address) "t",
+            .allowed = (string_address) "bcfinSTtuvwZ",
+            .valued = (string_address) "tS",
+            .long_optional = (string_address) "BuZ",
             .longs = mv_longs,
             .supersedes = mv_supersedes,
         };
 
         if (!file_take(address_of taking))
                 return 1;
+
+        if (!file_backup_taken(address_of taking, (string_address) "mv"))
+                return 1;
+
+        mv_newer_only = (taking.flags & FILE_FLAG('u')) != 0;
 
         positive first = taking.first;
 
