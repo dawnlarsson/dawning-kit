@@ -84,11 +84,23 @@ DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "default",
                  "misc": "default"}
 
 DOMAIN_FLOOR = {
-    #       domain: (cases that agreed, cases run) when the floor was set.
-    #       An entry is absent once its domain agrees on everything.
-    "shell": (10690, 19217),
-    "util_linux": (16550, 17551),
-    "misc": (18071, 19912),
+    #       domain: (cases that agreed, cases run, what the gap is) when the
+    #       floor was set. An entry is absent once its domain agrees on
+    #       everything, which four of the seven already do.
+    "shell": (10690, 19217,
+              "the pseudo-terminal families: a transcript carries the prompt and "
+              "job notices a terminal interleaves by timing, and bash writes its "
+              "history on exit, so the answers need a normaliser before their "
+              "divergences mean anything. Fifteen more are the reference itself "
+              "timing out"),
+    "util_linux": (16551, 17551,
+                   "the column families of lsfd, findmnt and lsblk: 2.42 lists "
+                   "ASSOC, XMODE, SOURCE and MNTID by default where these list "
+                   "FD and MODE, so a default listing differs in every row"),
+    "misc": (18071, 19912,
+             "script's transcript timing, cksum --check combinations, od and "
+             "numfmt corners, and eleven cases where the reference itself "
+             "exceeds the runner's limit"),
 }
 DOMAINS = ("text", "files", "misc", "util_linux", "shell", "builtins", "awk")
 SHELL_MODES = {"bash": ("/bin/bash", [], "bash"),
@@ -1276,11 +1288,12 @@ def main(argv=None):
                          if key.startswith(domain + "/"))
             ran = sum(count for key, count in total.items()
                       if key.startswith(domain + "/"))
-            want, of = floor
+            want, of, why = floor
             if agreed < want:
                 floored = False
                 print(f"  FLOOR {domain}: {agreed} of {ran} agree, below the {want} of {of} "
                       f"this domain is held to -- a regression inside a known gap")
+                print(f"        the gap is {why}")
             elif agreed > want:
                 print(f"  floor {domain}: {agreed} of {ran} agree, above the recorded "
                       f"{want} of {of}; lower the floor in DOMAIN_FLOOR to keep the gain")
