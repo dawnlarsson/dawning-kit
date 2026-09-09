@@ -98,19 +98,22 @@ DOMAIN_FLOOR = {
     #       that a green run nags on every pass, and a gate that always speaks
     #       is one nobody reads.
     "shell": (16095, 25681, 20,
-              "the process-surface families, and the interactive surface a script never "
-              "reaches. startup and set_options hold about six of every ten cases that do "
-              "not agree, and one answer holds most of that: an option nobody has -- and "
-              "three in five of startup's option sets carry one -- is answered by bash "
-              "with its whole usage banner, which the family replays, where this shell "
-              "writes the one diagnostic line and nothing else. The pseudo-terminal "
-              "families are no longer the prompt, the interleaving of the job notices or "
-              "the history file, which are normalised away now: what is left is the job "
-              "listing, printed in bash's columns under every name, so that a dash "
-              "session differs in every notice it writes; a terminal that goes away, "
-              "which kills bash with the hangup and leaves this one exiting zero; and "
-              "the line editing an interactive session reaches and a script never asks "
-              "for."),
+              "the process-surface families, and a diagnostic's wording wherever a "
+              "terminal puts it on the same stream as the answer. startup and set_options "
+              "hold about six of every ten cases that do not agree, and one answer holds "
+              "most of that: bash writes its whole usage banner for an option nobody has, "
+              "which the startup family replays, and three in five of that family's option "
+              "sets carry such an option. The pseudo-terminal families are no longer the "
+              "prompt, the interleaving of the job notices or the history file -- those are "
+              "the terminal's and are normalised away now -- but this: every other case in "
+              "this domain compares a diagnostic only as present or absent, and a session "
+              "has one stream, so a session compares its wording byte for byte. Of eighty "
+              "sessions sampled, two thirds of what still differs is a diagnostic: the name "
+              "and the input line dash writes in front of one, and the sentences "
+              "themselves. The rest is a builtin one shell has and the other has not, bash "
+              "echoing the line that was typed, the job listing this shell prints in bash's "
+              "columns under every name, and a terminal that goes away, which kills bash "
+              "with the hangup where this one exits zero."),
     "util_linux": (76645, 80852, 30,
                    "the mount namespace and what a process can watch inside it. "
                    "The column families this floor used to name are not the gap "
@@ -126593,7 +126596,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "d37543de4321636c6cb381fae4eb82ac583b43f2eccd9e863c4f48a6697e483b"
+   "stdout": "6c58b8761b46eafa0b55dc65d2334d6d0f7b6c0673fd948578a81d7701b610df"
   },
   "case": {
    "argv": [
