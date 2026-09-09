@@ -49,6 +49,11 @@ import sys
 import tempfile
 import concurrent.futures
 
+# Run as a program this module is __main__, so a spec's `from differential
+# import INPUTS` would import a second copy and add its inputs to that one.
+# The workers then fed those cases nothing at all. One name, one module.
+sys.modules.setdefault("differential", sys.modules[__name__])
+
 HERE = Path(__file__).resolve().parent
 PIN_FILE = Path(__file__).resolve()
 PIN_BEGIN = "# ---- pinned rows begin (written by --record; never by hand) ----"
@@ -345,6 +350,18 @@ def grammar_cases(domain, utility, budget, rng):
     if budget == "singles":
         return
     strength = 3 if budget == "full" else 2
+    # The greedy builder scores every uncovered tuple for every candidate row,
+    # and a program with several many-valued options has millions of them: a
+    # full run stopped making progress rather than covering triples. Where the
+    # three widest parameters alone pass a few thousand combinations, pairs
+    # are what is affordable.
+    if strength == 3:
+        widest = sorted((len(values) for values in parameters), reverse=True)[:3]
+        product = 1
+        for size in widest:
+            product *= size
+        if product > 4000:
+            strength = 2
     for row in covering_array(parameters, strength, random.Random(rng.random())):
         argv, stdin = assemble(utility, row, parameters)
         yield from emit(argv, stdin, "pairs" if strength == 2 else "triples")
