@@ -3072,13 +3072,24 @@ bool file_copy_contents(bipolar from_directory, string_address from,
                                        mode, FILE_WRITE);
 }
 
-bool file_make_parents(string_address path, positive mode)
+/*
+        Every component of a path, made in turn.
+
+        `told` is called with each component this actually created, which is
+        what mkdir -v reports -- a component that was already there is not a
+        creation and is not named. On failure the component that could not be
+        made is copied into `failed`, because that is the name the reference
+        quotes and not the whole path it was given.
+*/
+static bipolar file_make_parents_walk(string_address path, positive mode,
+                                      fn(address_to told)(string_address),
+                                      p8 address_to failed)
 {
         p8 work[FILE_PATH_MAX];
         positive length = string_length(path);
 
         if (length >= FILE_PATH_MAX)
-                return false;
+                return -ERROR_NAME_TOO_LONG;
 
         memory_copy_apart_end(work, path, length);
 
@@ -3094,17 +3105,47 @@ bool file_make_parents(string_address path, positive mode)
                 if (made < 0 &&
                     (made != -ERROR_EXISTS || !file_is_directory_through(work)))
                 {
+                        if (failed)
+                                string_copy(failed, work);
+
                         work[i] = '/';
-                        return false;
+                        //      Something is there and it is not a directory,
+                        //      which is what the reference says about it
+                        //      rather than that it exists.
+                        return made == -ERROR_EXISTS ? -ERROR_NOT_DIRECTORY
+                                                     : made;
                 }
+
+                if (!made && told)
+                        told(work);
 
                 work[i] = '/';
         }
 
         bipolar made = system_make_directory_at(AT_FDCWD, work, mode);
 
-        return made == 0 ||
-               (made == -ERROR_EXISTS && file_is_directory_through(work));
+        if (!made)
+        {
+                if (told)
+                        told(work);
+
+                return 0;
+        }
+
+        if (made == -ERROR_EXISTS && file_is_directory_through(work))
+                return 0;
+
+        if (failed)
+                string_copy(failed, work);
+
+        return made;
+}
+
+
+
+bool file_make_parents(string_address path, positive mode)
+{
+        return file_make_parents_walk(path, mode, null, null) == 0;
 }
 
 /*
@@ -12582,6 +12623,11 @@ static const file_long mkdir_longs[] = {
     {null, 0},
 };
 
+static fn mkdir_told(string_address path)
+{
+        string_format(log, "mkdir: created directory '%s'\n", path);
+}
+
 static b32 file_mkdir()
 {
         positive count = (positive)program_argument_count();
@@ -12608,9 +12654,10 @@ static b32 file_mkdir()
         // clause that names no class is filtered through the umask, and so
         // is every bit no clause mentions at all.
         if (given_mode &&
-            !file_mode_masked(file_option_value(address_of taking, 'm'),
-                              0777 & ~file_umask(), true, file_umask(),
-                              address_of mode))
+            (!string_get(file_option_value(address_of taking, 'm')) ||
+             !file_mode_masked(file_option_value(address_of taking, 'm'),
+                               0777 & ~file_umask(), true, file_umask(),
+                               address_of mode)))
         {
                 string_format(log_error, "mkdir: invalid mode '%s'\n",
                               file_option_value(address_of taking, 'm'));
@@ -12628,20 +12675,26 @@ static b32 file_mkdir()
 
                 if (parents)
                 {
-                        // The parents are made with the default, and only the
-                        // directory that was named gets the mode asked for.
-                        if (!file_make_parents(path, 0777))
+                        //      The parents are made with the default, and
+                        //      only the directory that was named gets the
+                        //      mode asked for. -v names each component this
+                        //      made and none that was already there, and a
+                        //      failure names the component that failed.
+                        p8 failed[FILE_PATH_MAX];
+                        bipolar made = file_make_parents_walk(
+                            path, 0777, loud ? mkdir_told : null, failed);
+
+                        if (made < 0)
                         {
-                                string_report(log_error, false, "%s: %s: %s\n", (string_address) "mkdir", path, (string_address) "Cannot create directory");
+                                string_format(log_error,
+                                              "mkdir: cannot create directory '%s': %s\n",
+                                              failed, file_reason(made));
                                 status = 1;
                                 continue;
                         }
 
                         if (given_mode)
                                 system_change_mode_at(AT_FDCWD, path, mode);
-
-                        if (loud)
-                                string_format(log, "mkdir: created directory '%s'\n", path);
 
                         continue;
                 }
@@ -16569,6 +16622,11 @@ static bool dircolors_add_entry(dircolors_builder address_to builder,
                                 bool extension, string_address value,
                                 positive value_length)
 {
+        //      The reference writes a colon inside a key or a value with a
+        //      backslash in front of it. This reader has no escape -- the
+        //      one scanner that splits an LS_COLORS table cuts at every
+        //      colon there is, for ls as well as here -- so such a table is
+        //      refused rather than written and then misread.
         if ((memory_first_of(key, ':', key_length) ||
              memory_first_of(value, ':', value_length)))
                 return string_report(log_error, false, "dircolors: ':' in keys or values is unsupported by the shared LS_COLORS grammar\n");
@@ -16782,6 +16840,15 @@ static fn dircolors_print_table(string_address table)
         }
 }
 
+//      Every dircolors refusal is its own sentence and then the line that
+//      sends the reader on, which is one shape written once.
+static b32 dircolors_refused(string_address sentence)
+{
+        string_format(log_error, "dircolors: %s", sentence);
+        log_error("Try 'dircolors --help' for more information.\n", 0);
+        return 1;
+}
+
 static b32 file_dircolors()
 {
         file_operands_begin();
@@ -16797,18 +16864,40 @@ static b32 file_dircolors()
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
-        if (file_operand_count > 1)
-                return string_report(log_error, 1, "dircolors: extra operand\n");
 
         positive flags = taking.flags;
         bool print_database = (flags & FILE_FLAG('p')) != 0;
         bool print_table = (flags & FILE_FLAG('L')) != 0;
 
-        if (print_database && (file_operand_count || dircolors_shell_option ||
-                               print_table))
-                return string_report(log_error, 1, "dircolors: --print-database cannot be combined with a file or another output mode\n");
-        if (print_table && dircolors_shell_option)
-                return string_report(log_error, 1, "dircolors: --print-ls-colors cannot select a shell syntax\n");
+        //      The reference refuses these in this order and with these
+        //      words, and sends the reader on to --help after each.
+        if ((print_database || print_table) && dircolors_shell_option)
+                return dircolors_refused((string_address)
+                    "the options to output non shell syntax,\n"
+                    "and to select a shell syntax are mutually exclusive\n");
+
+        if (print_database && print_table)
+                return dircolors_refused((string_address)
+                    "options --print-database and --print-ls-colors are "
+                    "mutually exclusive\n");
+
+        if (file_operand_count > 1)
+        {
+                string_format(log_error, "dircolors: extra operand '%s'\n",
+                              file_operand_at(1));
+                log_error("Try 'dircolors --help' for more information.\n", 0);
+                return 1;
+        }
+
+        if (print_database && file_operand_count)
+        {
+                string_format(log_error, "dircolors: extra operand '%s'\n",
+                              file_operand_at(0));
+                log_error("file operands cannot be combined with "
+                          "--print-database (-p)\n", 0);
+                log_error("Try 'dircolors --help' for more information.\n", 0);
+                return 1;
+        }
         if (print_database)
         {
                 log(dircolors_database, 0);
