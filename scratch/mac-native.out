@@ -1,0 +1,63 @@
+
+native -- arm64 assembly on an arm64 machine, with no emulator in the way
+  lifted out of src/library.c
+  arm64 native extractor: object contract and corruption checks passed
+  arm64 byte hunts: 1110711 checks | table 0 | first_of 0 | or_end 0 | max 0 | find 0
+  arm64 bounded: 1201280 checks | last_of_or_end 0 | compare_max 0 | length_max 0 | first_of 0
+  riscv64 bit arithmetic: 400510 checks | lowest 0 | highest 0 | zero test 0
+  arm64 bulk: 3479054 checks | failures 0
+  arm64 memory_reverse: 197848 checks | 0 failures
+  native decimal series: 60624 checks, 0 failures
+  arm64 wide: 3184603 checks | length 0 | length_max 0 | first_of 0 | or_end 0 | first_max 0 | last_of 0 | last_or_end 0 | memchr 0
+  arm64 base correctness: 286720 checks | 0 failures
+  arm64 native base conversion, best of 7, 131072 calls
+    binary             old 342881  assembly 78825  assembly/old 22%
+    base 4             old 142567  assembly 38309  assembly/old 26%
+    octal              old 98165  assembly 29114  assembly/old 29%
+    hexadecimal lower  old 53132  assembly 20125  assembly/old 37%
+    hexadecimal upper  old 53244  assembly 19183  assembly/old 36%
+    base 32 lower      old 44033  assembly 17486  assembly/old 39%
+    base 32 upper      old 43923  assembly 17470  assembly/old 39%
+    base 36 lower      old 56252  assembly 42769  assembly/old 76%
+    arm64 native base field: correct
+  arm64 compact human: 165594 checks | 0 failures
+  arm64 native compact human, best of 7, 262144 calls
+    plain        old 48801  assembly 48612  assembly/old 99%
+    fractional   old 30025  assembly 18892  assembly/old 62%
+    integer      old 41317  assembly 19042  assembly/old 46%
+    mixed u64    old 30993  assembly 14339  assembly/old 46%
+  arm64 nearest human/wait: 422456 checks | 0 failures
+  arm64 native nearest human, best of 7, 262144 calls
+    SI mixed   old 132408  assembly 86548  assembly/old 65%
+    IEC mixed  old 115002  assembly 70391  assembly/old 61%
+  arm64 contiguous fields: 100800 checks | 0 failures
+  arm64 native contiguous decimal, best of 7, 131072 calls
+    width 2  old 13199  assembly 8417  assembly/old 63%
+    width 6  old 34011  assembly 19181  assembly/old 56%
+    width 9  old 41120  assembly 17045  assembly/old 41%
+  arm64 native bounded input bases: correct
+    octal escape, 1-3  scalar 84615  assembly 93789  assembly/scalar 110%
+    octal word, 1-22   scalar 145517  assembly 128734  assembly/scalar 88%
+    hex escape, 1-2    scalar 75983  assembly 58969  assembly/scalar 77%
+    hex word, 1-16     scalar 184534  assembly 175121  assembly/scalar 94%
+    base 36, 1-13      scalar 238519  assembly 219154  assembly/scalar 91%
+  arm64 network fields: 2048576 checks | 0 failures
+  arm64 memory reserve: 87 checks | 0 failures
+
+  ----
+  arm64-byte-hunts 1110711 of 1110711
+  arm64-bounded  1201280 of 1201280
+  riscv64-bit-arithmetic 400510 of 400510
+  arm64-bulk     3479054 of 3479054
+  arm64-memory_reverse 197848 of 197848
+  native-decimal-series 60624 of 60624
+  arm64-wide     3184603 of 3184603
+  arm64-base-correctness 286720 of 286720
+  arm64-compact-human 165594 of 165594
+  arm64-nearest-human/wait 422456 of 422456
+  arm64-contiguous-fields 100800 of 100800
+  arm64-network-fields 2048576 of 2048576
+  arm64-memory-reserve 87 of 87
+                 12658863 of 12658863
+
+everything agrees

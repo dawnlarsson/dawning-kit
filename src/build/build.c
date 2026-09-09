@@ -122,8 +122,21 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
          " -D_FORTIFY_SOURCE=0 -fno-unwind-tables -fno-plt -fno-PIE -fno-pie"
          " -fno-stack-clash-protection"},
 
-        /*      The ISA floor the library promises, and what must not be in it.
-                Read by `build floor`; the lane in test/run calls that. */
+        /*      The ISA floor the library promises, and what must not be in
+                it. `build floor` proves both against the ELF attributes of an
+                object it compiles at that floor, and the standard lane in
+                test/run reads its answer.
+
+                Why these extensions, for this tree: A is part of the public
+                surface because the atomic macros lower to it. F and D are part
+                of the assembly itself -- string_format and fast_sin use both
+                precisions. get_cpu_time reads the time CSR, so Zicntr and its
+                Zicsr dependency are explicit too. Software fallbacks for those
+                would be a different implementation, not something a compile
+                check should pretend exists. C is forbidden rather than merely
+                unrequested: the shipped routines must assemble without
+                compressed instructions, and a toolchain defaulting to rv64gc
+                would put them back without a word. */
         {"floor_arch", "riscv64"},
         {"floor_prefix", "rv64"},
         {"floor_march", "rv64imafd_zicsr_zicntr"},

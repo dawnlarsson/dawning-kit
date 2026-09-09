@@ -1,0 +1,213 @@
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:16:
+src/build/../library.common.c:479:31: error: call to undeclared function 'system_read_retry'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+  479 |                 bipolar got = system_read_retry(
+      |                               ^
+src/build/../library.common.c:524:23: error: call to undeclared function 'system_read_retry'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+  524 |         bipolar got = system_read_retry((positive)handle, into, capacity - 1);
+      |                       ^
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1042:27: error: use of undeclared identifier 'syscall_macos_arm64_pread64'
+ 1042 |             system_call_4(syscall(pread64), (positive)handle,
+      |                           ^~~~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:178:1: note: expanded from here
+  178 | syscall_macos_arm64_pread64
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1047:27: error: use of undeclared identifier 'syscall_macos_arm64_pwrite64'
+ 1047 |             system_call_4(syscall(pwrite64), (positive)handle,
+      |                           ^~~~~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:179:1: note: expanded from here
+  179 | syscall_macos_arm64_pwrite64
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1065:13: error: use of undeclared identifier 'syscall_macos_arm64_dup3'
+ 1065 |             system_duplicate(from, to, flags))
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../library.common.c:316:23: note: expanded from macro 'system_duplicate'
+  316 |         system_call_3(syscall(dup3), (positive)(from), (positive)(to),       \
+      |                       ^~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:182:1: note: expanded from here
+  182 | syscall_macos_arm64_dup3
+      | ^~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1087:13: error: use of undeclared identifier 'syscall_macos_arm64_pipe2'
+ 1087 |             system_pipe(pair, flags))
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../library.common.c:313:23: note: expanded from macro 'system_pipe'
+  313 |         system_call_2(syscall(pipe2), (positive)(pair), (positive)(flags))
+      |                       ^~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:184:1: note: expanded from here
+  184 | syscall_macos_arm64_pipe2
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1089:13: error: use of undeclared identifier 'syscall_macos_arm64_pipe2'
+ 1089 |             system_pipe(pair, 0))
+      |             ^~~~~~~~~~~~~~~~~~~~
+src/build/../library.common.c:313:23: note: expanded from macro 'system_pipe'
+  313 |         system_call_2(syscall(pipe2), (positive)(pair), (positive)(flags))
+      |                       ^~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:185:1: note: expanded from here
+  185 | syscall_macos_arm64_pipe2
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1131:13: error: use of undeclared identifier 'syscall_macos_arm64_newfstatat'
+ 1131 |             system_status_at(directory, path, into, flags))
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../library.common.c:308:23: note: expanded from macro 'system_status_at'
+  308 |         system_call_4(syscall(newfstatat),                                   \
+      |                       ^~~~~~~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:189:1: note: expanded from here
+  189 | syscall_macos_arm64_newfstatat
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1133:13: error: use of undeclared identifier 'syscall_macos_arm64_newfstatat'
+ 1133 |             system_status_at(ERROR_AT_HERE, path, into, 0))
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../library.common.c:308:23: note: expanded from macro 'system_status_at'
+  308 |         system_call_4(syscall(newfstatat),                                   \
+      |                       ^~~~~~~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:190:1: note: expanded from here
+  190 | syscall_macos_arm64_newfstatat
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1135:13: error: use of undeclared identifier 'syscall_macos_arm64_newfstatat'
+ 1135 |             system_status_at(ERROR_AT_HERE, path, into, AT_SYMLINK_NOFOLLOW))
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../library.common.c:308:23: note: expanded from macro 'system_status_at'
+  308 |         system_call_4(syscall(newfstatat),                                   \
+      |                       ^~~~~~~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:191:1: note: expanded from here
+  191 | syscall_macos_arm64_newfstatat
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1170:13: error: use of undeclared identifier 'syscall_macos_arm64_renameat2'
+ 1170 |             system_rename_at(from_directory, from, to_directory, to, flags))
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../library.common.c:340:23: note: expanded from macro 'system_rename_at'
+  340 |         system_call_5(syscall(renameat2),                                    \
+      |                       ^~~~~~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:198:1: note: expanded from here
+  198 | syscall_macos_arm64_renameat2
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1172:13: error: use of undeclared identifier 'syscall_macos_arm64_renameat2'
+ 1172 |             system_rename_at(ERROR_AT_HERE, from, ERROR_AT_HERE, to, 0))
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../library.common.c:340:23: note: expanded from macro 'system_rename_at'
+  340 |         system_call_5(syscall(renameat2),                                    \
+      |                       ^~~~~~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:199:1: note: expanded from here
+  199 | syscall_macos_arm64_renameat2
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1271:13: error: use of undeclared identifier 'syscall_macos_arm64_getdents64'
+ 1271 |             system_read_directory(handle, into, size))
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../library.common.c:294:23: note: expanded from macro 'system_read_directory'
+  294 |         system_call_3(syscall(getdents64), (positive)(handle),               \
+      |                       ^~~~~~~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:218:1: note: expanded from here
+  218 | syscall_macos_arm64_getdents64
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1351:13: error: use of undeclared identifier 'syscall_macos_arm64_clone'
+ 1351 |             system_fork())
+      |             ^~~~~~~~~~~~~
+src/build/../library.common.c:401:37: note: expanded from macro 'system_fork'
+  401 | #define system_fork() system_call_2(syscall(clone), SIGCHLD, 0)
+      |                                     ^~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:231:1: note: expanded from here
+  231 | syscall_macos_arm64_clone
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2512:
+src/build/../standard/error.c:1393:46: error: aliases are not supported on darwin
+ 1393 | DEAD_END fn _Exit(b32 status) __attribute__((alias("_exit")));
+      |                                              ^
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2513:
+src/build/../standard/lock.c:240:17: error: use of undeclared identifier 'syscall_macos_arm64_futex'
+  240 |                 lock_futex_wait(address_of it->word, LOCK_WAITED, private);
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../standard/lock.c:195:28: note: expanded from macro 'lock_futex_wait'
+  195 |         ((fn)system_call_6(syscall(futex), (positive)(word),                \
+      |                            ^~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:237:1: note: expanded from here
+  237 | syscall_macos_arm64_futex
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2513:
+src/build/../standard/lock.c:265:9: error: use of undeclared identifier 'syscall_macos_arm64_futex'
+  265 |         lock_futex_wake(address_of it->word, private);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/../standard/lock.c:199:28: note: expanded from macro 'lock_futex_wake'
+  199 |         ((fn)system_call_6(syscall(futex), (positive)(word),                \
+      |                            ^~~~~~~~~~~~~~
+src/build/../platform/syscall.inc:55:23: note: expanded from macro 'syscall'
+   55 | #define syscall(name) syscall_macos_arm64_##name | 0x2000000
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+<scratch space>:2:1: note: expanded from here
+    2 | syscall_macos_arm64_futex
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from src/build/build.c:37:
+In file included from src/build/../compiler_memory.c:2515:
+src/build/../standard/allocator.c:950:55: error: aliases are not supported on darwin
+  950 | pub address_any malloc(positive bytes) __attribute__((alias("memory_take")));
+      |                                                       ^
+src/build/../standard/allocator.c:952:47: error: aliases are not supported on darwin
+  952 | pub fn free(address_any block) __attribute__((alias("memory_give")));
+      |                                               ^
+fatal error: too many errors emitted, stopping now [-ferror-limit=]
+20 errors generated.
