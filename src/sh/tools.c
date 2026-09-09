@@ -209,6 +209,27 @@ static fn logger_build_positive(logger_builder address_to build, positive value)
         logger_build_bytes(build, digits, length);
 }
 
+/* The clock's own opinion of itself, which RFC 5424's time quality reports:
+   a discipline without STA_UNSYNC is synchronised, and maxerror is the bound
+   it claims. struct timex is one 32-bit mode word padded out to the long
+   fields, so maxerror is the fourth word and status the sixth. */
+#define LOGGER_TIMEX_WORDS 26
+#define LOGGER_TIMEX_MAXERROR 3
+#define LOGGER_TIMEX_STATUS 5
+#define LOGGER_CLOCK_UNSYNCHRONISED 0x40
+
+static bool logger_clock_synced(positive address_to accuracy)
+{
+        positive words[LOGGER_TIMEX_WORDS] = {0};
+
+        if (system_call_1(syscall(adjtimex), (positive)words) < 0 ||
+            ((p32)words[LOGGER_TIMEX_STATUS] & LOGGER_CLOCK_UNSYNCHRONISED))
+                return false;
+
+        address_to accuracy = words[LOGGER_TIMEX_MAXERROR];
+        return true;
+}
+
 static fn logger_build_padded(logger_builder address_to build, positive value,
                               positive width)
 {
@@ -437,8 +458,22 @@ static bool logger_header(logger_control address_to control,
                                                         : (string_address)"-");
                 logger_build_character(address_of build, ' ');
                 if (control->rfc_quality)
-                        logger_build_string(address_of build,
-                            "[timeQuality tzKnown=\"1\" isSynced=\"0\"]");
+                {
+                        // util-linux asks the kernel's NTP state: a
+                        // synchronised clock also reports its error bound.
+                        positive accuracy;
+
+                        if (logger_clock_synced(address_of accuracy))
+                        {
+                                logger_build_string(address_of build,
+                                    "[timeQuality tzKnown=\"1\" isSynced=\"1\" syncAccuracy=\"");
+                                logger_build_positive(address_of build, accuracy);
+                                logger_build_string(address_of build, "\"]");
+                        }
+                        else
+                                logger_build_string(address_of build,
+                                    "[timeQuality tzKnown=\"1\" isSynced=\"0\"]");
+                }
                 else
                         logger_build_character(address_of build, '-');
                 logger_build_character(address_of build, ' ');
@@ -12278,10 +12313,11 @@ static fn tools_dmesg_calendar(tools_dmesg_state address_to state,
 static fn tools_dmesg_message(p8 address_to bytes, positive length,
                               bool noescape)
 {
+        // util-linux escapes every byte that is not printable ASCII.
         if (noescape)
                 text_put(bytes, length);
         else
-                writer_hex_escaped(text_put, bytes, length, HEX_CONTROL);
+                writer_hex_escaped(text_put, bytes, length, HEX_CONTROL | HEX_HIGH);
 }
 
 static fn tools_dmesg_emit(tools_dmesg_state address_to state,

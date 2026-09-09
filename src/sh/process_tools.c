@@ -817,48 +817,59 @@ static b32 process_pipesz()
                        (FILE_FLAG('f') | FILE_FLAG('n') | FILE_FLAG('i') |
                         FILE_FLAG('o') | FILE_FLAG('e'))) != 0;
 
+        /* util-linux parses every option before it opens a file, refuses a
+           descriptor that is not an integer whatever --quiet says, and lets
+           a negative one through to fcntl, which refuses it in turn. */
+        p8 fd_label[32];
+        bipolar named_descriptor = 0;
+        if (taking.flags & FILE_FLAG('n'))
+        {
+                string_address value = file_option_value(address_of taking, 'n');
+
+                if (!file_signed_decimal(value, address_of named_descriptor) ||
+                    named_descriptor > b32_max || named_descriptor < -(bipolar)b32_max)
+                        return string_report(log_error, 1, "pipesz: invalid fd argument: '%s'\n",
+                                             value);
+
+                positive at = (positive)(memory_copy_end(
+                    fd_label, (address_any)"fd ", 3) - fd_label);
+                if (named_descriptor < 0)
+                        fd_label[at++] = '-';
+                positive_into_string(fd_label + at,
+                                     (positive)(named_descriptor < 0
+                                                    ? -named_descriptor
+                                                    : named_descriptor));
+        }
+
+        if (getting && (taking.flags & FILE_FLAG('v')))
+                log("pipe\tsize\tunread\n", 17);
+
         if (taking.flags & FILE_FLAG('f'))
         {
                 string_address path = file_option_value(address_of taking, 'f');
                 bipolar descriptor = system_open_at(
-                    AT_FDCWD, path, FILE_READ_WRITE | O_NONBLOCK | O_CLOEXEC);
+                    AT_FDCWD, path, FILE_READ | O_NONBLOCK | O_CLOEXEC);
 
                 if (descriptor < 0)
                 {
                         if (!(taking.flags & FILE_FLAG('q')))
                                 string_format(log_error,
-                                              "pipesz: cannot open '%s': %s\n",
+                                              "pipesz: cannot open %s: %s\n",
                                               path, file_reason(descriptor));
                         if (taking.flags & FILE_FLAG('c'))
+                        {
+                                log_flush();
                                 return 1;
+                        }
                 }
                 else
                         targets[used++] = (process_pipe_target){
                             descriptor, path, true};
         }
 
-        p8 fd_label[32];
         if (taking.flags & FILE_FLAG('n'))
-        {
-                positive descriptor;
-                string_address value = file_option_value(address_of taking, 'n');
-
-                if (!string_digits_exact(value, address_of descriptor) ||
-                    descriptor > b32_max)
-                {
-                        for (positive at = 0; at < used; at++)
-                                if (targets[at].close)
-                                        system_close(targets[at].descriptor);
-                        return string_report(log_error, 1, "pipesz: invalid file descriptor: '%s'\n",
-                                      value);
-                }
-
-                positive at = (positive)(memory_copy_end(
-                    fd_label, (address_any)"fd ", 3) - fd_label);
-                positive_into_string(fd_label + at, descriptor);
                 targets[used++] = (process_pipe_target){
-                    (bipolar)descriptor, (string_address)fd_label, false};
-        }
+                    named_descriptor, (string_address)fd_label, false};
         if (taking.flags & FILE_FLAG('i'))
                 targets[used++] = (process_pipe_target){0, (string_address)"fd 0", false};
         if (taking.flags & FILE_FLAG('o'))
@@ -872,8 +883,6 @@ static b32 process_pipesz()
                     false};
 
         bool failed = false;
-        if (getting && (taking.flags & FILE_FLAG('v')))
-                log("pipe\tsize\tunread\n", 17);
 
         for (positive i = 0; i < used; i++)
         {
@@ -987,34 +996,45 @@ static fn process_coresched_cookie(writer write, p64 cookie)
 static b32 process_coresched()
 {
         enum { CORE_GET, CORE_NEW, CORE_COPY } operation = CORE_GET;
-        positive first = 1;
-        positive count = (positive)program_argument_count();
 
-        if (first < count)
-        {
-                string_address word = program_argument((b32)first);
-                if (string_equals(word, (string_address)"get"))
-                        first++;
-                else if (string_equals(word, (string_address)"new"))
-                {
-                        operation = CORE_NEW;
-                        first++;
-                }
-                else if (string_equals(word, (string_address)"copy"))
-                {
-                        operation = CORE_COPY;
-                        first++;
-                }
-        }
-
+        /* util-linux reads the options wherever they stand; the first bare
+           word may name the function and the rest is the command. */
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address)"coresched",
             .allowed = (string_address)"sdtvhV",
             .valued = (string_address)"sdt",
             .longs = process_coresched_longs,
+            .operand = file_operand,
         };
-        if (!file_take_from(address_of taking, first))
+        if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
+
+        positive first_word = 0;
+        if (file_operand_count)
+        {
+                string_address word = file_operand_at(0);
+                if (string_equals(word, (string_address)"get"))
+                        first_word = 1;
+                else if (string_equals(word, (string_address)"new"))
+                {
+                        operation = CORE_NEW;
+                        first_word = 1;
+                }
+                else if (string_equals(word, (string_address)"copy"))
+                {
+                        operation = CORE_COPY;
+                        first_word = 1;
+                }
+        }
+
+        string_address words[256];
+        positive word_count = file_operand_count - first_word;
+        if (word_count >= array_count(words))
+                return string_report(log_error, 1, "coresched: too many arguments\n");
+        for (positive at = 0; at < word_count; at++)
+                words[at] = file_operand_at(first_word + at);
+        words[word_count] = null;
 
         if (file_meta(address_of taking, "[get] [--source PID]\n"
                       "       coresched new [-t TYPE] --dest PID|-- COMMAND\n"
@@ -1041,11 +1061,12 @@ static b32 process_coresched()
                 return string_report(log_error, 1, "coresched: invalid destination type: '%s'\n",
                               file_option_value(address_of taking, 't'));
 
-        bool command = taking.first < count;
+        bool command = word_count > 0;
         if (operation == CORE_GET)
         {
-                if (command || destination ||
-                    (taking.flags & FILE_FLAG('t')))
+                // A destination type is accepted and ignored here, as in
+                // util-linux.
+                if (command || destination)
                         return string_report(log_error, 1, "coresched: bad usage of the get function\n");
 
                 p64 cookie = 0;
@@ -1121,9 +1142,7 @@ static b32 process_coresched()
         }
 
         if (command)
-                return process_tool_exec(
-                    (string_address)"coresched",
-                    program_argument_list() + taking.first);
+                return process_tool_exec((string_address)"coresched", words);
         return 0;
 }
 
