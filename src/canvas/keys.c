@@ -226,6 +226,12 @@ static void keys_deliver(void)
         if (head == tail)
                 return;
 
+        if (!pane || !pane->shared)
+        {
+                atomic_set(&desktop.key_tail, (int)head);
+                return;
+        }
+
         smp_rmb();
 
         /*
@@ -237,9 +243,12 @@ static void keys_deliver(void)
                 window read back through and then typed into looked like one
                 that had stopped listening, when every key had in fact arrived.
 
-                Before the handover rather than after: this pass is what draws
-                the answer, and the frame it asks for is the same one the keys
-                will have been read by.
+                The window the keys land in, which is why this is below the
+                return above rather than beside it: the kernel log has no
+                program to type at and drops them, and reading back through a
+                boot must not end at the first key pressed at it. Before the
+                handover rather than after, so the frame it asks for is the
+                one the program's answer is drawn in.
         */
         for (at = tail; at != head; at++)
         {
@@ -248,19 +257,13 @@ static void keys_deliver(void)
                 if (!key_typed(key->code, key->flags))
                         continue;
 
-                // The wheel goes to the window under the pointer and this to
-                // the one with focus, so an unfocused window is not snapped
-                // out from under the hand reading it.
-                if (pane && pane_view_live(pane))
+                // Focus rather than what the pointer is over, which is where
+                // the wheel goes: reading one window while typing into
+                // another leaves the one being read where it was.
+                if (pane_view_live(pane))
                         atomic_set(&desktop.frame_pending, 1);
 
                 break;
-        }
-
-        if (!pane || !pane->shared)
-        {
-                atomic_set(&desktop.key_tail, (int)head);
-                return;
         }
 
         /*

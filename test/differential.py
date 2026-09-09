@@ -1366,6 +1366,10 @@ def main(argv=None):
                     failures[key][("check",)] += 1
                     print(f"  FAIL {key}: {note}")
 
+    #       Whether this run is the one floors are recorded against: a
+    #       narrowed run walks a different set and cannot be held to them.
+    whole_run = not (args.replay or selected or modes or families or args.budget)
+
     for key in sorted(set(total) | set(absent)):
         line = f"  {key:28} {passed[key]} of {total[key]}"
         if unstable[key]:
@@ -1373,7 +1377,15 @@ def main(argv=None):
         if absent[key]:
             line += f"  ({absent[key]} NOT RUN -- no reference or candidate program)"
         print(line)
-        if os.environ.get("TEST_TALLY") and total[key]:
+        #       The runner adds every row up and calls a shortfall a
+        #       failure. That is right for a domain meant to agree on
+        #       everything, and wrong for one held to a floor, where the
+        #       floor is the assertion and these numbers are the evidence
+        #       for it. So a floored domain's programs are printed and not
+        #       tallied, and the floor writes the one row it is owed.
+        floored_here = whole_run and key.split("/")[0] in DOMAIN_FLOOR
+
+        if os.environ.get("TEST_TALLY") and total[key] and not floored_here:
             with open(os.environ["TEST_TALLY"], "a") as tally:
                 tally.write(f"{key.replace('/', '-')} {passed[key]} {total[key]}\n")
     all_passed = sum(passed.values())
@@ -1383,7 +1395,7 @@ def main(argv=None):
     #       reached. Agreeing on more is progress and says so; agreeing on
     #       fewer is a regression inside the gap and fails.
     floored = True
-    if not args.replay and not selected and not modes and not families and not args.budget:
+    if whole_run:
         for domain in domains:
             floor = DOMAIN_FLOOR.get(domain)
             if not floor:
@@ -1393,6 +1405,13 @@ def main(argv=None):
             ran = sum(count for key, count in total.items()
                       if key.startswith(domain + "/"))
             want, of, slack, why = floor
+
+            #       The one row the floor is owed, in place of the programs
+            #       it stands for: it holds, or it does not.
+            if os.environ.get("TEST_TALLY"):
+                with open(os.environ["TEST_TALLY"], "a") as tally:
+                    tally.write(f"{domain}-floor {1 if agreed >= want else 0} 1\n")
+
             if agreed < want:
                 floored = False
                 print(f"  FLOOR {domain}: {agreed} of {ran} agree, below the {want} of {of} "
@@ -1518,8 +1537,13 @@ def self_test():
                              b"grep: bad\ngrep: x\n")
             self.assertNotEqual(_stderr_exact(b"grep: bad\n"), _stderr_exact(b"grep: worse\n"))
 
+        #       These two are the only tests here that a clock decides, and
+        #       the sleeper they run sleeps for five seconds. The budget sits
+        #       well under that so the timeout is certain, and well over what
+        #       a program that does nothing costs on a machine that is busy,
+        #       so the other side is certain too.
         def test_candidate_timeout_is_a_divergence(self):
-            spec = Utility("sleeper", timeout=1.0)
+            spec = Utility("sleeper", timeout=2.5)
             case = Case("text", "sleeper", [])
             want, got = self.runner.pair(case, spec)
             self.assertTrue(got["timeout"])
@@ -1530,7 +1554,7 @@ def self_test():
             has nothing to agree or disagree with -- and whether it runs out
             depends on what else the machine is doing. It must leave the
             denominator, or a busy machine moves a floor."""
-            spec = Utility("dawdler", timeout=1.0)
+            spec = Utility("dawdler", timeout=2.5)
             case = Case("text", "dawdler", [])
             want, got = self.runner.pair(case, spec)
             self.assertTrue(want["timeout"])
@@ -14779,6 +14803,28 @@ static void keyboard_send(struct pointer_handle *p,unsigned code,int value) {
     pointer_event_locked(&p->handle,EV_KEY,code,value);
     mutex_unlock(&desktop.input_lock);
 }
+// What keys_deliver reads to decide whether the focused window is snapped
+// back to the end of its scrollback. Only a key that reaches the program as
+// bytes counts, so a modifier held while the other hand scrolls does not.
+static void check_key_typed(void) {
+    const unsigned modifiers[]={KEY_LEFTSHIFT,KEY_RIGHTSHIFT,KEY_LEFTCTRL,
+                                KEY_RIGHTCTRL,KEY_LEFTALT,KEY_RIGHTALT};
+    const unsigned bytes[]={30,'\0'+2,KEY_TAB,57,103,105,110,KEY_TABLE-1};
+    for(unsigned i=0;i<sizeof modifiers/sizeof*modifiers;i++) {
+        check(!key_typed(modifiers[i],WINDOW_KEY_DOWN),"a modifier alone is not typing");
+        check(!key_typed(modifiers[i],0),"a modifier release is not typing");
+    }
+    for(unsigned i=0;i<sizeof bytes/sizeof*bytes;i++) {
+        check(key_typed(bytes[i],WINDOW_KEY_DOWN),"a key that reaches the program is typing");
+        check(key_typed(bytes[i],WINDOW_KEY_DOWN|WINDOW_KEY_SHIFT|WINDOW_KEY_CONTROL),
+              "held modifiers do not stop the key under them counting");
+        check(!key_typed(bytes[i],WINDOW_KEY_SHIFT),"a release is not typing whatever is held");
+    }
+    // Past the table there is no modifier column to read, and the code still
+    // means one of the sequences term_key_modified knows.
+    check(key_typed(KEY_TABLE,WINDOW_KEY_DOWN) && key_typed(0u-1u,WINDOW_KEY_DOWN),
+          "a code past the table is typing rather than an out-of-bounds read");
+}
 static void check_keyboard_state(void) {
     const unsigned pairs[][2]={{KEY_LEFTSHIFT,KEY_RIGHTSHIFT},
                               {KEY_LEFTCTRL,KEY_RIGHTCTRL},{KEY_LEFTALT,KEY_RIGHTALT}};
@@ -15194,6 +15240,7 @@ int main(void) {
               desktop.abs_have==(high>low?(1u<<axis):0),"absolute axis range and ownership");
     }
     check_pointer_state(&handle);
+    check_key_typed();
     check_keyboard_state();
     free(output);
     printf("  core-state %u of %u\n",checks-failures,checks);
