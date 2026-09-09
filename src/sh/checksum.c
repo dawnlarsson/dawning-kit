@@ -791,7 +791,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         continue;
                 }
                 if (!manifest || (manifest[0] == '-' && !manifest[1]))
-                        manifest = (string_address) "'standard input'";
+                        manifest = (string_address) "standard input";
 
                 positive line = 0;
                 bool read_failed = false;

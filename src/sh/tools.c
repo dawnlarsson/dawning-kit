@@ -8846,15 +8846,6 @@ static b32 tools_od(void)
 
         bool traditional = (taking.flags & FILE_FLAG('T')) != 0;
 
-        if (traditional && operands > 2)
-        {
-                text_flush();
-                return text_done(string_report(writer_stderr, 1,
-                    "od: extra operand '%s'\nod: compatibility mode supports at most one file\n"
-                    "Try 'od --help' for more information.\n",
-                    program_argument((b32)(taking.first + 1))));
-        }
-
         if (operands >= 1 && operands <= 2)
         {
                 string_address last = program_argument((b32)(stop - 1));
@@ -8873,7 +8864,17 @@ static b32 tools_od(void)
                         }
                         dump_arguments.skip += offset;
                         stop--;
+                        operands--;
                 }
+        }
+
+        if (traditional && operands > 1)
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "od: extra operand '%s'\nod: compatibility mode supports at most one file\n"
+                    "Try 'od --help' for more information.\n",
+                    program_argument((b32)(taking.first + 1))));
         }
 
         if (taking.flags & FILE_FLAG('S'))
