@@ -1012,9 +1012,12 @@ static b32 tools_logger()
         string_address priority_text = file_option_value(address_of taking, 'p');
         if (priority_text && !logger_priority(priority_text, address_of control.priority))
         {
+                string_address level = string_first_of(priority_text, '.');
+
                 text_flush();
                 return text_done(string_report(writer_stderr, 1,
-                    "logger: unknown priority name: %s\n", priority_text));
+                    "logger: unknown priority name: %s\n",
+                    level ? level + 1 : priority_text));
         }
 
         string_address size_text = file_option_value(address_of taking, 'S');
@@ -2966,7 +2969,9 @@ static fn login_last_line(string_address user, string_address line,
         else if (end_kind == LOGIN_LAST_END_LOGGED)
                 text_put_string("   still logged in");
         else
-                text_put_string("    gone - no logout");
+                text_put_string(login_last.time_format == LOGIN_LAST_TIME_SHORT
+                                    ? "    gone - no logout"
+                                    : "   gone - no logout");
 
         if (!login_last.no_host && login_last.host_last && *host)
         {
@@ -5803,9 +5808,23 @@ static bool factor_number(p8 address_to bytes, positive length,
 
 invalid:
         {
-                p8 shown[64];
-                positive take = min(length, sizeof(shown) - 1);
-                memory_copy(shown, bytes, take);
+                p8 shown[256];
+                positive take = 0;
+
+                for (positive at = 0; at < length && take + 4 < sizeof(shown); at++)
+                {
+                        p8 byte = bytes[at];
+
+                        if (byte_is_printable(byte))
+                                shown[take++] = byte;
+                        else
+                        {
+                                shown[take++] = '\\';
+                                shown[take++] = (p8)('0' + (byte >> 6));
+                                shown[take++] = (p8)('0' + ((byte >> 3) & 7));
+                                shown[take++] = (p8)('0' + (byte & 7));
+                        }
+                }
                 shown[take] = end;
 
                 // Digits alone overflowed the native word, this factor's
@@ -12916,7 +12935,7 @@ static b32 tools_dmesg_main()
         value = file_option_value(address_of taking, 's');
         if (value && (!text_unsigned_option(value, false,
                                              address_of capacity) ||
-                      !capacity || capacity >= TEXT_ARENA_BYTES))
+                      capacity >= TEXT_ARENA_BYTES))
                 return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid buffer size"));
 
         string_address file = file_option_value(address_of taking, 'F');
