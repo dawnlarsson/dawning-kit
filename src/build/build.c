@@ -3925,21 +3925,18 @@ static b32 build_kernel_source()
         //      kernel.org lays every series out under vMAJOR.x.
         {
                 positive major = 0;
+                p8 address_to into;
 
                 while (version[major] && version[major] != '.')
                         major++;
 
-                series = build_join("v", build_join(null, null), null);
-                {
-                        p8 address_to into = build_text_take(major + 4);
-
-                        into[0] = 'v';
-                        memory_copy(into + 1, version, major);
-                        into[major + 1] = '.';
-                        into[major + 2] = 'x';
-                        into[major + 3] = end;
-                        series = (string_address)into;
-                }
+                into = build_text_take(major + 4);
+                into[0] = 'v';
+                memory_copy(into + 1, version, major);
+                into[major + 1] = '.';
+                into[major + 2] = 'x';
+                into[major + 3] = end;
+                series = (string_address)into;
         }
 
         tarball = build_join(artifacts, "/linux-", version, ".tar", null);
@@ -4092,7 +4089,8 @@ static b32 build_userspace()
 {
         string_address image = build_setting_get("image_root");
         string_address applet = null;
-        string_address flags = build_join(null, null);
+        //      Appended to below, one -D per component that is off.
+        string_address flags = "";
 
         /*
                 What was here last time, gone.
@@ -4305,21 +4303,17 @@ static b32 build_local(string_address address_to profiles, positive count)
                 log_flush();
         }
 
+        //      Ours, asked in a forked child, because the answer is a word
+        //      this needs rather than a line somebody reads.
         {
-                string_address system = build_join(null, null);
-                string_address words[3];
+                string_address system = build_tool_answer("uname", null);
 
-                words[0] = "uname";
-                words[1] = null;
-                build_capture_words((string_address address_to)words,
-                                    build_file_two, BUILD_FILE_ROOM);
-                system = (string_address)build_file_two;
-
-                if (memory_compare(system, "Linux", 5))
-                        return build_die(
+                if (!word_is(system, "Linux"))
+                        return build_die(build_join(
                                 "building a kernel wants a Linux toolchain and a case\n"
-                                "sensitive filesystem. Name a machine that has them with\n"
-                                "--host, or set MOONWATER_BUILD_HOST.");
+                                "sensitive filesystem, and this is ", system,
+                                ". Name a machine that has them with\n"
+                                "--host, or set MOONWATER_BUILD_HOST.", null));
         }
 
         build_label("", "REPOSITORY SETUP");
