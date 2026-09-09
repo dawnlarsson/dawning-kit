@@ -777,6 +777,13 @@ static bool build_have(string_address name)
 static p8 build_file_one[BUILD_FILE_ROOM];
 static p8 build_file_two[BUILD_FILE_ROOM];
 
+//      The composed configuration gets a buffer nothing else touches. It was
+//      read into the first of the two above, and the verifier and the spark
+//      packer both read files into that one -- so by the time the userspace
+//      build asked for the architecture, the answer had been overwritten by a
+//      kernel configuration and every key came back empty.
+static p8 build_config_buffer[BUILD_FILE_ROOM];
+
 static bipolar build_slurp(string_address path, p8 address_to into,
                            positive capacity)
 {
@@ -1032,11 +1039,11 @@ static bool build_config_load()
 {
         string_address path = build_in("artifacts", ".config");
 
-        build_config_loaded = build_slurp(path, build_file_one,
+        build_config_loaded = build_slurp(path, build_config_buffer,
                                           BUILD_FILE_ROOM) >= 0;
 
         if (!build_config_loaded)
-                build_file_one[0] = end;
+                build_config_buffer[0] = end;
 
         return build_config_loaded;
 }
@@ -1046,7 +1053,7 @@ static string_address build_key(string_address name)
         if (!build_config_loaded)
                 return "";
 
-        return build_key_from((string_address)build_file_one, name, null);
+        return build_key_from((string_address)build_config_buffer, name, null);
 }
 
 /*
@@ -1064,7 +1071,7 @@ static string_address build_key_one(string_address name, bool address_to good)
         if (!build_config_loaded)
                 return "";
 
-        answer = build_key_from((string_address)build_file_one, name,
+        answer = build_key_from((string_address)build_config_buffer, name,
                                 address_of matched);
 
         if (matched > 1)
