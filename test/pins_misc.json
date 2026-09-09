@@ -16,36 +16,19 @@
   "utility": "b2sum"
  },
  {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--groups=0",
-    "/",
-    "./exe"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "pinned",
-   "utility": "chroot"
-  },
   "domain": "misc",
-  "id": "1c08399d2586ea32",
   "kind": "deliberate",
   "list": "ledger",
+  "option": "--groups",
   "reason": "deliberate: --groups and --userspec change the credentials the command runs with, which needs setgroups/setresgid/setresuid and the account lookups behind them; the option is refused rather than accepted and ignored.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
+  "utility": "chroot"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--userspec",
+  "reason": "deliberate: --groups and --userspec change the credentials the command runs with, which needs setgroups/setresgid/setresuid and the account lookups behind them; the option is refused rather than accepted and ignored.",
   "utility": "chroot"
  },
  {
@@ -583,6 +566,1462 @@
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "04b80d20d3c0f5b5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "061c987497290897",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "0902deec139a60b4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5c0321450a9d5b06f833d3c8bbd08ca6bf7c51618a00b93955d708168ada8985"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "114aae4515189485",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "119aadc27bdb6470",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "1339fafb37379859",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "170216402632cb1d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "1c2f8ed0bf4aa4f2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "207acc25de38a2dc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "2a11408ff23ab6a4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "2b2bb35c32808456",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "2d38a58d499cb450",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "32809384c2dc51e9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "331f3eed711396e2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "35737aa10d36ea8a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "36ea3a7edf79cf9e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "399e628633e83a7c",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "3c3683e1cba72c09",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "4220319bcfae44b9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "450e96f074657522",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "496bb7b7b5e33784",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "4af115e293434435",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "random",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "4b7681d9e3ae9270",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "4d33bc7b9710de10",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "50fe4784bb88ed9e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "54033dbc685aa5d7",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "547f179f42b64918",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "55569428d4926918",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "56acc3c9c3241a28",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5c0321450a9d5b06f833d3c8bbd08ca6bf7c51618a00b93955d708168ada8985"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "59166213f8ed6551",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "68de1dbc3b1df2ae",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "6b2b5102d6187cc9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "6cf7016fb410e1cd",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "6eb167ed4eb0cb1c",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "70b5da10700589ee",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "71ed72e1c54df484",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "7297c723aed8af6f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "72a4621d5c3814e6",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "75f82d58a197f71e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "766d2b5d7da650d6",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5c0321450a9d5b06f833d3c8bbd08ca6bf7c51618a00b93955d708168ada8985"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "78827cfee7108d27",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "7a5ab299bc322338",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "7be525e6e48258c0",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "7fa3d94b99a49e89",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "8920c357f21cdf53",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "8934b19fe21d361e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5c0321450a9d5b06f833d3c8bbd08ca6bf7c51618a00b93955d708168ada8985"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
    "argv": [],
    "domain": "misc",
    "family": null,
@@ -602,6 +2041,1395 @@
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "92ab957f5033fb0b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "95a18fc1f45a4c11",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "97a615c47cc425b5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "9bd1af2177f43fae",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "a03b20f04d44c278",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "a1e86469d12b850e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "a5ffa14d2b6be4c9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "a63481d7d96c99ba",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5c0321450a9d5b06f833d3c8bbd08ca6bf7c51618a00b93955d708168ada8985"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "a6ae2f6174e4e73a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "a781bcc810775369",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "a7cefcb4da044ddc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "ad179dbb2126a481",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "-h",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "random",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "b6b4e8fff5de489c",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "b8db777fb1d1fb01",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "b97c7ed13da4b0b6",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "bc882ccd37a86dd3",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "bd4948b09b69beb7",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "c5781fa92d308eeb",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "c5b510786a258d55",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "c6f6e2f0cb0f6fce",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "c8210b3188414c27",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "c86974356cf72110",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "ca44b7c29f64ff38",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "cdb43083f214509b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "ceb7cfeffb997a58",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "cf42cc699fd688f1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5c0321450a9d5b06f833d3c8bbd08ca6bf7c51618a00b93955d708168ada8985"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "random",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "d3daafbf3e8c96f2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5c0321450a9d5b06f833d3c8bbd08ca6bf7c51618a00b93955d708168ada8985"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "db0024235b067868",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "dfcad3b86cff8224",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "e068bf62f99aef2a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "e31c7293c27f6d17",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "e655a5c5301e1082",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "ec0eb2d96a210b14",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "ed36f2262c538fcb",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e4229e691ecdcebf51acd53adb58f874d1b8362836bea29dd1af2ce6eabb593e"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "ef28a9b1557d0b18",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5c0321450a9d5b06f833d3c8bbd08ca6bf7c51618a00b93955d708168ada8985"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "f291bf75949e1b25",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "f2f346ca9ecdd458",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "f3861120456d73a1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "fa7145b551ce9018",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "fc05a266d54b3eaf",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    " 12"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "pairs",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "fd64857e59c287f9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5c0321450a9d5b06f833d3c8bbd08ca6bf7c51618a00b93955d708168ada8985"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "fdd22d52b4988d4d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "fdd74b1bf51d3e56",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "singles",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "fea47b70cf678240",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum; the integer past the ceiling is refused rather than factored partly. A token too long for the word is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1e510e06b1391ce2a9d71d5a28a3e4456007e391df43847b97cb7cc8d554cd9"
   },
   "utility": "factor"
  },
@@ -1072,6 +3900,225 @@
   },
   "case": {
    "argv": [
+    "-w",
+    "-q",
+    "-h",
+    "-i",
+    "-l",
+    "nosuchuser"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "153e26fa4611f097",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "318859acc23952de43a24d93a3a2c7ae61d24f02a0078ff579332081a2adcd73"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q",
+    "-h",
+    "-b",
+    "-i",
+    "-f",
+    "-l",
+    "nosuchuser"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "16eb98e9c37b13ea",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "318859acc23952de43a24d93a3a2c7ae61d24f02a0078ff579332081a2adcd73"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-i",
+    "--lookup",
+    "-w",
+    "-l",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "1a3401fecd6a787e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d41a8d6fc75b1881f7ddae7d628f3e54d8a1cdc5b36df2e595f35ccd949b7510"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "-w",
+    "-q",
+    "-s",
+    "-l",
+    "-f",
+    "nosuchuser"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "3340780e7ac8123f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "318859acc23952de43a24d93a3a2c7ae61d24f02a0078ff579332081a2adcd73"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-l",
+    "-w",
+    "--",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "3fbb03ffdfbd489c",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d41a8d6fc75b1881f7ddae7d628f3e54d8a1cdc5b36df2e595f35ccd949b7510"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-b",
+    "-q",
+    "-l",
+    "-w",
+    "-i",
+    "--",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "5000cd87afdd15dc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "46229e33919f2d3f2a4b772158e624de2c1ef3b52f69a3875ce7e8a2366ff2a2"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-l",
     "-b",
     "-w",
@@ -1098,6 +4145,622 @@
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
    "stdout": "46229e33919f2d3f2a4b772158e624de2c1ef3b52f69a3875ce7e8a2366ff2a2"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-f",
+    "-l",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "63d2c0332608fbed",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d41a8d6fc75b1881f7ddae7d628f3e54d8a1cdc5b36df2e595f35ccd949b7510"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q",
+    "-h",
+    "-i",
+    "--lookup",
+    "-s",
+    "-l",
+    "root",
+    "daemon"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "6b3aaa46749ae562",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7db5226539002a0f30fbaeeafc7f5339db754f6fefde981b20c787d3aa558a91"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-w",
+    "-l",
+    "root",
+    "daemon"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "6f3c46a9a72091a4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7db5226539002a0f30fbaeeafc7f5339db754f6fefde981b20c787d3aa558a91"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "-l",
+    "-q",
+    "--lookup",
+    "-w",
+    "root",
+    "daemon"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "6f5448ab133dd58d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7db5226539002a0f30fbaeeafc7f5339db754f6fefde981b20c787d3aa558a91"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-l",
+    "-w",
+    "--lookup",
+    "-f",
+    "-b",
+    "nosuchuser"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "7ce69987a1f77ccf",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "318859acc23952de43a24d93a3a2c7ae61d24f02a0078ff579332081a2adcd73"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-w",
+    "-b",
+    "-q",
+    "-l",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "891f6ad5fded346f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "46229e33919f2d3f2a4b772158e624de2c1ef3b52f69a3875ce7e8a2366ff2a2"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-p",
+    "-q",
+    "-l",
+    "--",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "93ad690614150d86",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "46229e33919f2d3f2a4b772158e624de2c1ef3b52f69a3875ce7e8a2366ff2a2"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-w",
+    "-b",
+    "-l",
+    "-p",
+    "-h",
+    "-q",
+    "--",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "97369ed2c9979739",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "46229e33919f2d3f2a4b772158e624de2c1ef3b52f69a3875ce7e8a2366ff2a2"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-l",
+    "-i",
+    "-q",
+    "-b",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "a0c223569b16d45e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "46229e33919f2d3f2a4b772158e624de2c1ef3b52f69a3875ce7e8a2366ff2a2"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--lookup",
+    "-i",
+    "-l",
+    "-b",
+    "nosuchuser"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "a45bfd1730af50d0",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "318859acc23952de43a24d93a3a2c7ae61d24f02a0078ff579332081a2adcd73"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-l",
+    "-b",
+    "-h",
+    "--lookup",
+    "-q",
+    "-f",
+    "root",
+    "daemon"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "cd23fcad63a7311f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "8196756cc46a5809f675ac652326f6579dc1a6bfb50034c92c6b11a67004f7aa"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-w",
+    "-l",
+    "-f",
+    "-i",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "d4a0a4b49505e28d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d41a8d6fc75b1881f7ddae7d628f3e54d8a1cdc5b36df2e595f35ccd949b7510"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "-l",
+    "-q",
+    "-p",
+    "--",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "d551fd649c2882cd",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d41a8d6fc75b1881f7ddae7d628f3e54d8a1cdc5b36df2e595f35ccd949b7510"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-f",
+    "-b",
+    "--lookup",
+    "-l",
+    "-p",
+    "root",
+    "daemon"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "e6f3689f7dc2ebb9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "8196756cc46a5809f675ac652326f6579dc1a6bfb50034c92c6b11a67004f7aa"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-w",
+    "-b",
+    "-q",
+    "-i",
+    "-l",
+    "-h",
+    "nosuchuser"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "e8f41964ab7e6e04",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "318859acc23952de43a24d93a3a2c7ae61d24f02a0078ff579332081a2adcd73"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-l",
+    "-h",
+    "-b",
+    "nosuchuser"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "f09c8db1faa1a572",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "318859acc23952de43a24d93a3a2c7ae61d24f02a0078ff579332081a2adcd73"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "-q",
+    "-l",
+    "-p",
+    "nosuchuser"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "fbe816a2a9b55361",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "318859acc23952de43a24d93a3a2c7ae61d24f02a0078ff579332081a2adcd73"
   },
   "utility": "pinky"
  },
@@ -1305,6 +4968,192 @@
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "09474604b23e9b49",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "words",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "0e2ef2a47ce3bed0",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "sorted",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "0e48997e973805e7",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r3",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "11d2420c258e3b2d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_cycle",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "11d98c8fec81c092",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_dup",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "1d5a32feb7896223",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
    "argv": [],
    "domain": "misc",
    "family": null,
@@ -1317,6 +5166,1804 @@
   },
   "domain": "misc",
   "id": "1e616a34b238697d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "repeats",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "2671bad39533b298",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "27dc485eccd1d162",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "2b5ff673966bcfdd",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "sorted",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "2c07bb2f3d20a505",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "2c9bd1f9942a77e2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_dup",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "2ebbf974966a73a0",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "35cacd672ee838e5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_chain",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "3604a1c46514b67c",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "37ac351dac3a0730",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "41fd0bda1aab69df",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "43a2a7991c5015de",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_long_token",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "4c411b4771ec8c9b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "4d8075c61c8a5c34",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r2",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "4ea0eac5333d9b82",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "4fef3aa764fa33ba",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "56a8e2d8a238810d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "5eaa098469f81956",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_chain",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "5ec7ba66828ef4ee",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "words",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "5f94ecb87ca770c2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_cycles",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "60d91da7797b591e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r3",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "63118babe61dd183",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_dag",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "6a29fc9690cf7ba1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_cycles",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "6af324e134245b8f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "711ba0772483db61",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "774c5a212929ac54",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_dup",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "781fb06c94915b7e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_cycle",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "7934213a343effc3",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r4",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "7c8084f292fbb28b",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r4",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "7e0bda9e02b422ad",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r3",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "875afab6d5d7c330",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "930970c5513cb996",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "943a74a030de8218",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_dag",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "9877a8647d0e1348",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_long_token",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "9a2f11f8b1edbc83",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "repeats",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "9fbc576b7ca6d781",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r1",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "a4706312cd11ebdb",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r2",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "a64bc4a44d80107a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r1",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "a68fb30f8cbc0a01",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "abe407cbe7a5a308",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "ae95317c8f3c98a5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_long_token",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "afab8e0cedb5ea7a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_chain",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "b0c33f72ecaa29c2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "b9b1357e36f38c7e",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_cycles",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "c18dff6ee3a24964",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r4",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "c2a183a0e392c816",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "repeats",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "c4ef64cdb329ce5f",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r1",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "c9df3548757d60f4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "d22ee810f93f89be",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_r2",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "d901e234c7755312",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_dag",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "deba3177fa9e98d4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_odd",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "e80d5ef5c8be1367",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "eb3b8d1186bd838d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "ef1c0cb713d17108",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "words",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "ef44afd1e3fe3371",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "sorted",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "f8b6279768037857",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_odd",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "fa4db675cb71832a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_cycle",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "fea67ff902bf9f18",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "tsort"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_tsort_odd",
+   "tier": "singles",
+   "utility": "tsort"
+  },
+  "domain": "misc",
+  "id": "ffb97a751197835f",
   "kind": "deliberate",
   "list": "ledger",
   "reason": "deliberate: a NUL byte cannot be part of a node name in this tool, whose graph indexes tokens split in place inside the input buffer; GNU counts it as an ordinary byte of a name.",
