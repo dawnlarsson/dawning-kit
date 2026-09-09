@@ -9919,7 +9919,10 @@ bipolar trap_number(string_address word)
                 return -1;
 
         string_address name = word;
-        if (!string_compare_folded_max(name, "SIG", 3))
+
+        //      Bash reads SIG in front of a name, in its POSIX mode too;
+        //      dash reads only the bare name and calls SIGINT a bad trap.
+        if (shell_bash_compat && !string_compare_folded_max(name, "SIG", 3))
                 name += 3;
 
         positive index = string_table_find_ascii_case(
@@ -9935,6 +9938,12 @@ bipolar trap_number(string_address word)
         // Linux's second spelling of IO, accepted by both trap and kill.
         if (!string_compare_folded(name, "POLL"))
                 return 29;
+
+        //      Both shells trap a real-time signal by the name they write it
+        //      under, and neither knows the utility's RT0.
+        bipolar real_time = kill_real_time_of(name);
+        if (real_time >= 0)
+                return real_time;
 
         bool good;
         bipolar value = shell_signed(word, address_of good);
@@ -10157,13 +10166,6 @@ static fn trap_write_condition(writer write, positive number,
         write("\n", 1);
 }
 
-static bool trap_unsigned(string_address word)
-{
-        positive value;
-
-        return string_digits_exact(word, address_of value);
-}
-
 //      What is standing, asked once after every change rather than by the
 //      executor before every command.
 static COLD fn trap_conditions_noted()
@@ -10226,17 +10228,52 @@ COLD fn shell_trap(writer write, string_address input)
         b32 answer = 0;
         bool print = false;
 
-        if (index < shell_argc && word_is(shell_argv[index], "-l"))
+        bool listing = false;
+
+        /*
+                The letters, which cluster: Bash reads -lp as -l and -p. dash
+                has neither letter and refuses the first one it is shown,
+                fatally, because trap is a special builtin.
+        */
+        while (index < shell_argc && shell_argv[index][0] == '-' &&
+               shell_argv[index][1] && !word_is(shell_argv[index], "--"))
+        {
+                string_address at = shell_argv[index] + 1;
+
+                for (; at[0]; at++)
+                {
+                        if (!shell_bash_compat)
+                        {
+                                string_format(log_error,
+                                    "trap: Illegal option -%s\n",
+                                    shell_argv[index] + 1);
+                                exec_special_error_note();
+
+                                return shell_answer(2);
+                        }
+
+                        if (at[0] == 'l')
+                                listing = true;
+                        else if (at[0] == 'p')
+                                print = true;
+                        else
+                                break;
+                }
+
+                //      A letter Bash does not have leaves the word to be read
+                //      as an operand, which is how `trap -x` reaches the
+                //      condition parser and is refused there.
+                if (at[0])
+                        break;
+
+                index++;
+        }
+
+        if (listing)
         {
                 trap_listed(write);
 
                 return shell_answer(0);
-        }
-
-        if (index < shell_argc && word_is(shell_argv[index], "-p"))
-        {
-                print = true;
-                index++;
         }
 
         if (index < shell_argc && word_is(shell_argv[index], "--"))
@@ -10246,31 +10283,40 @@ COLD fn shell_trap(writer write, string_address input)
         {
                 if (index >= shell_argc)
                 {
-                        // All conditions the shell accepts, excluding the two
-                        // signals POSIX permits trap -p to omit.
-                        for (positive number = 0; number < TRAP_NAMES - 1;
-                             number++)
+                        //      Bash writes only the conditions somebody has
+                        //      set; in its POSIX mode it writes every one it
+                        //      accepts, KILL and STOP among them, out to the
+                        //      last real-time signal and the three conditions
+                        //      that are not signals at all.
+                        bool every = shell_posix_on();
+                        positive last = every ? TRAP_NUMBER_MAX : TRAP_NAMES - 2;
+
+                        for (positive number = 0; number <= last; number++)
                         {
-                                string_address recorded;
-
-                                if (number == 9 || number == 19)
-                                        continue;
-
-                                recorded = trap_action(number);
+                                string_address recorded = trap_action(number);
 
                                 if (!recorded && number &&
                                     shell_was_ignored(number))
                                         recorded = (string_address) "";
 
+                                if (!recorded && !every)
+                                        continue;
+
                                 trap_write_condition(write, number, recorded);
                         }
 
-                        for (positive number = TRAP_ERR;
-                             number <= TRAP_DEBUG; number++)
+                        //      Bash writes the three that are not signals
+                        //      in the order DEBUG, ERR, RETURN, which is not
+                        //      the order they are numbered in.
+                        static const positive conditions[] = {
+                            TRAP_DEBUG, TRAP_ERR, TRAP_RETURN};
+
+                        for (positive at = 0; at < array_count(conditions); at++)
                         {
+                                positive number = conditions[at];
                                 string_address recorded = trap_action(number);
 
-                                if (recorded)
+                                if (recorded || every)
                                         trap_write_condition(write, number,
                                                              recorded);
                         }
@@ -10303,7 +10349,8 @@ COLD fn shell_trap(writer write, string_address input)
                                 // signal written out. A condition has no
                                 // disposition to write, so nothing is said
                                 // about one nobody has set.
-                                if (!recorded && number > TRAP_NUMBER_MAX)
+                                if (!recorded && (number > TRAP_NUMBER_MAX ||
+                                                  !shell_posix_on()))
                                         continue;
 
                                 trap_write_condition(write, (positive)number,
@@ -10316,16 +10363,22 @@ COLD fn shell_trap(writer write, string_address input)
 
         if (index >= shell_argc)
         {
-                // Without -p only non-default conditions are listed.  Query
-                // inherited dispositions as well as the explicit table: an
-                // ignored-on-entry signal has never needed a table entry.
-                // Every number a trap can be set on is walked, so a trap on
-                // a real-time signal past the named ones is listed too.
+                // Without -p only non-default conditions are listed. Every
+                // number a trap can be set on is walked, so a trap on a
+                // real-time signal past the named ones is listed too.
+                //
+                //      Bash also writes the signals that arrived already
+                //      ignored, which have no table entry of their own;
+                //      dash writes only what this shell has set. Asking a
+                //      shell that inherited an ignored HUP for its traps
+                //      therefore says nothing in dash and three lines in
+                //      Bash.
                 for (positive number = 0; number <= TRAP_NUMBER_MAX; number++)
                 {
                         string_address recorded = trap_action(number);
 
-                        if (!recorded && number && shell_was_ignored((b32)number))
+                        if (!recorded && number && shell_bash_compat &&
+                            shell_was_ignored((b32)number))
                                 recorded = (string_address) "";
 
                         if (recorded)
@@ -10344,10 +10397,50 @@ COLD fn shell_trap(writer write, string_address input)
                 return shell_answer(0);
         }
 
-        // An unsigned first operand is the historical reset form: every word
-        // is a condition, including that first one.  Otherwise it is action.
-        if (trap_unsigned(shell_argv[index]))
+        /*
+                One operand is the historical reset form: the word is the
+                condition, not an action, whether it is spelled INT or 2. Two
+                or more and the first is the action, even where it happens to
+                spell a signal -- `trap INT TERM` sets TERM to run INT.
+
+                And the one word has to name a condition. Both references
+                refuse one that does not, where this used to take it for an
+                action, find no condition to attach it to, and say nothing.
+        */
+        if (index + 1 == shell_argc)
+        {
+                positive digits;
+                bipolar only =
+                    shell_posix_on()
+                        ? (string_digits_exact(shell_argv[index],
+                                               address_of digits)
+                               ? (bipolar)digits : -1)
+                        : trap_number(shell_argv[index]);
+
+                //      Bash's POSIX mode keeps only the numeric reset form:
+                //      `trap 2` takes the handler away, `trap INT` is a usage
+                //      error, and a special builtin's usage error ends the
+                //      script.
+                if (only < 0 || only > TRAP_CONDITION_MAX)
+                {
+                        if (shell_posix_on())
+                        {
+                                string_format(log_error,
+                                    "trap: usage: trap [-Plp] "
+                                    "[[action] signal_spec ...]\n");
+                                exec_special_error_note();
+
+                                return shell_answer(2);
+                        }
+
+                        string_format(log_error, "trap: %s: bad trap\n",
+                                      shell_argv[index]);
+
+                        return shell_answer(shell_bash_compat ? 2 : 1);
+                }
+
                 action = null;
+        }
         else
                 action = shell_argv[index++];
 
@@ -10381,6 +10474,16 @@ COLD fn shell_trap(writer write, string_address input)
                 */
                 bool deaf = number > 0 && !shell_is_interactive &&
                             shell_was_ignored((positive)number);
+
+                /*
+                        Bash goes further: a signal that arrived ignored
+                        cannot be trapped at all, so the action is not even
+                        written down and the listing keeps saying ''. POSIX
+                        allows either reading and dash takes the other one,
+                        keeping the string it was given.
+                */
+                if (deaf && shell_bash_compat)
+                        continue;
 
                 if (!number)
                         trap_exit_inherited = false;

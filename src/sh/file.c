@@ -21342,6 +21342,50 @@ static bool kill_number_named(positive number, p8 address_to into)
         return false;
 }
 
+/*
+        A real-time signal as a shell writes it: RTMIN, RTMAX, or an offset
+        from either. This is the reading side of the spelling kill_name
+        writes. util-linux calls the same signals RT0 to RT30 and knows none
+        of these, so the caller says which vocabulary it is speaking.
+*/
+static bipolar kill_real_time_of(string_address word)
+{
+        positive offset;
+        string_address rest;
+
+        if (!string_compare_folded_max(word, "RTMIN", 5))
+        {
+                rest = word + 5;
+
+                if (!rest[0])
+                        return KILL_LEAST_REAL;
+
+                if (rest[0] != '+' ||
+                    !string_digits_exact(rest + 1, address_of offset) ||
+                    KILL_LEAST_REAL + offset > KILL_MOST)
+                        return -1;
+
+                return (bipolar)(KILL_LEAST_REAL + offset);
+        }
+
+        if (!string_compare_folded_max(word, "RTMAX", 5))
+        {
+                rest = word + 5;
+
+                if (!rest[0])
+                        return KILL_MOST;
+
+                if (rest[0] != '-' ||
+                    !string_digits_exact(rest + 1, address_of offset) ||
+                    offset > KILL_MOST - KILL_LEAST_REAL)
+                        return -1;
+
+                return (bipolar)(KILL_MOST - offset);
+        }
+
+        return -1;
+}
+
 // A signal as a word: a number, a name, SIG in front of one, or an RT
 // spelling. Answers -1 for anything else.
 static bipolar kill_signal_of(string_address word)
@@ -21351,12 +21395,21 @@ static bipolar kill_signal_of(string_address word)
         if (string_digits_exact(word, address_of number))
                 return number <= KILL_MOST ? (bipolar)number : -1;
 
-        if (string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
+        //      Bash reads SIG in front of a name and dash does not, so
+        //      `kill -s SIGINT` is a signal in one shell and an error in the
+        //      other. The utility reads it whichever shell is running it.
+        if ((!kill_shell_spelling || shell_bash_compat) &&
+            string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
                 word += 3;
 
         for (positive i = 0; i < array_count(kill_table); i++)
                 if (!string_compare(word, kill_table[i].name))
                         return kill_table[i].number;
+
+        //      Each vocabulary knows only its own real-time spelling: the
+        //      shells answer RTMIN and refuse RT0, the utility the reverse.
+        if (kill_shell_spelling)
+                return kill_real_time_of(word);
 
         if (string_is(word, 'R') && string_is(word + 1, 'T') &&
             string_digits_exact(word + 2, address_of number) &&

@@ -3734,26 +3734,45 @@ builtins_add(Utility(
 
 # --- trap -------------------------------------------------------------------
 # Report through bare `trap`, which lists only the conditions that have been
-# set -- as bash and dash do. (`trap -p` with no signal lists every default in
-# this shell, a deliberate difference pinned separately.)
+# set -- as bash and dash do.
+#
+#       The one-operand forms and the real-time names are here because each
+#       is a place the three shells part company: `trap INT` takes the
+#       handler away in bash and dash and is a usage error in bash's POSIX
+#       mode, which keeps only `trap 2`; a lone word that names no condition
+#       is refused by all three where this used to accept it in silence; and
+#       SIG in front of a name is bash's alone, so dash calls SIGINT a bad
+#       trap. RTMIN and RTMAX are what the shells call the real-time signals
+#       and the only spelling they take -- RT0 is util-linux's.
 builtins_add(Utility(
     "trap",
     operands=((), ("echo hi", "INT"), ("echo hi", "int"),
               ("echo hi", "SIGINT"), ("echo hi", "2"), ("", "HUP"),
               ("echo x", "EXIT"), ("echo x", "TERM", "HUP"),
               ("echo", "bogus"), ("echo", "64"), ("echo", "65"), ("-", "INT"),
-              ("echo hi", "hUp"), ("echo", "40"), ("echo", "USR1")),
+              ("echo hi", "hUp"), ("echo", "40"), ("echo", "USR1"),
+              ("INT",), ("2",), ("0",), ("NOPE",), ("RTMIN",), ("--", "INT"),
+              ("--", "NOPE"), ("--",), ("INT", "TERM"),
+              ("echo r", "RTMIN"), ("echo r", "rtmin"), ("echo r", "RTMIN+3"),
+              ("echo r", "RTMAX"), ("echo r", "RTMAX-2"), ("echo r", "SIGRTMIN"),
+              ("echo r", "SIGRTMIN+3"), ("echo r", "RT0"), ("echo r", "RTMIN+31"),
+              ("echo r", "SIGKILL"), ("echo r", "sigint"), ("echo r", "SIGint")),
     stdin=("empty",), stderr="loose", modes=ALL,
     # Report through bare trap, never a pipeline: a subshell resets trapped
     # signals to their default in dash, so a piped listing asks the wrong shell.
     script=builtins_wrap("trap", report='trap 2>/dev/null\n'),
     max_flags=0))
-# -l and -p are Bash extensions dash does not have. `trap -p` with no signal
-# lists every default in this shell (bash lists only what is set) -- pinned.
+#       -l and -p are Bash's, and dash refuses both letters -- fatally,
+#       because trap is a special builtin. So this runs in every mode: the
+#       point is that dash says no. `trap -p` with no operand lists what is
+#       set in bash and every condition it accepts in bash's POSIX mode,
+#       KILL and STOP among them, out to RTMAX and then DEBUG, ERR, RETURN.
 builtins_add(Utility(
     "trap_pl",
-    operands=(("-l",), ("-p",), ("-p", "INT"), ("-p", "INT", "TERM")),
-    stdin=("empty",), stderr="loose", modes=BASH,
+    operands=(("-l",), ("-p",), ("-p", "INT"), ("-p", "INT", "TERM"),
+              ("-p", "EXIT"), ("-p", "RTMIN"), ("-p", "NOPE"),
+              ("--", "-p"), ("-p", "--"), ("-lp",)),
+    stdin=("empty",), stderr="loose", modes=ALL,
     script=builtins_wrap(
         "trap", prologue="trap 'echo x' INT\n",
         report='trap 2>/dev/null\n'),
@@ -39584,110 +39603,6 @@ PINNED = r"""
   "reason_id": "r54",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "test_ext"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "128fa8a9df7301c1453bfbc99413fb981d13f5359982d01a56b53167ab11b139"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo hi' SIGINT\nprintf \"[%s]\\n\" \"$?\"\ntrap 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "trap",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "47b4f36838fe517c",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r78",
-  "utility": "trap"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "e4ea096804dee19d7662be0ce2d32f9e94a020669a2e038d292e12e2c98f5b22"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo x' INT\ntrap -p\nprintf \"[%s]\\n\" \"$?\"\ntrap 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "trap_pl",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "5cad70f7471c79a9",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r78",
-  "utility": "trap_pl"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "b16612d7436b8fd9c3184d0192c9186a14e2900e5d258102954b5b868aec2dc9"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo x' INT\ntrap -p\nprintf \"[%s]\\n\" \"$?\"\ntrap 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "trap_pl",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "c8ee10460b67aa76",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r78",
-  "utility": "trap_pl"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "bab4f598140200dbfa2d39219752e6f251048adb4b55c5bffe44ebdf7cdb5ba9"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo x' INT\ntrap -p INT TERM\nprintf \"[%s]\\n\" \"$?\"\ntrap 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "trap_pl",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ca395a3aadfcbe40",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r78",
-  "utility": "trap_pl"
  },
  {
   "candidate": {
