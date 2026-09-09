@@ -1689,7 +1689,7 @@ def engines_arguments():
     for item in args.binary:
         label, separator, path = item.partition("=")
         if not separator or not label or label in binaries:
-            parser.error("binary engines_arguments need distinct nonempty LABEL=PATH pairs")
+            parser.error("binary arguments need distinct nonempty LABEL=PATH pairs")
         binary = Path(path).resolve(strict=True)
         if not binary.is_file() or not os.access(binary, os.X_OK):
             parser.error(f"not an executable file: {binary}")
@@ -1903,7 +1903,7 @@ def engines_shell_workloads(root, size, legacy=True):
         "trap": loop('kill -USR1 $$', 'n=0; trap \'n=$((n+1))\' USR1',
                      'printf "%s:%s\\n" "$n" "$i"', turns=min(count, 2000)),
     }
-    scripts["parse-engines_arguments"] = (': alpha beta gamma long_variable_name delta\n' * count +
+    scripts["parse-arguments"] = (': alpha beta gamma long_variable_name delta\n' * count +
                                   'printf "done\\n"\n')
     scripts["parse-quotes"] = (': \'single quoted\' "double quoted" escaped\\ word "${missing:-fallback}"\n' * count +
                                'printf "done\\n"\n')
@@ -2043,7 +2043,7 @@ def harness_engines():
                     "cpu_median_ms": {label: statistics.median(values)
                                       for label, values in cpu_samples.items()},
                     "cpu_samples_ms": cpu_samples,
-                    "applet": tool, "engines_arguments": operands,
+                    "applet": tool, "arguments": operands,
                     "stdin_sha256": hashlib.sha256(source.read_bytes()).hexdigest() if source else None,
                     "invalid": invalid,
                     "ratio_to_first": {label: value / medians[labels[0]]
@@ -2060,31 +2060,20 @@ def harness_engines():
                 if args.json:
                     args.json.write_text(json.dumps(result, indent=2) + "\n")
     if not result["rows"]:
-        raise SystemExit("filter selected no engines_workloads")
+        raise SystemExit("filter selected no workloads")
     if args.json:
         args.json.write_text(json.dumps(result, indent=2) + "\n")
 
 
-HARNESS_CHECKS = {"engines": harness_engines}
+def harness_engines_main(argv):
+    """--harness engines ARGS, from harness_main: the engine benchmark.
 
-
-def harness_entry():
-    """--harness NAME [ARGS], from main(): run the program called NAME.
-
-    main() has already put the words after --harness into sys.argv, so the
-    first of them is the name and the rest belong to that program's own
-    argument parser.
+    The other folded programs read the words they were given; this one was a
+    command of its own and parses sys.argv, so the words go back there under
+    a program name that says how it was reached.
     """
-    names = ", ".join(sorted(HARNESS_CHECKS))
-    if len(sys.argv) < 2:
-        sys.stderr.write("--harness wants a name: %s\n" % names)
-        return 2
-    name = sys.argv[1]
-    if name not in HARNESS_CHECKS:
-        sys.stderr.write("no harness called %s; there is %s\n" % (name, names))
-        return 2
-    sys.argv = ["%s --harness %s" % (sys.argv[0], name)] + sys.argv[2:]
-    return HARNESS_CHECKS[name]() or 0
+    sys.argv = ["%s --harness engines" % sys.argv[0], *argv]
+    return harness_engines() or 0
 
 # ==== inlined domain specs (assembled by the pass; edit the grammar here) ====
 
@@ -17687,6 +17676,7 @@ def harness_code_map(argv):
 
 
 HARNESS_CHECKS = {
+    "engines": harness_engines_main,
     "core_state": harness_core_state,
     "spark_entry": harness_spark_entry,
     "build_tools": harness_build_tools,
