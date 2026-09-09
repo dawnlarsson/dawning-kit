@@ -12329,12 +12329,20 @@ static fn ul_lsblk_rows(bool list, bool dependencies, bool all, bool noempty,
         }
 }
 
+/*      Rows after the first open where the one before closed: libsmartcols
+        writes "},{" on one line and indents only the first. */
 static positive ul_lsblk_json_row(positive row, p8 address_to columns,
-                                   positive column_count, positive indent)
+                                   positive column_count, positive indent,
+                                   bool after)
 {
         ul_lsblk_device address_to device = ul_lsblk.rows + row;
-        writer_fill(log, indent, ' ');
-        log("{\n", 2);
+        if (after)
+                log(",{\n", 3);
+        else
+        {
+                writer_fill(log, indent, ' ');
+                log("{\n", 2);
+        }
         for (positive i = 0; i < column_count; i++)
         {
                 p8 column = columns[i];
@@ -12344,13 +12352,28 @@ static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                 string_format(log, "\"%s\": ", ul_lsblk_columns[column].name);
                 if (column == UL_LSBLK_MOUNTPOINTS)
                 {
-                        log("[", 1);
-                        for (positive m = 0; m < device->mount_count; m++)
+                        /* An array with something in it is written a line
+                           to the element, indented past the name it hangs
+                           from; an empty one stays on the name's line. */
+                        if (!device->mount_count)
+                                log("[]", 2);
+                        else
                         {
-                                if (m) log(",", 1);
-                                writer_json_string(log, device->mountpoints[m]);
+                                log("[\n", 2);
+                                for (positive m = 0; m < device->mount_count;
+                                     m++)
+                                {
+                                        writer_fill(log, indent + 7, ' ');
+                                        writer_json_string(
+                                            log, device->mountpoints[m]);
+                                        if (m + 1 < device->mount_count)
+                                                log(",\n", 2);
+                                        else
+                                                log("\n", 1);
+                                }
+                                writer_fill(log, indent + 3, ' ');
+                                log("]", 1);
                         }
-                        log("]", 1);
                 }
                 else
                 {
@@ -12371,9 +12394,8 @@ static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                 while (next < ul_lsblk.row_count &&
                        ul_lsblk.rows[next].depth > device->depth)
                 {
-                        if (comma) log(",\n", 2);
                         next = ul_lsblk_json_row(next, columns, column_count,
-                                                indent + 6);
+                                                indent + 6, comma);
                         comma = true;
                 }
                 log("\n", 1);
@@ -12394,8 +12416,9 @@ static fn ul_lsblk_json_out(p8 address_to columns, positive column_count)
         bool comma = false;
         while (row < ul_lsblk.row_count)
         {
-                log(comma ? ",\n" : "\n", comma ? 2 : 1);
-                row = ul_lsblk_json_row(row, columns, column_count, 6);
+                if (!comma)
+                        log("\n", 1);
+                row = ul_lsblk_json_row(row, columns, column_count, 6, comma);
                 comma = true;
         }
         if (!ul_lsblk.row_count)
