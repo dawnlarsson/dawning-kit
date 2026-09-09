@@ -733,6 +733,20 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                 }
         }
 
+        {
+                static const storage_exclusive_pair attach[] = {
+                    {'B', (string_address)"bind"},
+                    {'M', (string_address)"move"},
+                    {'R', (string_address)"rbind"}};
+
+                if (storage_exclusive_refuse(
+                        diagnostic, (string_address)"mount", argc, argv,
+                        arguments, array_count(arguments),
+                        (string_address)"toTLUSX", attach,
+                        array_count(attach)))
+                        goto done;
+        }
+
         if (named_source)
         {
                 if (operands > 1 || (named_target && operands))
@@ -964,12 +978,30 @@ static PURE storage_mount address_to storage_umount_target(
    point, and 32 when it took umount(2) and the kernel refused: the modes
    that bypass the table (--no-mtab, --read-only, --force, --types) therefore
    answer 32 where a plain umount of the same path answers 1. */
+/*      util-linux says what went wrong in its own words rather than the
+        kernel's: a path that is nothing to the mount table is "not mounted",
+        one the kernel refuses to let go is "target is busy", and a path the
+        kernel never saw at all is "no mount point specified". */
+static PURE string_address storage_umount_reason(b32 number)
+{
+        if (number == STORAGE_ERROR_PERMISSION)
+                return (string_address)"must be superuser to unmount.";
+        if (number == STORAGE_ERROR_BUSY)
+                return (string_address)"target is busy.";
+        if (number == STORAGE_ERROR_INVALID)
+                return (string_address)"not mounted.";
+        if (number == STORAGE_ERROR_NO_ENTRY)
+                return (string_address)"no mount point specified.";
+        return null;
+}
+
 static b32 storage_umount_one(writer diagnostic, string_address program,
                              string_address target, string_address type,
                              positive flags, bool read_only, bool checked,
-                             bool verbose, bool quiet)
+                             bool verbose, bool quiet, bool fake)
 {
-        bipolar answer = system_call_2(syscall(umount2), (positive)target, flags);
+        bipolar answer = fake ? 0
+            : system_call_2(syscall(umount2), (positive)target, flags);
 
         if (answer && read_only && answer == -STORAGE_ERROR_BUSY)
         {
@@ -985,12 +1017,20 @@ static b32 storage_umount_one(writer diagnostic, string_address program,
         {
                 b32 number = answer < 0 ? (b32)-(answer + 1) + 1 :
                                          (b32)answer;
-                if (!quiet)
-                        string_format(diagnostic, "%s: %s failed: %s\n", program,
-                                      target, strerror(number));
-                if (checked && (number == STORAGE_ERROR_INVALID ||
-                                number == STORAGE_ERROR_NO_ENTRY))
-                        return 1;
+                string_address reason = storage_umount_reason(number);
+                /*  --quiet is only about the path that was never a mount
+                    point; every other refusal is still said. */
+                if (!(quiet && number == STORAGE_ERROR_INVALID))
+                {
+                        if (reason)
+                                string_format(diagnostic, "%s: %s: %s\n",
+                                              program, target, reason);
+                        else
+                                string_format(diagnostic, "%s: %s failed: %s\n",
+                                              program, target,
+                                              strerror(number));
+                }
+                (void)checked;
                 return 32;
         }
         if (verbose)
@@ -1005,7 +1045,7 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                                     storage_mount_table address_to table,
                                     string_address root, string_address types,
                                     positive flags, bool read_only, bool verbose,
-                                    bool quiet)
+                                    bool quiet, bool fake)
 {
         b32 failed = 0;
         positive longest = positive_max;
@@ -1054,7 +1094,7 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                                                              record->target,
                                                              record->type, flags,
                                                              read_only, false, verbose,
-                                                             quiet);
+                                                             quiet, fake);
                                 record->target = null;
                         }
                 }
@@ -1170,6 +1210,25 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         types = value;
         }
 
+        {
+                static const storage_exclusive_pair reach[] = {
+                    {'a', (string_address)"all"},
+                    {'A', (string_address)"all-targets"}};
+                static const storage_exclusive_pair depth[] = {
+                    {'r', (string_address)"read-only"},
+                    {'R', (string_address)"recursive"}};
+
+                if (storage_exclusive_refuse(
+                        diagnostic, (string_address)"umount", argc, argv,
+                        arguments, array_count(arguments),
+                        (string_address)"tO", reach, array_count(reach)) ||
+                    storage_exclusive_refuse(
+                        diagnostic, (string_address)"umount", argc, argv,
+                        arguments, array_count(arguments),
+                        (string_address)"tO", depth, array_count(depth)))
+                        goto failed_early;
+        }
+
         if (!all && !operands)
         {
                 string_format(diagnostic, "umount: missing operand\n");
@@ -1182,9 +1241,6 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                               "umount: options --recursive and --types cannot be combined\n");
                 goto failed_early;
         }
-        if (fake)
-                goto done_early;
-
         if (all && operands)
         {
                 string_format(diagnostic,
@@ -1207,7 +1263,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                                 failed |= storage_umount_one(
                                     diagnostic, (string_address)"umount",
                                     record->target, record->type, flags,
-                                    read_only, false, verbose, quiet);
+                                    read_only, false, verbose, quiet, fake);
                 }
         }
 
@@ -1252,7 +1308,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                                 failed |= storage_umount_one(
                                     diagnostic, (string_address)"umount",
                                     record->target, record->type, flags,
-                                    read_only, false, verbose, quiet);
+                                    read_only, false, verbose, quiet, fake);
                         }
                         if (!matched)
                         {
@@ -1269,24 +1325,15 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                                         failed |= storage_umount_one(
                                             diagnostic, (string_address)"umount",
                                             target->target, target->type, flags,
-                                            read_only, false, verbose, quiet);
+                                            read_only, false, verbose, quiet,
+                                            fake);
                                 }
                         }
-                        if (!matched && !bypass)
-                        {
-                                /* A search of the table that found nothing
-                                   says so; it never reaches umount(2). */
-                                if (!quiet)
-                                        string_format(diagnostic,
-                                                      "umount: %s: not mounted.\n",
-                                                      operand[i]);
-                                failed |= 1;
-                        }
-                        else if (!matched)
+                        if (!matched)
                                 failed |= storage_umount_one(
                                     diagnostic, (string_address)"umount",
                                     operand[i], null, flags, read_only, false,
-                                    verbose, quiet);
+                                    verbose, quiet, fake);
                 }
                 else
                 {
@@ -1296,27 +1343,21 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                                 found = storage_umount_target(address_of table,
                                                               operand[i]);
                         string_address target = found ? found->target : asked;
-                        /* The table alone answers for a path that is not a
-                           mount point; umount(2) is never called, so the
-                           kernel's permission check cannot speak first. */
-                        if (!found && !bypass && !recursive)
-                        {
-                                if (!quiet)
-                                        string_format(diagnostic,
-                                                      "umount: %s: not mounted.\n",
-                                                      operand[i]);
-                                failed |= 1;
-                        }
-                        else if (recursive)
+                        /*  A path the table does not hold is named as it was
+                            written; one it holds is named by the table's own
+                            spelling, which is how the reference names it. */
+                        if (!found)
+                                target = operand[i];
+                        if (recursive)
                                 failed |= storage_umount_recursive(
                                     diagnostic, (string_address)"umount",
                                     address_of table, target, types, flags,
-                                    read_only, verbose, quiet);
+                                    read_only, verbose, quiet, fake);
                         else
                                 failed |= storage_umount_one(
                                     diagnostic, (string_address)"umount", target,
                                     found ? found->type : null, flags, read_only,
-                                    !found && !bypass, verbose, quiet);
+                                    !found && !bypass, verbose, quiet, fake);
                 }
                 if (resolved)
                         memory_free(resolved, resolved_room);

@@ -1874,6 +1874,95 @@ static COLD b32 storage_argument_next(
         return option;
 }
 
+/*      Two options that cannot be given together, named in the order the
+        command line wrote them: `-r -R` is "--read-only and --recursive" and
+        `-R -r` the reverse.  The parsed flags say only that both were given,
+        so the pair and its order are read back off the arguments. */
+typedef struct
+{
+        p8 letter;
+        string_address name;
+} storage_exclusive_pair;
+
+static COLD b32 storage_exclusive_refuse(
+    writer diagnostic, string_address program, positive argc,
+    string_address address_to argv,
+    const storage_argument_name address_to longs, positive long_count,
+    string_address valued, const storage_exclusive_pair address_to group,
+    positive count)
+{
+        p8 seen[2] = {0, 0};
+        positive have = 0;
+        bool value_next = false;
+
+        for (positive at = 1; at < argc && have < 2; at++)
+        {
+                string_address word = argv[at];
+
+                if (value_next)
+                {
+                        value_next = false;
+                        continue;
+                }
+                if (!word || word[0] != '-' || !word[1])
+                        continue;
+
+                if (word[1] == '-')
+                {
+                        if (!word[2])
+                                break;
+
+                        string_address equals =
+                            string_first_of_or_end(word + 2, '=');
+                        p8 letter = storage_argument_long(
+                            word + 2, (positive)(equals - (word + 2)), longs,
+                            long_count);
+
+                        for (positive i = 0; i < count && letter; i++)
+                                if (letter == group[i].letter &&
+                                    (!have || seen[0] != letter))
+                                        seen[have++] = letter;
+                        continue;
+                }
+
+                for (positive i = 1; word[i] && have < 2; i++)
+                {
+                        for (positive g = 0; g < count; g++)
+                                if (word[i] == group[g].letter &&
+                                    (!have || seen[0] != word[i]))
+                                {
+                                        seen[have++] = word[i];
+                                        break;
+                                }
+
+                        if (string_first_of(valued, word[i]))
+                        {
+                                value_next = !word[i + 1];
+                                break;
+                        }
+                }
+        }
+
+        if (have < 2)
+                return 0;
+
+        string_address one = null;
+        string_address two = null;
+
+        for (positive i = 0; i < count; i++)
+        {
+                if (group[i].letter == seen[0])
+                        one = group[i].name;
+                if (group[i].letter == seen[1])
+                        two = group[i].name;
+        }
+
+        string_format(diagnostic,
+                      "%s: options --%s and --%s cannot be combined\n",
+                      program, one, two);
+        return 1;
+}
+
 /*
         util-linux compatible core.  Syntax errors are 4, no recognised
         device is 2, success is 0.  The writers make it equally usable from

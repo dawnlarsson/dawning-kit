@@ -938,6 +938,20 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                 }
         }
 
+        {
+                static const storage_exclusive_pair shapes[] = {
+                    {'l', (string_address)"list"},
+                    {'P', (string_address)"pairs"},
+                    {'r', (string_address)"raw"}};
+
+                if (storage_exclusive_refuse(
+                        diagnostic, (string_address)"findmnt", argc, argv,
+                        arguments, array_count(arguments),
+                        (string_address)"STMtoOy", shapes,
+                        array_count(shapes)))
+                        return 1;
+        }
+
         if ((options.path_query && options.mountpoint_query) ||
             (options.operand &&
              (options.source || options.path_query || options.mountpoint_query)))
