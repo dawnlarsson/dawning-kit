@@ -587,14 +587,6 @@
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
-  "option": "--journald",
-  "reason": "deliberate: the journal export protocol is a separate framing (field names, binary lengths) from syslog; it is refused rather than sent as a syslog line.",
-  "utility": "logger"
- },
- {
-  "domain": "misc",
-  "kind": "deliberate",
-  "list": "ledger",
   "option": "--sd-id",
   "reason": "deliberate: RFC 5424 structured data has its own escaping, ordering and identity rules; emitting a partial element would produce a syntactically valid message with the wrong meaning.",
   "utility": "logger"
@@ -630,14 +622,6 @@
   "option": "-f",
   "reason": "deliberate: floating point output needs a binary float formatter (and, for -F, long double) whose rounding this freestanding tree does not provide; the type is refused rather than printed wrongly.",
   "utility": "od"
- },
- {
-  "domain": "misc",
-  "kind": "deliberate",
-  "list": "ledger",
-  "option": "-l",
-  "reason": "deliberate: the long format reads the account's home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
-  "utility": "pinky"
  },
  {
   "domain": "misc",

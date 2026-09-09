@@ -895,7 +895,8 @@ static b32 process_pipesz()
                 if (answer < 0)
                 {
                         failed = true;
-                        if (!(taking.flags & FILE_FLAG('q')))
+                        if (!(taking.flags & FILE_FLAG('q')) ||
+                            (taking.flags & FILE_FLAG('c')))
                                 string_format(
                                     log_error,
                                     "pipesz: cannot %s pipe buffer size of %s: %s\n",
@@ -2010,6 +2011,12 @@ static b32 process_script_record(process_script_state address_to state,
         positive input_at = 0, input_length = 0;
         bool input_end = false, eot = false, master_end = false;
         bool child_done = false, failed = false;
+        /* An end of file on our own input becomes the terminal's end-of-file
+           character, which only means that to a command that has already
+           taken the terminal. Hold it until the session has spoken once, or
+           a command started with its input already exhausted never sees it
+           and waits for a line that cannot come. */
+        bool session_spoke = false;
         positive status = 0;
 
         while (!master_end)
@@ -2017,10 +2024,11 @@ static b32 process_script_record(process_script_state address_to state,
                 process_timeout_poll waited[4];
                 positive count = 0;
                 positive master_index = count;
+                bool sending = input_at < input_length &&
+                               (!eot || session_spoke);
                 waited[count++] = (process_timeout_poll){
                     master, (b16)(PROCESS_POLL_IN |
-                                   ((input_at < input_length)
-                                        ? PROCESS_POLL_OUT : 0)), 0};
+                                   (sending ? PROCESS_POLL_OUT : 0)), 0};
                 positive input_index = positive_max;
                 if (!input_end && input_at == input_length)
                 {
@@ -2089,7 +2097,7 @@ static b32 process_script_record(process_script_state address_to state,
 
                 if (waited[master_index].returned & PROCESS_POLL_OUT)
                 {
-                        if (input_at < input_length)
+                        if (sending)
                         {
                                 bipolar wrote = system_write_once(
                                     (positive)master, input + input_at,

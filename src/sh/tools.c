@@ -1082,6 +1082,12 @@ static b32 tools_logger()
                 return text_done(1);
 
         bool answer;
+        if (file_operand_count && file_option_value(address_of taking, 'f'))
+        {
+                text_flush();
+                string_format(writer_stderr,
+                    "logger: --file <file> and <message> are mutually exclusive; file is ignored\n");
+        }
         if (file_operand_count)
                 answer = logger_operands(address_of control);
         else
