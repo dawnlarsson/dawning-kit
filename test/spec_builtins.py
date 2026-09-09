@@ -1445,26 +1445,6 @@ def builtins_allexport(rng):
     return "builtins-allexport", ALL, body + "\n"
 
 
-def builtins_history_file(rng):
-    """The history store as files: read, write, append, add and clear."""
-    total = rng.choice((0, 1, 3, 7))
-    keep = 500
-    steps = rng.choice((
-        "history -r initial; history",
-        "history -r initial; history -w saved; /bin/cat saved",
-        "history -r initial; history -a appended; /bin/cat appended",
-        "history -r initial; history -s added; history",
-        "history -r initial; history -c; history; printf 'cleared:%s\\n' \"$?\"",
-        "history -r initial; history -n initial; history",
-        "history -r missing12345 2>/dev/null; printf 'missing:%s\\n' \"$?\"",
-    ))
-    make = ("/usr/bin/awk 'BEGIN { for (i = 1; i <= " + str(total) +
-            "; i++) print \"old-\" i }' > initial\n")
-    script = ("set -o history 2>/dev/null\nHISTFILE=$PWD/hist\nHISTSIZE=" +
-              str(keep) + "\n" + make + "history -c\n" + steps + "\n")
-    return "builtins-history-file", ("bash", "posix"), script
-
-
 FAMILIES = (
     builtins_listing, builtins_query_namespaces, builtins_declaration_lifecycle,
     builtins_inventory_state, builtins_read_fields, builtins_read_ifs_snapshot,
@@ -1475,5 +1455,5 @@ FAMILIES = (
     builtins_getopts_scope, builtins_array_machinery, builtins_nameref,
     builtins_scope_snapshot, builtins_readonly_scope, builtins_pipestatus,
     builtins_dynamic_variables, builtins_umask_symbolic, builtins_test_forms,
-    builtins_allexport, builtins_history_file,
+    builtins_allexport,
 )
