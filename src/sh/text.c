@@ -4856,6 +4856,54 @@ static const file_long tee_longs[] = {
     {null, 0},
 };
 
+// The four words --output-error takes, and the two that end tee where a
+// destination fails rather than carrying on past it.
+static const string_address tee_error_modes[4] = {
+    (string_address) "warn", (string_address) "warn-nopipe",
+    (string_address) "exit", (string_address) "exit-nopipe"};
+static bool tee_leave;
+
+static bool tee_error_of(string_address said, positive address_to chosen)
+{
+        positive length = said ? string_length(said) : 0;
+        positive matches = 0;
+
+        if (!length)
+                return false;
+
+        for (positive i = 0; i < 4; i++)
+        {
+                if (length > string_length(tee_error_modes[i]) ||
+                    string_compare_max(said, tee_error_modes[i], length))
+                        continue;
+
+                if (string_equals(said, tee_error_modes[i]))
+                {
+                        address_to chosen = i;
+                        return true;
+                }
+
+                matches++;
+                address_to chosen = i;
+        }
+
+        return matches == 1;
+}
+
+static bool tee_option_seen(p8 letter, string_address value)
+{
+        positive chosen;
+
+        if (letter != 'O' || !value)
+                return true;
+
+        if (!tee_error_of(value, address_of chosen))
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid argument for --output-error");
+
+        tee_leave = chosen >= 2;
+        return true;
+}
+
 static b32 text_tee()
 {
         positive address_to handles = null;
@@ -4870,9 +4918,11 @@ static b32 text_tee()
             .optional = (string_address) "O",
             .longs = tee_longs,
             .operand = text_file_add,
+            .seen = tee_option_seen,
         };
 
         text_begin("tee");
+        tee_leave = false;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -4881,45 +4931,7 @@ static b32 text_tee()
                 return text_done(1);
 
         bool append = (taking.flags & FILE_FLAG('a')) != 0;
-        bool leave = false;
-
-        if (taking.flags & FILE_FLAG('O'))
-        {
-                // The word is one of four, or an unambiguous start of one;
-                // exit and exit-nopipe make a destination that cannot be
-                // opened the end rather than a complaint.
-                static const string_address modes[4] = {
-                    (string_address) "warn", (string_address) "warn-nopipe",
-                    (string_address) "exit", (string_address) "exit-nopipe"};
-                string_address said = file_option_value(address_of taking, 'O');
-                positive matches = 0;
-                positive chosen = 0;
-
-                if (said)
-                {
-                        positive length = string_length(said);
-
-                        for (positive i = 0; i < 4; i++)
-                                if (length && length <= string_length(modes[i]) &&
-                                    !string_compare_max(said, modes[i], length))
-                                {
-                                        if (string_equals(said, modes[i]))
-                                        {
-                                                matches = 1;
-                                                chosen = i;
-                                                break;
-                                        }
-
-                                        matches++;
-                                        chosen = i;
-                                }
-
-                        if (matches != 1)
-                                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --output-error"));
-
-                        leave = chosen >= 2;
-                }
-        }
+        bool leave = tee_leave;
 
         if (text_files_count)
         {
