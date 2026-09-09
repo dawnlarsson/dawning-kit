@@ -96,6 +96,13 @@ static p8 checksum_verify_mode;
 static bool checksum_zero;
 static bool checksum_base64;
 static bool checksum_raw;
+/* Whose name a verification complains in, and the label it calls a line it
+   could not read. cksum --check borrows this walk under its own name. */
+static string_address checksum_program;
+static string_address checksum_check_label;
+/* cksum collects its operands into the shared file list rather than leaving
+   them behind the options, so the manifests are named from there. */
+static bool checksum_manifest_files;
 
 static bool checksum_option_seen(p8 letter, string_address value)
 {
@@ -124,6 +131,10 @@ static bool checksum_option_seen(p8 letter, string_address value)
 
 static fn checksum_modes_reset()
 {
+        checksum_program = null;
+        checksum_check_label = null;
+        checksum_manifest_files = false;
+
         checksum_binary = false;
         checksum_warn = false;
         checksum_text_given = false;
@@ -799,24 +810,77 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
         return true;
 }
 
+/*
+        cksum --check reads whichever algorithm each tagged line names, so
+        the walk below is given no single algorithm and finds one per line.
+        Every other caller has one and keeps it. The transforms opened along
+        the way are held here, at most one per algorithm, and closed with the
+        walk.
+*/
+static bipolar checksum_transforms[array_count(checksum_algorithms)];
+
+static const checksum_algorithm address_to checksum_line_algorithm()
+{
+        positive at = text_line_length && text_line[0] == '\\';
+
+        for (positive which = 0; which < array_count(checksum_algorithms); which++)
+        {
+                const checksum_algorithm address_to one = checksum_algorithms + which;
+                positive length = string_length(one->label);
+
+                if (text_line_length > at + length + 1 &&
+                    !string_compare_max(text_line + at, one->label, length) &&
+                    text_line[at + length] == ' ' &&
+                    text_line[at + length + 1] == '(')
+                        return one;
+        }
+
+        return null;
+}
+
+#define CHECKSUM_TRANSFORM_UNOPENED (-2)
+
+static bipolar checksum_transform_for(const checksum_algorithm address_to algorithm)
+{
+        positive which = (positive)(algorithm - checksum_algorithms);
+
+        if (checksum_transforms[which] == CHECKSUM_TRANSFORM_UNOPENED)
+                checksum_transforms[which] = checksum_kernel_open(algorithm);
+
+        return checksum_transforms[which];
+}
+
 static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                            bipolar transform, file_taking address_to taking)
 {
+        for (positive which = 0; which < array_count(checksum_transforms); which++)
+                checksum_transforms[which] = CHECKSUM_TRANSFORM_UNOPENED;
+        if (!checksum_program)
+                checksum_program = algorithm ? algorithm->command
+                                             : (string_address) "cksum";
+        if (!checksum_check_label)
+                checksum_check_label = algorithm ? algorithm->label
+                                                 : (string_address) "CRC";
+
         bool quiet = checksum_verify_mode == 'q';
         bool status = checksum_verify_mode == 's';
         bool strict = (taking->flags & FILE_FLAG('S')) != 0;
         bool ignore_missing = (taking->flags & FILE_FLAG('i')) != 0;
-        positive manifests = taking->first < (positive)program_argument_count()
-                                 ? (positive)program_argument_count() - taking->first
-                                 : 1;
+        positive manifests = checksum_manifest_files
+                                 ? (positive)text_input_count()
+                                 : (taking->first < (positive)program_argument_count()
+                                        ? (positive)program_argument_count() - taking->first
+                                        : 1);
         bool failed = false;
 
         for (positive m = 0; m < manifests; m++)
         {
-                string_address manifest = taking->first <
-                                                  (positive)program_argument_count()
-                                              ? program_argument((b32)(taking->first + m))
-                                              : null;
+                string_address manifest =
+                    checksum_manifest_files
+                        ? text_file_name(m)
+                        : (taking->first < (positive)program_argument_count()
+                               ? program_argument((b32)(taking->first + m))
+                               : null);
 
                 if (!text_open(manifest))
                 {
@@ -833,7 +897,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
 
                         text_flush();
                         string_format(log_error, "%s: %s: read error\n",
-                                      algorithm->command,
+                                      checksum_program,
                                       checksum_quoted_name(manifest ? manifest
                                           : (string_address)"standard input",
                                           quoted, sizeof(quoted)));
@@ -862,7 +926,17 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         // An empty record is passed over in silence.
                         if (!text_line_length)
                                 continue;
-                        if (!checksum_line_parse(algorithm, expected,
+
+                        const checksum_algorithm address_to one = algorithm;
+                        bipolar hash = transform;
+
+                        if (!one)
+                                one = checksum_line_algorithm();
+                        if (one && hash < 0)
+                                hash = checksum_transform_for(one);
+
+                        if (!one || hash < 0 ||
+                            !checksum_line_parse(one, expected,
                                                  address_of filename))
                         {
                                 malformed++;
@@ -873,9 +947,9 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                                         p8 quoted[FILE_PATH_MAX + 64];
 
                                         string_format(log_error, "%s: %s: %p: improperly formatted %s checksum line\n",
-                                                      algorithm->command,
+                                                      checksum_program,
                                                       checksum_quoted_name(manifest, quoted, sizeof(quoted)),
-                                                      line, algorithm->label);
+                                                      line, checksum_check_label);
                                 }
                                 }
                                 continue;
@@ -884,7 +958,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         formatted++;
 
                         bipolar hashed = checksum_hash_path(
-                            transform, filename, digest, algorithm->bytes);
+                            hash, filename, digest, one->bytes);
 
                         if (hashed == -ERROR_NO_ENTRY && ignore_missing)
                                 continue;
@@ -903,7 +977,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         }
 
                         verified++;
-                        if (memory_compare(expected, digest, algorithm->bytes))
+                        if (memory_compare(expected, digest, one->bytes))
                         {
                                 mismatched++;
                                 failed = true;
@@ -933,17 +1007,17 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         if (malformed && formatted)
                         {
                                 text_flush();
-                                string_format(log_error, "%s: WARNING: %p%s\n", algorithm->command, malformed, malformed == 1 ? (string_address) " line is improperly formatted" : (string_address) " lines are improperly formatted");
+                                string_format(log_error, "%s: WARNING: %p%s\n", checksum_program, malformed, malformed == 1 ? (string_address) " line is improperly formatted" : (string_address) " lines are improperly formatted");
                         }
                         if (unreadable)
                         {
                                 text_flush();
-                                string_format(log_error, "%s: WARNING: %p%s\n", algorithm->command, unreadable, unreadable == 1 ? (string_address) " listed file could not be read" : (string_address) " listed files could not be read");
+                                string_format(log_error, "%s: WARNING: %p%s\n", checksum_program, unreadable, unreadable == 1 ? (string_address) " listed file could not be read" : (string_address) " listed files could not be read");
                         }
                         if (mismatched)
                         {
                                 text_flush();
-                                string_format(log_error, "%s: WARNING: %p%s\n", algorithm->command, mismatched, mismatched == 1 ? (string_address) " computed checksum did NOT match" : (string_address) " computed checksums did NOT match");
+                                string_format(log_error, "%s: WARNING: %p%s\n", checksum_program, mismatched, mismatched == 1 ? (string_address) " computed checksum did NOT match" : (string_address) " computed checksums did NOT match");
                         }
                 }
 
@@ -963,6 +1037,10 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                 if (strict && malformed)
                         failed = true;
         }
+
+        for (positive which = 0; which < array_count(checksum_transforms); which++)
+                if (checksum_transforms[which] > 0)
+                        system_close((positive)checksum_transforms[which]);
 
         return failed ? 1 : 0;
 }

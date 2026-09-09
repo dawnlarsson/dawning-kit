@@ -432,8 +432,23 @@ static const file_long cksum_longs[] = {
     {(string_address) "base64", 'B'},
     {(string_address) "zero", 'z'},
     {(string_address) "length", 'l'},
+    {(string_address) "check", 'c'},
+    {(string_address) "ignore-missing", 'i'},
+    {(string_address) "quiet", 'q'},
+    {(string_address) "status", 's'},
+    {(string_address) "strict", 'S'},
+    {(string_address) "warn", 'w'},
+    {(string_address) "debug", 'D'},
     {null, 0},
 };
+
+/* cksum's usage complaint: the sentence, then where to look. */
+static b32 cksum_usage_error(string_address message)
+{
+        text_flush();
+        return text_done(string_report(writer_stderr, 1,
+            "cksum: %s\nTry 'cksum --help' for more information.\n", message));
+}
 
 /* Each algorithm is checked as it is read, so an unknown one is refused
    even when a later --algorithm would supersede it. */
@@ -443,6 +458,13 @@ static bool cksum_option_seen(p8 letter, string_address value)
             "bsd", "sysv", "crc", "crc32b", "md5", "sha1", "sha224", "sha256",
             "sha384", "sha512", "sha2", "sha3", "blake2b", "sm3",
         };
+
+        if (letter == 'w' || letter == 'q' || letter == 's')
+        {
+                // The last of --warn, --quiet and --status wins, as in GNU.
+                checksum_warn = letter == 'w';
+                checksum_verify_mode = letter;
+        }
 
         if (letter != 'a' || !value)
                 return true;
@@ -461,16 +483,27 @@ static bool cksum_option_seen(p8 letter, string_address value)
         return false;
 }
 
+/* --tag and --untagged are the same choice written two ways, so the last of
+   them is what was asked for. */
+static p8 cksum_style;
+static const file_supersede cksum_supersedes[] = {
+    {(string_address) "TU", address_of cksum_style},
+    {null, null},
+};
+
 static b32 cksum_main()
 {
         file_taking taking = {
             .program = (string_address) "cksum",
-            .allowed = (string_address) "aUTRBzl",
+            .allowed = (string_address) "aUTRBzlciqsSwD",
             .valued = (string_address) "al",
             .longs = cksum_longs,
             .operand = text_file_add,
             .seen = cksum_option_seen,
+            .supersedes = cksum_supersedes,
         };
+
+        cksum_style = 0;
 
         text_begin("cksum");
 #if defined(LINUX)
@@ -483,12 +516,79 @@ static b32 cksum_main()
                 return text_done(1);
 
         string_address algorithm = file_option_value(address_of taking, 'a');
+        string_address length = file_option_value(address_of taking, 'l');
         bool raw = (taking.flags & FILE_FLAG('R')) != 0;
+        bool checking = (taking.flags & FILE_FLAG('c')) != 0;
+        bool tagged = cksum_style == 'T';
 
         checksum_zero = (taking.flags & FILE_FLAG('z')) != 0;
 
+        /*
+                The reference's own refusals, in the order it makes them. A
+                length of zero is no length at all -- it asks for the
+                algorithm's own width -- so it does not reach the first.
+        */
+        if ((taking.flags & FILE_FLAG('l')) && length && !string_equals(length, "0") &&
+            !(algorithm && (string_equals(algorithm, "blake2b") ||
+                            string_equals(algorithm, "sha2") ||
+                            string_equals(algorithm, "sha3"))))
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "cksum: --length is only supported with --algorithm blake2b, sha2, or sha3\n"));
+        }
+        if (checking && algorithm &&
+            (string_equals(algorithm, "bsd") || string_equals(algorithm, "sysv") ||
+             string_equals(algorithm, "crc") || string_equals(algorithm, "crc32b")))
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "cksum: --check is not supported with --algorithm={bsd,sysv,crc,crc32b}\n"));
+        }
+        if (raw && (taking.flags & FILE_FLAG('B')))
+                return cksum_usage_error("--base64 and --raw are mutually exclusive");
+        if (checksum_zero && checking)
+                return cksum_usage_error("the --zero option is not supported when verifying checksums");
+        if (tagged && checking)
+                return cksum_usage_error("the --tag option is meaningless when verifying checksums");
+        if (!checking)
+        {
+                if (taking.flags & FILE_FLAG('i'))
+                        return cksum_usage_error("the --ignore-missing option is meaningful only when verifying checksums");
+                if (checksum_verify_mode == 's')
+                        return cksum_usage_error("the --status option is meaningful only when verifying checksums");
+                if (checksum_verify_mode == 'w')
+                        return cksum_usage_error("the --warn option is meaningful only when verifying checksums");
+                if (checksum_verify_mode == 'q')
+                        return cksum_usage_error("the --quiet option is meaningful only when verifying checksums");
+                if (taking.flags & FILE_FLAG('S'))
+                        return cksum_usage_error("the --strict option is meaningful only when verifying checksums");
+        }
+
         if (raw && text_files_count > 1)
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "the --raw option is not supported with multiple files"));
+
+#if defined(LINUX)
+        if (checking)
+        {
+                /*
+                        Without --algorithm the reference reads whichever
+                        algorithm each tagged line names; with one, that
+                        algorithm reads every line, tagged or not.
+                */
+                const checksum_algorithm address_to digest =
+                    algorithm ? checksum_algorithm_find(algorithm, true) : null;
+
+                if (algorithm && !digest)
+                        return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm, "algorithm is not supported by the available checksum engine"));
+
+                checksum_manifest_files = true;
+                checksum_program = (string_address) "cksum";
+                checksum_check_label = digest ? digest->label
+                                              : (string_address) "CRC";
+                return text_done(checksum_verify(digest, -1, address_of taking));
+        }
+#endif
 
         if (algorithm && !string_equals(algorithm, "crc"))
         {
@@ -508,7 +608,7 @@ static b32 cksum_main()
                 {
                         checksum_raw = raw;
                         checksum_base64 = (taking.flags & FILE_FLAG('B')) != 0;
-                        return cksum_digest(digest, !(taking.flags & FILE_FLAG('U')));
+                        return cksum_digest(digest, cksum_style != 'U');
                 }
 #endif
 
@@ -520,6 +620,21 @@ static b32 cksum_main()
         if (!cksum_crc_pclmul_state)
                 cksum_crc_pclmul_state = cksum_crc_hardware();
 #endif
+
+        /* --debug names the machinery the CRC is computed with, once. */
+        if (taking.flags & FILE_FLAG('D'))
+        {
+                string_address machinery = (string_address) "generic";
+#if X64
+                if (cksum_crc_pclmul_state == 3)
+                        machinery = (string_address) "avx512";
+                else if (cksum_crc_pclmul_state == 2)
+                        machinery = (string_address) "pclmul";
+#endif
+                text_flush();
+                string_format(writer_stderr, "cksum: using %s hardware support\n",
+                              machinery);
+        }
 
         bool named = text_files_count != 0;
         b32 inputs = text_input_count();
