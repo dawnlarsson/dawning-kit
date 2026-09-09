@@ -2811,8 +2811,20 @@ lane_writer()
 #           sh test/run native
 #
 #       Lifts each routine's arm64 body out of the library and links it into
-#       the case beside it, so what runs is what is in the file. See README
-#       for why arm64 and only arm64 can be run from here.
+#       the case beside it, so what runs is what is in the file.
+#
+#       Why arm64 and only arm64: there is no qemu-user on a Mac, so
+#       CHECK_verify's differential cases cannot be run for a foreign
+#       architecture from here. arm64 is not foreign. This is an arm64
+#       machine, and AAPCS64 passes arguments in x0-x7 and returns in x0 on
+#       Darwin exactly as it does on Linux; none of the string or memory
+#       routines make a system call, so a body copied out of library.c
+#       between its label and its ret runs here unchanged. Darwin needs a
+#       leading underscore on the symbol and has no .type or .size, so only
+#       the three prologue lines differ from ASM_FUNC.
+#
+#       This is one architecture of three. x86_64 and riscv64 go through
+#       CHECK_verify under the repo's own qemu.
 #
 native_lifted()
 (
