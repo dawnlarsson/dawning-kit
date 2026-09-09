@@ -852,7 +852,8 @@ static b32 process_pipesz()
 
                 if (descriptor < 0)
                 {
-                        if (!(taking.flags & FILE_FLAG('q')))
+                        if (!(taking.flags & FILE_FLAG('q')) ||
+                            (taking.flags & FILE_FLAG('c')))
                                 string_format(log_error,
                                               "pipesz: cannot open %s: %s\n",
                                               path, file_reason(descriptor));

@@ -1011,7 +1011,11 @@ static b32 tools_logger()
 
         string_address priority_text = file_option_value(address_of taking, 'p');
         if (priority_text && !logger_priority(priority_text, address_of control.priority))
-                return text_done(string_diagnostic(&text_diagnostic, 1, priority_text, "unknown priority"));
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "logger: unknown priority name: %s\n", priority_text));
+        }
 
         string_address size_text = file_option_value(address_of taking, 'S');
         if (size_text && !logger_size(size_text, address_of control.maximum))
@@ -6100,17 +6104,19 @@ static bool tools_uuidgen_hex_name(string_address text,
 
 static b32 tools_uuidgen()
 {
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address)"uuidgen",
             .allowed = (string_address)"rtmnNsC67x",
             .valued = (string_address)"nNC",
             .longs = tools_uuidgen_longs,
+            .operand = file_operand,
         };
 
         text_begin("uuidgen");
         text_arena_used = 0;
 
-        if (!file_take(address_of taking))
+        if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -8824,7 +8830,12 @@ static b32 tools_od(void)
                         dump_arguments.address_width = radix[0] == 'x' ? 6 : 7;
                 }
                 else
-                        return text_done(string_diagnostic(&text_diagnostic, 1, radix, "invalid radix"));
+                {
+                        text_flush();
+                        return text_done(string_report(writer_stderr, 1,
+                            "od: invalid output address radix '%c'; it must be one character from [doxn]\n",
+                            radix[0]));
+                }
         }
 
         if ((taking.flags & FILE_FLAG('j')) &&
@@ -10793,7 +10804,11 @@ static bool diff_option_seen(p8 letter, string_address value)
         if (letter == 'L')
         {
                 if (diff_label_count >= 2)
-                        return string_diagnostic(&text_diagnostic, 0, value, "too many file label options");
+                {
+                        text_flush();
+                        return string_report(writer_stderr, false,
+                            "diff: too many file label options\n");
+                }
 
                 diff_labels[diff_label_count++] = value;
                 return true;
