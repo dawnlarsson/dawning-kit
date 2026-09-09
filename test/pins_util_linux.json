@@ -170,6 +170,14 @@
  {
   "list": "ledger",
   "domain": "util_linux",
+  "utility": "blockdev",
+  "option": "--report",
+  "kind": "deliberate",
+  "reason": "--report is a mode of its own: util-linux honours it only as the first word and otherwise reads it as a device name or refuses it as an unknown command, where this build refuses the combination outright"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
   "utility": "copyfilerange",
   "option": "--ranges",
   "kind": "deliberate",
@@ -1546,14 +1554,6 @@
  {
   "list": "ledger",
   "domain": "util_linux",
-  "utility": "setarch",
-  "option": "--sho",
-  "kind": "deliberate",
-  "reason": "a long option is spelled in full; upstream's unambiguous abbreviations are not accepted"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
   "utility": "setpriv",
   "option": "--apparmor-profile",
   "kind": "deliberate",
@@ -1742,5 +1742,634 @@
   "option": "-o",
   "kind": "deliberate",
   "reason": "signatures are listed, never erased: every mutating mode, the backup directory and device locking are refused"
+ },
+ {
+  "case": {
+   "argv": [
+    "--getalignoff",
+    "-v",
+    "--getdiscardzeroes",
+    "dir"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "blockdev"
+  },
+  "domain": "util_linux",
+  "id": "1dead5954abf34af",
+  "list": "regression",
+  "utility": "blockdev"
+ },
+ {
+  "case": {
+   "argv": [
+    "-v",
+    "--setro",
+    "/dev/null"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "blockdev"
+  },
+  "domain": "util_linux",
+  "id": "37090adcd03fd4c6",
+  "list": "regression",
+  "utility": "blockdev"
+ },
+ {
+  "case": {
+   "argv": [
+    "-v"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "blockdev"
+  },
+  "domain": "util_linux",
+  "id": "402533c796d09644",
+  "list": "regression",
+  "utility": "blockdev"
+ },
+ {
+  "case": {
+   "argv": [
+    "-q",
+    "-v",
+    "--getss",
+    "--setra",
+    "bad",
+    "/dev/null"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "blockdev"
+  },
+  "domain": "util_linux",
+  "id": "7fd23c84735d0d19",
+  "list": "regression",
+  "utility": "blockdev"
+ },
+ {
+  "case": {
+   "argv": [
+    "/dev/null"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "blockdev"
+  },
+  "domain": "util_linux",
+  "id": "bd0a47b00dd91b6b",
+  "list": "regression",
+  "utility": "blockdev"
+ },
+ {
+  "case": {
+   "argv": [
+    "UUID=12345678-1234-5678-9abc-def012345678"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul_images",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "findfs"
+  },
+  "domain": "util_linux",
+  "id": "018abd149029897b",
+  "list": "regression",
+  "utility": "findfs"
+ },
+ {
+  "case": {
+   "argv": [
+    "-s",
+    "-n",
+    "-F",
+    "--shared",
+    "--exclusive",
+    "--nb",
+    "--nonblocking",
+    "-w",
+    " 0.01",
+    "-E",
+    "-1",
+    "-c",
+    "printf command",
+    "--start=1",
+    "--length=1",
+    "--",
+    "-1"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "flock"
+  },
+  "domain": "util_linux",
+  "id": "02761ca239834511",
+  "list": "regression",
+  "utility": "flock"
+ },
+ {
+  "case": {
+   "argv": [
+    "-oab:c::",
+    "-l",
+    "name:::",
+    "--longoptions=baz:",
+    "-s",
+    "",
+    "-a",
+    "--alternative",
+    "--quiet-output",
+    "--test",
+    "--"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "none",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "getopt"
+  },
+  "domain": "util_linux",
+  "id": "008467be6bc356f5",
+  "list": "regression",
+  "utility": "getopt"
+ },
+ {
+  "case": {
+   "argv": [
+    "-oa",
+    "-l",
+    "foo,foobar",
+    "--longoptions=alpha,beta:",
+    "--name=parser",
+    "-s",
+    "zsh",
+    "--shell=csh",
+    "-a",
+    "-T",
+    "-u",
+    "--alternative",
+    "--quiet",
+    "--quiet-output",
+    "--test",
+    "--unknown",
+    "--",
+    "--charlie=",
+    "--beta="
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "none",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "getopt"
+  },
+  "domain": "util_linux",
+  "id": "01cd3116e0afbce0",
+  "list": "regression",
+  "utility": "getopt"
+ },
+ {
+  "case": {
+   "argv": [
+    "short.img",
+    "iso.img"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul_images",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "isosize"
+  },
+  "domain": "util_linux",
+  "id": "1b9c1479c8e4fb50",
+  "list": "regression",
+  "utility": "isosize"
+ },
+ {
+  "case": {
+   "argv": [
+    "-d",
+    "-1",
+    "iso.img"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul_images",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "isosize"
+  },
+  "domain": "util_linux",
+  "id": "286b561dc45844a1",
+  "list": "regression",
+  "utility": "isosize"
+ },
+ {
+  "case": {
+   "argv": [
+    "-x",
+    "short.img"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul_images",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "isosize"
+  },
+  "domain": "util_linux",
+  "id": "8803b943f0347a2d",
+  "list": "regression",
+  "utility": "isosize"
+ },
+ {
+  "case": {
+   "argv": [
+    "-J",
+    "-n",
+    "-r",
+    "--json",
+    "--output-all",
+    "--no-discover-dynamic",
+    "-o",
+    "TYPE,TYPE",
+    "--output=ID,NAME",
+    "-tboottime",
+    "-d",
+    "/dev/moonwater-not-a-clock",
+    "-c",
+    "bad"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "lsclocks"
+  },
+  "domain": "util_linux",
+  "id": "0a244c70c986456e",
+  "list": "regression",
+  "utility": "lsclocks"
+ },
+ {
+  "case": {
+   "argv": [
+    "-tboottime",
+    "-c",
+    "bad"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "lsclocks"
+  },
+  "domain": "util_linux",
+  "id": "87058a3feba84503",
+  "list": "regression",
+  "utility": "lsclocks"
+ },
+ {
+  "case": {
+   "argv": [
+    "--fake",
+    "-i",
+    "-o",
+    "rw",
+    "--show-labels",
+    "--target=",
+    "-t",
+    "auto",
+    "/proc"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "mount"
+  },
+  "domain": "util_linux",
+  "id": "058bbbc97a9d4fa1",
+  "list": "regression",
+  "utility": "mount"
+ },
+ {
+  "case": {
+   "argv": [
+    "-v",
+    "--make-rslave",
+    "--internal-only",
+    "--make-shared",
+    "-f",
+    "-t",
+    "tmpfs",
+    "--",
+    "dir"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "mount"
+  },
+  "domain": "util_linux",
+  "id": "0c9a3e5b0178a9a8",
+  "list": "regression",
+  "utility": "mount"
+ },
+ {
+  "case": {
+   "argv": [
+    "--fake",
+    "--target=",
+    "-t",
+    "auto",
+    "/proc"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "mount"
+  },
+  "domain": "util_linux",
+  "id": "4afdca79c27433e0",
+  "list": "regression",
+  "utility": "mount"
+ },
+ {
+  "case": {
+   "argv": [
+    "-v",
+    "-f",
+    "--make-shared",
+    "dir"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "mount"
+  },
+  "domain": "util_linux",
+  "id": "f0682ea7267a6535",
+  "list": "regression",
+  "utility": "mount"
+ },
+ {
+  "case": {
+   "argv": [
+    "-q",
+    "-d",
+    "-x",
+    "--nofollow",
+    "--quiet",
+    "--devno",
+    "/./proc"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "mountpoint"
+  },
+  "domain": "util_linux",
+  "id": "007fc31d891d94f0",
+  "list": "regression",
+  "utility": "mountpoint"
+ },
+ {
+  "case": {
+   "argv": [
+    "--list",
+    "--addr-no-randomize",
+    "--sho=0",
+    "-T",
+    "--list=garbage",
+    "./observe",
+    "arch"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "setarch"
+  },
+  "domain": "util_linux",
+  "id": "03ec52601d5c9e58",
+  "list": "regression",
+  "utility": "setarch"
+ },
+ {
+  "case": {
+   "argv": [
+    "-X",
+    "--show=0",
+    "--uname-2.6",
+    "--4gb",
+    "--pid=1"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "setarch"
+  },
+  "domain": "util_linux",
+  "id": "0620f431c01987c5",
+  "list": "regression",
+  "utility": "setarch"
+ },
+ {
+  "case": {
+   "argv": [
+    "--list",
+    "--sho=0"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "setarch"
+  },
+  "domain": "util_linux",
+  "id": "de60c7fe609d28b1",
+  "list": "regression",
+  "utility": "setarch"
+ },
+ {
+  "case": {
+   "argv": [
+    "-L",
+    "0123456789abcdefXYZ",
+    "--uuid=ffeeddcc-bbaa-9988-7766-554433221100",
+    "swap.img",
+    "swap.img"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul_images",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "swaplabel"
+  },
+  "domain": "util_linux",
+  "id": "35b76732233d6b55",
+  "list": "regression",
+  "utility": "swaplabel"
+ },
+ {
+  "case": {
+   "argv": [
+    "-f",
+    "-i",
+    "--detach-loop",
+    "-A",
+    "--all-targets",
+    "--fake",
+    "/proc"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "umount"
+  },
+  "domain": "util_linux",
+  "id": "01980cefd8edfcd7",
+  "list": "regression",
+  "utility": "umount"
+ },
+ {
+  "case": {
+   "argv": [
+    "-R",
+    "--no-mtab",
+    "-n",
+    "-v",
+    "--internal-only",
+    "--types=proc",
+    "/"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "umount"
+  },
+  "domain": "util_linux",
+  "id": "13634a63ee412a93",
+  "list": "regression",
+  "utility": "umount"
+ },
+ {
+  "case": {
+   "argv": [
+    "--internal-only",
+    "--read-only",
+    "--detach-loop",
+    "-q",
+    "-n",
+    "--fake",
+    "dir"
+   ],
+   "domain": "util_linux",
+   "family": null,
+   "fixture": "ul",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "umount"
+  },
+  "domain": "util_linux",
+  "id": "21a1463d05cd4500",
+  "list": "regression",
+  "utility": "umount"
  }
 ]
