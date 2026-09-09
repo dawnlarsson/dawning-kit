@@ -15386,6 +15386,59 @@ static bool sed_work_byte(positive address_to have, p8 value)
         return true;
 }
 
+/*
+        The case a replacement is written in.
+
+        \U and \L hold until \E or until the other one; \u and \l are the one
+        character in front of them and win over the span for that character.
+        Everything a substitution writes -- its literal bytes, the whole
+        match, a captured group -- goes through here.
+*/
+static p8 sed_case_span;
+static p8 sed_case_once;
+
+static p8 sed_case_apply(p8 value)
+{
+        p8 how = sed_case_once ? sed_case_once : sed_case_span;
+
+        sed_case_once = 0;
+
+        if (how == 'U' && value >= 'a' && value <= 'z')
+                return (p8)(value - ('a' - 'A'));
+
+        if (how == 'L' && value >= 'A' && value <= 'Z')
+                return (p8)(value + ('a' - 'A'));
+
+        return value;
+}
+
+static bool sed_case_byte(positive address_to have, p8 value)
+{
+        return sed_work_byte(have, sed_case_apply(value));
+}
+
+static bool sed_case_span_bytes(positive address_to have, p8 address_to from,
+                                positive length)
+{
+        // No case to change and nothing to change it for: the span goes
+        // across whole, as it did before there were escapes to obey.
+        if (!sed_case_span && !sed_case_once)
+        {
+                if (!sed_space_fits(address_to have, length))
+                        return false;
+
+                memory_copy(sed_work + address_to have, from, length);
+                address_to have += length;
+                return true;
+        }
+
+        for (positive at = 0; at < length; at++)
+                if (!sed_case_byte(have, from[at]))
+                        return false;
+
+        return true;
+}
+
 static bool sed_transfer(sed_buffer address_to into,
                          const sed_buffer address_to from, bool append)
 {
@@ -16553,6 +16606,9 @@ static bool sed_substitute(sed_command address_to command)
 
                 if (now)
                 {
+                        sed_case_span = 0;
+                        sed_case_once = 0;
+
                         for (positive c = 0; replacement[c]; c++)
                         {
                                 p8 character = replacement[c];
@@ -16577,6 +16633,23 @@ static bool sed_substitute(sed_command address_to command)
                                                     copy_to == TEXT_UNSET)
                                                         continue;
                                         }
+                                        else if (next == 'U' || next == 'L')
+                                        {
+                                                sed_case_span = next;
+                                                sed_case_once = 0;
+                                                continue;
+                                        }
+                                        else if (next == 'u' || next == 'l')
+                                        {
+                                                sed_case_once = next == 'u' ? 'U' : 'L';
+                                                continue;
+                                        }
+                                        else if (next == 'E')
+                                        {
+                                                sed_case_span = 0;
+                                                sed_case_once = 0;
+                                                continue;
+                                        }
                                         else
                                         {
                                                 p8 escaped = next == 'n'   ? '\n'
@@ -16584,7 +16657,7 @@ static bool sed_substitute(sed_command address_to command)
                                                              : next == 'r' ? '\r'
                                                                            : next;
 
-                                                if (!sed_work_byte(address_of have,
+                                                if (!sed_case_byte(address_of have,
                                                                    escaped))
                                                         return false;
 
@@ -16593,17 +16666,15 @@ static bool sed_substitute(sed_command address_to command)
                                 }
                                 else
                                 {
-                                        if (!sed_work_byte(address_of have, character))
+                                        if (!sed_case_byte(address_of have, character))
                                         return false;
                                         continue;
                                 }
 
-                                if (!sed_space_fits(have, copy_to - copy_from))
+                                if (!sed_case_span_bytes(address_of have,
+                                                         sed_pattern.bytes + copy_from,
+                                                         copy_to - copy_from))
                                         return false;
-
-                                memory_copy(sed_work + have, sed_pattern.bytes + copy_from,
-                                            copy_to - copy_from);
-                                have += copy_to - copy_from;
                         }
 
                         changed = true;
