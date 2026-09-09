@@ -24,6 +24,7 @@ SECTIONS
 
         .text : {
                 *(.text .text.*)
+                *(.moonwater.span_byte)
                 *(.rodata .rodata.*)
                 /* riscv64 puts read only globals of a few bytes here. */
                 *(.srodata .srodata.*)

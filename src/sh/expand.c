@@ -6368,8 +6368,6 @@ static positive expand_split(shell_words address_to out)
         positive at = 0;
         positive start;
 
-        expand_ifs_prepare();
-
         // A word that expanded to nothing at all is no field, unless some part
         // of it was quoted: "" is an empty argument and $nosuch is no argument.
         if (!expand_length)
@@ -6389,6 +6387,8 @@ static positive expand_split(shell_words address_to out)
                         expand_fail_state();
                 return out->count;
         }
+
+        expand_ifs_prepare();
 
         while (at < expand_length && expand_mark[at] == MARK_FIELD &&
                expand_ifs_blank(expand_text[at]))

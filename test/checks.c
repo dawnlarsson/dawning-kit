@@ -7618,7 +7618,7 @@ test(memory_hash_33) {
 
 test(memory_span_byte) {
         p8 bytes[4128];
-        positive page_lengths[] = {255, 256, 257, 4095};
+        positive page_lengths[] = {127, 128, 129, 255, 256, 257, 4095};
 
         for (positive value = 0; value < 256; value++)
                 for (positive offset = 0; offset < 16; offset++)

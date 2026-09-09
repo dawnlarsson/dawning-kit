@@ -2660,6 +2660,15 @@ f() { e inside; }; f'
 answer 'many aliases'    'i=0; while [ $i -lt 20 ]; do eval "alias a$i=echo"; i=$((i + 1)); done
 a7 seven; a19 nineteen'
 answer 'one hundred aliases' 'i=0; while [ $i -lt 100 ]; do eval "alias a$i=echo"; i=$((i + 1)); done; alias | wc -l'
+bash_answer 'alias operands survive repeated builtin and command wrappers' 'f() { builtin alias a=echo; command alias a=printf; alias a; }
+f
+f'
+answer 'alias value reuse preserves retained function spelling' 'alias a="echo before"
+f() { a; }
+alias a="echo later"
+g() { a; }
+alias a=:
+f; g'
 answer 'alias redefinition reclaims' 'i=0; while [ $i -lt 300 ]; do eval "alias e=echo-value-$i-padding"; i=$((i + 1)); done; alias e'
 
 # Alias substitution is a parser operation. Definitions from a completed
@@ -2705,6 +2714,21 @@ answer 'alias introduces a here document' 'alias h="cat <<EOF"
 h
 body
 EOF'
+answer 'alias nested here document survives repeated replacement' 'alias a='\''printf "<%s>\n" "$(cat <<EOF
+inside ) text
+EOF
+)"'\''
+a
+a
+alias a="echo changed"
+a'
+answer 'quoted fields leave the next IFS split current' 'x="alpha:beta,gamma"
+IFS=:
+printf "<%s>\n" "$x" "" $x
+IFS=,
+printf "<%s>\n" "$x" "" $x
+IFS=""
+printf "<%s>\n" "$x" "" $x'
 answer 'alias introduces a tabbed here document' 'alias h="cat <<-EOF"
 h
 	tabbed

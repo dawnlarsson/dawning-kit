@@ -1333,3 +1333,61 @@ UTILITIES = (
 # has a normaliser of its own.
 UTILITIES = tuple(utility if utility.normalize else dataclasses.replace(utility, normalize=files_plain)
                   for utility in UTILITIES)
+
+def files_column_cases():
+    # Round the maximum column count upward as GNU v9.11 does.
+    # Keep its strict exact-fit behavior and suppress empty horizontal output.
+    shapes = (
+        ("pair", ("a", "b"), tuple(range(1, 11))),
+        ("triple", ("a", "b", "c"), tuple(range(1, 11))),
+        ("mixed", ("a", "bbbb", "ccccc", "dd"), tuple(range(1, 11))),
+        ("exact", ("aaa", "bbbbbbbbbbbbbbb"), (19, 20, 21)),
+        ("empty", (), (1, 4, 10)),
+    )
+    for shape, names, widths in shapes:
+        for width in widths:
+            for direction in ("-C", "-x"):
+                argv = [direction, "-w", str(width), "--color=never", "."]
+                yield f"{shape} width {width} {direction}", shape, names, argv
+
+
+def files_column_layout(farm):
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    reference = shutil.which("dir", path=os.defpath)
+    candidate = Path(farm) / "dir"
+    if not reference or not candidate.exists():
+        return 0, 1, ["column layout requires both reference and candidate dir"]
+
+    environment = dict(os.environ, LC_ALL="C", TZ="UTC0", QUOTING_STYLE="literal",
+                       LS_COLORS="di=34:fi=31:rs=0")
+    passed = total = 0
+    notes = []
+    with tempfile.TemporaryDirectory(prefix="columns-check-") as temporary:
+        for name, shape, names, argv in files_column_cases():
+            directory = Path(temporary) / shape
+            if not directory.exists():
+                directory.mkdir()
+                for entry in names:
+                    (directory / entry).write_bytes(b"")
+            answers = []
+            for binary in (reference, candidate):
+                result = subprocess.run([str(binary), *argv], cwd=directory,
+                                        env=environment, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        timeout=5)
+                answers.append((result.returncode, result.stdout, result.stderr))
+            total += 1
+            if (answers[0] == answers[1] and answers[0][0] == 0 and
+                    not answers[0][2] and (not names or answers[0][1])):
+                passed += 1
+            else:
+                notes.append(f"{name}: expected successful exact output; "
+                             f"reference={answers[0]!r}, candidate={answers[1]!r}")
+    return passed, total, notes
+
+
+CHECKS = (files_column_layout,)

@@ -3314,9 +3314,16 @@ lane_util_linux() { differential_domain util_linux; }
 lane_shell()
 {
         need_shell || return 1
-        freestanding_checks_lane lexer_spans || return 1
-        python3 test/harness.py shell_functions --shell "$shell_binary" || return 1
-        differential_domain shell
+        shell_failed=0
+        freestanding_checks_lane lexer_spans lexer_spans || shell_failed=1
+        python3 test/harness.py shell_functions --shell "$shell_binary" || shell_failed=1
+        sh test/shell.sh "$shell_binary" "$farm" || shell_failed=1
+        sh test/expand.sh "$farm" "$shell_binary" || shell_failed=1
+        for suite in shell_compat shell_startup shell_lex shell_paths shell_pipeline shell_posix_exec; do
+                sh "test/$suite.sh" "$shell_binary" || shell_failed=1
+        done
+        python3 test/shell_generated.py "$shell_binary" || shell_failed=1
+        return "$shell_failed"
 }
 lane_builtins()   { differential_domain builtins; }
 lane_awk()        { differential_domain awk; }

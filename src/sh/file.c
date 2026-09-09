@@ -4830,7 +4830,8 @@ static positive ls_column_widths[LS_MAX_ENTRIES];
 static fn ls_print_columns(string_address directory, bool across)
 {
         positive width_limit = ls_width ? ls_width : positive_max;
-        positive most = ls_width ? max((positive)1, ls_width / 3) : ls_count;
+        positive most = ls_width
+            ? ls_width / 3 + (ls_width % 3 != 0) : ls_count;
 
         if (most > ls_count)
                 most = ls_count;
@@ -4902,7 +4903,8 @@ static fn ls_print_columns(string_address directory, bool across)
                                                      position + ls_column_widths[column]);
                 }
 
-                ls_out(address_of ls_eol, 1);
+                if (ls_count)
+                        ls_out(address_of ls_eol, 1);
                 return;
         }
 

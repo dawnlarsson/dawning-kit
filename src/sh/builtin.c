@@ -10445,6 +10445,8 @@ PURE string_address alias_lookup(string_address name)
         return at < alias_count ? alias_table[at].value : null;
 }
 
+// The counted name is also terminated; shell_alias restores its argv '='
+// immediately after the call, including every allocation-failure return.
 bool alias_record(string_address name, positive name_length, string_address value)
 {
         positive value_length = string_length(env_reading(value));
@@ -10455,41 +10457,38 @@ bool alias_record(string_address name, positive name_length, string_address valu
         if (name_length == positive_max || value_length == positive_max)
                 return false;
 
-        kept_name = shell_map(name_length + 1);
-        kept_value = shell_map(value_length + 1);
-
-        if (!kept_name || !kept_value)
+        index = string_table_find(name, alias_table, sizeof(alias_table[0]), alias_count);
+        if (index < alias_count && value_length < alias_table[index].value_room &&
+            (alias_table[index].value_room <= SHELL_SCRATCH_RETAIN ||
+             value_length >= SHELL_SCRATCH_RETAIN))
         {
-                if (kept_name)
-                        memory_free(kept_name, name_length + 1);
-
-                if (kept_value)
-                        memory_free(kept_value, value_length + 1);
-
-                return false;
+                memory_copy(alias_table[index].value, value, value_length + 1);
+                return true;
         }
 
-        string_copy_max_end(kept_name, name, name_length);
+        kept_value = shell_map(value_length + 1);
+        if (!kept_value)
+                return false;
+        // A growth source may be in the old value; finish copying before free.
         memory_copy(kept_value, value, value_length + 1);
-        index = string_table_find(kept_name, alias_table,
-                                  sizeof(alias_table[0]), alias_count);
 
         if (index < alias_count)
         {
-                memory_free(kept_name, name_length + 1);
-                memory_free(alias_table[index].value,
-                            alias_table[index].value_room);
+                memory_free(alias_table[index].value, alias_table[index].value_room);
                 alias_table[index].value = kept_value;
                 alias_table[index].value_room = value_length + 1;
                 return true;
         }
 
-        if (!shell_array_room(alias_table, alias_room, alias_count + 1))
+        kept_name = shell_map(name_length + 1);
+        if (!kept_name || !shell_array_room(alias_table, alias_room, alias_count + 1))
         {
-                memory_free(kept_name, name_length + 1);
+                if (kept_name)
+                        memory_free(kept_name, name_length + 1);
                 memory_free(kept_value, value_length + 1);
                 return false;
         }
+        string_copy_max_end(kept_name, name, name_length);
         alias_table[alias_count].name = kept_name;
         alias_table[alias_count].value = kept_value;
         alias_table[alias_count].name_room = name_length + 1;
@@ -10554,7 +10553,10 @@ COLD fn shell_alias(writer write, string_address input)
 
                 if (mark && mark != word)
                 {
-                        if (!alias_record(word, mark - word, mark + 1))
+                        *mark = end;
+                        bool recorded = alias_record(word, mark - word, mark + 1);
+                        *mark = '=';
+                        if (!recorded)
                                 answer = 1;
 
                         index++;

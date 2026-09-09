@@ -5434,8 +5434,14 @@ __asm__(
     "xor %eax, %eax\n"
 #ifndef KERNEL_MODE
     "cmp $16, %rdx\n   jb .Lmemory_span_byte_x64_tail\n"
+#if defined(__ELF__)
+    "movd %esi, %xmm1\n   punpcklbw %xmm1, %xmm1\n"
+    "punpcklwd %xmm1, %xmm1\n   pshufd $0, %xmm1, %xmm1\n"
+    "cmp $127, %rdx\n   ja .Lmemory_span_byte_x64_wide_entry\n"
+#else
     "movzbl %sil, %ecx\n   imul $16843009, %ecx, %ecx\n"
     "movd %ecx, %xmm1\n   pshufd $0, %xmm1, %xmm1\n"
+#endif
     ".balign 16\n.Lmemory_span_byte_x64_16:\n"
     "movdqu (%rdi,%rax), %xmm0\n   pcmpeqb %xmm1, %xmm0\n"
     "pmovmskb %xmm0, %ecx\n   cmp $65535, %ecx\n"
@@ -5453,8 +5459,64 @@ __asm__(
     ".Lmemory_span_byte_x64_mismatch:\n   xor $65535, %ecx\n"
     "bsf %ecx, %ecx\n   add %rcx, %rax\n"
     ASM_RET
+#if defined(__ELF__)
+    ".Lmemory_span_byte_x64_wide_entry:\n   jmp memory_span_byte_wide\n"
+#endif
 #endif
     ASM_END(memory_span_byte)
+#if !defined(KERNEL_MODE) && defined(__ELF__)
+    // Keep short spans and following hot floors in place. The bulk section
+    // shares the broadcast and tail; Spark also includes it in its text image.
+    ".pushsection .moonwater.span_byte, \"ax\", @progbits\n"
+    ASM_LOCAL_FUNC(memory_span_byte_wide)
+    "movdqu (%rdi), %xmm0\n   pcmpeqb %xmm1, %xmm0\n"
+    "pmovmskb %xmm0, %ecx\n   cmp $65535, %ecx\n"
+    "jne .Lmemory_span_byte_x64_mismatch\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je .Lmemory_span_byte_x64_16\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne .Lmemory_span_byte_x64_zmm\n"
+    "vpbroadcastb %xmm1, %ymm1\n"
+    ".balign 16\n.Lmemory_span_byte_x64_ymm_pair:\n"
+    "vpcmpeqb (%rdi,%rax), %ymm1, %ymm0\n"
+    "vpcmpeqb 32(%rdi,%rax), %ymm1, %ymm2\n"
+    "vpmovmskb %ymm0, %r8d\n   vpmovmskb %ymm2, %r9d\n"
+    "mov %r8d, %ecx\n   and %r9d, %ecx\n   cmp $-1, %ecx\n"
+    "jne .Lmemory_span_byte_x64_ymm_pair_found\n"
+    "add $64, %rax\n   sub $64, %rdx\n   cmp $64, %rdx\n"
+    "jae .Lmemory_span_byte_x64_ymm_pair\n"
+    ".Lmemory_span_byte_x64_ymm_tail:\n   cmp $32, %rdx\n"
+    "jb .Lmemory_span_byte_x64_wide_done\n"
+    "vpcmpeqb (%rdi,%rax), %ymm1, %ymm0\n   vpmovmskb %ymm0, %r8d\n"
+    "not %r8d\n   test %r8d, %r8d\n   jnz .Lmemory_span_byte_x64_wide_found\n"
+    "add $32, %rax\n   sub $32, %rdx\n"
+    "jmp .Lmemory_span_byte_x64_wide_done\n"
+    ".Lmemory_span_byte_x64_ymm_pair_found:\n   not %r8d\n   test %r8d, %r8d\n"
+    "jnz .Lmemory_span_byte_x64_wide_found\n"
+    "add $32, %rax\n   mov %r9d, %r8d\n   not %r8d\n   test %r8d, %r8d\n"
+    "jmp .Lmemory_span_byte_x64_wide_found\n"
+    ".Lmemory_span_byte_x64_zmm:\n   vpbroadcastb %xmm1, %zmm1\n"
+    ".balign 16\n.Lmemory_span_byte_x64_zmm_pair:\n"
+    "vpcmpneqb (%rdi,%rax), %zmm1, %k1\n"
+    "vpcmpneqb 64(%rdi,%rax), %zmm1, %k2\n"
+    "korq %k2, %k1, %k3\n   kortestq %k3, %k3\n"
+    "jnz .Lmemory_span_byte_x64_zmm_pair_found\n"
+    "add $128, %rax\n   sub $128, %rdx\n   cmp $128, %rdx\n"
+    "jae .Lmemory_span_byte_x64_zmm_pair\n"
+    ".Lmemory_span_byte_x64_zmm_tail:\n   cmp $64, %rdx\n"
+    "jb .Lmemory_span_byte_x64_wide_done\n"
+    "vpcmpneqb (%rdi,%rax), %zmm1, %k1\n   kmovq %k1, %r8\n"
+    "test %r8, %r8\n   jnz .Lmemory_span_byte_x64_wide_found\n"
+    "add $64, %rax\n   sub $64, %rdx\n"
+    ".Lmemory_span_byte_x64_wide_done:\n   vzeroupper\n"
+    "cmp $16, %rdx\n   jae .Lmemory_span_byte_x64_16\n"
+    "jmp .Lmemory_span_byte_x64_tail\n"
+    ".Lmemory_span_byte_x64_zmm_pair_found:\n   kmovq %k1, %r8\n"
+    "test %r8, %r8\n   jnz .Lmemory_span_byte_x64_wide_found\n"
+    "add $64, %rax\n   kmovq %k2, %r8\n"
+    ".Lmemory_span_byte_x64_wide_found:\n   bsf %r8, %r8\n"
+    "add %r8, %rax\n   vzeroupper\n" ASM_RET
+    ASM_LOCAL_END(memory_span_byte_wide)
+    ".popsection\n"
+#endif
 
     // Eligible disjoint spans index a table held in four vector registers.
     // Other calls retain four scalar lookup chains and their load/store order,

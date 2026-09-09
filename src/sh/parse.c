@@ -1235,8 +1235,10 @@ static bool parse_alias_replace(b32 position)
         parse_token address_to token = parse_tokens + position;
         parse_alias_trace address_to chain;
         parse_alias_trace address_to trace;
-        parse_token address_to replacement = null;
-        positive replacement_room = 0;
+        // Lexing a replacement can scan nested here-documents but cannot
+        // expand another alias until this replacement has been published.
+        static parse_token address_to replacement;
+        static positive replacement_room;
         positive replacement_count = 0;
         string_address value;
         string_address line;
@@ -1427,9 +1429,9 @@ static bool parse_alias_replace(b32 position)
                 }
 
 alias_done:
-        if (replacement)
-                memory_free(replacement,
-                            replacement_room * sizeof(replacement[0]));
+        shell_room_relax((address_any address_to)address_of replacement,
+                         address_of replacement_room, replacement_count,
+                         sizeof(replacement[0]));
 
         return !parse_state;
 }

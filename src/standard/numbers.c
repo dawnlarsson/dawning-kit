@@ -1322,7 +1322,10 @@ static bool numbers_read(string_address input, numbers_scan address_to number)
                 scan++;
         }
 
-        available = string_length_max(scan, 8);
+        // Only an i/n prefix can name infinity or NaN. Decimal input
+        // needs neither a preliminary length scan nor word comparisons.
+        available = ((scan[0] | 32) == 'i' || (scan[0] | 32) == 'n')
+                        ? string_length_max(scan, 8) : 0;
 
         if (available >= 8 &&
             string_compare_folded_max(scan, numbers_infinity_text, 8) == 0)
