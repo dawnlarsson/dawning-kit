@@ -11,7 +11,7 @@
 
         profile/
 
-        Kernel configuration, composed in order by kit/config, last request
+        Kernel configuration, composed in order by `build config`, last request
         winning. These are lists of CONFIG_ names and the values we want them
         to have -- our choices about what to build, expressed in the kernel's
         vocabulary. They contain no kernel code.

@@ -14264,7 +14264,7 @@ def harness_core_state(argv):
         geometry += "#undef compose_cells\n"
         geometry += section(drag, "static void bar_move", "/*\n        Filling the screen")
         (work / "canvas-pane.inc").write_text(geometry)
-        # kit/asm supplies the function macros; these empty include files replace
+        # `build asm` supplies the function macros; these empty include files replace
         # only the kernel declarations, never the renderer's assembly bodies.
         (work / "linux").mkdir(exist_ok=True)
         for name in ("export.h", "linkage.h"):
