@@ -130,55 +130,96 @@ static bool build_setting_set(string_address name, string_address value)
         Text.
 
         A build assembles a great many short strings -- paths, command lines,
-        flag lists -- and none of them outlives the step that made it. A ring
-        of fixed buffers handed out in turn is the whole allocator this needs:
-        no free, no growth, and a fixed ceiling that a build cannot quietly
-        walk past. BUILD_TEXT_LIVE is how many are live at once; exceed it and
-        an earlier one is overwritten, which is why nothing here keeps a
-        borrowed string across a step.
+        flag lists -- and it is one command from start to finish, so an arena
+        that only ever grows is the whole allocator this needs. Nothing is
+        freed and nothing is reused, which is the point: every string this
+        hands out stays valid until the command ends.
+
+        The first version was a ring of thirty two buffers handed out in turn,
+        on the reasoning that no string outlives the step that made it. Three
+        separate bugs said otherwise and only one of them was visible. `build
+        config` reported writing to the last profile it had read. The assembly
+        splitter wrote its temporary file under a recycled name and renamed
+        that to the right place, so the output was correct and the debris was
+        not. And the key reader took a buffer per line of a two thousand line
+        configuration, which recycled the very marker it was matching against,
+        so every key came back empty and the compiler was invoked as its own
+        directory. A ring is a bet that the author remembers its rule at every
+        call site. This does not need the bet.
+
+        The ceiling is a fixed array rather than a growing one, so a build that
+        asks for too much stops and says so instead of failing later in a way
+        that looks like something else.
 */
-#define BUILD_TEXT_ROOM 8192
-#define BUILD_TEXT_LIVE 32
+#define BUILD_TEXT_ROOM (16 << 20)
 
-static p8 build_text_ring[BUILD_TEXT_LIVE][BUILD_TEXT_ROOM];
-static positive build_text_next;
+//      One line's worth of words, which is what every splitter asks for.
+#define BUILD_WORD_ROOM 8192
 
-static p8 address_to build_text_take()
+static p8 build_text_arena[BUILD_TEXT_ROOM];
+static positive build_text_used;
+
+static b32 build_die(string_address text);
+
+static p8 address_to build_text_take(positive want)
 {
-        p8 address_to answer = build_text_ring[build_text_next];
+        p8 address_to answer;
 
-        build_text_next = (build_text_next + 1) % BUILD_TEXT_LIVE;
+        if (build_text_used + want > BUILD_TEXT_ROOM)
+                build_die("build: ran out of room for text");
+
+        answer = build_text_arena + build_text_used;
+        build_text_used += want;
         answer[0] = end;
 
         return answer;
+}
+
+//      Only --watch runs more than one build in one process, and it is the
+//      one caller that has to give the arena back.
+static fn build_text_reset()
+{
+        build_text_used = 0;
 }
 
 /*
         Join, with the pieces named rather than counted.
 
         A null argument ends the list, so a caller can pass a value it knows
-        may be absent and get the shorter string instead of a crash.
+        may be absent and get the shorter string instead of a crash. The list
+        is walked twice -- once to measure, once to copy -- so the arena is
+        asked for exactly what the answer needs.
 */
 static string_address build_join(string_address first, ...)
 {
-        p8 address_to into = build_text_take();
-        p8 address_to at = into;
-        positive left = BUILD_TEXT_ROOM - 1;
+        positive total = 0;
         string_address piece = first;
+        p8 address_to into;
+        p8 address_to at;
         var_args rest;
+        var_args measure;
 
         var_list(rest, first);
+        var_list_copy(rest, measure);
+
+        while (piece)
+        {
+                total += string_length(piece);
+                piece = var_list_get(measure, string_address);
+        }
+
+        var_list_end(measure);
+
+        into = build_text_take(total + 1);
+        at = into;
+        piece = first;
 
         while (piece)
         {
                 positive length = string_length(piece);
 
-                if (length > left)
-                        length = left;
-
                 memory_copy(at, piece, length);
                 at += length;
-                left -= length;
                 piece = var_list_get(rest, string_address);
         }
 
@@ -188,38 +229,9 @@ static string_address build_join(string_address first, ...)
         return (string_address)into;
 }
 
-/*
-        A string that must outlive the ring.
-
-        The ring hands out BUILD_TEXT_LIVE buffers in turn, so anything kept
-        across a loop that joins something has been overwritten by the time it
-        is read. Whatever is held for longer than one step is copied into the
-        caller's own storage first.
-
-        This was found the honest way. `build config` printed "Configuration
-        generated at kernel/profile/debug_none" -- the path it had written to
-        was correct, but the name it had been holding was the last profile
-        read. The assembly splitter had the same shape and was invisible: it
-        wrote its temporary file under a recycled name and then renamed that
-        to the right place, so the output was right and the debris was not.
-*/
-static string_address build_own(p8 address_to into, positive room,
-                                string_address text)
-{
-        positive length = string_length(text);
-
-        if (length + 1 > room)
-                length = room - 1;
-
-        memory_copy(into, text, length);
-        into[length] = end;
-
-        return (string_address)into;
-}
-
 static string_address build_number(positive value)
 {
-        p8 address_to into = build_text_take();
+        p8 address_to into = build_text_take(32);
         positive length = positive_into(into, value);
 
         into[length] = end;
@@ -258,11 +270,11 @@ static fn build_say(string_address text)
 
 static fn build_label(string_address colour, string_address text)
 {
-        string_format(log, "%s %s \n", BUILD_CYAN, BUILD_BOLD);
+        string_format(log, "%s %s\n", BUILD_CYAN, BUILD_BOLD);
         string_format(log, "    %s%s\n", colour, text);
         string_format(log,
                       "_____________________________________________________________________________\n");
-        string_format(log, "%s \n", BUILD_RESET);
+        string_format(log, "%s\n", BUILD_RESET);
         log_flush();
 }
 
@@ -410,6 +422,10 @@ static b32 build_tool(string_address name, ...)
         return build_tool_words((string_address address_to)words);
 }
 
+//      Named below, defined below that: the spawn helpers need it and it
+//      needs the text ring, so one of the two orders has to be broken.
+static string_address build_resolve(string_address name);
+
 /*
         Spawning something that is not ours.
 
@@ -431,17 +447,47 @@ static b32 build_wait(b32 child)
         return (b32)wait_status_code((positive)status);
 }
 
+/*
+        execve takes a path, not a name.
+
+        Everything the shell build invoked -- gcc, make, tar, ssh -- it named
+        and the shell found along PATH. A cross compiler is named
+        x86_64-linux-gnu-gcc in the configuration and lives in /usr/bin, so
+        handing that name straight to execve got 127 and "compilation failed"
+        with nothing above it to say why.
+*/
 static b32 build_spawn(string_address address_to words,
                        string_address address_to environment)
 {
+        string_address path = build_resolve(words[0]);
         b32 child;
+
+        if (!path)
+        {
+                string_format(log_error, "build: %s not found\n", words[0]);
+                log_flush();
+                return -1;
+        }
+
+        //      BUILD_TRACE prints every command before it runs. A build tool
+        //      that drives six other programs has to be able to say exactly
+        //      what it asked them, or a failure is a guess.
+        if (string_get_environment(environ, "BUILD_TRACE"))
+        {
+                string_format(log, "+ %s", path);
+
+                for (positive at = 1; words[at]; at++)
+                        string_format(log, " %s", words[at]);
+
+                string_format(log, "\n");
+        }
 
         log_flush();
         child = fork();
 
         if (child == 0)
         {
-                execve(words[0], words, environment ? environment : environ);
+                execve(path, words, environment ? environment : environ);
                 //      exec only returns having failed, and this is the child:
                 //      leaving would run the rest of the build twice.
                 exit(127);
@@ -489,6 +535,7 @@ static b32 build_run(string_address name, ...)
 static bipolar build_capture_words(string_address address_to words,
                                    p8 address_to into, positive capacity)
 {
+        string_address found;
         b32 pair[2];
         b32 child;
         positive used = 0;
@@ -497,6 +544,15 @@ static bipolar build_capture_words(string_address address_to words,
                 return -1;
 
         into[0] = end;
+
+        {
+                string_address path = build_resolve(words[0]);
+
+                if (!path)
+                        return -1;
+
+                found = path;
+        }
 
         if (pipe(pair) < 0)
                 return -1;
@@ -509,7 +565,7 @@ static bipolar build_capture_words(string_address address_to words,
                 close(pair[0]);
                 dup2(pair[1], 1);
                 close(pair[1]);
-                execve(words[0], words, environ);
+                execve(found, words, environ);
                 exit(127);
         }
 
@@ -550,25 +606,25 @@ static bipolar build_capture_words(string_address address_to words,
         which is what the shell would have done and what the build asks about
         before it decides to install a compiler.
 */
-static bool build_have(string_address name)
+static string_address build_resolve(string_address name)
 {
         string_address path = string_get_environment(environ, "PATH");
         string_address at;
 
         if (!name || !*name)
-                return false;
+                return null;
 
         if (string_first_of(name, '/'))
-                return access(name, X_OK) >= 0;
+                return access(name, X_OK) >= 0 ? name : null;
 
         if (!path)
-                return false;
+                return null;
 
         at = path;
 
         while (true)
         {
-                p8 address_to into = build_text_take();
+                p8 address_to into = build_text_take(BUILD_WORD_ROOM);
                 positive span = 0;
                 positive kept;
 
@@ -586,16 +642,20 @@ static bool build_have(string_address name)
                 }
                 else
                 {
-                        if (kept > BUILD_TEXT_ROOM - 2)
-                                kept = BUILD_TEXT_ROOM - 2;
+                        if (kept > BUILD_WORD_ROOM - 2)
+                                kept = BUILD_WORD_ROOM - 2;
                         memory_copy(into, at, kept);
                 }
 
                 into[kept] = end;
 
-                if (access(build_join((string_address)into, "/", name, null),
-                           X_OK) >= 0)
-                        return true;
+                {
+                        string_address candidate =
+                                build_join((string_address)into, "/", name, null);
+
+                        if (access(candidate, X_OK) >= 0)
+                                return candidate;
+                }
 
                 if (!at[span])
                         break;
@@ -603,7 +663,12 @@ static bool build_have(string_address name)
                 at += span + 1;
         }
 
-        return false;
+        return null;
+}
+
+static bool build_have(string_address name)
+{
+        return build_resolve(name) != null;
 }
 
 /*
@@ -810,9 +875,10 @@ static positive build_words_of(string_address line, positive bound,
 static string_address build_key_from(string_address buffer, string_address name,
                                      positive address_to matched)
 {
-        p8 address_to into = build_text_take();
+        p8 address_to into = build_text_take(BUILD_WORD_ROOM);
+        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
         p8 address_to write_at = into;
-        positive left = BUILD_TEXT_ROOM - 1;
+        positive left = BUILD_WORD_ROOM - 1;
         string_address marker = build_join("#> ", name, " ", null);
         positive marker_length = string_length(marker);
         build_lines walk;
@@ -823,7 +889,6 @@ static string_address build_key_from(string_address buffer, string_address name,
         while (build_lines_next(address_of walk))
         {
                 string_address words[BUILD_ARGUMENT_ROOM];
-                p8 address_to store = build_text_take();
                 positive count;
 
                 if (walk.length < marker_length ||
@@ -835,7 +900,7 @@ static string_address build_key_from(string_address buffer, string_address name,
                                        walk.length - marker_length,
                                        (string_address address_to)words,
                                        BUILD_ARGUMENT_ROOM, store,
-                                       BUILD_TEXT_ROOM);
+                                       BUILD_WORD_ROOM);
 
                 for (positive at = 0; at < count; at++)
                 {
@@ -1119,11 +1184,11 @@ static fn build_config_conflicts(string_address text,
 
                 if (distinct > 1)
                 {
-                        p8 address_to name = build_text_take();
+                        p8 address_to name = build_text_take(BUILD_WORD_ROOM);
                         positive length = build_pairs[first].name_length;
 
-                        if (length > BUILD_TEXT_ROOM - 1)
-                                length = BUILD_TEXT_ROOM - 1;
+                        if (length > BUILD_WORD_ROOM - 1)
+                                length = BUILD_WORD_ROOM - 1;
 
                         memory_copy(name, build_pairs[first].name, length);
                         name[length] = end;
@@ -1144,7 +1209,7 @@ static fn build_config_conflicts(string_address text,
                                         build_join(build_setting_get("profile_root"),
                                                    "/", profiles[which], null);
                                 build_lines profile_walk;
-                                p8 address_to value = build_text_take();
+                                p8 address_to value = build_text_take(BUILD_WORD_ROOM);
                                 bool found = false;
 
                                 if (build_slurp(path, build_file_two,
@@ -1167,8 +1232,8 @@ static fn build_config_conflicts(string_address text,
 
                                         have = profile_walk.length - want - 1;
 
-                                        if (have > BUILD_TEXT_ROOM - 1)
-                                                have = BUILD_TEXT_ROOM - 1;
+                                        if (have > BUILD_WORD_ROOM - 1)
+                                                have = BUILD_WORD_ROOM - 1;
 
                                         memory_copy(value,
                                                     profile_walk.line + want + 1,
@@ -1197,13 +1262,9 @@ static fn build_config_conflicts(string_address text,
 
 static b32 build_config(string_address address_to profiles, positive count)
 {
-        p8 target_store[512];
-        p8 information_store[512];
         string_address artifacts = build_setting_get("artifacts");
-        string_address target = build_own(target_store, 512,
-                                          build_join(artifacts, "/.config", null));
-        string_address information = build_own(information_store, 512,
-                                               build_join(artifacts, "/info", null));
+        string_address target = build_join(artifacts, "/.config", null);
+        string_address information = build_join(artifacts, "/info", null);
         bool missing = false;
         positive used = 0;
 
@@ -1724,7 +1785,7 @@ static bool build_asm_pass(string_address text, string_address target,
                     walk.line[lead + 1] == '>')
                 {
                         string_address words[BUILD_ARGUMENT_ROOM];
-                        p8 address_to store = build_text_take();
+                        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
                         positive at = lead + 2;
                         positive stop = walk.length;
                         positive count;
@@ -1739,7 +1800,7 @@ static bool build_asm_pass(string_address text, string_address target,
                         count = build_words_of(walk.line + at, stop - at,
                                                (string_address address_to)words,
                                                BUILD_ARGUMENT_ROOM, store,
-                                               BUILD_TEXT_ROOM);
+                                               BUILD_WORD_ROOM);
 
                         if (!count)
                                 return build_asm_fail(source, line_number,
@@ -1923,10 +1984,8 @@ static bool build_asm_pass(string_address text, string_address target,
 static b32 build_asm(string_address arch, string_address input,
                      string_address output)
 {
-        p8 temporary_store[512];
         string_address target;
-        string_address temporary = build_own(temporary_store, 512,
-                                             build_join(output, ".asm_tmp", null));
+        string_address temporary = build_join(output, ".asm_tmp", null);
         positive used = 0;
 
         if (!arch || !*arch)
@@ -2023,6 +2082,556 @@ static b32 build_asm(string_address arch, string_address input,
                 log_flush();
                 return 1;
         }
+
+        return 0;
+}
+
+//      The spelling printf gives %#x, which is what the packer's line has
+//      always shown. Zero would print bare there; nothing here is ever zero,
+//      because the caller refuses an image whose base or entry is.
+static string_address build_hex(positive value)
+{
+        p8 address_to into = build_text_take(32);
+        positive length;
+
+        into[0] = '0';
+        into[1] = 'x';
+        length = positive_into_base(into + 2, value, 16, false);
+        into[2 + length] = end;
+
+        return (string_address)into;
+}
+
+//      A working directory nobody else has. mktemp is one of ours, but its
+//      answer arrives on its standard output, and redirecting a tool's output
+//      to read it back costs more than the two syscalls the name needs: the
+//      process id is what makes it unique and it is already here.
+static string_address build_temporary_directory(string_address tag)
+{
+        string_address root = string_get_environment(environ, "TMPDIR");
+        string_address path;
+
+        if (!root || !*root)
+                root = "/tmp";
+
+        path = build_join(root, "/", tag, ".", build_number((positive)getpid()),
+                          null);
+
+        if (mkdir(path, 0700) < 0 && !build_is_directory(path))
+                return null;
+
+        return path;
+}
+
+//      Removing a tree is our rm, called rather than spawned. If ours is
+//      wrong the build leaves debris, which is the point of using it.
+static fn build_remove_tree(string_address path)
+{
+        build_tool("rm", "-rf", path, null);
+}
+
+//      Zeroes from where the region's content ended to where the page it
+//      occupies does. Every spark region is a whole number of pages.
+static bool build_pad(b32 handle, positive from, positive to)
+{
+        p8 zeroes[4096];
+
+        memory_zero(zeroes, sizeof(zeroes));
+
+        while (from < to)
+        {
+                positive want = to - from;
+                bipolar put;
+
+                if (want > sizeof(zeroes))
+                        want = sizeof(zeroes);
+
+                put = write(handle, zeroes, want);
+
+                if (put <= 0)
+                        return false;
+
+                from += (positive)put;
+        }
+
+        return true;
+}
+
+/*
+        Splitting a value that arrived as one word.
+
+        Flag lists ride in the configuration as a single key -- "#> flags -a -b"
+        -- and reach a compiler as separate arguments. The shell got that by
+        leaving the expansion unquoted, which is also how it got the empty
+        string turning into no argument at all rather than one empty one.
+*/
+static positive build_split(string_address text, string_address address_to into,
+                            positive room)
+{
+        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+
+        if (!text)
+                return 0;
+
+        return build_words_of(text, string_length(text), into, room, store,
+                              BUILD_WORD_ROOM);
+}
+
+//      Appending split words onto an argument vector under construction.
+static positive build_add_split(string_address address_to words, positive count,
+                                positive room, string_address text)
+{
+        string_address pieces[BUILD_ARGUMENT_ROOM];
+        positive found = build_split(text, (string_address address_to)pieces,
+                                     BUILD_ARGUMENT_ROOM);
+
+        for (positive at = 0; at < found && count + 1 < room; at++)
+                words[count++] = pieces[at];
+
+        return count;
+}
+
+/*
+        Linking a program of this tree's own shape.
+
+        Two link recipes live here because the tree has two kinds of program.
+        The freestanding one is an ordinary static ELF and takes link-time
+        optimisation. The spark one must not: -flto discards the section
+        layout the linker script depends on, and the packer below reads that
+        layout back out of the object.
+
+        Neither recipe names this project. The script, the entry symbol and
+        the per-architecture flags are settings; a tree with another linker
+        script and another entry gets the same two recipes.
+*/
+static string_address build_compiler()
+{
+        string_address named = build_key_one("compiler", null);
+
+        if (named && *named)
+                return named;
+
+        named = string_get_environment(environ, "CC");
+
+        return named && *named ? named : (string_address)"gcc";
+}
+
+/*
+        binutils has to match the compiler, not the machine this runs on.
+
+        objdump, readelf and objcopy all read the ELF the compiler just
+        produced. Building for another architecture with the host's copies
+        gets as far as "objcopy: Unable to recognise the architecture of the
+        input file", so the prefix comes off the compiler's own name:
+        aarch64-linux-gnu-gcc means aarch64-linux-gnu-objcopy. A plain "gcc"
+        leaves the prefix empty, which is the native case.
+
+        Prefer the matching tool, fall back to the host's.
+        x86_64-linux-gnu-gcc is a perfectly ordinary way to name a native
+        compiler and there is usually no x86_64-linux-gnu-objdump beside it,
+        only objdump -- which is the same program. Insisting on the prefix
+        breaks the native build to fix the cross one.
+*/
+static string_address build_binutil(string_address compiler,
+                                    string_address name)
+{
+        p8 address_to prefix = build_text_take(string_length(compiler) + 1);
+        positive length = string_length(compiler);
+        string_address candidate;
+
+        if (length > 3 && !memory_compare(compiler + length - 3, "gcc", 3))
+                length -= 3;
+        else if (length > 5 && !memory_compare(compiler + length - 5, "clang", 5))
+                length -= 5;
+        else if (length > 2 && !memory_compare(compiler + length - 2, "cc", 2))
+                length -= 2;
+
+        memory_copy(prefix, compiler, length);
+        prefix[length] = end;
+        candidate = build_join((string_address)prefix, name, null);
+
+        if (build_have(candidate))
+                return candidate;
+
+        if (build_have(name))
+                return name;
+
+        string_format(log_error, "spark: neither %s%s nor %s found\n",
+                      (string_address)prefix, name, name);
+        log_flush();
+
+        return null;
+}
+
+/*
+        Compiling C to the flat spark format.
+
+        The layout is described in src/spark.c, which the kernel loader
+        includes too, so the two sides cannot drift apart -- and this file
+        includes it as well, so the header written here is that struct rather
+        than a second description of it. Every region is a whole number of
+        pages; see the linker script for why.
+*/
+static bool build_hex_field(string_address text, positive length,
+                            positive address_to answer)
+{
+        positive value = 0;
+        positive at = 0;
+
+        if (length > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+                at = 2;
+
+        if (at >= length)
+                return false;
+
+        for (; at < length; at++)
+        {
+                p8 byte = text[at];
+                positive digit;
+
+                if (byte >= '0' && byte <= '9')
+                        digit = byte - '0';
+                else if (byte >= 'a' && byte <= 'f')
+                        digit = byte - 'a' + 10;
+                else if (byte >= 'A' && byte <= 'F')
+                        digit = byte - 'A' + 10;
+                else
+                        return false;
+
+                value = value * 16 + digit;
+        }
+
+        address_to answer = value;
+
+        return true;
+}
+
+//      objdump -h has a stable column layout; readelf -S splits "[ 1]" into
+//      two fields for single digit indices and one for double, which does not
+//      parse. The table is read once: invoking objdump and awk once per field
+//      made the packer parse the same ELF five times.
+static bool build_section(string_address table, string_address name,
+                          positive address_to size, positive address_to where)
+{
+        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+        build_lines walk;
+
+        address_to size = 0;
+        address_to where = 0;
+
+        build_lines_open(address_of walk, table);
+
+        while (build_lines_next(address_of walk))
+        {
+                string_address words[BUILD_ARGUMENT_ROOM];
+                positive count = build_words_of(walk.line, walk.length,
+                                                (string_address address_to)words,
+                                                BUILD_ARGUMENT_ROOM, store,
+                                                BUILD_WORD_ROOM);
+
+                if (count < 4 || !word_is(words[1], name))
+                        continue;
+
+                return build_hex_field(words[2], string_length(words[2]), size) &&
+                       build_hex_field(words[3], string_length(words[3]), where);
+        }
+
+        return true;
+}
+
+static positive build_page_up(positive value)
+{
+        return ((value + SPARK_PAGE - 1) / SPARK_PAGE) * SPARK_PAGE;
+}
+
+static b32 build_spark(string_address source, string_address output,
+                       string_address mode)
+{
+        string_address compiler = build_compiler();
+        string_address arch = build_key_one("arch", null);
+        string_address script = build_setting_get("link_script");
+        string_address entry_flag;
+        string_address objdump;
+        string_address objcopy;
+        string_address readelf;
+        string_address words[BUILD_ARGUMENT_ROOM];
+        string_address work;
+        string_address elf;
+        string_address text_binary;
+        string_address data_binary;
+        positive count = 0;
+        positive text_bytes = 0;
+        positive text_where = 0;
+        positive data_bytes = 0;
+        positive data_where = 0;
+        positive bss_bytes = 0;
+        positive bss_where = 0;
+        positive base;
+        positive entry = 0;
+        positive text_end;
+        positive text_size;
+        positive data_size;
+        positive bss_size;
+        struct header head;
+
+        if (!arch || !*arch)
+        {
+                string_format(log_error, "spark: no '#> arch' in %s\n",
+                              build_in("artifacts", ".config"));
+                log_flush();
+                return 1;
+        }
+
+        objdump = build_binutil(compiler, "objdump");
+        readelf = build_binutil(compiler, "readelf");
+        objcopy = build_binutil(compiler, "objcopy");
+
+        if (!objdump || !readelf || !objcopy)
+                return 1;
+
+        if (!build_is_file(script))
+        {
+                string_format(log_error, "spark: missing linker script at %s\n",
+                              script);
+                log_flush();
+                return 1;
+        }
+
+        build_label(BUILD_YELLOW, "EXPERIMENTAL! C compiled to spark format");
+        string_format(log, BUILD_BOLD "Compiling %s" BUILD_RESET "\n", output);
+        log_flush();
+
+        work = build_temporary_directory("spark");
+
+        if (!work)
+                return build_die("spark: cannot make a working directory");
+
+        elf = build_join(work, "/image.elf", null);
+        text_binary = build_join(work, "/text.bin", null);
+        data_binary = build_join(work, "/data.bin", null);
+        entry_flag = build_join("-Wl,-e,", build_setting_get("entry"), null);
+
+        words[count++] = compiler;
+        words[count++] = build_join(source, ".c", null);
+        words[count++] = "-o";
+        words[count++] = elf;
+
+        //      -flto discards the section layout the linker script depends on,
+        //      and everything below reads that layout back.
+        {
+                string_address pieces[BUILD_ARGUMENT_ROOM];
+                positive found = build_split(build_key("program_flags"),
+                                             (string_address address_to)pieces,
+                                             BUILD_ARGUMENT_ROOM);
+
+                for (positive at = 0; at < found && count + 1 < BUILD_ARGUMENT_ROOM;
+                     at++)
+                        if (!word_is(pieces[at], "-flto"))
+                                words[count++] = pieces[at];
+        }
+
+        if (mode && word_is(mode, "debug"))
+                words[count++] = "-g";
+
+        count = build_add_split((string_address address_to)words, count,
+                                BUILD_ARGUMENT_ROOM,
+                                string_get_environment(environ,
+                                                       "SPARK_CPPFLAGS"));
+
+        words[count++] = "-static";
+        words[count++] = "-nostdlib";
+        words[count++] = "-nostartfiles";
+        words[count++] = "-T";
+        words[count++] = script;
+        words[count++] = "-Wl,--build-id=none";
+        words[count++] = entry_flag;
+        words[count++] = "-Wl,--no-warn-rwx-segments";
+        words[count] = null;
+
+        if (build_run_words((string_address address_to)words, null))
+        {
+                build_remove_tree(work);
+                string_format(log_error, "spark: compilation failed\n");
+                log_flush();
+                return 1;
+        }
+
+        count = 0;
+        words[count++] = objdump;
+        words[count++] = "-h";
+        words[count++] = elf;
+        words[count] = null;
+
+        if (build_capture_words((string_address address_to)words, build_file_one,
+                                BUILD_FILE_ROOM) < 0)
+        {
+                build_remove_tree(work);
+                return 1;
+        }
+
+        build_section((string_address)build_file_one, ".text",
+                      address_of text_bytes, address_of text_where);
+        build_section((string_address)build_file_one, ".data",
+                      address_of data_bytes, address_of data_where);
+        build_section((string_address)build_file_one, ".bss",
+                      address_of bss_bytes, address_of bss_where);
+
+        count = 0;
+        words[count++] = readelf;
+        words[count++] = "-h";
+        words[count++] = "-W";
+        words[count++] = elf;
+        words[count] = null;
+
+        if (build_capture_words((string_address address_to)words, build_file_two,
+                                BUILD_FILE_ROOM) >= 0)
+        {
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                build_lines walk;
+
+                build_lines_open(address_of walk, (string_address)build_file_two);
+
+                while (build_lines_next(address_of walk))
+                {
+                        string_address found[BUILD_ARGUMENT_ROOM];
+                        positive parts;
+
+                        if (!memory_search(walk.line, walk.length, "Entry point", 11))
+                                continue;
+
+                        parts = build_words_of(walk.line, walk.length,
+                                               (string_address address_to)found,
+                                               BUILD_ARGUMENT_ROOM, store,
+                                               BUILD_WORD_ROOM);
+
+                        if (parts)
+                                build_hex_field(found[parts - 1],
+                                                string_length(found[parts - 1]),
+                                                address_of entry);
+                }
+        }
+
+        //      The image is mapped from SPARK_HEADER_SIZE bytes before .text:
+        //      that is where the header sits, and the linker script reserves
+        //      exactly that much.
+        base = text_where - SPARK_HEADER_SIZE;
+
+        if (!text_where || !entry)
+        {
+                build_remove_tree(work);
+                string_format(log_error,
+                              "spark: could not read base/entry from the linked image\n");
+                log_flush();
+                return 1;
+        }
+
+        //      A program need not have every section: duck has no .data at
+        //      all. Text runs up to whichever region actually follows it, or
+        //      to its own end if none does.
+        if (data_bytes > 0)
+                text_end = data_where;
+        else if (bss_bytes > 0)
+                text_end = bss_where;
+        else
+                text_end = text_where + text_bytes;
+
+        text_size = build_page_up(text_end - base);
+        data_size = build_page_up(data_bytes);
+        bss_size = build_page_up(bss_bytes);
+
+        if (!text_size)
+        {
+                build_remove_tree(work);
+                string_format(log_error,
+                              "spark: computed a non positive text size (%p)\n",
+                              text_size);
+                log_flush();
+                return 1;
+        }
+
+        if (build_run(objcopy, "-O", "binary", "--only-section=.text", elf,
+                      text_binary, null))
+        {
+                build_remove_tree(work);
+                return 1;
+        }
+
+        if (build_run(objcopy, "-O", "binary", "--only-section=.data", elf,
+                      data_binary, null))
+                build_write_file(data_binary, "", 0);
+
+        head.magic = SPARK_MAGIC;
+        head.version = SPARK_VERSION;
+        head.flags = 0;
+        head.base = base;
+        head.entry = entry;
+        head.text_size = text_size;
+        head.data_size = data_size;
+        head.bss_size = bss_size;
+        head.reserved[0] = 0;
+        head.reserved[1] = 0;
+
+        {
+                b32 handle = open(output, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+                bipolar got;
+                bool good;
+
+                if (handle < 0)
+                {
+                        build_remove_tree(work);
+                        string_format(log_error, "spark: cannot write %s\n",
+                                      output);
+                        log_flush();
+                        return 1;
+                }
+
+                //      The header occupies the first SPARK_HEADER_SIZE bytes of
+                //      the text region itself, so the image carries no page
+                //      that nothing maps.
+                good = write(handle, address_of head, SPARK_HEADER_SIZE) ==
+                       SPARK_HEADER_SIZE;
+                got = build_slurp(text_binary, build_file_one, BUILD_FILE_ROOM);
+
+                if (got > 0)
+                        good = good && write(handle, build_file_one,
+                                             (positive)got) == got;
+
+                good = good && build_pad(handle, (positive)(got > 0 ? got : 0),
+                                         text_size - SPARK_HEADER_SIZE);
+
+                if (data_size > 0)
+                {
+                        got = build_slurp(data_binary, build_file_one,
+                                          BUILD_FILE_ROOM);
+
+                        if (got > 0)
+                                good = good && write(handle, build_file_one,
+                                                     (positive)got) == got;
+
+                        good = good && build_pad(handle,
+                                                 (positive)(got > 0 ? got : 0),
+                                                 data_size);
+                }
+
+                close(handle);
+                build_remove_tree(work);
+
+                if (!good)
+                {
+                        string_format(log_error, "spark: writing %s failed\n",
+                                      output);
+                        log_flush();
+                        return 1;
+                }
+        }
+
+        string_format(log, "spark: base=%s entry=%s text=%p data=%p bss=%p\n",
+                      build_hex(base), build_hex(entry), text_size,
+                      data_size, bss_size);
+        log_flush();
+        build_size(output);
+        string_format(log, "\n");
+        log_flush();
 
         return 0;
 }
@@ -2132,6 +2741,23 @@ b32 main()
                 }
 
                 return build_asm(arguments[2], arguments[3], arguments[4]);
+        }
+
+        if (command && word_is(command, "spark"))
+        {
+                build_is_safe();
+                build_config_load();
+
+                if (count < 4)
+                {
+                        string_format(log_error,
+                                      "spark: usage: spark <source_without_extension> <output> [debug]\n");
+                        log_flush();
+                        return 1;
+                }
+
+                return build_spark(arguments[2], arguments[3],
+                                   count > 4 ? arguments[4] : null);
         }
 
         if (command && word_is(command, "key"))
