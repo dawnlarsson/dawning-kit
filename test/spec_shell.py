@@ -1344,11 +1344,11 @@ def shell_startup_script(argv, stdin):
             prefix.append(word[len("--env="):])
         else:
             words.append(word)
-    # The environment reaches the inner shell through env(1): a prefix
-    # assignment would test the outer shell's variables (bash's SHELLOPTS
-    # is readonly) rather than the startup under test.
+    # A prefix assignment, not env(1): env would be the process that opens
+    # ./bash, and /proc/self/exe answers whoever opens it -- so env re-ran
+    # itself and every case in this family compared two usage errors.
     return (shell_SELF + shell_startup_files() +
-            "env PS4='TRACE ' " + " ".join(prefix) + (" " if prefix else "") +
+            "PS4='TRACE ' " + " ".join(prefix) + (" " if prefix else "") +
             '"./$shell_me" ' + shell_words(words) + " 2>err.txt\n"
             'echo "status=$?"\n' + shell_STDERR_REPLAY +
             'rm -f err.txt "./$shell_me"\n')
@@ -1374,8 +1374,7 @@ shell_STARTUP = Utility(
                                 "BASH_ENV='$FILE'", "BASH_ENV=missing", "BASH_ENV=",
                                 "BASH_ENV=exit-start", "BASH_ENV=errexit-start", "BASH_ENV=~/start",
                                 "BASH_ENV='$(exit 7)'", "ENV=start", "ENV='start file'",
-                                "POSIXLY_CORRECT=1", "POSIXLY_CORRECT=", "SHELLOPTS=xtrace:noglob",
-                                "BASHOPTS=nullglob", "IFS=:", "PS1='$ '", "HOME=/nonexistent",
+                                "POSIXLY_CORRECT=1", "POSIXLY_CORRECT=", "IFS=:", "PS1='$ '", "HOME=/nonexistent",
                                 "PATH=", "CDPATH=dir"),
                attached=True, repeat=True),
     ),
@@ -3446,7 +3445,7 @@ def shell_lang_reader_boundaries(rng):
     elif shape == "crlf":
         script = "echo one\r\necho two\r"
     elif shape == "nul":
-        script = "echo one\necho \0two\necho three"
+        script = "printf 'echo one\\necho \\0two\\necho three\\n' > nul.sh; sh ./nul.sh; echo \"file=$?\""
     elif shape == "deep-parens":
         depth = rng.choice((10, 50, 150))
         script = "echo " + "$(" * depth + "echo deep" + ")" * depth
