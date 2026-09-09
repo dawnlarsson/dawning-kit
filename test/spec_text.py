@@ -566,11 +566,10 @@ def text_column_valid(argv):
     table = any(word in ("-t", "--table", "-J", "--json", "-K", "--table-header-as-columns")
                 for word in argv)
     fill = any(word in ("-x", "--fillrows") for word in argv)
-    # column 2.42.2 never returns from --table-maxout beside
-    # --table-header-as-columns; there is no answer to compare against.
-    header = any(word in ("-K", "--table-header-as-columns") for word in argv)
+    # column 2.42.2 never returns from --table-maxout beside a table; there
+    # is no answer to compare against.
     maxout = any(word in ("-m", "--table-maxout") for word in argv)
-    return not (table and fill) and not (header and maxout)
+    return not (table and fill) and not (table and maxout)
 
 
 _TEXT_ENCODINGS = ("--base64", "--base64url", "--base32", "--base32hex", "--base16",
@@ -934,7 +933,7 @@ UTILITIES = (
                      Option("-O"), Option("--format=roff"), Option("-T"), Option("--format=tex"),
                      Option("-R"), Option("--right-side-refs"),
                      Option("-S", ("\\n", "[.?!]", "", "x"), None), Option("--sentence-regexp", ("\\n",), True),
-                     Option("-W", ("[a-z][a-z]*", "[A-Za-z]+", "", "x", "\\w+"), None),
+                     Option("-W", ("[a-z][a-z]*", "[A-Za-z]+", "x", "\\w+"), None),
                      Option("--word-regexp", ("[a-z][a-z]*",), True),
                      Option("-b", ("ptx_breaks", "missing", "empty"), None), Option("--break-file", ("ptx_breaks",), True),
                      Option("-f"), Option("--ignore-case"),
