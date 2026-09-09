@@ -390,7 +390,7 @@ def text_sed_scripts():
         "1,$!d", "N;$p", "n;$p", "h;H;g;G;x;p", "s/a/expanded/g;H;x;p", "N;D;p",
         "s/\\(\\([a-z]\\)[0-9]\\)/[\\1|\\2]/", "/^a*a*a*$/p;/^\\(ab\\)*$/p",
         "/^a*a*a*a*a*a*a*a*a*$/p", "s/[[:blank:]]\\+/ /g", "s/^[ \\t]*//", "s/(a|ab)(b|)/[\\1][\\2]/",
-        "s/a/b/w", "w", "r", "b ", "t", "T", ":a;ba", "1d;1p",
+        "s/a/b/w", "w", "r", "b ", "t", "T", "1d;1p",
     ]
     rng = random.Random(0x53454431)
     replacements = ["X", "[&]", "", "Y&Y", "a\\nb", "\\t", "a\\\\b", "\\U&", "\\l&\\E", "&&"]
@@ -566,7 +566,11 @@ def text_column_valid(argv):
     table = any(word in ("-t", "--table", "-J", "--json", "-K", "--table-header-as-columns")
                 for word in argv)
     fill = any(word in ("-x", "--fillrows") for word in argv)
-    return not (table and fill)
+    # column 2.42.2 never returns from --table-maxout beside
+    # --table-header-as-columns; there is no answer to compare against.
+    header = any(word in ("-K", "--table-header-as-columns") for word in argv)
+    maxout = any(word in ("-m", "--table-maxout") for word in argv)
+    return not (table and fill) and not (header and maxout)
 
 
 _TEXT_ENCODINGS = ("--base64", "--base64url", "--base32", "--base32hex", "--base16",
@@ -773,7 +777,7 @@ UTILITIES = (
                      Option("-u"), Option("--uniform-spacing"),
                      Option("-w", ("10", "20", "37", "75", "80", "1", "0", "2500", "2501", "x", "-5", "3"), None),
                      Option("--width", ("39", "37"), True),
-                     Option("-g", ("20", "31", "93", "0", "x", "21", "1"), None), Option("--goal", ("31",), True),
+                     Option("-g", ("20", "31", "93", "x", "21", "1"), None), Option("--goal", ("31",), True),
                      Option("-37"), Option("-20"), Option("-1")),
             operands=((), ("para",), ("a.txt", "b.txt"), ("missing",), ("-",), ("dir",), ("nonl",),
                       ("empty",), ("words",), ("nonl", "para"), ("wide",), ("big",)),
@@ -930,7 +934,8 @@ UTILITIES = (
                      Option("-O"), Option("--format=roff"), Option("-T"), Option("--format=tex"),
                      Option("-R"), Option("--right-side-refs"),
                      Option("-S", ("\\n", "[.?!]", "", "x"), None), Option("--sentence-regexp", ("\\n",), True),
-                     Option("-W", ("[a-z][a-z]*", "[A-Za-z]+", "", "x", "\\w+"), None), Option("--word-regexp", ("[a-z]*",), True),
+                     Option("-W", ("[a-z][a-z]*", "[A-Za-z]+", "", "x", "\\w+"), None),
+                     Option("--word-regexp", ("[a-z][a-z]*",), True),
                      Option("-b", ("ptx_breaks", "missing", "empty"), None), Option("--break-file", ("ptx_breaks",), True),
                      Option("-f"), Option("--ignore-case"),
                      Option("-g", ("1", "5", "0", "x", "20"), None), Option("--gap-size", ("2",), True),

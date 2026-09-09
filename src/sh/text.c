@@ -4693,6 +4693,14 @@ static inline INLINE b32 text_head_tail(bool tail)
 
         string_address misplaced = text_digits_misplaced(address_of taking);
 
+        // tail's obsolete -N is the whole of what it was given: another
+        // option beside it is the invalid context GNU names.
+        if (!misplaced && tail && (taking.flags & FILE_FLAG('n')) &&
+            file_option_value(address_of taking, 'n') &&
+            !text_count_last &&
+            (taking.flags & ~(positive)FILE_FLAG('n')))
+                misplaced = file_option_value(address_of taking, 'n') - 1;
+
         if (misplaced)
                 return text_done(string_diagnostic(&text_diagnostic, 1, misplaced + 1,
                                                   tail ? "option used in invalid context"
@@ -7196,9 +7204,10 @@ static fn pr_put_header(string_address name, b64 stamp, positive page)
         positive name_length = string_length(name);
         positive page_length = page_digits + 5;
         positive occupied = date_length + name_length + page_length;
-        positive available = occupied < pr_page_width
-                                 ? pr_page_width - occupied
-                                 : 0;
+        // The margin sits in front of the header rather than inside it.
+        positive room = pr_page_width > pr_margin ? pr_page_width - pr_margin
+                                                  : 0;
+        positive available = occupied < room ? room - occupied : 0;
         positive left = available / 2;
         positive right = available - left;
 
@@ -7401,7 +7410,8 @@ static fn pr_single_file(string_address path)
 
         // A first page beyond the last one that had anything on it is a
         // complaint on the error stream and nothing else: the status stays.
-        if (pr_first_page > filled)
+        // Nobody asked for a first page when nobody wrote a +.
+        if (pr_first_page > 1 && pr_first_page > filled)
                 string_report(writer_stderr, 0,
                               "%s: starting page number %p exceeds page count %p\n",
                               text_name, pr_first_page, filled);
@@ -14273,6 +14283,14 @@ static fn grep_operand(b32 index)
         text_file_add(index);
 }
 
+// A word one of the three options takes and only one of the words will do.
+static bool grep_word_is(string_address value, string_address first,
+                         string_address second, string_address third)
+{
+        return string_equals(value, first) || string_equals(value, second) ||
+               (third && string_equals(value, third));
+}
+
 static bool grep_option_seen(p8 letter, string_address value)
 {
         // Every context length and every max count is read where it was
@@ -14287,7 +14305,7 @@ static bool grep_option_seen(p8 letter, string_address value)
                                                                : "invalid context length argument");
         }
 
-        if (letter == 'E' || letter == 'G' || letter == 'F' || letter == 'P')
+        if (letter == 'E' || letter == 'G' || letter == 'F')
         {
                 if (grep_matcher && grep_matcher != letter)
                         grep_matchers_conflict = true;
@@ -14376,13 +14394,6 @@ static bool grep_option_seen(p8 letter, string_address value)
         return true;
 }
 
-// A word one of the three options takes and only one of the words will do.
-static bool grep_word_is(string_address value, string_address first,
-                         string_address second, string_address third)
-{
-        return string_equals(value, first) || string_equals(value, second) ||
-               (third && string_equals(value, third));
-}
 
 /* Discarded output needs only each file's selection status, not its count
    or formatting. Verify the actual writable device, never its descriptor's
@@ -15660,6 +15671,34 @@ static bool sed_parse_address(p8 address_to type, positive address_to line,
         return false;
 }
 
+// How many groups a pattern opens, which is what a \N in a replacement may
+// name at most.
+static b32 sed_group_count(string_address pattern)
+{
+        b32 count = 0;
+
+        for (positive at = 0; pattern[at]; at++)
+        {
+                if (pattern[at] != '\\')
+                {
+                        if (sed_extended && pattern[at] == '(')
+                                count++;
+
+                        continue;
+                }
+
+                if (!pattern[at + 1])
+                        break;
+
+                if (!sed_extended && pattern[at + 1] == '(')
+                        count++;
+
+                at++;
+        }
+
+        return count;
+}
+
 static fn sed_parse()
 {
         b32 open_blocks[32];
@@ -15785,9 +15824,15 @@ static fn sed_parse()
 
                 if (kind == '}')
                 {
-                        if (open_count)
-                                sed_commands[open_blocks[--open_count]].block_stop =
-                                    sed_command_count + 1;
+                        // A close with nothing open is not a program either.
+                        if (!open_count)
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
+                        sed_commands[open_blocks[--open_count]].block_stop =
+                            sed_command_count + 1;
 
                         sed_command_count++;
                         continue;
@@ -15819,6 +15864,8 @@ static fn sed_parse()
                         command->writer = -1;
                         command->which = 0;
 
+                        bool numbered = false;
+
                         for (;;)
                         {
                                 p8 flag = sed_peek();
@@ -15826,25 +15873,74 @@ static fn sed_parse()
                                 if (flag == 'w')
                                 {
                                         p8 name[TEXT_PATH_MAX];
+                                        positive length;
 
                                         sed_at++;
-                                        command->writer = sed_file_of(
-                                            name, sed_rest_of_line(name, sizeof(name)));
+                                        length = sed_rest_of_line(name, sizeof(name));
+
+                                        // w without a name is the missing
+                                        // filename GNU refuses.
+                                        if (!length)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
+                                        command->writer = sed_file_of(name, length);
                                         break;
                                 }
 
+                                // A flag given twice, a count of nothing and
+                                // a letter s has not got are all refused
+                                // where they are written.
                                 if (flag == 'g')
+                                {
+                                        if (command->global)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
                                         command->global = true;
+                                }
                                 else if (flag == 'p')
+                                {
+                                        if (command->printing)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
                                         command->printing = true;
+                                }
                                 else if (flag == 'i' || flag == 'I')
                                         icase = true;
                                 else if (flag == 'm' || flag == 'M')
                                         (void)flag;
                                 else if (byte_is_digit(flag))
                                 {
+                                        if (numbered)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
+                                        numbered = true;
                                         command->which = sed_number_at();
+
+                                        if (!command->which)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
                                         continue;
+                                }
+                                else if (flag && flag != '\n' && flag != ';' &&
+                                         flag != '}' && flag != '#')
+                                {
+                                        sed_broken = true;
+                                        return;
                                 }
                                 else
                                         break;
@@ -15854,6 +15950,23 @@ static fn sed_parse()
 
                         if (!command->which)
                                 command->which = 1;
+
+                        // A \N in the replacement names a group the pattern
+                        // has to have.
+                        for (positive c = 0; replacement[c]; c++)
+                        {
+                                if (replacement[c] != '\\' || !replacement[c + 1])
+                                        continue;
+
+                                p8 next = replacement[++c];
+
+                                if (byte_is_digit(next) &&
+                                    (b32)(next - '0') > sed_group_count(pattern))
+                                {
+                                        sed_broken = true;
+                                        return;
+                                }
+                        }
 
                         command->pattern = sed_compile_regex(pattern, icase);
                         if (command->pattern >= 0 &&
@@ -15877,7 +15990,10 @@ static fn sed_parse()
                         positive two = sed_unescape(
                             to, sed_take_until(delimiter, to, sizeof(to)));
 
-                        if (sed_map_count >= SED_MAPS_MAX)
+                        // Both halves must be there, and be the same length:
+                        // y has no character to turn the odd one into.
+                        if (sed_broken || one != two ||
+                            sed_map_count >= SED_MAPS_MAX)
                         {
                                 sed_broken = true;
                                 return;
@@ -15900,14 +16016,34 @@ static fn sed_parse()
                 {
                         p8 body[1024];
                         positive have = 0;
+                        bool escaped = sed_peek() == '\\';
+                        bool empty;
 
-                        if (sed_peek() == '\\')
+                        if (escaped)
                                 sed_at++;
 
                         if (sed_peek() == '\n')
                                 sed_at++;
 
                         sed_skip_blanks();
+
+                        // a, i and c want a backslash or a text: a bare one
+                        // at the end of the script is neither.
+                        empty = sed_at >= sed_script_length || sed_peek() == '\n';
+
+                        if (empty && !escaped)
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
+                        // A backslash with nothing behind it adds nothing.
+                        if (empty)
+                        {
+                                command->kind = 'v';
+                                sed_command_count++;
+                                continue;
+                        }
 
                         while (sed_at < sed_script_length && sed_script[sed_at] != '\n')
                         {
@@ -15946,8 +16082,26 @@ static fn sed_parse()
 
                 if (kind == 'q' || kind == 'Q')
                 {
+                        // One address only, and nothing after the status but
+                        // the end of the command.
+                        if (command->second_type != SED_ADDRESS_NONE)
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
                         sed_skip_blanks();
                         command->which = sed_number_at();
+                        sed_skip_blanks();
+
+                        p8 after = sed_peek();
+
+                        if (after && after != '\n' && after != ';' && after != '}')
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
                         sed_command_count++;
                         continue;
                 }
@@ -16021,6 +16175,13 @@ static fn sed_parse()
                         continue;
                 }
 
+                sed_broken = true;
+                return;
+        }
+
+        // A block that was opened and never closed is not a program.
+        if (open_count)
+        {
                 sed_broken = true;
                 return;
         }
@@ -18193,9 +18354,6 @@ static b32 text_sort()
         if ((flags & FILE_FLAG('c')) && (flags & FILE_FLAG('C')))
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "options '-cC' are incompatible"));
 
-        if (checking && merging)
-                return text_done(string_diagnostic(&text_diagnostic, 2, null, "options '-cm' are incompatible"));
-
         if (checking && output)
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "options '-co' are incompatible"));
 
@@ -18211,6 +18369,38 @@ static b32 text_sort()
             (!text_unsigned_option(file_option_value(address_of taking, 'p'), false, address_of number) ||
              !number))
                 return text_done(string_diagnostic(&text_diagnostic, 2, file_option_value(address_of taking, 'p'), "invalid --parallel argument"));
+
+        said = file_option_value(address_of taking, 't');
+
+        if (said)
+        {
+                // One byte, or the two that spell a NUL. Anything longer is a
+                // separator no line can be split on -- \t among them, which
+                // GNU refuses and which a literal tab is the way to ask for.
+                bool escaped = said[0] == '\\' && said[1] == '0' && !said[2];
+
+                if (!said[0])
+                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "empty tab"));
+
+                if (said[1] && !escaped)
+                        return text_done(string_diagnostic(&text_diagnostic, 2, said, "multi-character tab"));
+        }
+
+        said = file_option_value(address_of taking, 'K');
+
+        if (said && !string_equals(said, "quiet") && !string_equals(said, "silent") &&
+            !string_equals(said, "diagnose-first"))
+                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --check"));
+
+        said = file_option_value(address_of taking, 'W');
+
+        if (said && !string_equals(said, "numeric") &&
+            !string_equals(said, "human-numeric") && !string_equals(said, "month") &&
+            !string_equals(said, "version") && !string_equals(said, "general-numeric") &&
+            !string_equals(said, "random"))
+                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --sort"));
+
+        said = file_option_value(address_of taking, 'K');
 
         if (flags & FILE_FLAG('Z'))
         {
