@@ -1132,13 +1132,6 @@ bool shell_builtin(string_address arguments, positive2 named)
         static positive remembered_length;
         shell_command address_to command = null;
 
-        /* A slash is already a complete answer: neither a builtin nor an
-           in-process utility has one in its name.  Direct executable paths
-           are the startup-sensitive case and used to build both static name
-           indexes only to prove two guaranteed misses. */
-        if (string_first_of(shell_argv[0], '/'))
-                return false;
-
         if (!arguments && shell_command_name_stable &&
             shell_argv[0] == shell_command_name_address && remembered &&
             !shell_disabled[remembered - shell_commands] &&
@@ -1148,6 +1141,10 @@ bool shell_builtin(string_address arguments, positive2 named)
                 command = remembered;
         else
         {
+                /* A cache hit already proves this name has no slash. Other
+                   paths still bypass both builtin and utility indexes. */
+                if (memory_first_of(shell_argv[0], '/', named.y))
+                        return false;
                 command = shell_command_named_hashed(shell_argv[0], named);
 
                 if (!arguments && shell_command_name_stable &&

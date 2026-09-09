@@ -1,7 +1,9 @@
 # Hardware bounds and measured gaps
 
 The final pass gets selected shared kernels close to conditional hardware
-bounds, with measured tool gains and unresolved shell regressions. See
+bounds, with measured tool gains and unresolved shell regressions. The later
+[shell performance pass](SHELL_HARDWARE.md) records the shell-specific follow-up;
+the measurements below retain their original frozen source. See
 [Final frozen candidate](#final-frozen-candidate) for the complete outcome.
 
 A reference tool is a compatibility and practical performance comparison. The

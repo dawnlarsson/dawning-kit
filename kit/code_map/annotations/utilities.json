@@ -13,7 +13,7 @@
     "src/sh/checksum.c",
     "src/sh/regex_graph.c"
   ],
-  "source_digest": "7fca743f4fae01df406889f619cb18bcc1349adef934b7175c9c18afccfaa9f4",
+  "source_digest": "dab083d7c00a1f47e6d8f029a1797ffb0853fd75b676ae5671693b9852e4d30c",
   "families": [
     {"id": "utility.arena","title": "Utility arena allocation","description": "Allocates, grows and retains command-lifetime text and record storage.","design_question": "Which parts of Utility arena allocation are contract-specific, and which already belong to shared infrastructure?","constraints": ["Allocation failure and pointer invalidation must remain explicit."]},
     {"id": "utility.file_output","title": "File utility output","description": "Writes file-oriented records through the shared log writer.","design_question": "Which parts of File utility output are contract-specific, and which already belong to shared infrastructure?","constraints": ["Preserve flush failures and record terminators."]},

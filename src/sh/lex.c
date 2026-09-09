@@ -59,25 +59,16 @@ typedef struct
 } lex_token;
 
 /*
-        The tokens of one line, and the bytes they were cut from.
-
-        Both grow. The table may move freely; the bytes may not, because every
-        token already handed out holds an address inside them -- so when the
-        bytes do move, those addresses are moved with them by the same delta.
-        That is cheap and exact: they all point into the one block, so one
-        subtraction rebases the lot.
-
-        Eight kilobytes of text and 256 tokens used to be the ceiling, and a
-        line past it was refused, which a generated command list or one very
-        long argument reaches without trying.
+        Tokens borrow counted spans from the caller's input. Quotes and
+        expansions retain their exact source bytes, so no text arena is needed.
+        The caller keeps that input alive until it consumes the tokens; a word
+        need not end at a NUL. The parser copies it into stable, terminated
+        storage before the next input line can reuse its source buffer.
 */
 typedef struct
 {
         lex_token address_to tokens;
         positive token_room;
-        p8 address_to text;
-        positive text_room;
-        positive used;
         b32 count;
         /*
                 Which line of this input the shell is running.
@@ -93,19 +84,13 @@ typedef struct
 } lex_frame;
 
 /*
-        A nested source gets empty lexer storage of its own. Keeping the outer
-        blocks rather than copying them preserves every token address while
-        eval or dot grows and frees the nested blocks independently. Current
-        and saved state have one shape, so a new store cannot be omitted from
-        one side of the transition.
+        Nested input gets its own token table; the outer table and the input
+        it views remain alive until the nested source returns.
 */
 static lex_frame lex_context;
 
 #define lex_tokens lex_context.tokens
 #define lex_token_room lex_context.token_room
-#define lex_text lex_context.text
-#define lex_text_room lex_context.text_room
-#define lex_used lex_context.used
 #define lex_count lex_context.count
 #define shell_line_number lex_context.line
 
@@ -131,34 +116,7 @@ static fn lex_nest_leave(lex_frame address_to frame)
         if (lex_tokens)
                 memory_free(lex_tokens, lex_token_room * sizeof(lex_token));
 
-        if (lex_text)
-                memory_free(lex_text, lex_text_room);
-
         lex_context = address_to frame;
-}
-
-//      Room for want bytes of token text, moving what is already handed out
-//      if the block itself has to move.
-static bool lex_room(positive want)
-{
-        p8 address_to before = lex_text;
-        b32 index;
-
-        if (lex_text_room >= want)
-                return true;
-
-        if (!shell_array_room(lex_text, lex_text_room, want))
-                return false;
-
-        if (lex_text == before || !before)
-                return true;
-
-        for (index = 0; index < lex_count; index++)
-                if (lex_tokens[index].text)
-                        lex_tokens[index].text =
-                            lex_text + (lex_tokens[index].text - before);
-
-        return true;
 }
 
 /*
@@ -322,22 +280,6 @@ static b32 lex_add(b32 kind, b32 op, string_address text, positive length)
         lex_count++;
 
         return true;
-}
-
-// Words already live in lex_text. The two whole Bash tokens must live there
-// as well: lex_room rebases every handed-out text pointer when that block
-// grows, so keeping one pointed at the caller's input would turn it into an
-// unrelated address as soon as a later word enlarged the block.
-static b32 lex_add_whole(b32 kind, string_address text, positive length)
-{
-        positive start = lex_used;
-
-        if (length == positive_max || !lex_room(lex_used + length + 1))
-                return false;
-
-        memory_copy_end(lex_text + lex_used, text, length);
-        lex_used += length + 1;
-        return lex_add(kind, 0, lex_text + start, length);
 }
 
 PURE bool shell_extglob_asked();
@@ -1147,24 +1089,10 @@ static string_address lex_assignment_subscript_end(string_address at)
         return null;
 }
 
-static inline INLINE bool lex_word_nested(string_address address_to at,
-                                          string_address stop)
-{
-        positive run = (positive)(stop - address_to at);
-
-        if (!lex_room(lex_used + run + 2))
-                return false;
-
-        memory_copy(lex_text + lex_used, address_to at, run);
-        lex_used += run;
-        address_to at = stop;
-        return true;
-}
-
 static b32 lex_word(string_address address_to at)
 {
         string_address step = address_to at;
-        positive start = lex_used;
+        string_address start = step;
 
         while (1)
         {
@@ -1172,11 +1100,6 @@ static b32 lex_word(string_address address_to at)
 
                 if (run)
                 {
-                        if (!lex_room(lex_used + run + 1))
-                                return false;
-
-                        memory_copy(lex_text + lex_used, step, run);
-                        lex_used += run;
                         step += run;
                         continue;
                 }
@@ -1188,32 +1111,26 @@ static b32 lex_word(string_address address_to at)
                    followed by = or += makes the complete subscript one piece,
                    including otherwise separating blanks. */
                 if (c == '[' &&
-                    lex_assignment_head(lex_text + start, lex_used - start))
+                    lex_assignment_head(start, (positive)(step - start)))
                 {
                         string_address stop =
                             lex_assignment_subscript_end(step + 1);
 
                         if (stop)
                         {
-                                if (!lex_word_nested(address_of step, stop))
-                                        return false;
-
+                                step = stop;
                                 continue;
                         }
                 }
 
-                if (c == '(' && lex_used > start &&
-                    lex_text[lex_used - 1] == '=' &&
-                    lex_assignment_head(lex_text + start,
-                                        lex_used - start - 1))
+                if (c == '(' && step > start && step[-1] == '=' &&
+                    lex_assignment_head(start, (positive)(step - start - 1)))
                 {
                         string_address stop = lex_nesting(step);
 
                         if (stop > step)
                         {
-                                if (!lex_word_nested(address_of step, stop))
-                                        return false;
-
+                                step = stop;
                                 continue;
                         }
                 }
@@ -1225,16 +1142,14 @@ static b32 lex_word(string_address address_to at)
                         syntax error. Only under the option: with it off the
                         parenthesis is what it has always been.
                 */
-                if (c == '(' && lex_used > start && shell_extglob_asked() &&
-                    lex_extended_head(lex_text[lex_used - 1]))
+                if (c == '(' && step > start && shell_extglob_asked() &&
+                    lex_extended_head(step[-1]))
                 {
                         string_address stop = lex_nesting(step);
 
                         if (stop > step)
                         {
-                                if (!lex_word_nested(address_of step, stop))
-                                        return false;
-
+                                step = stop;
                                 continue;
                         }
                 }
@@ -1248,9 +1163,7 @@ static b32 lex_word(string_address address_to at)
 
                         if (stop > step + 1)
                         {
-                                if (!lex_word_nested(address_of step, stop))
-                                        return false;
-
+                                step = stop;
                                 continue;
                         }
                 }
@@ -1258,10 +1171,6 @@ static b32 lex_word(string_address address_to at)
                 if (!c || string_set_blanks[c] || lex_operator[c] || c == '\n')
                         break;
 
-                if (!lex_room(lex_used + 3))
-                        return false;
-
-                lex_text[lex_used++] = c;
                 step++;
 
                 bool dollar_quote = c == '$' && string_is(step, '\'');
@@ -1271,18 +1180,13 @@ static b32 lex_word(string_address address_to at)
                         // quote when present; the parser diagnoses open ones.
                         string_address stop = dollar_quote
                             ? lex_dollar_quote_end(step + 1) : lex_quote_end(step, c);
-                        run = (positive)(stop - step) + (string_get(stop) ? 1 : 0);
-                        if (!lex_room(lex_used + run + 3))
-                                return false;
-                        memory_copy_apart(lex_text + lex_used, step, run);
-                        lex_used += run;
-                        step += run;
+                        step = stop + (string_get(stop) ? 1 : 0);
                         continue;
                 }
 
                 if (c == '\\' && string_get(step))
                 {
-                        lex_text[lex_used++] = string_get(step++);
+                        step++;
                         continue;
                 }
 
@@ -1298,23 +1202,13 @@ static b32 lex_word(string_address address_to at)
                                 stop = lex_nesting(step);
 
                         if (stop && stop > step)
-                        {
-                                positive run = (positive)(stop - step);
-
-                                if (!lex_room(lex_used + run + 2))
-                                        return false;
-
-                                memory_copy(lex_text + lex_used, step, run);
-                                lex_used += run;
                                 step = stop;
-                        }
                 }
         }
 
-        lex_text[lex_used++] = end;
         address_to at = step;
 
-        return lex_add(LEX_WORD, 0, lex_text + start, lex_used - start - 1);
+        return lex_add(LEX_WORD, 0, start, (positive)(step - start));
 }
 
 /*
@@ -1330,7 +1224,6 @@ HOT b32 lex_line(string_address line)
 
         lex_prepare();
         lex_count = 0;
-        lex_used = 0;
 
         while (1)
         {
@@ -1358,7 +1251,7 @@ HOT b32 lex_line(string_address line)
 
                         if (stop)
                         {
-                                if (!lex_add_whole(LEX_CONDITIONAL, step,
+                                if (!lex_add(LEX_CONDITIONAL, 0, step,
                                                    (positive)(stop - step)))
                                         return -1;
 
@@ -1373,7 +1266,7 @@ HOT b32 lex_line(string_address line)
 
                         if (stop)
                         {
-                                if (!lex_add_whole(LEX_ARITHMETIC, step,
+                                if (!lex_add(LEX_ARITHMETIC, 0, step,
                                                    (positive)(stop - step)))
                                         return -1;
 

@@ -31,7 +31,7 @@ def arguments():
     parser.add_argument("--rounds", type=int, default=11)
     parser.add_argument("--bytes", type=int, default=4 * 1024 * 1024)
     parser.add_argument("--filter", default="")
-    parser.add_argument("--suite", choices=("engines", "stack", "all"), default="engines")
+    parser.add_argument("--suite", choices=("engines", "stack", "shell", "all"), default="engines")
     parser.add_argument("--time-reference", action="store_true",
                         help="include the installed reference tool in paired timings")
     parser.add_argument("--allow-invalid", action="append", default=[], metavar="LABEL",
@@ -177,6 +177,105 @@ def selected_workloads(root, size, env, suite):
             yield name, tool, operands, None
     if suite in ("stack", "all"):
         yield from stack_workloads(root, size)
+    if suite in ("shell", "all"):
+        yield from shell_workloads(root, size, legacy=suite != "all")
+
+
+def shell_workloads(root, size, legacy=True):
+    """Shell-owned work: inputs are generated outside every timed invocation.
+
+    Keep the five historical stack controls at their original scale. New
+    repeated-body cases scale with --bytes; filesystem/process cases have
+    their own caps so a reference shell remains practical to time.
+    """
+    if legacy:
+        for row in stack_workloads(root, size):
+            if row[0].startswith("shell/"):
+                yield row
+    count = max(1000, min(100000, size // 64))
+    processes = max(16, min(256, count // 128))
+    sink = root / "shell-redirection"
+    glob_root = root / "shell-glob"
+    glob_root.mkdir(exist_ok=True)
+    for i in range(128):
+        (glob_root / f"entry-{i:03d}.txt").touch()
+    sourced = root / "shell-sourced.sh"
+    sourced.write_text('source_value=$((source_value+1))\n')
+
+    def loop(body, setup="", result='printf "%s\\n" "$i"', turns=count):
+        return (f"{setup}\ni=0\nwhile [ \"$i\" -lt {turns} ]; do\n"
+                f"{body}\ni=$((i+1))\ndone\n{result}\n")
+
+    scripts = {
+        "arithmetic": loop('((a=(a*33+i)^7))', 'a=1',
+                           'printf "%s:%s\\n" "$a" "$i"'),
+        "scalar-short": loop(': "$x" "$long_variable_name" "prefix${x}suffix"',
+                             'x=abc; long_variable_name=xyz'),
+        "scalar-long": loop(': "$x" "$long_variable_name" "prefix${x}suffix"',
+                            'x=' + 'abcdefgh' * 128 + '\nlong_variable_name=$x'),
+        "parameter-mix": loop('a=${x#prefix}; b=${x%suffix}; c=${x//ab/CD}; d=${x:2:8}',
+                              'x=prefix' + 'abcd' * 24 + 'suffix',
+                              'printf "%s:%s:%s:%s:%s\\n" "$a" "$b" "$c" "$d" "$i"'),
+        "fields": loop('set -- $x; n=$((n+$#))',
+                       "x=' alpha  beta\tgamma\n delta '; n=0",
+                       'printf "%s:%s\\n" "$n" "$i"'),
+        "ifs-fields": loop('set -- $x; n=$((n+$#))',
+                           "IFS=:,; x='alpha::beta,gamma:delta'; n=0",
+                           'printf "%s:%s\\n" "$n" "$i"'),
+        "positional": loop('f "" "a b" "*" z',
+                           'n=0; f() { for word in "$@"; do n=$((n+${#word}+1)); done; }',
+                           'printf "%s:%s\\n" "$n" "$i"'),
+        "local-nameref": loop('f "$i"',
+                              'f() { local x=$1; local -n r=x; r=$((r+1)); result=$r; }',
+                              'printf "%s:%s\\n" "$result" "$i"'),
+        "array-indexed": loop('((a[i%3]+=i))', 'a=(1 2 3)',
+                              'printf "%s:%s:%s:%s\\n" "${a[0]}" "${a[1]}" "${a[2]}" "$i"'),
+        "array-associative": loop('m[alpha]=$i; x=${m[alpha]}; y=${m[long_key]}',
+                                  'declare -A m=([alpha]=1 [long_key]=value)',
+                                  'printf "%s:%s:%s\\n" "$x" "$y" "$i"'),
+        "builtin-format": loop('printf -v x "%08d:%s" "$i" abc; [ "$x" != "" ]',
+                               result='printf "%s:%s\\n" "$x" "$i"'),
+        "case-pattern": loop('case abcdef in a*e?) n=$((n+1));; *) n=0;; esac',
+                             'n=0', 'printf "%s:%s\\n" "$n" "$i"'),
+        "regex-condition": loop('if [[ $x =~ ^([a-z]+):([0-9]+)$ ]]; then n=$((n+1)); fi',
+                                'x=alpha:123; n=0',
+                                'printf "%s:%s:%s\\n" "$n" "${BASH_REMATCH[2]}" "$i"'),
+        "glob": loop(f'set -- "{glob_root}"/entry-0[0-9]?.txt; n=$((n+$#))',
+                     'n=0', 'printf "%s:%s\\n" "$n" "$i"', turns=min(count, 2000)),
+        "brace": loop('set -- item{01..64}; n=$((n+$#))', 'n=0',
+                      'printf "%s:%s\\n" "$n" "$i"', turns=min(count, 4000)),
+        "read-lines": 'n=0; while IFS= read -r line; do n=$((n+${#line})); done\nprintf "%s\\n" "$n"\n',
+        "mapfile": 'mapfile -t rows; printf "%s:%s\\n" "${#rows[@]}" "${rows[0]}"\n',
+        "command-substitution": loop('x=$(printf "%s" "$i")',
+                                     result='printf "%s:%s\\n" "$x" "$i"', turns=processes),
+        "pipeline": loop('printf "one\\ntwo\\n" | { n=0; while IFS= read -r x; do n=$((n+1)); done; printf "%s\\n" "$n"; }',
+                         turns=processes),
+        "subshell": loop('( : )', turns=processes),
+        "background-wait": loop('( : ) & wait', turns=processes),
+        "redirect": loop(f': > "{sink}"', turns=min(count, 2000)),
+        "source": loop(f'. "{sourced}"', 'source_value=0',
+                       'printf "%s:%s\\n" "$source_value" "$i"', turns=min(count, 2000)),
+        "trap": loop('kill -USR1 $$', 'n=0; trap \'n=$((n+1))\' USR1',
+                     'printf "%s:%s\\n" "$n" "$i"', turns=min(count, 2000)),
+    }
+    scripts["parse-arguments"] = (': alpha beta gamma long_variable_name delta\n' * count +
+                                  'printf "done\\n"\n')
+    scripts["parse-quotes"] = (': \'single quoted\' "double quoted" escaped\\ word "${missing:-fallback}"\n' * count +
+                               'printf "done\\n"\n')
+    scripts["parse-grammar"] = ('if :; then :; elif false; then :; else :; fi\n' * count +
+                                'printf "done\\n"\n')
+    scripts["parse-heredoc"] = ('f() { : <<\'END\'\n$literal \\ text\nEND\n}\n' * min(count, 4000) +
+                               'f; printf "done\\n"\n')
+    scripts["alias"] = ("shopt -s expand_aliases\nalias hit=':'\n" +
+                        'hit alpha beta\n' * count + 'printf "done\\n"\n')
+    inputs = root / "shell-input"
+    inputs.write_bytes(b"alpha beta\\gamma\n" * count)
+    yield "shell/startup", "bash", ["-c", ":"], None
+    for name, script in scripts.items():
+        path = root / ("shell-" + name + ".sh")
+        path.write_text(script)
+        source = inputs if name in ("read-lines", "mapfile") else None
+        yield "shell/" + name, "bash", [str(path)], source
 
 
 def expired(signum, frame):

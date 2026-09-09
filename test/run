@@ -3314,8 +3314,9 @@ lane_util_linux() { differential_domain util_linux; }
 lane_shell()
 {
         need_shell || return 1
+        freestanding_checks_lane lexer_spans test/lexer_spans.c || return 1
         python3 test/shell_functions.py --shell "$shell_binary" || return 1
-        differential_domain shell
+        sh test/shell.sh "$shell_binary"
 }
 lane_builtins()   { differential_domain builtins; }
 lane_awk()        { differential_domain awk; }

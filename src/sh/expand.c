@@ -2554,16 +2554,15 @@ static bipolar arith_power()
         return arith_power_of(value, arith_power());
 }
 
-/* Every left-associative arithmetic level has the same cursor loop. Keep
-   the operator grammar and calculation visible to the compiler; only logical
-   levels below change arith_active while parsing their right operand. */
+/* arith_power returns past trailing whitespace. Every higher production
+   preserves that cursor invariant, including recursive right operands, so
+   precedence levels inspect each operator without rescanning the same span. */
 #define ARITH_LEVEL(name, lower, matches, width, result)                      \
         static bipolar name()                                               \
         {                                                                   \
                 bipolar value = lower();                                    \
                 while (true)                                                \
                 {                                                           \
-                        arith_space();                                      \
                         p8 op = string_get(arith_at);                        \
                         p8 next = op ? string_get(arith_at + 1) : 0;        \
                         if (!(matches))                                     \
@@ -2608,7 +2607,6 @@ ARITH_LEVEL(arith_bit_or, arith_bit_xor,
                                                                              \
                 while (true)                                                 \
                 {                                                            \
-                        arith_space();                                        \
                         if (!string_is(arith_at, (byte)) ||                  \
                             string_get(arith_at + 1) != (byte))              \
                                 return value;                                \
@@ -2642,7 +2640,6 @@ static bipolar arith_choose()
         bipolar left;
         bool active;
 
-        arith_space();
 
         if (!string_is(arith_at, '?'))
                 return value;
@@ -2672,13 +2669,11 @@ static bipolar arith_choose()
 static bipolar arith_expression()
 {
         bipolar value = arith_choose();
-        arith_space();
 
         while (arith_bash_mode && string_is(arith_at, ','))
         {
                 arith_at++;
                 value = arith_choose();
-                arith_space();
         }
 
         return value;
@@ -6089,15 +6084,20 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                 }
                 memory_copy_apart(prefix + used, named, run);
 
+                // A final matching directory entry needs no second lookup.
+                // Keep the old recursion-limit failure for ordinary patterns.
+                if (!string_get(rest) && (star || depth + 1 < GLOB_DEPTH))
+                {
+                        prefix[out] = end;
+                        glob_add(prefix);
+                        if (!star)
+                                continue;
+                }
+
                 if (!star)
                         glob_walk(prefix, out, rest, depth + 1);
                 else
                 {
-                        if (!string_get(rest))
-                        {
-                                prefix[out] = end;
-                                glob_add(prefix);
-                        }
                         // Unknown directory types are resolved by
                         // the recursive open; symlinks are not followed.
                         bool link_directory = entry->d_type == 10 &&
@@ -6377,6 +6377,16 @@ static positive expand_split(shell_words address_to out)
                 if (expand_quoted_seen)
                         expand_emit(0, 0, out);
 
+                return out->count;
+        }
+
+        // A wholly quoted nonempty field can neither split nor glob. Keep
+        // it directly instead of constructing an unused escaped pattern.
+        if (memory_span_byte(expand_mark, MARK_QUOTED, expand_length) == expand_length)
+        {
+                string_address kept = expand_keep_bytes(expand_text, expand_length);
+                if (expand_failed || !shell_words_add(out, kept))
+                        expand_fail_state();
                 return out->count;
         }
 
