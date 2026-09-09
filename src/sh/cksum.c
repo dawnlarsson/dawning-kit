@@ -481,7 +481,20 @@ static b32 cksum_main()
                 }
 #endif
 
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm, "algorithm is not supported by the available checksum engine"));
+                text_flush();
+                string_format(writer_stderr,
+                    "cksum: invalid argument '%s' for '--algorithm'\nValid arguments are:\n",
+                    algorithm);
+                static const string_address known[] = {
+                    "bsd", "sysv", "crc", "crc32b", "md5", "sha1", "sha224",
+                    "sha256", "sha384", "sha512", "sha2", "sha3", "blake2b",
+                    "sm3",
+                };
+                for (positive at = 0; at < array_count(known); at++)
+                        string_format(writer_stderr, "  - '%s'\n", known[at]);
+                string_format(writer_stderr,
+                              "Try 'cksum --help' for more information.\n");
+                return text_done(1);
         }
 
         cksum_crc_prepare();

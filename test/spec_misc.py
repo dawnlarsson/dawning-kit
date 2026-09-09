@@ -517,7 +517,7 @@ def misc_ps_normalize(channel, data):
         return data
     lines = data.split(b"\n")
     if len(lines) > 5:
-        heading = lines[0] if re.search(rb"[A-Za-z]", lines[0]) else b""
+        heading = lines[0] if not re.search(rb"[0-9]", lines[0]) else b""
         return heading + b"\n<ROWS>\n"
     data = re.sub(rb"\d+-\d\d:\d\d:\d\d", b"##-##:##:##", data)
     data = re.sub(rb"\d\d:\d\d:\d\d", b"##:##:##", data)

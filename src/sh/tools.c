@@ -7183,16 +7183,18 @@ static b32 tools_dd(void)
                 string_address name;
                 positive address_to value;
                 bool address_to bytes, address_to seen;
+                // Where to keep the spelling, for the complaint that names it.
+                string_address address_to spelling;
         } numbers[] = {
-            {"ibs", &ibs, null, null},
-            {"obs", &obs, null, null},
-            {"bs", &bs, null, &bs_set},
-            {"count", &count, &count_bytes, &count_set},
-            {"skip", &skip, &skip_bytes, null},
-            {"iseek", &skip, &skip_bytes, null},
-            {"seek", &seek, &seek_bytes, null},
-            {"oseek", &seek, &seek_bytes, null},
-            {"cbs", &cbs, null, null},
+            {"ibs", &ibs, null, null, &input_size},
+            {"obs", &obs, null, null, &output_size},
+            {"bs", &bs, null, &bs_set, null},
+            {"count", &count, &count_bytes, &count_set, null},
+            {"skip", &skip, &skip_bytes, null, null},
+            {"iseek", &skip, &skip_bytes, null, null},
+            {"seek", &seek, &seek_bytes, null, null},
+            {"oseek", &seek, &seek_bytes, null, null},
+            {"cbs", &cbs, null, null, null},
         };
 
         text_begin("dd");
@@ -7228,6 +7230,10 @@ static b32 tools_dd(void)
                                 return string_diagnostic(&text_diagnostic, 1, argument, "invalid number");
                         if (numbers[n].seen)
                                 *numbers[n].seen = true;
+                        if (numbers[n].spelling)
+                                *numbers[n].spelling = value;
+                        else if (numbers[n].value == &bs)
+                                input_size = output_size = value;
                 }
                 else if (dd_operand(argument, "if", address_of value))
                         input = value;
