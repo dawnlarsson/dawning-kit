@@ -21298,6 +21298,16 @@ static fn kill_table_written(writer write)
 
 // A number's name: the table for the ones that have one, and RTn above the
 // real-time floor, which is how util-linux writes them for -l.
+/*
+        Which spelling a real-time signal gets.
+
+        util-linux's kill calls signal 34 RT0 and 64 RT30; the shells call the
+        same two RTMIN and RTMAX. Both are right for the program a caller
+        thinks it is running, so the utility keeps its own and the shell
+        builtin sets this while it borrows the utility's parser.
+*/
+static bool kill_shell_spelling;
+
 static bool kill_number_named(positive number, p8 address_to into)
 {
         if (!number)
@@ -21315,6 +21325,12 @@ static bool kill_number_named(positive number, p8 address_to into)
 
         if (number >= KILL_LEAST_REAL && number <= KILL_MOST)
         {
+                if (kill_shell_spelling)
+                {
+                        kill_name(number, into);
+                        return true;
+                }
+
                 p8 address_to at = into;
 
                 address_to at++ = 'R';
