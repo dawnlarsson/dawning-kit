@@ -649,8 +649,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                 }
                 else if (option == ARGUMENT_MISSING)
                         goto missing_option;
-                else if (option == ARGUMENT_UNKNOWN ||
-                         ((option == 'S' || option == 'X') && !*value))
+                else if (option == ARGUMENT_UNKNOWN)
                 {
                         if (taking.letters)
                         {
@@ -820,9 +819,26 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                               (operand[0]) ? (operand[0]) : (string_address)"none",
                                               strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
                         else if (options.verbose)
+                        {
+                                /* util-linux names the followed, absolute
+                                   spelling here, not the word it was given. */
+                                positive room = 0;
+                                p8 address_to resolved = null;
+                                bipolar handle = system_open_at(
+                                    AT_FDCWD, operand[0],
+                                    STORAGE_OPEN_PATH | O_CLOEXEC);
+                                if (handle >= 0)
+                                {
+                                        resolved = storage_fd_path(handle, address_of room);
+                                        system_close(handle);
+                                }
                                 string_format(write,
                                               "mount: %s propagation flags changed.\n",
-                                              operand[0]);
+                                              resolved ? (string_address)resolved
+                                                       : operand[0]);
+                                if (resolved)
+                                        memory_free(resolved, room);
+                        }
                         status = answer ? 32 : 0;
                 }
                 else if (options.flags & STORAGE_MS_REMOUNT)

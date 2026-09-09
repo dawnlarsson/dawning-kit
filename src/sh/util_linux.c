@@ -4168,6 +4168,14 @@ static b32 util_linux_lsclocks()
         if (taking.first < (positive)program_argument_count())
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, program_argument((b32)taking.first), "unexpected operand"));
 
+        /* Every argument is read before any of them is answered, so a bad
+           PID is named even when --time would have printed and left. */
+        string_address cpu_text = file_option_value(address_of taking, 'c');
+        positive cpu_pid = 0;
+        if (cpu_text && (!ul_unsigned(cpu_text, b32_max, address_of cpu_pid) || !cpu_pid))
+                return text_done(string_diagnostic(address_of text_diagnostic, 1,
+                                                   cpu_text, "invalid PID"));
+
         string_address time_name = file_option_value(address_of taking, 't');
         if (time_name)
         {
@@ -4234,12 +4242,10 @@ static b32 util_linux_lsclocks()
         string_address rtc = file_option_value(address_of taking, 'x');
         if (rtc && !ul_lsclock_add_path(rows, address_of count, rtc, true, true))
                 return text_done(1);
-        string_address pid_text = file_option_value(address_of taking, 'c');
+        string_address pid_text = cpu_text;
         if (pid_text)
         {
-                positive pid;
-                if (!ul_unsigned(pid_text, b32_max, address_of pid) || !pid)
-                        return text_done(string_diagnostic(address_of text_diagnostic, 1, pid_text, "invalid PID"));
+                positive pid = cpu_pid;
                 p8 path[64]; file_facts facts;
                 system_process_path(path, (p32)pid, null, "");
                 if (!file_look_at(path, address_of facts))
@@ -9187,7 +9193,8 @@ static b32 util_linux_swaplabel()
                     address_of answer))
                 return answer;
         positive count = (positive)program_argument_count();
-        if (taking.first + 1 != count)
+        /* One device is read; util-linux ignores whatever follows it. */
+        if (taking.first >= count)
                 return string_report(log_error, 1, "%s: %s\n", "swaplabel", "expected exactly one device");
 
         string_address path = program_argument((b32)taking.first);
