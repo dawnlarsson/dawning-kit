@@ -13274,7 +13274,10 @@ static inline INLINE b32 shell_query(writer write, positive index, b32 flags,
                         matched = true;
                 }
 
-                if (!path_only)
+                //      -P asks for a file and nothing else, so the
+                //      namespaces are not written even when the answer is a
+                //      single word rather than a path.
+                if (!path_only && !(flags & SHELL_QUERY_FORCE_PATH))
                 {
                         if (alias)
                         {
@@ -13349,7 +13352,9 @@ static inline INLINE b32 shell_query(writer write, positive index, b32 flags,
                 //      -t and -p/-P ask for one word and nothing else, so
                 //      neither says anything when there is no answer; -a and
                 //      -f do say it, which is where this used to stay quiet.
-                if (command ? style == SHELL_KIND_LONG : !terse && !path_only)
+                if (command ? style == SHELL_KIND_LONG
+                            : !terse && !path_only &&
+                              !(flags & SHELL_QUERY_FORCE_PATH))
                         string_format(shell_bash_compat ? log_error : write,
                                       "%s: not found\n", name);
                 if (!command)
@@ -13380,16 +13385,28 @@ COLD fn shell_type(writer write, string_address input)
 
         while (shell_option_letter(address_of walk, address_of which))
         {
+                //      -t on one side and -p and -P on the other ask for
+                //      two different single answers, and the last of them
+                //      wins. -P leaves behind the demand for a file, which
+                //      a -t after it does not take away: "type -aPt cd"
+                //      finds no file called cd and says nothing at all.
                 if (which == 't')
+                {
                         terse = true;
+                        path_only = false;
+                }
                 else if (which == 'a')
                         every = true;
                 else if (which == 'p')
+                {
                         path_only = true;
+                        terse = false;
+                }
                 else if (which == 'P')
                 {
                         path_only = true;
                         force_path = true;
+                        terse = false;
                 }
                 else if (which == 'f')
                         no_functions = true;
@@ -13402,12 +13419,6 @@ COLD fn shell_type(writer write, string_address input)
         }
 
         index = walk.index;
-
-        //      -t asks for one word and outranks -p, which would have
-        //      nothing to say about a builtin; -P outranks -t in turn,
-        //      because it asks for a file and a builtin is not one.
-        if (terse && !force_path)
-                path_only = false;
 
         if (index >= shell_argc)
                 return shell_answer(0);
