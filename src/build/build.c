@@ -12,12 +12,19 @@
         line and then hands over, so `sh build.sh` still works and still means
         the same thing.
 
-        What this replaces: build.sh's 885 lines and the six shell scripts
-        under kit/ that were the build path -- build, spark, asm, common,
-        config and verify_config. The external programs they drove are still
-        driven: kbuild is GNU make, the kernel arrives through curl and tar,
-        the image is packed by objcopy, and QEMU boots it. What has gone is
-        the shell plumbing between them.
+        What this replaces: the build half of build.sh, and the five shell
+        scripts under kit/ that were the rest of the build path -- build,
+        spark, asm, config and verify_config. The external programs they drove
+        are still driven: kbuild is GNU make, the kernel arrives through curl
+        and tar, the image is packed by objcopy, and QEMU boots it. What has
+        gone is the shell plumbing between them.
+
+        kit/common is not one of the five and stays. It is a library of shell
+        helpers, and four scripts this fold does not touch still source it --
+        kit/onbox, kernel/patch/apply, kernel/replace/apply and the Raspberry
+        Pi post-build step -- so removing its build-path callers did not make
+        it dead. Its key/key_one are the same two answers `build key` and
+        `build key-one` give.
 
         Where a utility exists in this tree it is called rather than spawned.
         cp, ln, rm, mkdir, mknod, chmod, find and nproc here are the same
