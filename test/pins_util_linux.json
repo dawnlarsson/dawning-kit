@@ -2,6 +2,230 @@
  {
   "list": "ledger",
   "domain": "util_linux",
+  "utility": "bits",
+  "option": ",,1",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": ",1,",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": ",1,,2",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "0x,1",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "0x1,",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "0x1,,2",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "0x1000000000000000g",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "0x_1",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "0xg0000000000000001",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "1,,2",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "1-3:0",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "18446744073709551616",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "3-1",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "abc",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "bits",
+  "option": "none",
+  "kind": "deliberate",
+  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "--list-one",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "--probe",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-D",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-H",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-O",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-S",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-d",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-i",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-k",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-l",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-n",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-p",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "blkid",
+  "option": "-u",
+  "kind": "deliberate",
+  "reason": "identity comes from a direct low-level probe of the device named: the cache-driven lookups, libblkid's probing modes, I/O limits, the type and usage filters, the known-filesystem list, size and offset overrides and probing hints are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
   "utility": "copyfilerange",
   "option": "--ranges",
   "kind": "deliberate",

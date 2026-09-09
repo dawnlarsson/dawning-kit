@@ -2108,6 +2108,13 @@ static const file_long ul_flock_longs[] = {
     {(string_address)"version", 'V'}, {null, 0},
 };
 
+static COLD b32 ul_flock_usage()
+{
+        return string_report(log_error, 64,
+                             "flock: bad usage\n"
+                             "Try 'flock --help' for more information.\n");
+}
+
 static b32 util_linux_flock()
 {
         file_taking taking = {
@@ -2137,7 +2144,7 @@ static b32 util_linux_flock()
 
         positive count = (positive)program_argument_count();
         if (taking.first >= count)
-                return 64;
+                return ul_flock_usage();
 
         b32 conflict = 1;
         positive parsed;
@@ -2145,7 +2152,8 @@ static b32 util_linux_flock()
         {
                 if (!ul_unsigned(file_option_value(address_of taking, 'E'), 255,
                                  address_of parsed))
-                        return 64;
+                        return string_report(log_error, 64, "%s: %s\n", "flock",
+                                             "exit code out of range (expected 0 to 255)");
                 conflict = (b32)parsed;
         }
 
@@ -2197,12 +2205,12 @@ static b32 util_linux_flock()
             string_equals(program_argument((b32)taking.first + 1), "-c"))
         {
                 if (taking.first + 3 != count)
-                        return 64;
+                        return ul_flock_usage();
                 command_text = program_argument((b32)taking.first + 2);
                 command_option = true;
         }
         else if (command_option && taking.first + 1 != count)
-                return 64;
+                return ul_flock_usage();
         bool descriptor = false;
         bipolar descriptor_number = 0;
         if (!command_option && taking.first + 1 == count)
@@ -2278,7 +2286,7 @@ static b32 util_linux_flock()
         if ((!words[0]) || (!command_option && taking.first + 1 >= count))
         {
                 system_close(handle);
-                return 64;
+                return ul_flock_usage();
         }
         if (verbose)
                 string_format(log, "flock: executing %s\n", words[0]);
@@ -2574,7 +2582,12 @@ static b32 util_linux_setarch()
                             "setarch", "PID", address_of pid) || !pid) return 1;
         }
         if (ul_setarch_do_show)
-                return ul_setarch_show(file_option_value(address_of taking, 's'), pid);
+        {
+                /* --show=VALUE names the personality outright; only a bare
+                   --show reads one from a process. */
+                string_address shown = file_option_value(address_of taking, 's');
+                return ul_setarch_show(shown, shown ? 0 : pid);
+        }
         if (pid) return string_report(log_error, 1, "%s: %s\n", "setarch", "use -p/--pid option with --show option");
         if (!arch && !ul_setarch_options) return string_report(log_error, 1, "%s: %s\n", "setarch", "no architecture argument or personality flags specified");
 
@@ -7326,8 +7339,21 @@ static string_address address_to ul_getopt_long_lists;
 static positive ul_getopt_long_count;
 static positive ul_getopt_long_room;
 
+static bool ul_getopt_shell_known(string_address shell)
+{
+        return string_equals(shell, "sh") || string_equals(shell, "bash") ||
+               string_equals(shell, "csh") || string_equals(shell, "tcsh");
+}
+
 static bool ul_getopt_seen(p8 letter, string_address value)
 {
+        /* Each occurrence is checked where it stands: keeping only the last
+           value must not let an unknown shell through on the way. */
+        if (letter == 's' && !ul_getopt_shell_known(value))
+        {
+                string_report(log_error, 2, "getopt: %s\n" "Try 'getopt --help' for more information.\n", "unknown shell after -s or --shell argument");
+                return false;
+        }
         if (letter != 'l')
                 return true;
 
@@ -7768,14 +7794,8 @@ static b32 util_linux_getopt()
 
                 string_address shell = file_option_value(address_of taking, 's');
                 if (shell)
-                {
-                        if (string_equals(shell, "csh") ||
-                            string_equals(shell, "tcsh"))
-                                csh = true;
-                        else if (!string_equals(shell, "sh") &&
-                                 !string_equals(shell, "bash"))
-                                return string_report(log_error, 2, "getopt: %s\n" "Try 'getopt --help' for more information.\n", "unknown shell after -s or --shell argument");
-                }
+                        csh = string_equals(shell, "csh") ||
+                              string_equals(shell, "tcsh");
         }
 
         bool address_to deferred = count
@@ -8321,7 +8341,8 @@ static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
                 if (result < 0)
                 {
                         system_close(handle);
-                        if (verbose)
+                        if (verbose &&
+                            descriptor->operation <= UL_BLOCK_QUERY_SIGNED32)
                                 string_format(log, "%s failed.\n",
                                               descriptor->description);
                         log_flush();
