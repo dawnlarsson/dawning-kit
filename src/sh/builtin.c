@@ -5249,11 +5249,13 @@ static COLD fn shell_shopt_said(writer write, positive which, bool as_commands)
 static COLD fn shell_shopt_option_said(writer write, string_address name,
                                        bool on, bool as_commands)
 {
-        /* shopt uses its own twenty-column listing even when -o selects the
-           set-option namespace. `set -o` retains the POSIX/dash layout. */
+        /* The name comes from the set namespace and so does its column:
+           Bash pads shopt -o to fifteen, the same width set -o writes, and
+           not to the twenty a shopt name gets. A script cutting the listing
+           on the tab sees one layout for the one namespace. */
         shell_option_row(write, name, on,
                          as_commands ? (on ? "set -o " : "set +o ") : null,
-                         20, '\t');
+                         15, '\t');
 }
 
 COLD fn shell_shopt(writer write, string_address input)
