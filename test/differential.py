@@ -133,9 +133,29 @@ DOMAIN_FLOOR = {
                    "verbose removals and the Times, Creators and PIDs listings; "
                    "lsfd_live, the row set above; and the long usage banners of "
                    "rfkill and uclampset, which are a page of text each"),
-    "misc": (18223, 20044, 8,
-             "script's transcript timing, cksum --check combinations, and od "
-             "and numfmt corners"),
+    "misc": (19806, 20052, 10,
+             "unfinished work, not undecidable answers. The note this floor "
+             "used to carry named script's transcript timing first, and that "
+             "was the wrong diagnosis: script's recorder held back an "
+             "end-of-file it never let go of, because the flag that says the "
+             "session has spoken was read and never set. The transcripts "
+             "agree now. What is left, largest first: scriptreplay keeps one "
+             "log to a stream, so it refuses --log-io beside --log-in and "
+             "--log-out, refuses the signal and info streams, and refuses a "
+             "zero divisor, all of which util-linux takes; logger refuses "
+             "--sd-id and --sd-param outright and refuses them before the "
+             "checks util-linux reaches first, so it never says --sd-id was "
+             "not specified for --sd-param; ps has no nice, pri, pcpu, ruser, "
+             "lstart or start column and answers -H, -l and -j as options it "
+             "has not got, though the runner normalises the rows away so it "
+             "is the heading and the acceptance that differ; numfmt cannot "
+             "print the float in value too large to be printed: 1.84467e+19, "
+             "there being no floating point in this file; od reads the "
+             "traditional FILE OFFSET operand as a second file and refuses "
+             "-t f before it has validated --endian; dmesg does not read "
+             "--kmsg-file; and what is left of diff is the unified body "
+             "itself, not its diagnostics. None of it depends on the "
+             "reference's own machine."),
     "files": (58260, 73330, 100,
               "the domain moved from singles to full in one pass, so most of "
               "what pairwise, three-wise and the powerset first reached is "
@@ -197296,6 +197316,47 @@ PINNED = r"""
   "reference": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "sed"
+ },
+ {
+  "candidate": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--quiet",
+    "-e",
+    "e",
+    "-fdir",
+    "-l70",
+    "--line-length=2",
+    "-E",
+    "-r",
+    "-s",
+    "-u",
+    "big"
+   ],
+   "domain": "text",
+   "family": null,
+   "fixture": "text",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "sed"
+  },
+  "domain": "text",
+  "id": "d186db2af4903a38",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the GNU sed extensions these scripts use -- case conversion in a replacement, the e flag and the e command, the backtick and quote anchors, first~step and addr,~N addresses, F -- are not implemented, so the script is refused whole.",
+  "reference": {
+   "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
+   "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "utility": "sed"
