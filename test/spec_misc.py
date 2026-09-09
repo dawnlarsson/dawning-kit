@@ -690,7 +690,7 @@ def misc_checksum(name, variable_length=False):
                   ("sums." + name,), ("sums." + name + ".bad",), ("sums.malformed",),
                   ("sums." + name, "sums.malformed"), ("sums.malformed", "sums." + name),
                   ("sums." + name, "empty"), ("sums." + name, "missing"), ("-", "-"),
-                  ("sums." + name + ".tagged",), ("sums.md5",), ("sums.sha256.bad",)),
+                  ("sums." + name + ".tagged",), ("sums.md5sum",), ("sums.sha256sum.bad",)),
         stdin=("text", "empty", "misc_sums_" + name, "misc_sums_malformed", "edge_65535",
                "edge_65536", "edge_65537", "long", "nul", "high", "nonl"),
         fixture="misc", stderr="exact")
@@ -947,16 +947,16 @@ UTILITIES = (
                      Option("-w"), Option("--debug")),
             operands=((), ("a.txt",), ("a.txt", "b.txt", "empty"), ("-",), ("missing",), ("dir",), ("binary",),
                       ("edge_65535",), ("edge_65536",), ("edge_65537",), ("long",), ("unreadable",), ("two words",),
-                      ("a\\b", "ab\nc"), ("a.txt", "missing", "b.txt"), ("sums.sha256.tagged",), ("sums.md5.tagged",),
-                      ("sums.b2sum.tagged",), ("sums.sha256",), ("sums.crc",), ("sums.malformed",), ("a.txt", "--algorithm=crc"),
+                      ("a\\b", "ab\nc"), ("a.txt", "missing", "b.txt"), ("sums.sha256sum.tagged",), ("sums.md5sum.tagged",),
+                      ("sums.b2sum.tagged",), ("sums.sha256sum",), ("sums.crc",), ("sums.malformed",), ("a.txt", "--algorithm=crc"),
                       ("a.txt", "--algorithm=sha256")),
             # The algorithms this engine does not carry, and the check mode
             # that would have to read every one of their spellings.
             extra=(("-a", "crc32b", "a.txt"), ("-acrc32b", "a.txt"), ("-a", "sm3", "a.txt"),
                    ("-a", "sha3", "a.txt"), ("-a", "sha2", "a.txt"), ("-a", "bsd", "a.txt"),
-                   ("-a", "sysv", "a.txt"), ("-c", "sums.crc"), ("--check", "sums.sha256"),
-                   ("-a", "sha256", "-c", "sums.sha256.tagged")),
-            stdin=("text", "empty", "misc_sums_sha256", "edge_65535", "edge_65536", "edge_65537", "long", "nul",
+                   ("-a", "sysv", "a.txt"), ("-c", "sums.crc"), ("--check", "sums.sha256sum"),
+                   ("-a", "sha256", "-c", "sums.sha256sum.tagged")),
+            stdin=("text", "empty", "misc_sums_sha256sum", "edge_65535", "edge_65536", "edge_65537", "long", "nul",
                    "high", "nonl", "many_lines"),
             fixture="misc", stderr="exact"),
 
