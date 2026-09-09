@@ -1,5 +1,5 @@
 // Isolated headless-Chrome checks for a generated standalone function atlas.
-// Usage: node test/code_map_browser.mjs [artifact-directory]
+// Usage: node kit/code_map/browser.mjs [artifact-directory]
 import fs from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {resolve, join} from 'node:path';

@@ -8,7 +8,7 @@
         says so and leaves the rest to run.
 
             fixes.py        two corrections, anchored on the file's own
-                            wording. See test/native_FINDING.
+                            wording. See kit/native_FINDING.
             chain.py        instructions several to a source line
             dedup.py        a routine's contract written once, not once per
                             architecture
