@@ -22,7 +22,7 @@ moonwater-y := core.o
 #       A .asm dropped in this directory is picked up here, translated to a .S
 #       for whichever architecture the kernel is being configured for, and
 #       assembled by the toolchain's own assembler through the kernel's
-#       ordinary rule for .S files. See kit/asm for the dialect.
+#       ordinary rule for .S files. See `build asm` for the dialect.
 #
 #       Two directories, named rather than found recursively. kernel/replace/
 #       holds the other kind of .asm -- the ones that stand in for a file the
@@ -57,7 +57,7 @@ targets += $(asm-sources:.asm=.S)
 #       to this repository's src/. A relative path out of it would land back
 #       in the kernel tree, so realpath follows the link home first.
 quiet_cmd_asm = ASM     $@
-      cmd_asm = sh $(realpath $(src))/../kit/asm '$(asm-arch-y)' $< $@
+      cmd_asm = $(realpath $(src))/../build asm '$(asm-arch-y)' $< $@
 
 $(obj)/%.S: $(src)/%.asm FORCE
 	$(call if_changed,asm)

@@ -7,6 +7,44 @@ foundational parts of the common userspace is moved into the moonwater kernel mo
 
 Moonwater is also supposed to be super small, sub 15 mb for the entire system.
 
+## The build tool
+
+The whole build path is one C program, `src/build/build.c`, built on this
+project's own freestanding stack. Bootstrap it with one command, from the
+repository root:
+
+```sh
+cc -O2 -static -nostdlib -nostartfiles -fno-stack-protector -fno-builtin -w \
+   -o build src/build/build.c
+```
+
+That is all a bare machine needs: a C compiler and an assembler. Nothing is
+linked and no library is required. `sh build.sh` runs exactly that line and
+then hands over, so either front door works and both mean the same thing.
+
+Besides the build, the tool is the pieces the build is made of:
+
+```sh
+./build config <profile ...>                    compose artifacts/.config
+./build verify-config <config> [profile ...]    what the profiles did not get
+./build asm <arch> <in.asm> <out.S>             one architecture out of a .asm
+./build spark <source> <output> [debug]         link a spark program
+./build freestanding [-v] [--run] [--watch] [source] [output]
+./build floor [arch]                            prove the ISA floor
+./build key <name>                              a value from artifacts/.config
+```
+
+Nothing in it names this project: the paths, the linker script, the entry
+symbol, the flag sets, the ISA floor, the image layout and the kernel version
+are settings, overridable one at a time with `--set name=value`. Point them at
+another tree and the same guarantees apply there.
+
+Building a kernel wants a Linux toolchain and a case-sensitive filesystem, so
+on anything else -- a Mac, most obviously -- point `--host` at a machine that
+has them, or set `MOONWATER_BUILD_HOST` once and forget about it. Everything
+after the build is local either way: QEMU runs on this machine so the window,
+the mouse and the keyboard are real.
+
 ## Building a desktop or server image
 
 The default build starts the in-kernel Canvas desktop. Two profiles provide

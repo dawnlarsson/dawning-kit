@@ -39,3 +39,6 @@ __pycache__/
 
 # Agent worktrees and local session state.
 .claude/
+
+# The build tool, compiled from src/build/build.c by build.sh.
+/build

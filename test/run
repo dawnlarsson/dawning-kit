@@ -210,6 +210,24 @@ freestanding()
         return 1
 }
 
+#       The build tool, bootstrapped if this is the first thing to want it.
+#
+#       src/build/build.c is the whole build path -- what kit/build, kit/spark,
+#       kit/asm, kit/config and kit/verify_config used to be -- and lanes reach
+#       it the same way build.sh does, with the one documented command.
+build_tool()
+{
+        if [ ! -x "$root/build" ] ||
+                [ "$root/src/build/build.c" -nt "$root/build" ]
+        then
+                ${CC:-cc} -O2 -static -nostdlib -nostartfiles \
+                        -fno-stack-protector -fno-builtin -w \
+                        -o "$root/build" "$root/src/build/build.c" || return 1
+        fi
+
+        "$root/build" "$@"
+}
+
 #       One section of test/checks.c, which is where every C check lives. The
 #       name selects the section; anything after the architecture goes to the
 #       compiler as well, which is how a variant gets its second definition
@@ -8055,7 +8073,7 @@ bench_shell()
         if [ -z "$subject" ]; then
                 subject=$work/moonwater-shell
                 echo "building $subject" >&2
-                sh kit/build programs/shell.c "$subject"
+                build_tool freestanding programs/shell.c "$subject"
         fi
 
         # shellcheck disable=SC1007
@@ -8311,7 +8329,7 @@ bench_tools()
         if [ -z "$subject" ]; then
                 subject=$work/moonwater
                 echo "building $subject" >&2
-                sh kit/build programs/shell.c "$subject"
+                build_tool freestanding programs/shell.c "$subject"
         fi
 
         # shellcheck disable=SC1007
@@ -8537,7 +8555,7 @@ bench_awk()
 
         if [ -z "$subject" ]; then
                 subject=$work/moonwater
-                sh kit/build programs/shell.c "$subject"
+                build_tool freestanding programs/shell.c "$subject"
         fi
 
         # shellcheck disable=SC1007
@@ -8732,7 +8750,7 @@ bench_find()
         if [ -z "$subject" ]; then
                 subject=$work/moonwater
                 echo "building $subject" >&2
-                sh kit/build programs/shell.c "$subject"
+                build_tool freestanding programs/shell.c "$subject"
         fi
 
         # shellcheck disable=SC1007

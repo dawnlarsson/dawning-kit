@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 #       Puts a .asm from kernel/replace/ in the place of a file the kernel already
-#       builds, which is the other half of what kit/asm is for: not everything
+#       builds, which is the other half of what `build asm` is for: not everything
 #       worth writing in assembly can live in a module.
 #
 #       Its own directory, and that is not tidiness. src/Makefile globs every
@@ -166,7 +166,7 @@ while read -r source target extra; do
         fi
 
         echo "Replacing $target with $source"
-        sh kit/asm "$arch" "$asm" "$destination"
+        ./build asm "$arch" "$asm" "$destination"
 done < "$requested"
 
 echo "$arch" > "$stamp"

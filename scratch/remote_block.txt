@@ -1,0 +1,64 @@
+#       Building somewhere else.
+#
+#       Optional, and only reached when a host was named. The remote command
+#       carries no --host of its own and ssh does not forward the environment,
+#       so the build over there is an ordinary local one and this cannot
+#       recurse.
+#
+build_remote() {
+        say "Checking $host"
+        ssh -n -o BatchMode=yes -o ConnectTimeout=20 "$host" true 2>/dev/null ||
+                die "cannot reach $host over ssh"
+
+        say "Copying the tree to $host:$remote"
+        remote_path=$(shell_quote "$remote")
+        remote_rsync="mkdir -p -- $remote_path && cd -- $remote_path && rsync"
+
+        # The kernel source, its artifacts and the built filesystem stay on
+        # the build host: they are large, and none of them belong to this
+        # checkout. linux/ is the upstream tree, not part of this repository.
+        rsync -az --delete --rsync-path="$remote_rsync" \
+                --exclude '.git' \
+                --exclude '.claude' \
+                --exclude 'linux' \
+                --exclude 'artifacts' \
+                --exclude 'fs' \
+                --exclude 'dist' \
+                ./ "$host:./" || die "copying the tree failed"
+
+        say "Building on $host: $*"
+        # -n so the build does not swallow this script's stdin. Without it the
+        # USB prompts below read nothing, because ssh forwards whatever is on
+        # stdin to the remote command.
+        # shellcheck disable=SC2029,SC2086
+        #
+        #       sudo drops the environment, so anything the remote build has
+        #       to know is named here. env rather than a VAR=value prefix,
+        #       which sudo only passes when it has been configured to.
+        #
+        carry=""
+        [ -z "${MOONWATER_STOCK:-}" ] || carry="MOONWATER_STOCK=1"
+
+        # shellcheck disable=SC2029,SC2086
+        ssh -n "$host" "cd -- $remote_path && sudo env $carry sh build.sh $(shell_quote "$@")" ||
+                die "the build failed on $host"
+
+        # The host which built the configured profile is authoritative about
+        # its export.  A stale local artifacts/.config may describe another
+        # architecture entirely (an ARM Mac commonly names kernel8.img).
+        image=$(ssh -n "$host" \
+                "cd -- $remote_path && . ./kit/common && key_one kernel_export") ||
+                die "could not identify the built image"
+        case "$image" in
+        dist/*) ;;
+        *) die "remote build reported an invalid image path: $image" ;;
+        esac
+
+        say "Fetching $image"
+        mkdir -p "$(dirname "$image")"
+        ssh -n "$host" "cd -- $remote_path && cat -- $(shell_quote "$image")" > "$image" ||
+                die "could not fetch the built image"
+}
+
+build_local() {
+        # Only this path needs it. Booting an image, writing a stick and
