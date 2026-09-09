@@ -42,3 +42,6 @@ __pycache__/
 
 # The build tool, compiled from src/build/build.c by build.sh.
 /build
+
+# Working files: nothing here is part of the tree.
+scratch/

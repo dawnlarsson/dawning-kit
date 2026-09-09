@@ -1,3 +1,0 @@
-[91mbuild failed: building a kernel wants a Linux toolchain and a case
-sensitive filesystem, and this is Darwin. Name a machine that has them with
---host, or set MOONWATER_BUILD_HOST.[0m
