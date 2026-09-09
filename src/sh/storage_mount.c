@@ -655,12 +655,14 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                         {
                                 p8 letter[2] = {(p8)taking.letters[-1], end};
                                 string_format(diagnostic,
-                                              "mount: unknown option: -%s\n",
+                                              "mount: invalid option -- '%s'\n"
+                                              "Try 'mount --help' for more information.\n",
                                               letter);
                         }
                         else
                                 string_format(diagnostic,
-                                              "mount: unknown option: %s\n",
+                                              "mount: unrecognized option '%s'\n"
+                                              "Try 'mount --help' for more information.\n",
                                               taking.word);
                         goto done;
                 }
@@ -1125,12 +1127,14 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         {
                                 p8 letter[2] = {(p8)taking.letters[-1], end};
                                 string_format(diagnostic,
-                                              "umount: unknown option: -%s\n",
+                                              "umount: invalid option -- '%s'\n"
+                                              "Try 'umount --help' for more information.\n",
                                               letter);
                         }
                         else
                                 string_format(diagnostic,
-                                              "umount: unknown option: %s\n",
+                                              "umount: unrecognized option '%s'\n"
+                                              "Try 'umount --help' for more information.\n",
                                               taking.word);
                         goto failed_early;
                 }
