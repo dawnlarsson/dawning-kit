@@ -429,21 +429,22 @@ def ul_waitpid_valid(argv):
     live = any(word in ("1", "1:1", "+1", " 1") for word in argv)
     if not live:
         return True
+    # The last spelling wins, so an earlier expiring timeout says nothing:
+    # `--timeout=.01 -t 0` waits forever and has no oracle.
+    last = None
     for index, word in enumerate(argv):
-        value = None
         if word in ("-t", "--timeout") and index + 1 < len(argv):
-            value = argv[index + 1]
+            last = argv[index + 1]
         elif word.startswith("-t") and len(word) > 2:
-            value = word[2:]
+            last = word[2:]
         elif word.startswith("--timeout="):
-            value = word[len("--timeout="):]
-        if value is not None:
-            try:
-                if float(value) > 0:
-                    return True
-            except ValueError:
-                return True
-    return False
+            last = word[len("--timeout="):]
+    if last is None:
+        return False
+    try:
+        return float(last) > 0
+    except ValueError:
+        return True
 
 
 def ul_lsns_live_valid(argv):
