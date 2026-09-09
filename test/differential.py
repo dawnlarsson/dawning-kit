@@ -1140,7 +1140,17 @@ def main(argv=None):
                     #       For a deliberate policy it means the policy was
                     #       lost, which is a failure whatever the mode.
                     if args.record == "refresh" and row.get("kind") == "bug":
-                        refreshed_gone.append(row)
+                        #       One observation of agreement is what this has.
+                        #       A case that races decides differently the next
+                        #       time and the row is then gone for nothing, so
+                        #       confirm it before dropping.
+                        again, again_got = runner.pair(case, spec)
+                        if again and not differences(again, again_got, policy):
+                            refreshed_gone.append(row)
+                            passed[tally_key] += 1
+                            continue
+                        print(f"  kept {key} {label_of(case)}: agreed once and differed "
+                              f"again, so the row stays")
                         passed[tally_key] += 1
                         continue
                     failures[tally_key][("ledger-agrees",)] += 1
