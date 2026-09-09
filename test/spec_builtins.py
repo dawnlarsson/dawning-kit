@@ -372,7 +372,9 @@ builtins_add(Utility(
               ("echo", "bogus"), ("echo", "64"), ("echo", "65"), ("-", "INT"),
               ("echo hi", "hUp"), ("echo", "40"), ("echo", "USR1")),
     stdin=("empty",), stderr="loose", modes=ALL,
-    script=builtins_wrap("trap", report='trap 2>/dev/null | /bin/grep -c . \n'),
+    # Report through bare trap, never a pipeline: a subshell resets trapped
+    # signals to their default in dash, so a piped listing asks the wrong shell.
+    script=builtins_wrap("trap", report='trap 2>/dev/null\n'),
     max_flags=0))
 # -l and -p are Bash extensions dash does not have. `trap -p` with no signal
 # lists every default in this shell (bash lists only what is set) -- pinned.
@@ -382,7 +384,7 @@ builtins_add(Utility(
     stdin=("empty",), stderr="loose", modes=BASH,
     script=builtins_wrap(
         "trap", prologue="trap 'echo x' INT\n",
-        report='trap 2>/dev/null | /bin/grep -c . \n'),
+        report='trap 2>/dev/null\n'),
     max_flags=0))
 
 # --- set --------------------------------------------------------------------
@@ -790,13 +792,14 @@ builtins_add(Utility(
     operands=((), ("-o", "nospace"), ("-Z",), ("cmd",)),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=builtins_wrap("compopt"), max_flags=0))
+# bind is taken and does nothing, so one word of each shape is the whole of
+# its surface; the walk would only multiply identical no-ops.
 builtins_add(Utility(
     "bind",
-    options=(Option("-v"), Option("-l"), Option("-p"), Option("-s"),
-             Option("-q", ("abort",), None), Option("-f", ("missing",), None)),
-    operands=((), ("-Z",)),
+    operands=((), ("-v",), ("-l",), ("-p",), ("-s",), ("-q", "abort"),
+              ("-f", "missing"), ("-Z",)),
     stdin=("empty",), stderr="loose", modes=BASH,
-    script=builtins_wrap("bind"), max_flags=2))
+    script=builtins_wrap("bind"), max_flags=0))
 
 # --- fc / history -----------------------------------------------------------
 # The history store and its event numbering need an interactive reader; here

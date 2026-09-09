@@ -12711,21 +12711,27 @@ fn shell_limit_said(writer write, shell_limit address_to limit, bool hard)
         write("\n", 1);
 }
 
+/* The name in front of a value, for -a and for every listing that names
+   more than one resource and so has to say which value belongs to which. */
+static COLD fn shell_limit_label(writer write, shell_limit address_to limit,
+                                 bool bash)
+{
+        if (bash)
+                write(limit->bash_line, string_length(limit->bash_line));
+        else
+        {
+                string_to_field(write, limit->name, 20, ' ', true);
+                write(" ", 1);
+        }
+}
+
 fn shell_limit_listed(writer write, bool bash, bool hard)
 {
         shell_limit address_to limit = bash ? shell_bash_limits : shell_limits;
 
         while (limit->name)
         {
-                if (bash)
-                        write(limit->bash_line,
-                              string_length(limit->bash_line));
-                else
-                {
-                        string_to_field(write, limit->name, 20, ' ', true);
-                        write(" ", 1);
-                }
-
+                shell_limit_label(write, limit, bash);
                 shell_limit_said(write, limit, hard);
                 limit++;
         }
@@ -12737,6 +12743,10 @@ fn shell_ulimit(writer write, string_address input)
         bool hard = false;
         bool soft = false;
         bool listed = false;
+        //      Every resource the words name, not merely the last of them:
+        //      `ulimit -d -f` reports both, each behind its own name.
+        shell_limit address_to picked[32];
+        positive picked_count = 0;
         shell_limit address_to chosen = null;
         shell_limit address_to limit;
 
@@ -12805,6 +12815,9 @@ fn shell_ulimit(writer write, string_address input)
                         }
 
                         chosen = limit;
+
+                        if (picked_count < array_count(picked))
+                                picked[picked_count++] = limit;
                 }
 
                 index++;
@@ -12820,19 +12833,35 @@ fn shell_ulimit(writer write, string_address input)
         // No resource named is the file size, which is what every shell means
         // by a bare ulimit.
         if (!chosen)
+        {
                 chosen = shell_bash_compat ? shell_bash_limits + 4
                                            : shell_limits + 1;
+                picked[0] = chosen;
+                picked_count = 1;
+        }
 
         if (index >= shell_argc)
         {
-                shell_limit_said(write, chosen, hard);
+                for (positive at = 0; at < picked_count; at++)
+                {
+                        // One resource answers with a bare value; several
+                        // have to say which value belongs to which.
+                        if (picked_count > 1)
+                                shell_limit_label(write, picked[at],
+                                                  shell_bash_compat);
+
+                        shell_limit_said(write, picked[at], hard);
+                }
 
                 return shell_answer(0);
         }
 
+        for (positive at = 0; at < picked_count; at++)
         {
                 ul_limit_pair pair;
                 p64 value;
+
+                chosen = picked[at];
 
                 if (chosen->resource == SHELL_LIMIT_PIPE)
                         return shell_answer(string_report(log_error, shell_bash_compat ? 1 : 2,
