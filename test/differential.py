@@ -346,6 +346,18 @@ def grammar_cases(domain, utility, budget, rng):
     if budget == "singles":
         return
     strength = 3 if budget == "full" else 2
+    # Three-wise over a program with long operand and input lists is a
+    # covering array of many thousands of rows, and the greedy builder that
+    # writes it costs more than the cases it saves. Where the three widest
+    # parameters alone already multiply past a few thousand, pairs are what
+    # the full budget walks; its random tier goes deeper anyway.
+    if strength == 3:
+        widest = sorted((len(values) for values in parameters), reverse=True)[:3]
+        product = 1
+        for size in widest:
+            product *= size
+        if product > 4000:
+            strength = 2
     for row in covering_array(parameters, strength, random.Random(rng.random())):
         argv, stdin = assemble(utility, row, parameters)
         yield from emit(argv, stdin, "pairs" if strength == 2 else "triples")

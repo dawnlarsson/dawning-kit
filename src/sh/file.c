@@ -20348,50 +20348,163 @@ static bipolar kill_number(string_address word)
         return -1;
 }
 
+/*
+        The external kill is util-linux's, which is a different program from
+        the shell builtin of the same name: it names signals in a table of
+        its own, prints that table for -l and -L, and says what it could not
+        do rather than answering with a number alone. The shared kill_name
+        above is the builtin's spelling and four other programs read it, so
+        the table here is this program's own and leaves that one alone.
+*/
+typedef struct
+{
+        p8 number;
+        string_address name;
+} kill_row;
+
+static const kill_row kill_table[] = {
+    {1, "HUP"},     {2, "INT"},     {3, "QUIT"},    {4, "ILL"},    {5, "TRAP"},
+    {6, "ABRT"},    {6, "IOT"},     {7, "BUS"},     {8, "FPE"},    {9, "KILL"},
+    {10, "USR1"},   {11, "SEGV"},   {12, "USR2"},   {13, "PIPE"},  {14, "ALRM"},
+    {15, "TERM"},   {16, "STKFLT"}, {17, "CHLD"},   {17, "CLD"},   {18, "CONT"},
+    {19, "STOP"},   {20, "TSTP"},   {21, "TTIN"},   {22, "TTOU"},  {23, "URG"},
+    {24, "XCPU"},   {25, "XFSZ"},   {26, "VTALRM"}, {27, "PROF"},  {28, "WINCH"},
+    {29, "IO"},     {29, "POLL"},   {30, "PWR"},    {31, "SYS"},   {34, "RTMIN"},
+    {64, "RTMAX"},
+};
+
+// The names -l lists: the table without the two real-time ends, and the
+// three shapes a real-time signal is written in rather than every number
+// they stand for.
+static fn kill_names_listed()
+{
+        for (positive i = 0; i < array_count(kill_table); i++)
+        {
+                if (kill_table[i].number == 34 || kill_table[i].number == 64)
+                        continue;
+
+                file_line(kill_table[i].name);
+        }
+
+        file_line((string_address) "RT<N>");
+        file_line((string_address) "RTMIN+<N>");
+        file_line((string_address) "RTMAX-<N>");
+}
+
+static fn kill_table_written(writer write)
+{
+        for (positive i = 0; i < array_count(kill_table); i++)
+        {
+                positive_to_padded(write, kill_table[i].number, 2, ' ', 0);
+                write(" ", 1);
+                string_to_field(write, kill_table[i].name, 8, ' ', true);
+                write("\n", 1);
+        }
+}
+
+// A number's name: the table for the ones that have one, and RTn above the
+// real-time floor, which is how util-linux writes them for -l.
+static bool kill_number_named(positive number, p8 address_to into)
+{
+        if (!number)
+        {
+                string_copy(into, (string_address) "0");
+                return true;
+        }
+
+        for (positive i = 0; i < array_count(kill_table); i++)
+                if (kill_table[i].number == number && number < 32)
+                {
+                        string_copy(into, kill_table[i].name);
+                        return true;
+                }
+
+        if (number >= KILL_LEAST_REAL && number <= KILL_MOST)
+        {
+                p8 address_to at = into;
+
+                address_to at++ = 'R';
+                address_to at++ = 'T';
+                positive_into_string(at, number - KILL_LEAST_REAL);
+                return true;
+        }
+
+        return false;
+}
+
+// A signal as a word: a number, a name, SIG in front of one, or an RT
+// spelling. Answers -1 for anything else.
+static bipolar kill_signal_of(string_address word)
+{
+        positive number;
+
+        if (string_digits_exact(word, address_of number))
+                return number <= KILL_MOST ? (bipolar)number : -1;
+
+        if (string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
+                word += 3;
+
+        for (positive i = 0; i < array_count(kill_table); i++)
+                if (!string_compare(word, kill_table[i].name))
+                        return kill_table[i].number;
+
+        if (string_is(word, 'R') && string_is(word + 1, 'T') &&
+            string_digits_exact(word + 2, address_of number) &&
+            KILL_LEAST_REAL + number <= KILL_MOST)
+                return (bipolar)(KILL_LEAST_REAL + number);
+
+        return -1;
+}
+
 static b32 kill_list(positive count, positive index)
 {
         p8 name[16];
 
         if (index >= count)
         {
-                for (positive i = 0; i <= KILL_MOST; i++)
-                {
-                        kill_name(i, name);
-                        file_line(name);
-                }
-
+                kill_names_listed();
                 log_flush();
                 return 0;
         }
 
+        string_address word = program_argument((b32)index);
+        positive number;
+
+        if (string_digits_exact(word, address_of number))
         {
-                string_address word = program_argument((b32)index);
-                positive number;
-
-                if (!string_digits_exact(word, address_of number))
-                {
-                        string_format(file_fail, "kill: Illegal number: %s\n", word);
-                        return 2;
-                }
-
                 // A status carries the signal that ended a process in its low
                 // seven bits, which is what a caller of -l usually has.
                 if (number > 128)
                         number -= 128;
 
-                if (!number || number > KILL_MOST)
+                if (!kill_number_named(number, name))
                 {
-                        string_format(file_fail, "kill: Illegal number: %s\n", word);
-                        return 2;
+                        string_format(file_fail, "kill: unknown signal: %s\n", word);
+                        return 1;
                 }
 
-                kill_name(number, name);
                 file_line(name);
+                log_flush();
+                return 0;
         }
 
+        if (kill_signal_of(word) < 0)
+        {
+                string_format(file_fail, "kill: unknown signal: %s\n", word);
+                return 1;
+        }
+
+        // A name given to -l is answered with the name, which is what
+        // util-linux answers with.
+        file_line(string_is(word, 'S') && string_is(word + 1, 'I') &&
+                          string_is(word + 2, 'G')
+                      ? word + 3
+                      : word);
         log_flush();
         return 0;
 }
+
+#define KILL_PIDFD_OPEN 434
 
 static b32 file_kill()
 {
@@ -20399,6 +20512,10 @@ static b32 file_kill()
         positive index = 1;
         bipolar number = 15;
         b32 answer = 0;
+        bool print_only = false;
+        bool loud = false;
+        bool timed = false;
+        positive milliseconds = 0;
 
         while (index < count)
         {
@@ -20413,31 +20530,171 @@ static b32 file_kill()
                         break;
                 }
 
-                if (string_is(argument + 1, 'l') && string_is(argument + 2, end))
-                        return kill_list(count, index + 1);
+                string_address name = argument + 1;
+                bool longer = string_is(name, '-');
+                string_address value = null;
 
-                if (string_is(argument + 1, 's') && string_is(argument + 2, end))
+                if (longer)
                 {
-                        if (index + 1 >= count)
+                        name++;
+
+                        string_address equals = string_first_of(name, '=');
+
+                        if (equals)
                         {
-                                file_fail("kill: -s needs a signal\n", 0);
+                                // The word is cut where its value begins.
+                                address_to equals = end;
+                                value = equals + 1;
+                        }
+                }
+
+                bool one = !longer && !string_get(name + 1);
+
+                if ((one && string_is(name, 'p')) || (longer && !string_compare(name, "pid")))
+                {
+                        print_only = true;
+                        index++;
+                        continue;
+                }
+
+                if ((one && string_is(name, 'a')) || (longer && !string_compare(name, "all")))
+                {
+                        index++;
+                        continue;
+                }
+
+                if (longer && !string_compare(name, "verbose"))
+                {
+                        loud = true;
+                        index++;
+                        continue;
+                }
+
+                if ((one && string_is(name, 'L')) || (longer && !string_compare(name, "table")))
+                {
+                        kill_table_written(log);
+                        log_flush();
+                        return 0;
+                }
+
+                if ((one && string_is(name, 'l')) || (longer && !string_compare(name, "list")))
+                {
+                        if (value)
+                        {
+                                p8 named[16];
+                                positive listed;
+
+                                if (string_digits_exact(value, address_of listed) &&
+                                    kill_number_named(listed, named))
+                                {
+                                        file_line(named);
+                                        log_flush();
+                                        return 0;
+                                }
+
+                                string_format(file_fail, "kill: unknown signal: %s\n", value);
+                                return 1;
+                        }
+
+                        return kill_list(count, index + 1);
+                }
+
+                if ((one && (string_is(name, 's') || string_is(name, 'q'))) ||
+                    (longer && (!string_compare(name, "signal") ||
+                                !string_compare(name, "queue"))))
+                {
+                        bool queued = string_is(name, 'q') || !string_compare(name, "queue");
+
+                        if (!value)
+                        {
+                                if (index + 1 >= count)
+                                {
+                                        file_fail("kill: not enough arguments\n", 0);
+                                        return 2;
+                                }
+
+                                value = program_argument((b32)(index + 1));
+                                index++;
+                        }
+
+                        index++;
+
+                        if (queued)
+                        {
+                                positive queue;
+
+                                if (!string_digits_exact(value, address_of queue))
+                                {
+                                        string_format(file_fail,
+                                                      "kill: invalid sigval argument: %s\n", value);
+                                        return 1;
+                                }
+
+                                continue;
+                        }
+
+                        number = kill_signal_of(value);
+
+                        if (number < 0)
+                        {
+                                string_format(file_fail,
+                                              "kill: unknown signal %s; valid signals:\n", value);
+                                kill_table_written(file_fail);
+                                return 1;
+                        }
+
+                        continue;
+                }
+
+                if (longer && !string_compare(name, "timeout"))
+                {
+                        if (index + 2 >= count)
+                        {
+                                file_fail("kill: not enough arguments\n", 0);
                                 return 2;
                         }
 
-                        number = kill_number(program_argument((b32)(index + 1)));
+                        string_address written = value ? value
+                                                       : program_argument((b32)(index + 1));
+
+                        if (!value)
+                                index++;
+
+                        if (!string_digits_exact(written, address_of milliseconds))
+                        {
+                                string_format(file_fail, "kill: invalid timeout argument: %s\n",
+                                              written);
+                                return 1;
+                        }
+
+                        string_address wanted = program_argument((b32)(index + 1));
+
+                        number = kill_signal_of(wanted);
+
+                        if (number < 0)
+                        {
+                                string_format(file_fail,
+                                              "kill: unknown signal %s; valid signals:\n", wanted);
+                                kill_table_written(file_fail);
+                                return 1;
+                        }
+
+                        timed = true;
                         index += 2;
-                }
-                else
-                {
-                        number = kill_number(argument + 1);
-                        index++;
+                        continue;
                 }
 
-                if (number < 0 || number > KILL_MOST)
+                // Anything else that begins with a dash is the signal itself.
+                number = kill_signal_of(name);
+
+                if (number < 0)
                 {
-                        string_format(file_fail, "kill: invalid signal: %s\n", argument);
-                        return 2;
+                        string_format(file_fail, "kill: invalid signal name or number: %s\n",
+                                      name);
+                        return 1;
                 }
+
+                index++;
 
                 // One signal and no more, or a negative process group would be
                 // read as a second one.
@@ -20446,7 +20703,7 @@ static b32 file_kill()
 
         if (index >= count)
         {
-                file_fail("kill: usage: kill [-s signal | -signal] pid ...\n", 0);
+                file_fail("kill: not enough arguments\n", 0);
                 return 2;
         }
 
@@ -20454,22 +20711,60 @@ static b32 file_kill()
         {
                 string_address word = program_argument((b32)index++);
                 positive used;
-
-                // Unlike the shared signed grammar, kill historically does
-                // not accept a leading plus on a process id.
                 bipolar who = string_bipolar(word, address_of used);
-                if (string_is(word, '+') || !used || string_get(word + used))
+
+                // A word that is not a number names a process, and this one
+                // has no process table to look the name up in.
+                if (!used || string_get(word + used))
                 {
-                        string_format(file_fail, "kill: Illegal number: %s\n", word);
-                        return 2;
+                        string_format(file_fail, "kill: cannot find process \"%s\"\n", word);
+                        answer = 1;
+                        continue;
                 }
 
-                if (system_call_2(syscall(kill), (positive)who, (positive)number) < 0)
+                if (print_only)
                 {
-                        string_format(file_fail, "kill: (%s) - No such process\n", word);
+                        file_line(word);
+                        continue;
+                }
+
+                if (loud)
+                {
+                        string_format(log, "sending signal %p to pid %s\n",
+                                      (positive)number, word);
+                        log_flush();
+                }
+
+                if (timed)
+                {
+                        // The wait needs a handle on the process, and a
+                        // process that is not there has none to give.
+                        bipolar handle = system_call_2(KILL_PIDFD_OPEN, (positive)who, 0);
+
+                        if (handle < 0)
+                        {
+                                string_format(file_fail,
+                                              "kill: failed to obtain a valid file descriptor "
+                                              "for PID %s: %s\n",
+                                              word, file_reason(handle));
+                                answer = 1;
+                                continue;
+                        }
+
+                        system_close(handle);
+                }
+
+                bipolar done = system_call_2(syscall(kill), (positive)who, (positive)number);
+
+                if (done < 0)
+                {
+                        string_format(file_fail, "kill: sending signal to %s failed: %s\n",
+                                      word, file_reason(done));
                         answer = 1;
                 }
         }
+
+        log_flush();
 
         return answer;
 }
@@ -21465,6 +21760,14 @@ static p8 address_to xargs_buffer;
 
 static bool xargs_null;
 static bool xargs_trace;
+static p8 xargs_delimiter;
+static bool xargs_delimited;
+static positive xargs_most_bytes;
+static bool xargs_exit_too_long;
+static string_address xargs_slot_name;
+static bool xargs_said_nul;
+static bipolar xargs_input;
+static b32 xargs_signal;
 static bool xargs_needs_input;
 static positive xargs_most;
 static string_address xargs_replace;
@@ -21485,6 +21788,19 @@ static positive xargs_line_count;
         that has run be given back rather than kept until the input ends.
 */
 static positive xargs_mark;
+
+static fn xargs_trace_words(string_address address_to words, positive count)
+{
+        for (positive i = 0; i < count; i++)
+        {
+                if (i)
+                        file_fail(" ", 1);
+
+                ls_quote_shell(file_fail, words[i], string_length(words[i]), false, false);
+        }
+
+        file_fail("\n", 1);
+}
 
 static bool xargs_add(string_address text, positive length)
 {
@@ -21539,17 +21855,7 @@ static bipolar xargs_execute(string_address address_to words,
         words[word_count] = null;
 
         if (xargs_trace)
-        {
-                for (positive i = 0; i < word_count; i++)
-                {
-                        if (i)
-                                file_fail(" ", 1);
-
-                        file_fail(words[i], 0);
-                }
-
-                file_fail("\n", 1);
-        }
+                xargs_trace_words(words, word_count);
 
         log_flush();
 
@@ -21589,7 +21895,10 @@ static bipolar xargs_execute(string_address address_to words,
                 return exec_error;
 
         if (status & 0x7f)
+        {
+                xargs_signal = (b32)(status & 0x7f);
                 return XARGS_EXEC_SIGNAL;
+        }
 
         return (bipolar)((status >> 8) & 0xff);
 }
@@ -21665,8 +21974,8 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code == XARGS_EXEC_SIGNAL)
         {
-                string_format(file_fail, "xargs: %s: terminated by a signal\n",
-                              command);
+                string_format(file_fail, "xargs: %s: terminated by signal %d\n",
+                              command, xargs_signal);
                 xargs_answer = 125;
                 xargs_done = true;
                 return false;
@@ -21677,8 +21986,8 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code < 0)
         {
-                string_format(file_fail, "xargs: failed to run command '%s'\n",
-                              command);
+                string_format(file_fail, "xargs: failed to run command '%s': %s\n",
+                              command, file_reason(code));
                 xargs_answer = code == -ERROR_ACCESS ? 126 : 127;
                 xargs_done = true;
                 return false;
@@ -21808,11 +22117,33 @@ static fn xargs_item_done()
                 return;
         }
 
+        if (xargs_prefix_bytes + xargs_item_length + 1 > xargs_most_bytes)
+        {
+                if (xargs_word_count > xargs_prefix_words)
+                {
+                        xargs_run();
+                        xargs_reset();
+                }
+
+                file_fail("xargs: argument line too long\n", 0);
+                xargs_answer = 1;
+                xargs_done = true;
+                return;
+        }
+
         if (xargs_word_count > xargs_prefix_words &&
             (xargs_item_length == positive_max ||
              xargs_used > positive_max - xargs_item_length - 1 ||
-             xargs_used + xargs_item_length + 1 > XARGS_BATCH_BYTES))
+             xargs_used + xargs_item_length + 1 > xargs_most_bytes))
         {
+                if (xargs_exit_too_long)
+                {
+                        file_fail("xargs: argument list too long\n", 0);
+                        xargs_answer = 1;
+                        xargs_done = true;
+                        return;
+                }
+
                 xargs_run();
 
                 if (xargs_done)
@@ -21836,17 +22167,115 @@ static fn xargs_item_done()
         }
 }
 
-static bool xargs_count_value(string_address value, positive address_to out)
+static bool xargs_count_value(string_address value, p8 letter, positive address_to out)
 {
         positive taken = 0;
         positive made = string_digits(value, address_of taken);
+        p8 named[2] = {letter, end};
 
-        if (!taken || string_get(value + taken) || !made)
+        if (!taken || string_get(value + taken))
+        {
+                string_format(file_fail, "xargs: invalid number \"%s\" for -%s option\n",
+                              value, named);
                 return false;
+        }
+
+        if (!made && letter != 'P' && letter != 's')
+        {
+                string_format(file_fail,
+                              "xargs: value 0 for -%s option should be >= 1\n", named);
+                return false;
+        }
 
         address_to out = made;
         return true;
 }
+
+/*
+        -d says the one byte that ends an item, written plainly or as an
+        escape. Nothing else about an item is special then: no quotes, no
+        backslashes, and a newline is a byte like any other.
+*/
+static bool xargs_delimiter_read(string_address text, p8 address_to into)
+{
+        positive length = string_length(text);
+
+        if (length == 1)
+        {
+                address_to into = string_get(text);
+                return true;
+        }
+
+        if (length >= 2 && string_is(text, '\\'))
+        {
+                p8 letter = string_get(text + 1);
+                p8 named = letter == 'n'   ? '\n'
+                           : letter == 't' ? '\t'
+                           : letter == 'r' ? '\r'
+                           : letter == 'b' ? '\b'
+                           : letter == 'f' ? '\f'
+                           : letter == 'v' ? '\v'
+                           : letter == 'a' ? 7
+                           : letter == '\\' ? '\\'
+                                             : 0;
+
+                if (named && length == 2)
+                {
+                        address_to into = named;
+                        return true;
+                }
+
+                if (length == 2 && letter == '0')
+                {
+                        address_to into = 0;
+                        return true;
+                }
+
+                string_address at = text + 1;
+                positive number;
+
+                if (string_is(at, 'x') || string_is(at, 'X'))
+                {
+                        at++;
+                        if (string_digits_checked(address_of at, 16, address_of number) &&
+                            !string_get(at) && number < 256)
+                        {
+                                address_to into = (p8)number;
+                                return true;
+                        }
+                }
+                else if (string_digits_checked(address_of at, 8, address_of number) &&
+                         !string_get(at) && number < 256)
+                {
+                        address_to into = (p8)number;
+                        return true;
+                }
+        }
+
+        string_format(file_fail,
+                      "xargs: Invalid input delimiter specification %s: the delimiter must "
+                      "be either a single character or an escape sequence starting with \\.\n",
+                      text);
+        return false;
+}
+
+static const file_long xargs_longs[] = {
+    {(string_address) "arg-file", 'a'},
+    {(string_address) "delimiter", 'd'},
+    {(string_address) "eof", 'E'},
+    {(string_address) "exit", 'x'},
+    {(string_address) "interactive", 'p'},
+    {(string_address) "max-args", 'n'},
+    {(string_address) "max-chars", 's'},
+    {(string_address) "max-lines", 'l'},
+    {(string_address) "max-procs", 'P'},
+    {(string_address) "no-run-if-empty", 'r'},
+    {(string_address) "null", '0'},
+    {(string_address) "process-slot-var", 'V'},
+    {(string_address) "replace", 'I'},
+    {(string_address) "verbose", 't'},
+    {null, 0},
+};
 
 static b32 file_xargs()
 {
@@ -21876,8 +22305,10 @@ static b32 file_xargs()
 
         file_taking taking = {
             .program = (string_address) "xargs",
-            .allowed = (string_address) "0EILinrt",
-            .valued = (string_address) "EILn",
+            .allowed = (string_address) "0aEdILilnPrstx",
+            .valued = (string_address) "aEdILnPsV",
+            .optional = (string_address) "il",
+            .longs = xargs_longs,
         };
 
         if (!file_take(address_of taking))
@@ -21890,27 +22321,87 @@ static b32 file_xargs()
         xargs_needs_input = (taking.flags & FILE_FLAG('r')) != 0;
         xargs_ending = file_option_value(address_of taking, 'E');
         xargs_replace = file_option_value(address_of taking, 'I');
+        xargs_slot_name = file_option_value(address_of taking, 'V');
+        xargs_exit_too_long = (taking.flags & FILE_FLAG('x')) != 0;
+        xargs_delimited = false;
+        xargs_delimiter = 0;
+        xargs_said_nul = false;
+        xargs_signal = 0;
         xargs_most = 0;
         xargs_lines = 0;
+        xargs_most_bytes = XARGS_BATCH_BYTES;
+        xargs_input = 0;
 
         if ((taking.flags & FILE_FLAG('n')) &&
-            !xargs_count_value(file_option_value(address_of taking, 'n'),
+            !xargs_count_value(file_option_value(address_of taking, 'n'), 'n',
                                address_of xargs_most))
-        {
-                file_fail("xargs: invalid number for -n\n", 0);
                 return 1;
-        }
 
         if ((taking.flags & FILE_FLAG('L')) &&
-            !xargs_count_value(file_option_value(address_of taking, 'L'),
+            !xargs_count_value(file_option_value(address_of taking, 'L'), 'L',
                                address_of xargs_lines))
-        {
-                file_fail("xargs: invalid number for -L\n", 0);
                 return 1;
+
+        if (taking.flags & FILE_FLAG('l'))
+        {
+                string_address written = file_option_value(address_of taking, 'l');
+
+                xargs_lines = 1;
+
+                if (written && !xargs_count_value(written, 'L', address_of xargs_lines))
+                        return 1;
+        }
+
+        if (taking.flags & FILE_FLAG('P'))
+        {
+                positive parallel;
+
+                if (!xargs_count_value(file_option_value(address_of taking, 'P'), 'P',
+                                       address_of parallel))
+                        return 1;
+        }
+
+        if (taking.flags & FILE_FLAG('s'))
+        {
+                if (!xargs_count_value(file_option_value(address_of taking, 's'), 's',
+                                       address_of xargs_most_bytes))
+                        return 1;
+
+                if (xargs_most_bytes > XARGS_BATCH_BYTES)
+                        xargs_most_bytes = XARGS_BATCH_BYTES;
+        }
+
+        if (taking.flags & FILE_FLAG('d'))
+        {
+                if (!xargs_delimiter_read(file_option_value(address_of taking, 'd'),
+                                          address_of xargs_delimiter))
+                        return 1;
+
+                xargs_delimited = true;
+                xargs_null = xargs_delimiter == 0;
         }
 
         if (!xargs_replace && (taking.flags & FILE_FLAG('i')))
-                xargs_replace = "{}";
+        {
+                xargs_replace = file_option_value(address_of taking, 'i');
+
+                if (!xargs_replace)
+                        xargs_replace = "{}";
+        }
+
+        string_address from = file_option_value(address_of taking, 'a');
+
+        if (from)
+        {
+                xargs_input = system_open_at(AT_FDCWD, from, FILE_READ);
+
+                if (xargs_input < 0)
+                {
+                        string_format(file_fail, "xargs: Cannot open input file '%s': %s\n",
+                                      from, file_reason(xargs_input));
+                        return 1;
+                }
+        }
 
         positive words = (index < count ? count - index : 1) + XARGS_BATCH_BYTES + 3;
 
@@ -21952,7 +22443,7 @@ static b32 file_xargs()
 
         for (;;)
         {
-                bipolar got = system_read_retry(0, xargs_buffer,
+                bipolar got = system_read_retry((positive)xargs_input, xargs_buffer,
                                                  XARGS_READ_BYTES);
 
                 if (got < 0)
@@ -21969,6 +22460,31 @@ static b32 file_xargs()
                      at < (positive)got && !xargs_done && !xargs_ended; at++)
                 {
                         p8 letter = xargs_buffer[at];
+
+                        if (!letter && !xargs_null && !xargs_said_nul)
+                        {
+                                file_fail("xargs: WARNING: a NUL character occurred in the "
+                                          "input.  It cannot be passed through in the "
+                                          "argument list.  Did you mean to use the --null "
+                                          "option?\n", 0);
+                                xargs_said_nul = true;
+                        }
+
+                        if (xargs_delimited && !xargs_null)
+                        {
+                                if (letter != xargs_delimiter)
+                                {
+                                        xargs_item_put(letter);
+                                        started = true;
+                                        continue;
+                                }
+
+                                xargs_item[xargs_item_length] = end;
+                                xargs_item_done();
+                                xargs_item_length = 0;
+                                started = false;
+                                continue;
+                        }
 
                         if (xargs_null)
                         {
@@ -22097,6 +22613,9 @@ static b32 file_xargs()
                 if (xargs_done || xargs_ended)
                         break;
         }
+
+        if (xargs_input > 0)
+                system_close(xargs_input);
 
         if (quote)
         {
