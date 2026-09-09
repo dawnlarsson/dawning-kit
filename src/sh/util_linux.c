@@ -8582,7 +8582,7 @@ static b32 util_linux_isosize()
                 return string_report(log_error, 1, "%s: %s\n", "isosize", "invalid divisor argument");
 
         bool several = count - taking.first > 1;
-        b32 status = 0;
+        positive failed = 0, answered = 0;
         while (taking.first < count)
         {
                 string_address path = program_argument((b32)taking.first++);
@@ -8593,7 +8593,7 @@ static b32 util_linux_isosize()
                         string_format(log_error,
                                       "isosize: cannot open %s: %s\n",
                                       path, file_reason(handle));
-                        status = 32;
+                        failed++;
                         continue;
                 }
 
@@ -8614,7 +8614,7 @@ static b32 util_linux_isosize()
                         /* A short descriptor has no size to report. */
                         string_format(log_error,
                                       "isosize: read error on %s\n", path);
-                        status = 32;
+                        failed++;
                         continue;
                 }
 
@@ -8632,10 +8632,11 @@ static b32 util_linux_isosize()
                         string_format(log, "%b\n",
                                       divisor ? bytes / divisor : bytes);
                 }
+                answered++;
         }
 
         log_flush();
-        return status;
+        return failed ? (answered ? 64 : 32) : 0;
 }
 
 enum
