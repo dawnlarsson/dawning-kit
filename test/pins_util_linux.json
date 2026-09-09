@@ -1,0 +1,1098 @@
+[
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "copyfilerange",
+  "option": "--ranges",
+  "kind": "deliberate",
+  "reason": "a range file is not read: ranges are given as operands"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "copyfilerange",
+  "option": "-r",
+  "kind": "deliberate",
+  "reason": "a range file is not read: ranges are given as operands"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "fallocate",
+  "option": "--dig-holes",
+  "kind": "deliberate",
+  "reason": "this build allocates and punches; it does not scan a file for zero runs (--dig-holes) or walk its extent map (--report-holes)"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "fallocate",
+  "option": "--report-holes",
+  "kind": "deliberate",
+  "reason": "this build allocates and punches; it does not scan a file for zero runs (--dig-holes) or walk its extent map (--report-holes)"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "fallocate",
+  "option": "-d",
+  "kind": "deliberate",
+  "reason": "this build allocates and punches; it does not scan a file for zero runs (--dig-holes) or walk its extent map (--report-holes)"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "fallocate",
+  "option": "-r",
+  "kind": "deliberate",
+  "reason": "this build allocates and punches; it does not scan a file for zero runs (--dig-holes) or walk its extent map (--report-holes)"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--id",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--kernel",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--output-all",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--pseudo",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--real",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--shadowed",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--tree",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--verbose",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--vfs-all",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-A",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-C",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-D",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-F",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-I",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-J",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-N",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-Q",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-R",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-U",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-a",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-b",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-c",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-d",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-e",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-k",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-m",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-s",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-u",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-w",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-x",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-y",
+  "kind": "deliberate",
+  "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--discard",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--hyperlink",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--inverse",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--output-all",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--pairs",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--properties-by",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--sysroot",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--tree",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--zoned",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-D",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-E",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-H",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-I",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-M",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-N",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-O",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-P",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-Q",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-T",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-e",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-v",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-w",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-x",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-y",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-z",
+  "kind": "deliberate",
+  "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lscpu",
+  "option": "--annotate",
+  "kind": "deliberate",
+  "reason": "physical identifiers, column metadata, an alternate sysroot and the annotation and hierarchy presentation are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lscpu",
+  "option": "--hierarchic",
+  "kind": "deliberate",
+  "reason": "physical identifiers, column metadata, an alternate sysroot and the annotation and hierarchy presentation are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lscpu",
+  "option": "--list-columns",
+  "kind": "deliberate",
+  "reason": "physical identifiers, column metadata, an alternate sysroot and the annotation and hierarchy presentation are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lscpu",
+  "option": "--output-all",
+  "kind": "deliberate",
+  "reason": "physical identifiers, column metadata, an alternate sysroot and the annotation and hierarchy presentation are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lscpu",
+  "option": "--physical",
+  "kind": "deliberate",
+  "reason": "physical identifiers, column metadata, an alternate sysroot and the annotation and hierarchy presentation are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lscpu",
+  "option": "-H",
+  "kind": "deliberate",
+  "reason": "physical identifiers, column metadata, an alternate sysroot and the annotation and hierarchy presentation are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lscpu",
+  "option": "-s",
+  "kind": "deliberate",
+  "reason": "physical identifiers, column metadata, an alternate sysroot and the annotation and hierarchy presentation are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lscpu",
+  "option": "-y",
+  "kind": "deliberate",
+  "reason": "physical identifiers, column metadata, an alternate sysroot and the annotation and hierarchy presentation are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--debug-filter",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--dump-counters",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--hyperlink",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--inet",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--list-columns",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--summary",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--threads",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "-C",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "-H",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "-Q",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "-i",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "-l",
+  "kind": "deliberate",
+  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lslocks",
+  "option": "--list-columns",
+  "kind": "deliberate",
+  "reason": "display filters, column metadata and --output-all are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lslocks",
+  "option": "--output-all",
+  "kind": "deliberate",
+  "reason": "display filters, column metadata and --output-all are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lslocks",
+  "option": "-H",
+  "kind": "deliberate",
+  "reason": "display filters, column metadata and --output-all are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lslocks",
+  "option": "-Q",
+  "kind": "deliberate",
+  "reason": "display filters, column metadata and --output-all are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
+  "option": "--output-all",
+  "kind": "deliberate",
+  "reason": "pairs output, --output-all and an alternate sysroot are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
+  "option": "--pairs",
+  "kind": "deliberate",
+  "reason": "pairs output, --output-all and an alternate sysroot are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
+  "option": "-P",
+  "kind": "deliberate",
+  "reason": "pairs output, --output-all and an alternate sysroot are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
+  "option": "-s",
+  "kind": "deliberate",
+  "reason": "pairs output, --output-all and an alternate sysroot are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "--list-columns",
+  "kind": "deliberate",
+  "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "--output-all",
+  "kind": "deliberate",
+  "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "--persistent",
+  "kind": "deliberate",
+  "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "-H",
+  "kind": "deliberate",
+  "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "-P",
+  "kind": "deliberate",
+  "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "-Q",
+  "kind": "deliberate",
+  "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "-T",
+  "kind": "deliberate",
+  "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
+  "option": "--check",
+  "kind": "deliberate",
+  "reason": "a swap area is written over a whole existing file: bad-block scanning, creating or resizing the file, an offset and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
+  "option": "--file",
+  "kind": "deliberate",
+  "reason": "a swap area is written over a whole existing file: bad-block scanning, creating or resizing the file, an offset and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
+  "option": "--lock",
+  "kind": "deliberate",
+  "reason": "a swap area is written over a whole existing file: bad-block scanning, creating or resizing the file, an offset and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
+  "option": "-F",
+  "kind": "deliberate",
+  "reason": "a swap area is written over a whole existing file: bad-block scanning, creating or resizing the file, an offset and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
+  "option": "-c",
+  "kind": "deliberate",
+  "reason": "a swap area is written over a whole existing file: bad-block scanning, creating or resizing the file, an offset and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
+  "option": "-o",
+  "kind": "deliberate",
+  "reason": "a swap area is written over a whole existing file: bad-block scanning, creating or resizing the file, an offset and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
+  "option": "-s",
+  "kind": "deliberate",
+  "reason": "a swap area is written over a whole existing file: bad-block scanning, creating or resizing the file, an offset and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "nsenter",
+  "option": "--env",
+  "kind": "deliberate",
+  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "nsenter",
+  "option": "--join-cgroup",
+  "kind": "deliberate",
+  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "nsenter",
+  "option": "--keep-caps",
+  "kind": "deliberate",
+  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "nsenter",
+  "option": "--user-parent",
+  "kind": "deliberate",
+  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "nsenter",
+  "option": "-N",
+  "kind": "deliberate",
+  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "nsenter",
+  "option": "-c",
+  "kind": "deliberate",
+  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "nsenter",
+  "option": "-e",
+  "kind": "deliberate",
+  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setarch",
+  "option": "--sho",
+  "kind": "deliberate",
+  "reason": "a long option is spelled in full; upstream's unambiguous abbreviations are not accepted"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--ambient-caps",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--apparmor-profile",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--bounding-set",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--inh-caps",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--init-groups",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--landlock-access",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--landlock-rule",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--seccomp-filter",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--securebits",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "setpriv",
+  "option": "--selinux-label",
+  "kind": "deliberate",
+  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
+  "option": "--forward-signals",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
+  "option": "--keep-caps",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
+  "option": "--kill-child",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
+  "option": "--map-auto",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
+  "option": "--map-subids",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
+  "option": "--mount-binfmt",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
+  "option": "--owner",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
+  "option": "-l",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "wipefs",
+  "option": "--all",
+  "kind": "deliberate",
+  "reason": "signatures are listed, never erased: every mutating mode, the backup directory and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "wipefs",
+  "option": "--backup",
+  "kind": "deliberate",
+  "reason": "signatures are listed, never erased: every mutating mode, the backup directory and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "wipefs",
+  "option": "--lock",
+  "kind": "deliberate",
+  "reason": "signatures are listed, never erased: every mutating mode, the backup directory and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "wipefs",
+  "option": "-a",
+  "kind": "deliberate",
+  "reason": "signatures are listed, never erased: every mutating mode, the backup directory and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "wipefs",
+  "option": "-b",
+  "kind": "deliberate",
+  "reason": "signatures are listed, never erased: every mutating mode, the backup directory and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "wipefs",
+  "option": "-f",
+  "kind": "deliberate",
+  "reason": "signatures are listed, never erased: every mutating mode, the backup directory and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "wipefs",
+  "option": "-o",
+  "kind": "deliberate",
+  "reason": "signatures are listed, never erased: every mutating mode, the backup directory and device locking are refused"
+ }
+]
