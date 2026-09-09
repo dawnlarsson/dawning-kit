@@ -80,8 +80,8 @@ OUTPUT_LIMIT = 1 << 20
 #       gaps stay visible and stay counted, and a regression inside them is
 #       caught the moment the number drops. Lowering a floor is a decision
 #       somebody makes here, in this table, on purpose.
-DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "default",
-                 "files": "full", "shell": "quick", "util_linux": "full",
+DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "full",
+                 "files": "full", "shell": "default", "util_linux": "full",
                  "misc": "default"}
 
 DOMAIN_FLOOR = {
@@ -9357,6 +9357,13 @@ def shell_pty_script(steps, settings, flags=()):
 # ----------------------------------------------------------------------------
 
 shell_PROMPT_MARKS = re.compile(rb"%mwPS[12]%")
+#       A line that held nothing but prompts is the terminal's line and not
+#       the program's: it is where the shell asked and the answer had no
+#       output. Dropping it whole is what makes a session that asked one more
+#       time compare with one that did not. The one shape it cannot tell from
+#       a prompt is a program that printed an empty line just there, so the
+#       terminal families do not print one.
+shell_PROMPT_ONLY = re.compile(rb"^(?:%mwPS[12]%)+$")
 #       "[1] 4242", "[1]+  Stopped   sleep 5", "[2] - Running  sleep 3": a
 #       job number in brackets, then the current-job mark or a space, then
 #       the notice. A line of the program's own that begins with a bracketed
@@ -9373,9 +9380,11 @@ shell_JOB_STARTED = re.compile(rb"^(\[\d+\][-+ ]\s*)\d+$")
 def shell_terminal_normalize(channel, data):
     if channel != "stdout" or not data:
         return data
-    data = shell_PROMPT_MARKS.sub(b"", data)
     kept, notices = [], []
     for line in data.split(b"\n"):
+        if shell_PROMPT_ONLY.match(line):
+            continue
+        line = shell_PROMPT_MARKS.sub(b"", line)
         if shell_JOB_NOTICE.match(line):
             line = shell_JOB_STARTED.sub(rb"\1<pid>", line)
             notices.append(re.sub(rb"\b\d{3,}\b", b"<pid>", line))
