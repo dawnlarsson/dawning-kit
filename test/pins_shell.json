@@ -9557,9 +9557,9 @@
   },
   "domain": "shell",
   "id": "0ffe7c4054bac67e",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -9589,9 +9589,9 @@
   },
   "domain": "shell",
   "id": "198fe8e9aa8cbb0b",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -9621,9 +9621,9 @@
   },
   "domain": "shell",
   "id": "3d8b663d75ebecb0",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -9653,9 +9653,9 @@
   },
   "domain": "shell",
   "id": "80026a25195d58ce",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -9685,9 +9685,9 @@
   },
   "domain": "shell",
   "id": "8d03cd955a8ee740",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -9717,9 +9717,9 @@
   },
   "domain": "shell",
   "id": "8dd072807dc15f1d",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -9749,9 +9749,9 @@
   },
   "domain": "shell",
   "id": "9f2a31e16187b5b3",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -9781,9 +9781,9 @@
   },
   "domain": "shell",
   "id": "ba3fadc1ccdcb1cb",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -9813,13 +9813,13 @@
   },
   "domain": "shell",
   "id": "be5c7dd22be40e2f",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "6daa97f7276511d74485ddd82fbba59c9abf4e9b0e1f922e4897829ad298be73"
+   "stdout": "c02b6e5333956f121c3e0121cb900b8ed7b8230a173c2fccf1bfa97ebca29fcc"
   },
   "utility": "special-builtin-fatality"
  },
@@ -9845,13 +9845,13 @@
   },
   "domain": "shell",
   "id": "d4e11bb3dfd2b858",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "e66af4e2f073c20d04b53e89eacd277463222d1e24348405c938da2286980116"
+   "stdout": "724f42dc84eb2a6684cc102e115218857ba3710d935e3531eea88995ff1f31e5"
   },
   "utility": "special-builtin-fatality"
  },
@@ -9877,13 +9877,13 @@
   },
   "domain": "shell",
   "id": "d7091b24cac3019b",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "6ac591500c23eb86532021cd6eb0b1af097106093d37f2cbda1f972107b00d31"
+   "stdout": "c02b6e5333956f121c3e0121cb900b8ed7b8230a173c2fccf1bfa97ebca29fcc"
   },
   "utility": "special-builtin-fatality"
  },
@@ -9909,9 +9909,9 @@
   },
   "domain": "shell",
   "id": "da6cad6c9af2818a",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -9941,9 +9941,9 @@
   },
   "domain": "shell",
   "id": "ff937a13d14db412",
-  "kind": "deliberate",
+  "kind": "bug",
   "list": "ledger",
-  "reason": "An expansion, arithmetic, indirection or special-builtin error ends a non-interactive shell here, as it does in dash and as POSIX requires; bash outside POSIX mode abandons only the command and reads on. The project keeps the POSIX rule under every name and recovers at a terminal instead, so the status and the commands that never ran both differ from bash.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 2,
@@ -17463,7 +17463,7 @@
   "id": "594194778634e13a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17495,7 +17495,7 @@
   "id": "5d057a7b27564536",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17527,7 +17527,7 @@
   "id": "8469c4733873125f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17559,7 +17559,7 @@
   "id": "6c554945fafdadb7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17591,7 +17591,7 @@
   "id": "944484728b27323e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17623,7 +17623,7 @@
   "id": "2e67d14098854ef3",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17655,7 +17655,7 @@
   "id": "e5a7f4ac7f81a368",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17687,7 +17687,7 @@
   "id": "40c9140c9e80ac52",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a2a2084bc348d89d85146b132d74c8e52d334e68cba689557d77af1cc0311613",
    "status": 0,
@@ -17719,7 +17719,7 @@
   "id": "71747e6cb422303c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a2a2084bc348d89d85146b132d74c8e52d334e68cba689557d77af1cc0311613",
    "status": 0,
@@ -17751,7 +17751,7 @@
   "id": "917494a6c9fea2ff",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a2a2084bc348d89d85146b132d74c8e52d334e68cba689557d77af1cc0311613",
    "status": 0,
@@ -17783,7 +17783,7 @@
   "id": "9223550847446bde",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a2a2084bc348d89d85146b132d74c8e52d334e68cba689557d77af1cc0311613",
    "status": 0,
@@ -17815,7 +17815,7 @@
   "id": "3e6e5343cd75fe49",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17847,7 +17847,7 @@
   "id": "e217907a80d58e18",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 2,
@@ -17879,7 +17879,7 @@
   "id": "df220050338571f6",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17911,7 +17911,7 @@
   "id": "1cd8f63f3205d283",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17943,7 +17943,7 @@
   "id": "d9a0d5a83af5ceaa",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -17975,7 +17975,7 @@
   "id": "1a9f11defc652ca9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -18007,7 +18007,7 @@
   "id": "6c7615613a52bb77",
   "kind": "bug",
   "list": "ledger",
-  "reason": "Bash surface this shell does not implement: the @A and @K transforms, exec {name}>file descriptor variables, jobs -n, wait remembering an already reaped child so a second wait answers again, trap -p listing only the conditions that were set (ours always lists every signal, which is what bash --posix does), and the arithmetic-expansion fallback to a command substitution when the text is not arithmetic.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -18433,102 +18433,6 @@
  },
  {
   "candidate": {
-   "effects": "eac508d642167fedf0b1f770e1fa1347bdacea837a1b3a412c3ba58901d96fd0",
-   "status": 0,
-   "stdout": "a0d76f10e49cc0f91068d233045ad425394049791af6f0bdfd22480b871f9714"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\nset -x; eval 'echo one; echo two'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "xtrace-shape",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "0bb799262e2fd13f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
-  "reference": {
-   "effects": "81e2d93c02b0c5983d86c4bbc92180a677aaad1939d317fd49c62921e0f155ff",
-   "status": 0,
-   "stdout": "0cb3c88aa94bd24928fa04ba4a7a4eb3659bdcd21ff7e8bc43479c3da4b7760a"
-  },
-  "utility": "xtrace-shape"
- },
- {
-  "candidate": {
-   "effects": "9fa430af4b28fe73c3e4346a81a32d1c2b6549b6f601725939de28200ea82272",
-   "status": 0,
-   "stdout": "c3a91a95fa4c392c71e98594567489b945f63d72f4eb343573f8ed999c140ae2"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\nset -x; eval 'v=$(echo sub)'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "xtrace-shape",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "107260fea102de7b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
-  "reference": {
-   "effects": "2d0e1d4d0a8daead43d01e73d084a87719b8e5f31065ad52594c302b35008d05",
-   "status": 0,
-   "stdout": "71c077f01afd1c392d2a45c7db72d981410d260ce6bb2e4be234404cc966afd8"
-  },
-  "utility": "xtrace-shape"
- },
- {
-  "candidate": {
-   "effects": "adb98937ee2d46ae29f6ed0d80ff57b8e7a31caa074e8bfd8e024387fa0ed5e1",
-   "status": 0,
-   "stdout": "40d5f118176098dc3394f201d5df8f3483c1575adf59a4efb045575074861209"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    ": > a.txt; x=X\nPS4='\\$ '\nexec 2>trace\nset -x; eval 'echo é'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "xtrace-shape",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "114a2815ded75e73",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
-  "reference": {
-   "effects": "4cf112c5f56f3d08348c12bd38bb9aa38769c31e583cd514fa84fdb34163d27a",
-   "status": 0,
-   "stdout": "1469ad0a77cb7ea74113e1a745827e6dc4ae70f7b793b38fd22fcc04976280ab"
-  },
-  "utility": "xtrace-shape"
- },
- {
-  "candidate": {
    "effects": "3db60b9c41509eb67feb4b25abb56b10cbdc0f2b6c1271f49d7edbca6bd88faa",
    "status": 0,
    "stdout": "e35b7fbe74bef4768602c32d1bdd553f5eb2c18da52aff4ad2a5aaa685485da4"
@@ -18551,43 +18455,11 @@
   "id": "14053e7e5ea9370e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "1fc479715e3b522d48fd22cca9dcb2b26c96dea46eeb9202d778cd76061f71a3",
    "status": 0,
    "stdout": "175ca2a4fabe51f9a0a0546dc2083ee7ab68783670f1a9415f5fa7815e847300"
-  },
-  "utility": "xtrace-shape"
- },
- {
-  "candidate": {
-   "effects": "9fa430af4b28fe73c3e4346a81a32d1c2b6549b6f601725939de28200ea82272",
-   "status": 0,
-   "stdout": "c3a91a95fa4c392c71e98594567489b945f63d72f4eb343573f8ed999c140ae2"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\nset -x; eval 'v=$(echo sub)'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "xtrace-shape",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "200c39d5f91155be",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
-  "reference": {
-   "effects": "2d0e1d4d0a8daead43d01e73d084a87719b8e5f31065ad52594c302b35008d05",
-   "status": 0,
-   "stdout": "71c077f01afd1c392d2a45c7db72d981410d260ce6bb2e4be234404cc966afd8"
   },
   "utility": "xtrace-shape"
  },
@@ -18615,7 +18487,7 @@
   "id": "21664dfc57ac6fa2",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6d56063c1fa72c585865de847eae7faadec241e067663d74e06e660582a3c42",
    "status": 0,
@@ -18625,46 +18497,14 @@
  },
  {
   "candidate": {
-   "effects": "a43acbd4742d3ecdf91fee11a98651e8042780bca474b1304df69543ade60e3f",
+   "effects": "7d711067a73922790b8a05070d01833834a75d2880d7578e580857afd30a7b06",
    "status": 0,
-   "stdout": "b628dcb04d0c15c5a5b7539ed03b0a5ba67b55b5e53f533d6e00369994b62e9f"
+   "stdout": "2513cefbb1ebd5e6980d9b5fdd56c7a18ba6200815f4364ec8ce8daf5967532d"
   },
   "case": {
    "argv": [
     "-c",
-    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\nset -o xtrace; echo \"$(echo n)\"\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "xtrace-shape",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "29c200b4da9f946b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
-  "reference": {
-   "effects": "da661663616851d5adfcb89c883a0410c7c1119ca400ca01fa1ab00f51a5d791",
-   "status": 0,
-   "stdout": "eead1568227f6164496f5134c1592f692f0bffbef77f9ddde233a6b155018819"
-  },
-  "utility": "xtrace-shape"
- },
- {
-  "candidate": {
-   "effects": "adb98937ee2d46ae29f6ed0d80ff57b8e7a31caa074e8bfd8e024387fa0ed5e1",
-   "status": 0,
-   "stdout": "40d5f118176098dc3394f201d5df8f3483c1575adf59a4efb045575074861209"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    ": > a.txt; x=X\nPS4='\\$ '\nexec 2>trace\nset -x; eval 'echo é'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\nset -x; eval 'echo \"$(echo n)\"'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
    ],
    "domain": "shell",
    "family": "xtrace-shape",
@@ -18676,14 +18516,46 @@
    "utility": "shell"
   },
   "domain": "shell",
-  "id": "34144bb44cb95dc6",
+  "id": "24052e2f9895b5d7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
-   "effects": "ea341acdfd839ced734fb1259e9adad64bc3a2a441a817a75d1c2779713645c0",
+   "effects": "64c264c8aac9e66c5ba2f8dd706cd3f7e836896122e8965f1276ade799d76529",
    "status": 0,
-   "stdout": "4cd64e36013fdd4105798bd0dcf653043126ac620fe2c059bbe59f60c20ff73e"
+   "stdout": "04242a0919f15f9c5f9e2d1eafd347851e2e5bb37504bbfe4741bbfbbe801f12"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "49888ddc4062ce775d4bcdb3ce491e87d920f9fc16409304723dec54d9f5417e",
+   "status": 0,
+   "stdout": "605e4ea08f55f395a13daa77735a85bc9e5dd3cde7f22656fbe8cde3bf921d95"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\nset -x; eval 'x='\"'\"'q\"uote'\"'\"'; echo \"$x\"'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "4df0d99acb31144d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
+  "reference": {
+   "effects": "8bdca780500137a7651ea643ee09892fc510589b0189581cba136ea7e08470e3",
+   "status": 0,
+   "stdout": "1fd65223698da3d082deef7de65974f141b69c4fa4745b84cea4ca0b69efc8e3"
   },
   "utility": "xtrace-shape"
  },
@@ -18711,7 +18583,7 @@
   "id": "4f129d06d4cb38c7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "6efc4e036c64b8a467e44203fb277a3ca014854fba5cb5e998a55c62c970107d",
    "status": 0,
@@ -18721,14 +18593,46 @@
  },
  {
   "candidate": {
-   "effects": "adb98937ee2d46ae29f6ed0d80ff57b8e7a31caa074e8bfd8e024387fa0ed5e1",
+   "effects": "49888ddc4062ce775d4bcdb3ce491e87d920f9fc16409304723dec54d9f5417e",
    "status": 0,
-   "stdout": "40d5f118176098dc3394f201d5df8f3483c1575adf59a4efb045575074861209"
+   "stdout": "605e4ea08f55f395a13daa77735a85bc9e5dd3cde7f22656fbe8cde3bf921d95"
   },
   "case": {
    "argv": [
     "-c",
-    ": > a.txt; x=X\nPS4='\\$ '\nexec 2>trace\nset -x; eval 'echo é'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\nset -x; eval 'x='\"'\"'q\"uote'\"'\"'; echo \"$x\"'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "4f463a3e0294aa59",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
+  "reference": {
+   "effects": "f53af20399db47bdea02db7c84332c31cd472550042ddb3e4e22a88f50b4a1f0",
+   "status": 0,
+   "stdout": "46567883259cebffb2a593c0b0aa3fe2bdfa9c6fa955bb4829daab617fbc7245"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "7d711067a73922790b8a05070d01833834a75d2880d7578e580857afd30a7b06",
+   "status": 0,
+   "stdout": "2513cefbb1ebd5e6980d9b5fdd56c7a18ba6200815f4364ec8ce8daf5967532d"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\nset -x; eval 'echo \"$(echo n)\"'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
    ],
    "domain": "shell",
    "family": "xtrace-shape",
@@ -18740,14 +18644,14 @@
    "utility": "shell"
   },
   "domain": "shell",
-  "id": "54e3e87c462d9844",
+  "id": "5418bd93fcb0de9a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
-   "effects": "ea341acdfd839ced734fb1259e9adad64bc3a2a441a817a75d1c2779713645c0",
+   "effects": "64c264c8aac9e66c5ba2f8dd706cd3f7e836896122e8965f1276ade799d76529",
    "status": 0,
-   "stdout": "4cd64e36013fdd4105798bd0dcf653043126ac620fe2c059bbe59f60c20ff73e"
+   "stdout": "04242a0919f15f9c5f9e2d1eafd347851e2e5bb37504bbfe4741bbfbbe801f12"
   },
   "utility": "xtrace-shape"
  },
@@ -18775,7 +18679,7 @@
   "id": "57e02404379a827d",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "d9b9ad1e6aaad93f14b1fbe761af0766347afc4530a27c61589cce40e11daa6b",
    "status": 0,
@@ -18785,14 +18689,14 @@
  },
  {
   "candidate": {
-   "effects": "0db69fa3b3b2d3a112dbbac24515784fe18e1af7980e89c1e08211653b0e4533",
+   "effects": "170464b00c75aa2ad512a16e660e04af11ddc84d3792513c6ac35e62c8bab437",
    "status": 0,
-   "stdout": "dd5a2b4f30341cfa57acf79af27dbfebd00e0979eb9f476a6c635b212adec534"
+   "stdout": "dfc07a77de195cce540abf557219897e6d3adb24016d664e4554757a028a64ca"
   },
   "case": {
    "argv": [
     "-c",
-    ": > a.txt; x=X\nPS4='${FUNCNAME[0]-main}: '\nexec 2>trace\nset -x; exec 3>&1\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+    ": > a.txt; x=X\nPS4='${FUNCNAME[0]-main}: '\nexec 2>trace\nset -x; set +x; echo quiet\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
    ],
    "domain": "shell",
    "family": "xtrace-shape",
@@ -18804,59 +18708,27 @@
    "utility": "shell"
   },
   "domain": "shell",
-  "id": "6f45699e0a532c4d",
+  "id": "5c6bb116dee40b2a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
-   "effects": "f19a601d87cbfe444058c8c4d113fef6b48bbf7c4c8cc7f9d420dbfadf1182c9",
+   "effects": "7e90f82b1cfab651af412eec581e769f10a9c2b883e8bc8bddae7bea5ad55227",
    "status": 0,
-   "stdout": "ce4662c4bfbe24374159c114a028685ff4870d51847b1c289dba3170aa076bb9"
+   "stdout": "60a4642883efbfd544359afa6d4a2b3518df28d95663fd305d67b60c8005a6c5"
   },
   "utility": "xtrace-shape"
  },
  {
   "candidate": {
-   "effects": "03c087a4c1c8013b572e65e1e760ceae3e0497f69615226d45a12ea62e51b71c",
+   "effects": "c4162265644fb2855b10ccc34d07cba9d387214a205b3965e682857ce8edbbf9",
    "status": 0,
-   "stdout": "be489a0fd346a5931a8ae2d8fc5e93a875bbfc664a5b3182fe5b1537501d40f1"
+   "stdout": "e356d02689db211ac3cb8076630b1e78370f649e72a7e4dc75a093eb2701e0a2"
   },
   "case": {
    "argv": [
     "-c",
-    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\ng() { set -x; echo $'\\t'; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "xtrace-shape",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "72d6fb34be82c567",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
-  "reference": {
-   "effects": "1eccbde125fddb309782691461c6407e966efddecd2d4d774e5aa051fff34134",
-   "status": 0,
-   "stdout": "e76ee43cdc934d4a896c3f34128ff22d67e0fa0befae9951d485c62edbc30411"
-  },
-  "utility": "xtrace-shape"
- },
- {
-  "candidate": {
-   "effects": "99ad5484636e854fb8cf4b345a4ed2821e01879e33c782c41e7a50150aa6c179",
-   "status": 0,
-   "stdout": "1d802ca443972e54087996b10e8f60570de0ab03a92c2d5c0d2d7bb933903bd6"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    ": > a.txt; x=X\nPS4='+ '\nexec 2>trace\nset -x; echo é\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\ng() { set -x; exec 3>&1; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
    ],
    "domain": "shell",
    "family": "xtrace-shape",
@@ -18868,14 +18740,46 @@
    "utility": "shell"
   },
   "domain": "shell",
-  "id": "86320eed742b22db",
+  "id": "5d1421aa2c9772a6",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
-   "effects": "a456f1f8e7f05e2da89e133863278104f232b4c327049d5efb2019b9db938cf7",
+   "effects": "03ec520702db7cb33d8666316779ea1204e62dfae8ce1e3d261830171b2dd000",
    "status": 0,
-   "stdout": "f6926d2577d423578733fde6e313d3a4a0048c934c6a12f37003e31c52d33980"
+   "stdout": "fe52cef4f9e5d58fe29eace4675c846023510ed9b8fbd9abc21408b80c558017"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "c4162265644fb2855b10ccc34d07cba9d387214a205b3965e682857ce8edbbf9",
+   "status": 0,
+   "stdout": "e356d02689db211ac3cb8076630b1e78370f649e72a7e4dc75a093eb2701e0a2"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\ng() { set -x; exec 3>&1; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "708e665375a87c51",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
+  "reference": {
+   "effects": "03ec520702db7cb33d8666316779ea1204e62dfae8ce1e3d261830171b2dd000",
+   "status": 0,
+   "stdout": "fe52cef4f9e5d58fe29eace4675c846023510ed9b8fbd9abc21408b80c558017"
   },
   "utility": "xtrace-shape"
  },
@@ -18903,11 +18807,75 @@
   "id": "8777fc2fb7589890",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "edef5e43c8ceb293916d28e76fd33cda54cb58f0c491dc1cafeae41c216c0bf8",
    "status": 0,
    "stdout": "12b7d7226a03292791dbd22a160beeb721cc2674542fd98d1a4c18041cf0fea5"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "b353ba776f197658f5f834a91468caa384eeda6156045817591e7b3acefa7834",
+   "status": 0,
+   "stdout": "7e2f8dd4445537fd1e4d09e65eff58dfda31effe80dfd80c51f1ff3fc10c83bf"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='\\$ '\nexec 2>trace\nset -x; eval 'read v <<EOF\nl\nEOF'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "8d29be3b97ec395b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
+  "reference": {
+   "effects": "4c68f6b4977a806f995024084a39030b02b0299a41cf5c4525416cac07f8286f",
+   "status": 0,
+   "stdout": "12c964dc04f624498bff335172de0a5436d9fb7b064e68457919dc1019b37c3f"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "b353ba776f197658f5f834a91468caa384eeda6156045817591e7b3acefa7834",
+   "status": 0,
+   "stdout": "7e2f8dd4445537fd1e4d09e65eff58dfda31effe80dfd80c51f1ff3fc10c83bf"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='\\$ '\nexec 2>trace\nset -x; eval 'read v <<EOF\nl\nEOF'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "8e9ad8953e035bb3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
+  "reference": {
+   "effects": "d7417b9ee05befc9cb26ffc6b206b3b38c2acb9472febce3996ea950f8a31032",
+   "status": 0,
+   "stdout": "f24a68d6c9a0890a9861b5faf1da14ef7ee856ad1bcce9759dfd063a7f164c56"
   },
   "utility": "xtrace-shape"
  },
@@ -18935,7 +18903,7 @@
   "id": "8f992df5da758d5b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "1fc479715e3b522d48fd22cca9dcb2b26c96dea46eeb9202d778cd76061f71a3",
    "status": 0,
@@ -18945,14 +18913,14 @@
  },
  {
   "candidate": {
-   "effects": "03c087a4c1c8013b572e65e1e760ceae3e0497f69615226d45a12ea62e51b71c",
+   "effects": "b353ba776f197658f5f834a91468caa384eeda6156045817591e7b3acefa7834",
    "status": 0,
-   "stdout": "be489a0fd346a5931a8ae2d8fc5e93a875bbfc664a5b3182fe5b1537501d40f1"
+   "stdout": "7e2f8dd4445537fd1e4d09e65eff58dfda31effe80dfd80c51f1ff3fc10c83bf"
   },
   "case": {
    "argv": [
     "-c",
-    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\ng() { set -x; echo $'\\t'; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+    ": > a.txt; x=X\nPS4='\\$ '\nexec 2>trace\nset -x; eval 'read v <<EOF\nl\nEOF'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
    ],
    "domain": "shell",
    "family": "xtrace-shape",
@@ -18964,14 +18932,46 @@
    "utility": "shell"
   },
   "domain": "shell",
-  "id": "ae0e33abc290ec2a",
+  "id": "9ba3d261069d211f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
-   "effects": "1eccbde125fddb309782691461c6407e966efddecd2d4d774e5aa051fff34134",
+   "effects": "4c68f6b4977a806f995024084a39030b02b0299a41cf5c4525416cac07f8286f",
    "status": 0,
-   "stdout": "e76ee43cdc934d4a896c3f34128ff22d67e0fa0befae9951d485c62edbc30411"
+   "stdout": "12c964dc04f624498bff335172de0a5436d9fb7b064e68457919dc1019b37c3f"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "9af320b1485c2eb0de0ab3668a3b0af990553c18a988704744676a86090bc551",
+   "status": 0,
+   "stdout": "b8a29251eed89e7e8f3f389becde603a5a9978cac9ce1070fb9c49ad929f6d83"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\nset -o xtrace; [ a = a ]\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "aecd0eeeff8ef96a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
+  "reference": {
+   "effects": "b3cf1e02380f73b6db2ecdae0030abd4152bf0aecb6a196026b1ef8c7ecfad2d",
+   "status": 0,
+   "stdout": "464e0edc04d59463ba368958c52cce6e3f81822193300d72920f8d963ccfa60a"
   },
   "utility": "xtrace-shape"
  },
@@ -18999,7 +18999,7 @@
   "id": "af7615edcc974ef9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "6efc4e036c64b8a467e44203fb277a3ca014854fba5cb5e998a55c62c970107d",
    "status": 0,
@@ -19009,14 +19009,14 @@
  },
  {
   "candidate": {
-   "effects": "0db69fa3b3b2d3a112dbbac24515784fe18e1af7980e89c1e08211653b0e4533",
+   "effects": "170464b00c75aa2ad512a16e660e04af11ddc84d3792513c6ac35e62c8bab437",
    "status": 0,
-   "stdout": "dd5a2b4f30341cfa57acf79af27dbfebd00e0979eb9f476a6c635b212adec534"
+   "stdout": "dfc07a77de195cce540abf557219897e6d3adb24016d664e4554757a028a64ca"
   },
   "case": {
    "argv": [
     "-c",
-    ": > a.txt; x=X\nPS4='${FUNCNAME[0]-main}: '\nexec 2>trace\nset -x; exec 3>&1\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+    ": > a.txt; x=X\nPS4='${FUNCNAME[0]-main}: '\nexec 2>trace\nset -x; set +x; echo quiet\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
    ],
    "domain": "shell",
    "family": "xtrace-shape",
@@ -19028,27 +19028,59 @@
    "utility": "shell"
   },
   "domain": "shell",
-  "id": "ba9e3da4505c6f4f",
+  "id": "b84c4929002daa31",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
-   "effects": "f19a601d87cbfe444058c8c4d113fef6b48bbf7c4c8cc7f9d420dbfadf1182c9",
+   "effects": "7e90f82b1cfab651af412eec581e769f10a9c2b883e8bc8bddae7bea5ad55227",
    "status": 0,
-   "stdout": "ce4662c4bfbe24374159c114a028685ff4870d51847b1c289dba3170aa076bb9"
+   "stdout": "60a4642883efbfd544359afa6d4a2b3518df28d95663fd305d67b60c8005a6c5"
   },
   "utility": "xtrace-shape"
  },
  {
   "candidate": {
-   "effects": "99ad5484636e854fb8cf4b345a4ed2821e01879e33c782c41e7a50150aa6c179",
+   "effects": "9af320b1485c2eb0de0ab3668a3b0af990553c18a988704744676a86090bc551",
    "status": 0,
-   "stdout": "1d802ca443972e54087996b10e8f60570de0ab03a92c2d5c0d2d7bb933903bd6"
+   "stdout": "b8a29251eed89e7e8f3f389becde603a5a9978cac9ce1070fb9c49ad929f6d83"
   },
   "case": {
    "argv": [
     "-c",
-    ": > a.txt; x=X\nPS4='+ '\nexec 2>trace\nset -x; echo é\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\nset -o xtrace; [ a = a ]\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "ba3ad3232d3ecc15",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
+  "reference": {
+   "effects": "b3cf1e02380f73b6db2ecdae0030abd4152bf0aecb6a196026b1ef8c7ecfad2d",
+   "status": 0,
+   "stdout": "464e0edc04d59463ba368958c52cce6e3f81822193300d72920f8d963ccfa60a"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "c4162265644fb2855b10ccc34d07cba9d387214a205b3965e682857ce8edbbf9",
+   "status": 0,
+   "stdout": "e356d02689db211ac3cb8076630b1e78370f649e72a7e4dc75a093eb2701e0a2"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\ng() { set -x; exec 3>&1; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
    ],
    "domain": "shell",
    "family": "xtrace-shape",
@@ -19060,14 +19092,14 @@
    "utility": "shell"
   },
   "domain": "shell",
-  "id": "c2bf9c64e8355283",
+  "id": "ba990a71400eeaad",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
-   "effects": "a456f1f8e7f05e2da89e133863278104f232b4c327049d5efb2019b9db938cf7",
+   "effects": "03ec520702db7cb33d8666316779ea1204e62dfae8ce1e3d261830171b2dd000",
    "status": 0,
-   "stdout": "f6926d2577d423578733fde6e313d3a4a0048c934c6a12f37003e31c52d33980"
+   "stdout": "fe52cef4f9e5d58fe29eace4675c846023510ed9b8fbd9abc21408b80c558017"
   },
   "utility": "xtrace-shape"
  },
@@ -19095,7 +19127,7 @@
   "id": "c65aade8cb4dfd1c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "d9b9ad1e6aaad93f14b1fbe761af0766347afc4530a27c61589cce40e11daa6b",
    "status": 0,
@@ -19105,14 +19137,14 @@
  },
  {
   "candidate": {
-   "effects": "eac508d642167fedf0b1f770e1fa1347bdacea837a1b3a412c3ba58901d96fd0",
+   "effects": "49888ddc4062ce775d4bcdb3ce491e87d920f9fc16409304723dec54d9f5417e",
    "status": 0,
-   "stdout": "a0d76f10e49cc0f91068d233045ad425394049791af6f0bdfd22480b871f9714"
+   "stdout": "605e4ea08f55f395a13daa77735a85bc9e5dd3cde7f22656fbe8cde3bf921d95"
   },
   "case": {
    "argv": [
     "-c",
-    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\nset -x; eval 'echo one; echo two'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\nset -x; eval 'x='\"'\"'q\"uote'\"'\"'; echo \"$x\"'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
    ],
    "domain": "shell",
    "family": "xtrace-shape",
@@ -19124,46 +19156,14 @@
    "utility": "shell"
   },
   "domain": "shell",
-  "id": "d98675a7faa4db97",
+  "id": "d40c7c62b5c8feef",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
-   "effects": "81e2d93c02b0c5983d86c4bbc92180a677aaad1939d317fd49c62921e0f155ff",
+   "effects": "f53af20399db47bdea02db7c84332c31cd472550042ddb3e4e22a88f50b4a1f0",
    "status": 0,
-   "stdout": "0cb3c88aa94bd24928fa04ba4a7a4eb3659bdcd21ff7e8bc43479c3da4b7760a"
-  },
-  "utility": "xtrace-shape"
- },
- {
-  "candidate": {
-   "effects": "a43acbd4742d3ecdf91fee11a98651e8042780bca474b1304df69543ade60e3f",
-   "status": 0,
-   "stdout": "b628dcb04d0c15c5a5b7539ed03b0a5ba67b55b5e53f533d6e00369994b62e9f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\nset -o xtrace; echo \"$(echo n)\"\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "xtrace-shape",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "dfd579c25f30c59c",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
-  "reference": {
-   "effects": "da661663616851d5adfcb89c883a0410c7c1119ca400ca01fa1ab00f51a5d791",
-   "status": 0,
-   "stdout": "eead1568227f6164496f5134c1592f692f0bffbef77f9ddde233a6b155018819"
+   "stdout": "46567883259cebffb2a593c0b0aa3fe2bdfa9c6fa955bb4829daab617fbc7245"
   },
   "utility": "xtrace-shape"
  },
@@ -19191,43 +19191,11 @@
   "id": "e96f5008d76954f9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "a6d56063c1fa72c585865de847eae7faadec241e067663d74e06e660582a3c42",
    "status": 0,
    "stdout": "0f6a880fe599283a41ea07b440e813835a8cdb9fcbb086e808a12b196676fe1f"
-  },
-  "utility": "xtrace-shape"
- },
- {
-  "candidate": {
-   "effects": "eac508d642167fedf0b1f770e1fa1347bdacea837a1b3a412c3ba58901d96fd0",
-   "status": 0,
-   "stdout": "a0d76f10e49cc0f91068d233045ad425394049791af6f0bdfd22480b871f9714"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\nset -x; eval 'echo one; echo two'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "xtrace-shape",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "fd9fc42f8c545047",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
-  "reference": {
-   "effects": "418262530fee8df331b14bde322467c756a8dce9d34d41eda8dbef0a2fb58da0",
-   "status": 0,
-   "stdout": "9f78260e0d4ddfad0ab84746df96e57a833838aca40ef943f0ebc49d34993d3d"
   },
   "utility": "xtrace-shape"
  },
@@ -19255,7 +19223,7 @@
   "id": "fe4e4ea197ba1dbd",
   "kind": "bug",
   "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
   "reference": {
    "effects": "edef5e43c8ceb293916d28e76fd33cda54cb58f0c491dc1cafeae41c216c0bf8",
    "status": 0,
