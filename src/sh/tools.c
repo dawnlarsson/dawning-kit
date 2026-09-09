@@ -4319,6 +4319,7 @@ typedef struct
         string_address unit_separator;
         numfmt_format format;
         bool have_format;
+        bool fields_given;
         bool failed;
         bool stop;
 } numfmt_options;
@@ -4440,10 +4441,20 @@ static bool numfmt_unit(string_address text, positive address_to unit)
 /* numfmt's format deliberately has a narrower grammar than printf: one %f,
    optional zero/group/left flags, width and an optional decimal precision.
    No precision means the ordinary human-format precision, not printf's six. */
+/* Which of the reference's three sentences a format string earns. */
+#define NUMFMT_FORMAT_OK 0
+#define NUMFMT_FORMAT_NONE 1
+#define NUMFMT_FORMAT_MANY 2
+#define NUMFMT_FORMAT_BAD 3
+
+static p8 numfmt_format_kind;
+
 static bool numfmt_format_read(string_address text,
                                numfmt_format address_to format)
 {
         bool found = false;
+
+        numfmt_format_kind = NUMFMT_FORMAT_BAD;
         memory_fill(format, 0, sizeof(*format));
         format->text = text;
 
@@ -4460,7 +4471,10 @@ static bool numfmt_format_read(string_address text,
                         return false;
 
                 if (found)
+                {
+                        numfmt_format_kind = NUMFMT_FORMAT_MANY;
                         return false;
+                }
 
                 found = true;
                 format->directive = at++;
@@ -4514,6 +4528,11 @@ static bool numfmt_format_read(string_address text,
 
                 format->after = at + 1;
         }
+
+        if (!found)
+                numfmt_format_kind = NUMFMT_FORMAT_NONE;
+        else
+                numfmt_format_kind = NUMFMT_FORMAT_OK;
 
         return found;
 }
@@ -5006,6 +5025,38 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
                 return false;
         }
 
+        /*
+                Under --debug the reference says when the integer part of an
+                input carries more digits than a long double holds exactly,
+                because everything after them is the parser's guess.
+        */
+        if (numfmt.debug)
+        {
+                positive at = numeric_length && bytes[0] == '-';
+                positive digits = 0;
+
+                while (at < numeric_length && bytes[at] == '0')
+                        at++;
+                while (at < numeric_length && byte_is_digit(bytes[at]))
+                {
+                        digits++;
+                        at++;
+                }
+
+                if (digits > 18)
+                {
+                        p8 shown[128];
+                        positive take = min(numeric_length, sizeof(shown) - 1);
+
+                        memory_copy(shown, bytes, take);
+                        shown[take] = end;
+                        text_flush();
+                        string_format(writer_stderr,
+                            "numfmt: large input value '%s': possible precision loss\n",
+                            shown);
+                }
+        }
+
         if (suffix_bytes)
                 number.shown = 0;
 
@@ -5214,10 +5265,142 @@ static fn numfmt_record(p8 address_to bytes, positive length)
         }
 }
 
-/* GNU refuses a bad delimiter or header count as it reads the option, even
-   when a later one would supersede it. */
+/* The shared field list is walked once per field spelling, and each -f
+   starts a fresh one. */
+static fn numfmt_fields_begin()
+{
+        memory_fill(text_list, 0, sizeof(text_list));
+        memory_fill(text_list_begins, 0, sizeof(text_list_begins));
+        text_list_open = 0;
+}
+
+static bool numfmt_hint()
+{
+        string_format(writer_stderr,
+                      "Try 'numfmt --help' for more information.\n");
+        return false;
+}
+
+/* The reference's complaint about a word that is not one of a fixed set:
+   the word, then the set one to a line, then where to look. */
+static bool numfmt_word_refuse(string_address option, string_address value,
+                               const string_address address_to words,
+                               positive count)
+{
+        text_flush();
+        string_format(writer_stderr,
+                      "numfmt: invalid argument '%s' for '%s'\nValid arguments are:\n",
+                      value, option);
+
+        for (positive at = 0; at < count; at++)
+                string_format(writer_stderr, "  - '%s'\n", words[at]);
+
+        return numfmt_hint();
+}
+
+/*
+        A field list the reference will not read has three sentences of its
+        own, and which one depends on the shape rather than on the parser
+        failing: a byte that belongs to no list at all, a field numbered
+        zero, and a range that runs backwards.
+*/
+static bool numfmt_fields_refuse(string_address value)
+{
+        bool shaped = true;
+        positive left = 0;
+        positive right = 0;
+        bool have_left = false;
+        bool have_right = false;
+        bool range = false;
+        bool decreasing = false;
+        bool zero = false;
+
+        for (positive at = 0;; at++)
+        {
+                p8 byte = value[at];
+
+                if (byte_is_digit(byte))
+                {
+                        positive digit = (positive)(byte - '0');
+
+                        if (range)
+                        {
+                                have_right = true;
+                                right = right * 10 + digit;
+                        }
+                        else
+                        {
+                                have_left = true;
+                                left = left * 10 + digit;
+                        }
+                        continue;
+                }
+
+                if (byte == '-' && !range)
+                {
+                        range = true;
+                        continue;
+                }
+
+                if (byte && byte != ',' && !byte_is_space(byte))
+                {
+                        shaped = false;
+                        break;
+                }
+
+                /* The end of one component: a lone dash is every field, a
+                   side left empty is the first or the last, and a side
+                   spelled zero is the complaint. */
+                if (!range && !have_left)
+                        zero = true;
+                else if (range && have_left && have_right && right < left)
+                        decreasing = true;
+                if ((have_left && !left) || (have_right && !right))
+                        zero = true;
+
+                left = right = 0;
+                have_left = have_right = range = false;
+
+                if (!byte)
+                        break;
+        }
+
+        text_flush();
+
+        if (!shaped)
+                string_format(writer_stderr,
+                              "numfmt: invalid field value '%s'\n", value);
+        else if (decreasing)
+                string_format(writer_stderr,
+                              "numfmt: invalid decreasing range\n");
+        else if (zero)
+                string_format(writer_stderr,
+                              "numfmt: fields are numbered from 1\n");
+        else
+                string_format(writer_stderr,
+                              "numfmt: invalid field value '%s'\n", value);
+
+        return numfmt_hint();
+}
+
+/*
+        Every value but --format is read where it is written, because that
+        is where the reference reads it: two bad values are then reported in
+        the order they were typed. --format is the one it stores and looks
+        at after the walk, so a bad format loses to a bad option written
+        after it, and that is kept too.
+*/
 static bool numfmt_option_seen(p8 letter, string_address value)
 {
+        static const string_address from_words[] = {"none", "auto", "si",
+                                                    "iec", "iec-i"};
+        static const string_address to_words[] = {"none", "si", "iec",
+                                                  "iec-i"};
+        static const string_address round_words[] = {"up", "down", "from-zero",
+                                                     "towards-zero", "nearest"};
+        static const string_address invalid_words[] = {"abort", "fail", "warn",
+                                                       "ignore"};
+
         if (letter == 'd' && value && string_length(value) > 1)
         {
                 text_flush();
@@ -5235,6 +5418,80 @@ static bool numfmt_option_seen(p8 letter, string_address value)
                                       "numfmt: invalid header value '%s'\n", value);
                         return false;
                 }
+        }
+        if (letter == 'r' && value &&
+            !numfmt_scale_name(value, true, address_of numfmt.from))
+                return numfmt_word_refuse("--from", value, from_words,
+                                          array_count(from_words));
+        if (letter == 't' && value &&
+            !numfmt_scale_name(value, false, address_of numfmt.to))
+                return numfmt_word_refuse("--to", value, to_words,
+                                          array_count(to_words));
+        if ((letter == 'R' || letter == 'T') && value)
+        {
+                positive unit;
+
+                if (!numfmt_unit(value, address_of unit))
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                                      "numfmt: invalid unit size: '%s'\n", value);
+                        return false;
+                }
+
+                if (letter == 'R')
+                        numfmt.from_unit = unit;
+                else
+                        numfmt.to_unit = unit;
+        }
+        if (letter == 'p' && value &&
+            (!file_signed_decimal(value, address_of numfmt.padding) ||
+             !numfmt.padding))
+        {
+                text_flush();
+                string_format(writer_stderr,
+                              "numfmt: invalid padding value '%s'\n", value);
+                return false;
+        }
+        if (letter == 'u' && value)
+        {
+                static const string_address names[] = {
+                    [NUMFMT_ROUND_FROM_ZERO] = "from-zero",
+                    [NUMFMT_ROUND_UP] = "up", [NUMFMT_ROUND_DOWN] = "down",
+                    [NUMFMT_ROUND_TO_ZERO] = "towards-zero",
+                    [NUMFMT_ROUND_NEAREST] = "nearest",
+                };
+
+                numfmt.rounding = string_table_find(
+                    value, names, sizeof(names[0]), array_count(names));
+                if (numfmt.rounding == array_count(names))
+                        return numfmt_word_refuse("--round", value, round_words,
+                                                  array_count(round_words));
+        }
+        if (letter == 'i' && value)
+        {
+                static const string_address names[] = {
+                    [NUMFMT_INVALID_ABORT] = "abort", [NUMFMT_INVALID_FAIL] = "fail",
+                    [NUMFMT_INVALID_WARN] = "warn", [NUMFMT_INVALID_IGNORE] = "ignore",
+                };
+
+                numfmt.invalid = string_table_find(
+                    value, names, sizeof(names[0]), array_count(names));
+                if (numfmt.invalid == array_count(names))
+                        return numfmt_word_refuse("--invalid", value, invalid_words,
+                                                  array_count(invalid_words));
+        }
+        if (letter == 'f' && value)
+        {
+                /* A lone dash is every field. */
+                string_address list = string_equals(value, "-")
+                                          ? (string_address) "1-"
+                                          : value;
+
+                numfmt_fields_begin();
+                if (!text_list_parse(list))
+                        return numfmt_fields_refuse(value);
+                numfmt.fields_given = true;
         }
         return true;
 }
@@ -5271,60 +5528,34 @@ static b32 tools_numfmt()
         numfmt.suffix = file_option_value(address_of taking, 's');
         numfmt.unit_separator = file_option_value(address_of taking, 'S');
 
-        string_address value = file_option_value(address_of taking, 'r');
-        if (value && !numfmt_scale_name(value, true, address_of numfmt.from))
-                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid --from value"));
+        /* --from, --to, --from-unit, --to-unit, --padding, --round,
+           --invalid, --field, --delimiter and --header were read where they
+           were written, in numfmt_option_seen. --format is the one the
+           reference stores and reads after the walk. */
+        string_address value = file_option_value(address_of taking, 'm');
 
-        value = file_option_value(address_of taking, 't');
-        if (value && !numfmt_scale_name(value, false, address_of numfmt.to))
-                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid --to value"));
+        /* The reference refuses the pair before it reads the format, so a
+           format it could not read is not what it complains about. */
+        if (value && numfmt.grouping)
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--grouping cannot be combined with --format"));
 
-        value = file_option_value(address_of taking, 'R');
-        if (value && !numfmt_unit(value, address_of numfmt.from_unit))
-                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid unit size"));
-
-        value = file_option_value(address_of taking, 'T');
-        if (value && !numfmt_unit(value, address_of numfmt.to_unit))
-                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid unit size"));
-
-        value = file_option_value(address_of taking, 'p');
-        if (value && (!file_signed_decimal(value, address_of numfmt.padding) ||
-                      !numfmt.padding))
-                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid padding value"));
-
-        value = file_option_value(address_of taking, 'u');
-        if (value)
-        {
-                static const string_address names[] = {
-                    [NUMFMT_ROUND_FROM_ZERO] = "from-zero",
-                    [NUMFMT_ROUND_UP] = "up", [NUMFMT_ROUND_DOWN] = "down",
-                    [NUMFMT_ROUND_TO_ZERO] = "towards-zero",
-                    [NUMFMT_ROUND_NEAREST] = "nearest",
-                };
-                numfmt.rounding = string_table_find(
-                    value, names, sizeof(names[0]), array_count(names));
-                if (numfmt.rounding == array_count(names))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid rounding method"));
-        }
-
-        value = file_option_value(address_of taking, 'i');
-        if (value)
-        {
-                static const string_address names[] = {
-                    [NUMFMT_INVALID_ABORT] = "abort", [NUMFMT_INVALID_FAIL] = "fail",
-                    [NUMFMT_INVALID_WARN] = "warn", [NUMFMT_INVALID_IGNORE] = "ignore",
-                };
-                numfmt.invalid = string_table_find(
-                    value, names, sizeof(names[0]), array_count(names));
-                if (numfmt.invalid == array_count(names))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid invalid-mode"));
-        }
-
-        value = file_option_value(address_of taking, 'm');
         if (value)
         {
                 if (!numfmt_format_read(value, address_of numfmt.format))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "format needs exactly one %f conversion"));
+                {
+                        text_flush();
+                        if (numfmt_format_kind == NUMFMT_FORMAT_NONE)
+                                string_format(writer_stderr,
+                                    "numfmt: format '%s' has no %% directive\n", value);
+                        else if (numfmt_format_kind == NUMFMT_FORMAT_MANY)
+                                string_format(writer_stderr,
+                                    "numfmt: format '%s' has too many %% directives\n", value);
+                        else
+                                string_format(writer_stderr,
+                                    "numfmt: invalid format '%s', directive must be %%[0]['][-][N][.][N]f\n",
+                                    value);
+                        return text_done(1);
+                }
                 numfmt.have_format = true;
         }
 
@@ -5349,35 +5580,36 @@ static b32 tools_numfmt()
         {
                 positive length = string_length(value);
 
-                if (length > 1)
-                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "delimiter must be one byte"));
                 numfmt.delimiter_given = true;
                 numfmt.field_delimiter = length ? value[0] : '\0';
         }
 
-        memory_fill(text_list, 0, sizeof(text_list));
-        memory_fill(text_list_begins, 0, sizeof(text_list_begins));
-        text_list_open = 0;
-        value = file_option_value(address_of taking, 'f');
-        if (!value)
-                value = (string_address) "1";
-        // A lone dash is every field.
-        if (string_equals(value, "-"))
-                value = (string_address) "1-";
-        if (!text_list_parse(value))
-                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid field specification"));
+        if (!numfmt.fields_given)
+        {
+                numfmt_fields_begin();
+                text_list_parse((string_address) "1");
+        }
 
         if (flags & FILE_FLAG('h'))
         {
                 value = file_option_value(address_of taking, 'h');
                 numfmt.header = 1;
 
-                if (value && (!string_digits_exact(value, address_of numfmt.header) ||
-                              !numfmt.header))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid header value"));
+                if (value)
+                        string_digits_exact(value, address_of numfmt.header);
         }
 
         text_delimiter = (flags & FILE_FLAG('z')) ? '\0' : '\n';
+
+        /* A --debug run with nothing to convert says so before it reads a
+           byte. */
+        if (numfmt.debug && numfmt.from == NUMFMT_SCALE_NONE &&
+            numfmt.to == NUMFMT_SCALE_NONE && !numfmt.grouping &&
+            !numfmt.padding && !numfmt.have_format)
+        {
+                text_flush();
+                writer_stderr("numfmt: no conversion option specified\n", 0);
+        }
 
         // GNU's two warnings about options that another option overrides,
         // both of which it prints only under --debug.
@@ -5386,6 +5618,23 @@ static b32 tools_numfmt()
                 text_flush();
                 writer_stderr("numfmt: --format padding overriding --padding\n", 0);
         }
+        /* Without an explicit delimiter the fields are split on blanks, and
+           a unit separator then has nothing left to separate. */
+        if (numfmt.debug && (flags & FILE_FLAG('S')) && !(flags & FILE_FLAG('d')))
+        {
+                text_flush();
+                writer_stderr("numfmt: field delimiters have higher precedence "
+                              "than unit separators\n", 0);
+        }
+
+        /* Grouping is the locale's separator, and the C locale has none. */
+        if (numfmt.debug &&
+            (numfmt.grouping || (numfmt.have_format && numfmt.format.grouping)))
+        {
+                text_flush();
+                writer_stderr("numfmt: grouping has no effect in this locale\n", 0);
+        }
+
         if (numfmt.debug && (flags & FILE_FLAG('h')) && file_operand_count)
         {
                 text_flush();
