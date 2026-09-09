@@ -5363,6 +5363,7 @@ typedef struct
 {
         string_address word;
         p8 answer;
+        bool alone;
 } ls_word;
 
 // One word among several spellings, or a complaint listing them the way the
@@ -5379,7 +5380,7 @@ static b32 ls_word_among(string_address option, string_address value,
 
         for (positive i = 0; i < count; i++)
         {
-                if (i && words[i].answer == words[i - 1].answer)
+                if (i && !words[i].alone && words[i].answer == words[i - 1].answer)
                 {
                         string_format(file_fail, ", '%s'", words[i].word);
                         continue;
@@ -5409,8 +5410,8 @@ static const ls_word ls_time_words[] = {
     {"mtime", 'm'}, {"modification", 'm'}, {"birth", 'b'}, {"creation", 'b'}};
 static const ls_word ls_quoting_words[] = {
     {"literal", 'L'}, {"shell", 's'}, {"shell-always", 'S'}, {"shell-escape", 'e'},
-    {"shell-escape-always", 'E'}, {"c", 'c'}, {"c-maybe", 'c'}, {"escape", 'b'},
-    {"locale", 'o'}, {"clocale", 'o'}};
+    {"shell-escape-always", 'E'}, {"c", 'c'}, {"c-maybe", 'c', true}, {"escape", 'b'},
+    {"locale", 'o'}, {"clocale", 'o', true}};
 static const ls_word ls_indicator_words[] = {
     {"none", 'N'}, {"slash", '/'}, {"file-type", 'f'}, {"classify", 'F'}};
 
@@ -5514,7 +5515,7 @@ static bool ls_operand(string_address path, file_facts address_to facts, bool ad
         {
                 looked = file_look_code(AT_FDCWD, path, 0, facts);
 
-                if (looked == -ERROR_NO_ENTRY && ls_dereference == 'D')
+                if (looked < 0 && ls_dereference == 'D')
                         looked = file_look_code(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, facts);
                 else if (looked == 0 && ls_dereference == 'D' &&
                          (facts->mode & MODE_FORMAT) != MODE_DIRECTORY)
@@ -5588,7 +5589,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                                          file_option_value(address_of taking, 'J'),
                                          ls_format_words, array_count(ls_format_words));
                 if (word < 0)
-                        return 2;
+                        return 1;
                 ls_format = (p8)word;
         }
         else if (ls_format_option && string_first_of((string_address) "lgonMD", ls_format_option))
@@ -5627,7 +5628,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                                          file_option_value(address_of taking, '3'),
                                          ls_sort_words, array_count(ls_sort_words));
                 if (word < 0)
-                        return 2;
+                        return 1;
                 ls_sorting = (p8)word;
         }
         else if (ls_sort_option == 'f')
@@ -5643,7 +5644,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                                          file_option_value(address_of taking, '4'),
                                          ls_time_words, array_count(ls_time_words));
                 if (word < 0)
-                        return 2;
+                        return 1;
                 ls_time_key = (p8)word;
         }
         else if (ls_time_option == 'c')
@@ -5710,7 +5711,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                                          file_option_value(address_of taking, 'z'),
                                          ls_quoting_words, array_count(ls_quoting_words));
                 if (word < 0)
-                        return 2;
+                        return 1;
                 ls_quoting = (p8)word;
         }
         else if (ls_quote_option == 'N')
@@ -5733,7 +5734,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                                          file_option_value(address_of taking, 'Y'),
                                          ls_indicator_words, array_count(ls_indicator_words));
                 if (word < 0)
-                        return 2;
+                        return 1;
                 ls_indicator = word == 'N' ? 0 : (p8)word;
         }
         else if (ls_indicator_option == 'E')
@@ -5841,7 +5842,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                                      : 'a';
 
                 if (when < 0)
-                        return 2;
+                        return 1;
 
                 ls_coloring = ls_colors && string_get(ls_colors) && ls_when_active((p8)when);
         }
@@ -6223,7 +6224,7 @@ static b32 file_nice()
                                 given = program_argument((b32)first);
                         else
                         {
-                                file_fail("nice: option needs an argument: -n\n", 0);
+                                file_fail("nice: option requires an argument -- 'n'\n", 0);
                                 return 125;
                         }
 
@@ -9832,6 +9833,8 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
 
 static const file_long chmod_longs[] = {
     {(string_address) "changes", 'c'},
+    {(string_address) "no-preserve-root", 'N'},
+    {(string_address) "preserve-root", 'N'},
     {(string_address) "quiet", 'f'},
     {(string_address) "recursive", 'R'},
     {(string_address) "reference", 'e'},
@@ -9848,7 +9851,7 @@ static b32 file_chmod()
 
         file_taking taking = {
             .program = (string_address) "chmod",
-            .allowed = (string_address) "RcfvrwxXstugoa",
+            .allowed = (string_address) "RcfvrwxXstugoaN",
             .valued = (string_address) "e",
             .optional = (string_address) "rwxXstugoa",
             .longs = chmod_longs,
@@ -10015,7 +10018,20 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
 {
         positive through = chown_dereference_option == 'h' ? AT_SYMLINK_NOFOLLOW : 0;
         file_facts facts;
-        bool known = file_look(directory, name, through, address_of facts);
+        bipolar looked = file_look_code(directory, name, through, address_of facts);
+        bool known = looked == 0;
+
+        // A name that is not there is not an ownership that would not
+        // change: the reference says it could not look at it.
+        if (looked == -ERROR_NO_ENTRY)
+        {
+                if (!chown_quiet)
+                        string_format(file_fail, "%s: cannot access '%s': %s\n",
+                                      chown_program, shown, file_reason(looked));
+
+                chown_status = 1;
+                return;
+        }
 
         bipolar done = system_change_owner_at(
             directory, name, chown_user, chown_group, through);
@@ -10072,7 +10088,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
         file_taking taking = {
             .program = program,
-            .allowed = (string_address) "Rcfhv",
+            .allowed = (string_address) "HLPRcfhv",
             .valued = (string_address) "e",
             .longs = chown_longs,
             .supersedes = chown_supersedes,
@@ -10162,6 +10178,15 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
         if (string_is(who + length, ':') || string_is(who + length, '.'))
                 group = who + length + 1;
+
+        // "user:" names a group by the user's own login group, which needs a
+        // password database this one has not got; the reference refuses a
+        // spec it cannot complete rather than changing only the user.
+        if (group && !string_get(group))
+        {
+                string_format(file_fail, "%s: invalid spec: '%s'\n", program, who);
+                return 1;
+        }
 
         if (length > 0)
         {
@@ -16124,7 +16149,8 @@ static b32 file_shuf()
         }
         if (!echo && !range_text && file_operand_count > 1)
         {
-                file_fail("shuf: extra operand\n", 0);
+                string_format(file_fail, "shuf: extra operand '%s'\n",
+                              file_operand_at(1));
                 return 1;
         }
 
@@ -17312,7 +17338,23 @@ static bool file_copy_one(string_address source, string_address destination,
                 if (!copied)
                 {
                         if (!moving)
-                                string_format(file_fail, "cp: cannot copy '%s'\n", source);
+                        {
+                                // The copy says only that it failed; the open
+                                // says why, and a probe that succeeds is
+                                // taken away again before anyone sees it.
+                                bipolar probe = system_open_at_mode(
+                                    AT_FDCWD, destination, FILE_WRITE, facts.mode & 07777);
+
+                                if (probe >= 0)
+                                {
+                                        system_close(probe);
+                                        string_format(file_fail, "cp: cannot copy '%s'\n", source);
+                                }
+                                else
+                                        string_format(file_fail,
+                                                      "cp: cannot create regular file '%s': %s\n",
+                                                      destination, file_reason(probe));
+                        }
                         return false;
                 }
 
@@ -17468,7 +17510,7 @@ static b32 file_cp()
 
         file_taking taking = {
             .program = (string_address) "cp",
-            .allowed = (string_address) "aAbCdDefHiklLnNprRsStTuvwxzZ",
+            .allowed = (string_address) "aAbCdDefHiklLnNpPrRsStTuvwxzZ",
             .valued = (string_address) "tSNz",
             .long_optional = (string_address) "BkupZ",
             .longs = cp_longs,
@@ -18508,7 +18550,11 @@ static b32 file_touch()
                 else
                 {
                         string_format(file_fail,
-                                      "touch: invalid argument '%s' for '--time'\n", which);
+                                      "touch: invalid argument '%s' for '--time'\n"
+                                      "Valid arguments are:\n"
+                                      "  - 'atime', 'access', 'use'\n"
+                                      "  - 'mtime', 'modify'\n",
+                                      which);
                         return 1;
                 }
         }
@@ -19311,7 +19357,8 @@ static b32 file_seq()
 
         if (!step.coefficient)
         {
-                file_fail("seq: increment must not be zero\n", 0);
+                string_format(file_fail, "seq: invalid Zero increment value: '%s'\n",
+                              program_argument((b32)(index + 1)));
                 return 1;
         }
 
