@@ -254,7 +254,7 @@ cover('specialized', 'size', 'memory_translate',
       'x86-64, 59% under the AArch64 runner and 67% under the RV64 runner. '
       'The expansion stops at eight bytes, where removing control overhead '
       'still dominates the scalar table loads',
-      expansion='translate_known', evidence='kit/bench_translate.c')
+      expansion='translate_known', evidence='test/checks.c#BENCH_translate')
 cover('specialized', 'bound', 'string_compare_folded_max',
       'Short literal bounds reuse the measured ASCII-case compare expansion '
       'and add strncasecmp\'s equal-terminator stop. At three bytes the '

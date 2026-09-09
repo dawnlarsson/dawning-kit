@@ -186,7 +186,8 @@ and 14,988 KiB for the candidate. These are sampled workload values, not global
 memory bounds; the BSS and array reservations above are exact.
 
 Compilation and matching are measured separately in a proof-only freestanding
-benchmark using the existing `kit/bench_measure.c`. Repeated grouped patterns
+benchmark using the existing timing scaffold, which is
+`SHARED_bench_measure` in test/checks.c. Repeated grouped patterns
 compile faster because they no longer expand their child. Simple patterns can
 compile slower because graph construction and prepared metadata have fixed
 costs. A fixed grouped match requires count continuations where the old program

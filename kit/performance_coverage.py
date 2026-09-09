@@ -50,144 +50,144 @@ def cover(category, evidence, names, note, anchors=None):
 
 # Direct subjects: these names are passed to a timed runner or appear in a
 # dedicated floor row, rather than merely helping the harness print or count.
-cover('direct_benchmark', 'kit/floor.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_floor', '''
 memory_compare memory_copy memory_copy_apart memory_count memory_fill
 memory_first_of string_compare string_first_of
 string_last_of_or_end string_length
 ''', 'floor-relative rows over multiple sizes')
 
-cover('direct_benchmark', 'kit/bench_numbers.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_numbers', '''
 positive_into positive_to_string
 ''', 'paired former-C/assembly timing over numeric distributions')
 
-cover('direct_benchmark', 'kit/bench_bases.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_bases', '''
 positive_into_base
 ''', 'paired scalar/assembly timing across bases and value widths')
 
-cover('direct_benchmark', 'kit/bench_hex.c', 'memory_into_hex',
+cover('direct_benchmark', 'test/checks.c#BENCH_hex', 'memory_into_hex',
       'paired former-C/assembly timing over byte tails, dump rows and large spans')
 
-cover('direct_benchmark', 'kit/bench_fixed.c', 'memory_decimal_series',
+cover('direct_benchmark', 'test/checks.c#BENCH_fixed', 'memory_decimal_series',
       'bounded decimal-record expansion against a C carry loop; native timing required')
 
-cover('benchmark_context', 'kit/bench_escape.c', '''
+cover('benchmark_context', 'test/checks.c#BENCH_escape', '''
 memory_escape_index memory_into_escaped
 ''', 'shared primitives timed through sparse/dense hex and JSON writer workloads',
       anchors={'memory_escape_index': 'writer_hex_escaped',
                'memory_into_escaped': 'writer_hex_escaped'})
 
-cover('direct_benchmark', 'kit/bench_codec.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_codec', '''
 memory_encode_power2 memory_decode_power2
 ''', 'bounded codec quanta against independent scalar bit loops; native timing required')
 
 cover('correctness_only', 'test/checks.c#CHECK_codec', 'memory_into_hex_case',
       'case-selectable entry shares the existing hexadecimal assembly core')
 
-cover('direct_benchmark', 'kit/bench_padded.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_padded', '''
 positive_to_padded
 ''', 'paired former-C/assembly timing across field shapes')
 
-cover('direct_benchmark', 'kit/bench_parse_bases.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_input_bases', '''
 string_digits_base_max string_digits_hexadecimal_escape_max
 string_digits_hexadecimal_max string_digits_octal_escape_max
 string_digits_octal_max
 ''', 'paired scalar/assembly timing with bounded parser inputs')
 
-cover('direct_benchmark', 'kit/bench_reserve.c', 'memory_reserve',
+cover('direct_benchmark', 'test/checks.c#BENCH_reserve', 'memory_reserve',
       'fresh-process mapping growth timing and peak resident memory, with '
       'dense and sparse inputs; hardware/RSS claims require native execution')
 
-cover('direct_benchmark', 'kit/bench_into_padded.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_fields', '''
 positive_into_padded positive_into_pair
 ''', 'paired former-C/assembly timing across padded converter shapes')
 
-cover('direct_benchmark', 'kit/bench_human.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_human', '''
 positive_into_human_1024_string positive_to_human_1024
 ''', 'paired former-C/assembly timing for buffer and writer forms')
 
-cover('direct_benchmark', 'kit/bench_human_nearest.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_human_nearest', '''
 positive_into_human_nearest_string
 ''', 'paired former-C/assembly timing for decimal and binary forms')
 
-cover('direct_benchmark', 'kit/bench_startup.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_startup', '''
 moonwater_cpu_detect program_environment_list program_initial_identity
 ''', 'isolated runtime-entry components, including the Spark loader identity '
      'handoff and the stock-kernel fallback')
 
-cover('direct_benchmark', 'kit/bench_paths.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_paths', '''
 path_head_copy path_join path_tail_copy
 ''', 'paired former-C/assembly timing over short, nested, and long paths')
 
-cover('direct_benchmark', 'kit/bench_reverse.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_reverse', '''
 memory_reverse
 ''', 'paired former-C/assembly timing over primitive and folded rev shapes')
 
-cover('direct_benchmark', 'kit/bench_writer_field.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_writer_field', '''
 string_to_field writer_field
 ''', 'paired former-C/assembly timing over exact and padded fields')
-cover('direct_benchmark', 'kit/bench_writer_text.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_writer_text', '''
 buffered_flush buffered_reserve buffered_write buffered_write_byte buffered_write_deferred_equal log
 ''', 'paired former-C/assembly timing over buffered and direct output shapes')
-cover('direct_benchmark', 'kit/bench_prefix_known.c', 'memory_common_prefix',
+cover('direct_benchmark', 'test/checks.c#BENCH_prefix_known', 'memory_common_prefix',
       'literal-size expansion against the out-of-line hardware routine on '
       'equal spans: native x86-64 plus ARM64/RV64 instruction-set runners')
-cover('direct_benchmark', 'kit/bench_compare_max.c', 'string_compare_max',
+cover('direct_benchmark', 'test/checks.c#BENCH_compare_max', 'string_compare_max',
       'dynamic-bound first-mismatch semantic floor and equal/late traffic proxies')
-cover('direct_benchmark', 'kit/bench_string_copy.c', 'string_copy',
+cover('direct_benchmark', 'test/checks.c#BENCH_string_copy', 'string_copy',
       'caller-shaped sizes against copy-only traffic and exact scalar semantic proxies')
-cover('direct_benchmark', 'kit/bench_hash_33.c',
+cover('direct_benchmark', 'test/checks.c#BENCH_hash_33',
       'memory_hash_33 string_hash_33_length',
       'bounded/string verifier and paired scalar/four-byte or one-pass/two-pass timing')
-cover('direct_benchmark', 'kit/bench_span_byte.c', 'memory_span_byte',
+cover('direct_benchmark', 'test/checks.c#BENCH_span_byte', 'memory_span_byte',
       'page-edge verifier and paired scalar/vector equal-run timing')
-cover('direct_benchmark', 'kit/bench_fill_u32.c', 'memory_fill_u32',
+cover('direct_benchmark', 'test/checks.c#BENCH_fill_u32', 'memory_fill_u32',
       '32-bit span fill against scalar and bulk-store traffic floors')
-cover('direct_benchmark', 'kit/bench_fill_u64.c', 'memory_fill_u64_aligned',
+cover('direct_benchmark', 'test/checks.c#BENCH_fill_u64', 'memory_fill_u64_aligned',
       'aligned 64-bit pattern fill against scalar and bulk-store traffic floors')
-cover('direct_benchmark', 'kit/bench_ascii_case.c', 'memory_compare_ascii_case',
+cover('direct_benchmark', 'test/checks.c#BENCH_ascii_case', 'memory_compare_ascii_case',
       'exhaustive byte-pair validation and paired folded comparison timing')
-cover('direct_benchmark', 'kit/bench_ascii_convert.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_ascii_convert', '''
 byte_to_lower byte_to_upper memory_to_lower_ascii memory_to_upper_ascii
 ''', 'exhaustive byte/page-edge validation and paired scalar-call/inlined-loop timing')
-cover('direct_benchmark', 'kit/bench_ascii_search.c', 'memory_search_ascii_case',
+cover('direct_benchmark', 'test/checks.c#BENCH_ascii_search', 'memory_search_ascii_case',
       'bounded exhaustive verifier plus paired former-C/assembly fixed-search timing')
-cover('direct_benchmark', 'kit/bench_grep_search.c', '''
+cover('direct_benchmark', 'test/checks.c#BENCH_grep_search', '''
 memory_search_prepared memory_search_ascii_case_prepared
 ''', 'paired repeated-search timing over sparse, folded, false-candidate and dense matches')
-cover('direct_benchmark', 'kit/bench_grep_count.c',
+cover('direct_benchmark', 'test/checks.c#BENCH_grep_count',
       'memory_count_records_with_prepared',
       'bounded record verifier and traffic/repeated/fused resident-input timing')
-cover('direct_benchmark', 'kit/bench_last_of.c', 'memory_last_of',
+cover('direct_benchmark', 'test/checks.c#BENCH_last_of', 'memory_last_of',
       'guarded reverse-search validation and paired scalar/assembly timing')
-cover('direct_benchmark', 'kit/bench_words.c', 'memory_count_words',
+cover('direct_benchmark', 'test/checks.c#BENCH_words', 'memory_count_words',
       'state/split validation and paired word-transition timing')
-cover('direct_benchmark', 'kit/bench_translate.c', 'memory_translate',
+cover('direct_benchmark', 'test/checks.c#BENCH_translate', 'memory_translate',
       'paired former-C/assembly timing over byte-table translation sizes')
 
 
 # Private cores are present in the timed call graph, but the harness cannot
 # assign their cost independently from their public wrappers.
-cover('benchmark_context', 'kit/bench_ascii_search.c',
+cover('benchmark_context', 'test/checks.c#BENCH_ascii_search',
       'memory_first_of_ascii_case',
       'bounded hunt reached by the directly timed folded search',
       {'memory_first_of_ascii_case': 'memory_search_ascii_case'})
-cover('benchmark_context', 'kit/bench_grep_search.c', '''
+cover('benchmark_context', 'test/checks.c#BENCH_grep_search', '''
 memory_search_prepared_core memory_search_ascii_case_prepared_core
 ''', 'private cores reached by the directly timed prepared searches',
       {'memory_search_prepared_core': 'memory_search_prepared',
        'memory_search_ascii_case_prepared_core': 'memory_search_ascii_case_prepared'})
-cover('benchmark_context', 'kit/bench_paths.c', 'path_split_core',
+cover('benchmark_context', 'test/checks.c#BENCH_paths', 'path_split_core',
       'private core reached by all three directly timed path wrappers',
       {'path_split_core': 'path_head_copy'})
-cover('benchmark_context', 'kit/bench_numbers.c', '''
+cover('benchmark_context', 'test/checks.c#BENCH_numbers', '''
 positive_digits_core positive_into_core
 ''', 'private conversion core reached by a directly timed public converter',
       {'positive_digits_core': 'positive_to_string',
        'positive_into_core': 'positive_into'})
-cover('benchmark_context', 'kit/bench_writer_field.c', 'writer_field_core',
+cover('benchmark_context', 'test/checks.c#BENCH_writer_field', 'writer_field_core',
       'private core reached by both directly timed field wrappers',
       {'writer_field_core': 'writer_field'})
-cover('benchmark_context', 'kit/bench_writer_text.c', 'buffered_write_core',
+cover('benchmark_context', 'test/checks.c#BENCH_writer_text', 'buffered_write_core',
       'private core reached by both directly timed buffer-policy wrappers',
       {'buffered_write_core': 'buffered_write'})
 
@@ -301,7 +301,7 @@ def validate():
     manifest.reconcile(ROWS, errors)
 
     cache = {}
-    benchmark_dispatch = (ROOT / 'kit/bench').read_text(encoding='utf-8')
+    benchmark_dispatch = (ROOT / 'test/run').read_text(encoding='utf-8')
     for row in ROWS:
         if row.category not in CATEGORY_DESCRIPTION:
             errors.append('%s: unknown category %s' %
@@ -318,8 +318,12 @@ def validate():
         if not manifest.anchor(row, cache, errors):
             continue
         if row.category in ('direct_benchmark', 'benchmark_context'):
-            if (ROOT / row.evidence).name not in benchmark_dispatch:
-                errors.append('%s: benchmark %s is not dispatched by kit/bench' %
+            # The evidence is a section of test/checks.c, and the claim that
+            # it is a benchmark is only worth anything if something runs it:
+            # the section name has to appear in test/run's bench catalogue.
+            section = row.evidence.partition('#')[2]
+            if not section or section not in benchmark_dispatch:
+                errors.append('%s: benchmark %s is not dispatched by test/run bench' %
                               (row.routine, row.evidence))
     return errors
 
