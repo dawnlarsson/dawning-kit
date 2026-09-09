@@ -38,3 +38,6 @@ test/bin/
 # copy in the repository would only be a second place to edit.
 /src/library.next.c
 __pycache__/
+
+# Agent worktrees and local session state.
+.claude/

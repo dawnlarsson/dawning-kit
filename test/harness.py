@@ -9,20 +9,29 @@
     python3 test/harness.py native_extract LIBRARY ROUTINE...
     python3 test/harness.py native_extract_test LIBRARY
     python3 test/harness.py surface_coreutils_gap
+    python3 test/harness.py shell_functions --shell SHELL
+    python3 test/harness.py audit_shell_functions
+    python3 test/harness.py canvas_lifetime
+    python3 test/harness.py code_map [-v]
 
 Each was a file of its own in test/ -- core_state.py, spark_entry.py,
 build_tools.py, inventory.py, edit_driver.py, native_extract.py with
-native_extract_test.py as its self-check, and surface_coreutils_gap.py with
-the coreutils 9.11 program list it pinned -- and each is one function here,
-harness_<name>(argv), with the body it had. Nothing runs at import: the name
+native_extract_test.py as its self-check, surface_coreutils_gap.py with the
+coreutils 9.11 program list it pinned, shell_functions.py,
+audit_shell_functions.py, canvas_lifetime.py and code_map.py -- and each is
+one function here, harness_<name>(argv), with the body it had. Nothing runs at import: the name
 on the command line goes to harness_main, and that is the only thing
 __main__ does.
 """
 
+import argparse
 import ast
 import contextlib
+import copy
+import csv
 import fcntl
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -40,9 +49,11 @@ import subprocess
 import sys
 import tempfile
 import termios
+import textwrap
 import time
 import types
 import unittest
+from unittest.mock import patch
 
 HARNESS_ROOT = Path(__file__).resolve().parents[1]
 
@@ -363,8 +374,8 @@ static void canvas_rect_fill(u32 *at,unsigned long pitch,unsigned long w,
     source += section(compose, "#define DESKTOP_PIECES", "static HOT void compose_clip")
     source += r'''
 #define IS_ENABLED(x) largest
-#define log_canvas(...) ((void)0)
-#define log_canvas_error(...) ((void)0)
+#define pr_info(...) ((void)0)
+#define pr_err(...) ((void)0)
 struct canvas { int client; };
 static int largest,build_results[2],commit_results[2];
 static unsigned builds,commits,releases,attaches,mode_bits;
@@ -2528,6 +2539,1110 @@ def harness_surface_coreutils_gap(argv):
     return 0
 
 
+def harness_shell_functions(argv):
+    """Check persistent function storage using the compiled shell and GNU Bash.
+
+        python3 test/harness.py shell_functions --shell /path/to/shell [--out report.json]
+
+    Capacity-error cases use explicit bounded-shell expectations; the remaining
+    cases compare stdout, stderr and status with Bash. No source is extracted.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--shell', required=True)
+    parser.add_argument('--out')
+    parser.add_argument('--runner', default='')
+    parser.add_argument('--observe', action='store_true',
+                        help='record a baseline without requiring it to pass')
+    args = parser.parse_args(argv)
+
+    cases = {
+        'alternating': '''i=0; while test "$i" -lt 10000; do
+eval 'a(){ :; }; b(){ :; }' || break
+i=$((i+1)); done; printf '%s\\n' "$i"; a; b''',
+        'varying_sizes': '''i=0; while test "$i" -lt 2000; do
+case $((i%3)) in
+0) eval 'a(){ : A A A A; }; b(){ : B; }; c(){ : C C; }';;
+1) eval 'a(){ : A; }; c(){ : C; }; b(){ : B B B B; }';;
+2) eval 'b(){ : B B; }; a(){ : A A; }; c(){ : C C C C; }';;
+esac
+test "$?" = 0 || break
+a; b; c; i=$((i+1)); done; printf '%s\\n' "$i"''',
+        'active_redefinition': '''install(){ f(){ f(){ new=$((new+1)); }; old=$((old+1)); }; }
+i=0; old=0; new=0
+while test "$i" -lt 2000; do install && f && f || break; i=$((i+1)); done
+printf '%s:%s:%s\\n' "$i" "$old" "$new"''',
+        'active_unset': '''install(){ f(){ unset -f f; tail=$((tail+1)); }; }
+i=0; tail=0
+while test "$i" -lt 2000; do install && f || break; i=$((i+1)); done
+printf '%s:%s\\n' "$i" "$tail"; command -v f; :''',
+        'recursive_versions': '''install(){ f(){
+if test "$1" -gt 0; then f "$(( $1-1 ))"; else
+f(){ newer=$((newer+1)); }
+fi
+older=$((older+1))
+}; }
+i=0; older=0; newer=0
+while test "$i" -lt 1000; do install && f 12 && f || break; i=$((i+1)); done
+printf '%s:%s:%s\\n' "$i" "$older" "$newer"''',
+        'nested_kept_heredoc': '''outer(){ inner(){ cat <<'BODY'
+held $literal text
+BODY
+}; }
+outer; unset -f outer
+i=0; while test "$i" -lt 1200; do eval 'a(){ :; }; b(){ :; }' || break; i=$((i+1)); done
+printf '%s\\n' "$i"; inner
+text=$(declare -f inner); unset -f inner; eval "$text"; inner''',
+        'return_trap': '''set -T
+trap 'f(){ result=new; }' RETURN
+f(){ result=old; }; f
+trap - RETURN
+printf '%s\\n' "$result"; f; printf '%s\\n' "$result"
+i=0; while test "$i" -lt 1000; do eval 'a(){ :; }; b(){ :; }' || break; i=$((i+1)); done
+printf '%s\\n' "$i"''',
+        'alias_definition_time': '''shopt -s expand_aliases
+alias saved='printf "defined\\n"'
+eval 'f(){ saved; }'
+unalias saved
+i=0; while test "$i" -lt 1000; do eval 'a(){ :; }; b(){ :; }' || break; i=$((i+1)); done
+printf '%s\\n' "$i"; f
+text=$(declare -f f); unset -f f; eval "$text"; f''',
+        'compound_word_reuse': '''i=0
+while test "$i" -lt 1000; do
+eval 'a(){ local x=(one two); test "${x[1]}" = two; }; b(){ : "x=(wrong)"; }' || break
+a || break
+unset -f a
+eval 'a(){ local x="(one two)"; test "$x" = "(one two)"; }' || break
+a || break
+i=$((i+1)); done
+printf '%s\\n' "$i"''',
+        'frontier_reclaimed': '''i=0; while test "$i" -lt 1000; do
+eval 'a(){ :; }; b(){ :; }; c(){ :; }' || break
+unset -f b a c
+i=$((i+1)); done
+printf '%s\\n' "$i"
+eval '''+shlex.quote('; '.join(': x' for _ in range(180)))+'''
+printf 'parsed:%s\\n' "$?"''',
+        'exported_redefinition': '''i=0; f(){ :; }; export -f f
+while test "$i" -lt 1000; do
+eval 'a(){ :; }; f(){ printf "exported\\n"; }; b(){ :; }' || break
+i=$((i+1)); done
+printf '%s\\n' "$i"; /bin/bash -c f''',
+    }
+    # An inactive large definition can contribute its own capacity to replacement.
+    large = 'x' * 6200
+    cases['large_same_size_replacement'] = (
+        'i=0; while test "$i" -lt 100; do eval '
+        + shlex.quote('a(){ : ' + large + '; }')
+        + ' || break; i=$((i+1)); done; printf "%s\\n" "$i"; a')
+
+    # Reservation can fail after earlier arenas were reserved. Measurement can
+    # also reject the new body before reservation; both must preserve the old one.
+    cases['failed_copy_preserves_definition'] = (
+        'a(){ printf "old\\n"; }; b(){ : ' + 'x' * 4000 + '; }\n'
+        + 'eval ' + shlex.quote('a(){ : ' + 'y' * 5000 + '; }')
+        + ' 2>/dev/null\nprintf "reject:%s\\n" "$?"; a; b')
+    cases['failed_measure_preserves_definition'] = (
+        'a(){ printf "old\\n"; }\n'
+        + 'eval ' + shlex.quote('a(){ : ' + 'z' * 8192 + '; }')
+        + ' 2>/dev/null\nprintf "reject:%s\\n" "$?"; a')
+    special_expected = {
+        'failed_copy_preserves_definition': (0, 'reject:1\nold\n', ''),
+        'failed_measure_preserves_definition': (0, 'reject:1\nold\n', ''),
+    }
+
+    results = []
+    for name, script in cases.items():
+        if args.runner:
+            command = shlex.split(args.runner) + ['-0', 'bash', args.shell, '-c', script]
+            executable = None
+        else:
+            command = ['bash', '-c', script]
+            executable = args.shell
+        run = subprocess.run(command, executable=executable, capture_output=True,
+                             text=True, timeout=60)
+        if name in special_expected:
+            wanted = special_expected[name]
+        else:
+            reference = subprocess.run(['/bin/bash', '-c', script], capture_output=True,
+                                       text=True, timeout=60)
+            wanted = (reference.returncode, reference.stdout, reference.stderr)
+        got = (run.returncode, run.stdout, run.stderr)
+        results.append(dict(name=name, script=script, wanted=wanted, got=got,
+                            passed=got == wanted))
+        print(name, 'PASS' if got == wanted else 'FAIL', repr(run.stdout), flush=True)
+
+    if args.out:
+        report = dict(binary_sha256=hashlib.sha256(pathlib.Path(args.shell).read_bytes()).hexdigest(),
+                      shell=args.shell, runner=args.runner, cases=results)
+        pathlib.Path(args.out).write_text(json.dumps(report, indent=2) + '\n')
+    passed = sum(row['passed'] for row in results)
+    print(f'function-storage {passed} of {len(results)}')
+    if os.environ.get('TEST_TALLY'):
+        with open(os.environ['TEST_TALLY'], 'a') as tally:
+            tally.write(f'function-storage {passed} {len(results)}\n')
+    if not args.observe:
+        assert passed == len(results)
+    return 0
+
+
+def harness_audit_shell_functions(argv):
+    """Check retained AST ownership and atomic allocation using a hosted extraction.
+
+    python3 test/harness.py audit_shell_functions [--out output-directory]
+Project span/copy primitives are hosted adapters here; real-shell grammar and
+call-frame lifetime are covered separately by harness shell_functions.
+    """
+    ROOT = HARNESS_ROOT
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--out')
+    args = parser.parse_args(argv)
+    owned_output = None if args.out else tempfile.TemporaryDirectory(prefix='shell-functions-')
+    out = pathlib.Path(args.out or owned_output.name)
+    out.mkdir(parents=True, exist_ok=True)
+    source = (ROOT / 'src/sh/parse.c').read_text()
+    start = source.index('typedef struct\n{\n        b32 kind;', source.index('One node shape'))
+    types = source[start:source.index('#define PARSE_WORD_LITERAL')]
+    engine = source[source.index('/* Retained bodies own independent ranges'):]
+    reserve = 'static b32 parse_keep_reserve(positive arena, b32 count, b32 floor)\n{'
+    assert engine.count(reserve) == 1
+    engine = engine.replace(reserve, reserve + '\n        if ((b32)arena == injected_failure) return -1;')
+
+    prefix=r'''
+    #include <stdbool.h>
+    #include <stdint.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <assert.h>
+    typedef int32_t b32;
+    typedef uint8_t b8;
+    typedef char p8;
+    typedef uintptr_t positive;
+    typedef char *string_address;
+    #define fn void
+    #define address_to *
+    #define array_count(x) (sizeof(x)/sizeof((x)[0]))
+    static void memory_fill(void *p, int value, positive n) { memset(p,value,n); }
+    static void memory_copy(void *to, const void *from, positive n) { memcpy(to,from,n); }
+    static void memory_copy_end(char *to, const char *from, positive n) { memcpy(to,from,n);to[n]=0; }
+    static positive memory_span_byte(const void *p, int byte, positive n) { const unsigned char *s=p;positive i=0;while(i<n&&s[i]==byte)i++;return i; }
+    static void *memory_first_of(const void *p, int byte, positive n) { return memchr(p,byte,n); }
+    static void *memory_last_of(const void *p, int byte, positive n) { const unsigned char *s=p;while(n) { n--;if(s[n]==byte)return (void *)(s+n); }return NULL; }
+    static b32 injected_failure=-1;
+    '''
+    state=r'''
+    static b32 parse_node_used,parse_word_used,parse_redirect_used;
+    static b32 parse_node_top=PARSE_NODES,parse_word_top=PARSE_WORDS,parse_redirect_top=PARSE_REDIRECTS;
+    static char parse_kept_text[PARSE_KEPT_TEXT],here_text[PARSE_KEPT_TEXT];
+    '''
+    main=r'''
+    static positive checks;
+    #define CHECK(x) do { checks++; assert(x); } while (0)
+    static char words[64][128];
+    static void prepare(int serial,int count,int redirected) {
+        parse_node_used=3;parse_word_used=count;parse_redirect_used=redirected;
+        parse_nodes[1]=(parse_node){.kind=12,.left=2};
+        parse_nodes[2]=(parse_node){.kind=1,.word=0,.word_count=count,.redirect=0,.redirect_count=redirected};
+        for(int i=0;i<count;i++) {
+            snprintf(words[i],sizeof(words[i]),"word-%d-%d",serial,i);
+            parse_words[i]=words[i];parse_word_lengths[i]=strlen(words[i]);
+            parse_word_name_lengths[i]=i;parse_word_name_hashes[i]=serial+i;parse_word_flags[i]=(unsigned char)i;
+        }
+        if(redirected) {
+            snprintf(here_text,sizeof(here_text),"body-%d",serial);
+            parse_redirects[0]=(parse_redirect){.op=3,.fd=2,.text=words[0],.text_length=strlen(words[0]),.body=0,.body_length=strlen(here_text)};
+        }
+    }
+    static void check_body(int body,int serial,int count,int redirected) {
+        CHECK(body>0&&parse_kept_bodies[body].references>0);
+        parse_node *node=parse_nodes+parse_nodes[body].left;
+        CHECK(node->word_count==count&&node->redirect_count==redirected);
+        for(int i=0;i<count;i++) {
+            char wanted[128];snprintf(wanted,sizeof(wanted),"word-%d-%d",serial,i);
+            int w=node->word+i;
+            CHECK(!strcmp(parse_words[w],wanted));CHECK(parse_word_lengths[w]==strlen(wanted));
+            CHECK(parse_word_name_lengths[w]==(positive)i&&parse_word_name_hashes[w]==(positive)(serial+i)&&parse_word_flags[w]==i);
+        }
+        if(redirected) {
+            char wanted[128];snprintf(wanted,sizeof(wanted),"body-%d",serial);
+            parse_redirect *r=parse_redirects+node->redirect;
+            CHECK(r->kept&&r->body_length==strlen(wanted));CHECK(!strcmp(parse_kept_text+r->body,wanted));
+        }
+    }
+    static uint64_t hash_bytes(const void *p,size_t n,uint64_t h) { const unsigned char*s=p;for(size_t i=0;i<n;i++)h=(h^s[i])*1099511628211ULL;return h; }
+    static uint64_t snapshot(void) {
+        uint64_t h=1469598103934665603ULL;
+    #define HASH(x) h=hash_bytes(x,sizeof(x),h)
+        HASH(parse_nodes);HASH(parse_words);HASH(parse_word_lengths);HASH(parse_word_name_lengths);HASH(parse_word_name_hashes);HASH(parse_word_flags);HASH(parse_redirects);HASH(parse_kept_text);HASH(parse_kept_bodies);HASH(parse_node_kept);HASH(parse_word_kept);HASH(parse_redirect_kept);HASH(parse_text_kept);
+    #undef HASH
+        return h;
+    }
+    static void empty(void) {
+        CHECK(parse_node_top==PARSE_NODES&&parse_word_top==PARSE_WORDS&&parse_redirect_top==PARSE_REDIRECTS);
+        for(size_t a=0;a<array_count(parse_kept_arenas);a++)CHECK(memory_span_byte(parse_kept_arenas[a].occupied,0,parse_kept_arenas[a].room)==(positive)parse_kept_arenas[a].room);
+        for(int i=0;i<PARSE_NODES;i++)CHECK(!parse_kept_bodies[i].references);
+    }
+    static void reserve_bitmap_cases(void) {
+        unsigned char expected[PARSE_NODES];
+        for (int n=0;n<=10;n++)
+            for (unsigned bits=0;bits<(1u<<n);bits++)
+                for (int low=0;low<=n;low++)
+                    for (int count=0;count<=n+1;count++) {
+                        memset(parse_node_kept,1,sizeof(parse_node_kept));
+                        for (int j=0;j<n;j++)parse_node_kept[PARSE_NODES-n+j]=(bits>>j)&1;
+                        memcpy(expected,parse_node_kept,sizeof expected);
+                        int floor=PARSE_NODES-n+low,wanted=count? -1:0;
+                        for (int at=floor;count&&at<=PARSE_NODES-count;at++) {
+                            int free=1;
+                            for (int j=0;j<count;j++)if(expected[at+j])free=0;
+                            if(free)wanted=at;
+                        }
+                        if(count&&wanted>=0)memset(expected+wanted,1,count);
+                        CHECK(parse_keep_reserve(0,count,floor)==wanted);
+                        CHECK(!memcmp(expected,parse_node_kept,sizeof expected));
+                    }
+        memset(parse_node_kept,0,sizeof(parse_node_kept));
+    }
+    int main(void) {
+        reserve_bitmap_cases();
+        prepare(1,3,1);int old=parse_keep(1,0);CHECK(old);check_body(old,1,3,1);
+        for(injected_failure=0;injected_failure<4;injected_failure++) {
+            prepare(2,4,1);uint64_t held=snapshot();int n=parse_keep(1,old);
+            CHECK(!n);CHECK(snapshot()==held);check_body(old,1,3,1);
+        }
+        injected_failure=-1;
+        prepare(3,1,0);parse_word_lengths[0]=UINTPTR_MAX;uint64_t held=snapshot();
+        CHECK(!parse_keep(1,old));CHECK(snapshot()==held);check_body(old,1,3,1);
+        parse_release(old);empty();
+        // Active versions retain their bytes despite later definitions and return in arbitrary order.
+        int versions[40];
+        for(int i=0;i<40;i++) {
+            prepare(i,2,1);versions[i]=parse_keep(1,i?versions[i-1]:0);CHECK(versions[i]);parse_kept_bodies[versions[i]].references++;
+        }
+        for(int i=0;i<40;i++)check_body(versions[i],i,2,1);
+        for(int i=0;i<40;i+=2)parse_release(versions[i]);
+        for(int i=1;i<40;i+=2)parse_release(versions[i]);
+        parse_release(versions[39]);empty();
+        // Nested definitions copy owned heredoc text, then survive the original owner.
+        prepare(91,2,1);old=parse_keep(1,0);parse_kept_bodies[old].references++;
+        int nested=parse_keep(old,0);CHECK(nested);parse_release(old);parse_release(old);check_body(nested,91,2,1);parse_release(nested);empty();
+        // Random replacement/deletion varies all independent arena extents.
+        int live[12]={0},serial[12]={0},counts[12]={0},redirected[12]={0};srand(7);
+        for(int step=0;step<10000;step++) {
+            int slot=rand()%12;
+            if(live[slot]&&rand()%5==0) {parse_release(live[slot]);live[slot]=0;}
+            else {
+                int count=1+rand()%9,red=rand()%2;prepare(step,count,red);
+                int made=parse_keep(1,live[slot]);CHECK(made);live[slot]=made;serial[slot]=step;counts[slot]=count;redirected[slot]=red;
+            }
+            for(int i=0;i<12;i++)if(live[i])check_body(live[i],serial[i],counts[i],redirected[i]);
+        }
+        for(int i=0;i<12;i++)
+            parse_release(live[i]);
+        empty();
+        // No words, redirects or text: zero extents must not pin unrelated frontiers.
+        prepare(0,0,0);old=parse_keep(1,0);CHECK(old);CHECK(parse_word_top==PARSE_WORDS&&parse_redirect_top==PARSE_REDIRECTS);parse_release(old);empty();
+        printf("{\"checks\":%lu,\"body_table_bytes\":%lu,\"occupancy_bytes\":%lu}\n",(unsigned long)checks,(unsigned long)sizeof(parse_kept_bodies),(unsigned long)(sizeof(parse_node_kept)+sizeof(parse_word_kept)+sizeof(parse_redirect_kept)+sizeof(parse_text_kept)));
+    }
+    '''
+    code = prefix + types + state + engine + main
+    unit = out / 'retention.c'
+    binary = out / 'retention'
+    unit.write_text(code)
+    command = shlex.split(os.environ.get('CC', 'cc')) + [
+        '-std=c11', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
+        '-fsanitize=address,undefined', str(unit), '-o', str(binary)]
+    build = subprocess.run(command, capture_output=True, text=True)
+    (out / 'build.log').write_text(build.stdout + build.stderr)
+    assert build.returncode == 0, build.stderr
+    run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60)
+    (out / 'run.log').write_text(run.stdout + run.stderr)
+    assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+    result = json.loads(run.stdout)
+    report = dict(
+        source_sha256=hashlib.sha256(source.encode()).hexdigest(),
+        extracted_sha256=hashlib.sha256(code.encode()).hexdigest(),
+        compiler_command=command,
+        binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+        result=result,
+        limitations='Hosted retention engine; libc adapters replace project span/copy helpers. '
+                    'Failure injection occurs only at arena reservation entry. Runtime grammar '
+                    'and function-call reference routing are validated separately with real shells.')
+    (out / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(f"function-storage-sanitizer {result['checks']} of {result['checks']}")
+    if os.environ.get('TEST_TALLY'):
+        with open(os.environ['TEST_TALLY'], 'a') as tally:
+            tally.write(f"function-storage-sanitizer {result['checks']} {result['checks']}\n")
+    return 0
+
+
+def harness_canvas_lifetime(argv):
+    """Fault-inject Canvas output retirement against a reference-counted DRM model.
+
+    Runs extracted production ownership transitions, not a GPU driver. Atomic plane
+    state owns a framebuffer reference independently of the client buffer wrapper;
+    failed atomic framebuffer removal leaves that state reference until a later
+    commit/device shutdown. Early RMFB errors retain file ownership until close.
+    """
+    ROOT = HARNESS_ROOT
+    parser = argparse.ArgumentParser(description=harness_canvas_lifetime.__doc__)
+    parser.add_argument("--source-root", type=Path, default=ROOT)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args(argv)
+    spans = []
+    def function(file, name):
+        text = (args.source_root / file).read_text()
+        match = re.search(r"^static [^;{}]*\b" + name + r"\([^;{}]*\)\n\{", text, re.M)
+        if not match:
+            raise ValueError("missing function definition: " + name)
+        start = match.start()
+        brace = match.end() - 1
+        end = text.index("\n}", brace) + 2
+        body = text[start:end]
+        spans.append(dict(file=file, name=name, line=text[:start].count("\n") + 1,
+                          sha256=hashlib.sha256(body.encode()).hexdigest()))
+        return body + "\n"
+
+    prefix = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#define COLD
+#define GFP_KERNEL 0
+#define CURSOR_W 16
+#define CURSOR_H 20
+#define CURSOR_ARROW 0
+#define DRM_FORMAT_ARGB8888 1
+#define DRM_FORMAT_INVALID 0
+#define IS_ERR(p) ((intptr_t)(p) < 0)
+#define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
+struct list_head { struct list_head *next, *prev; };
+static void list_init(struct list_head *h) { h->next = h->prev = h; }
+static bool list_empty(struct list_head *h) { return h->next == h; }
+static void list_add_tail(struct list_head *n, struct list_head *h) {
+    n->prev=h->prev; n->next=h; h->prev->next=n; h->prev=n;
+}
+static void list_del(struct list_head *n) { n->prev->next=n->next; n->next->prev=n->prev; }
+#define list_for_each_entry(p,h,m) \
+    for (p=container_of((h)->next,__typeof__(*p),m); &p->m!=(h); \
+         p=container_of(p->m.next,__typeof__(*p),m))
+#define list_for_each_entry_safe(p,n,h,m) \
+    for (p=container_of((h)->next,__typeof__(*p),m), \
+         n=container_of(p->m.next,__typeof__(*p),m); &p->m!=(h); \
+         p=n,n=container_of(n->m.next,__typeof__(*n),m))
+struct drm_device { bool atomic; struct { unsigned cursor_width,cursor_height; } mode_config; };
+struct drm_client_dev { struct drm_device *dev; };
+struct drm_client_buffer { unsigned resource; };
+struct drm_plane_funcs { void (*update_plane)(void), (*disable_plane)(void); };
+struct drm_plane { const struct drm_plane_funcs *funcs; };
+struct drm_crtc { struct drm_plane *cursor; };
+struct drm_mode_set { struct drm_crtc *crtc; };
+struct canvas { struct list_head link; struct drm_client_dev client; bool started; };
+struct output {
+    struct list_head link; struct canvas *canvas;
+    struct drm_client_buffer *buffer, *cursor_buffer;
+    struct drm_mode_set *mode_set; struct drm_plane *cursor_plane;
+    unsigned cursor_w,cursor_h,cursor_recovery; bool cursor_shown; int x,y;
+};
+static struct { struct list_head outputs; int lock; } desktop;
+static struct list_head canvas_list;
+static int canvas_list_lock, cursor_plane_failures;
+static bool cursor_plane_recovery;
+static void atomic_long_inc(int *n) { ++*n; }
+static void mutex_lock(int *m) { (void)m; }
+static void mutex_unlock(int *m) { (void)m; }
+static void canvas_thread_stop(void) {}
+static struct canvas *canvas_from_client(struct drm_client_dev *c) {
+    return container_of(c,struct canvas,client);
+}
+static void kfree(void *p) { free(p); }
+
+/* Separate client wrapper, file framebuffer, and plane-state ownership. */
+struct resource { struct drm_client_buffer *wrapper; struct drm_client_dev *client;
+                  bool file, plane, gem; };
+static struct resource resources[64];
+static unsigned allocated, deleted, paint_calls, release_calls, commit_calls;
+static bool disable_fail, remove_fail, close_fail, commit_fail, create_fail, paint_fail;
+static struct output *fail_during_commit;
+static bool drm_drv_uses_atomic_modeset(struct drm_device *d) { return d->atomic; }
+static unsigned canvas_plane_pick_format(struct drm_plane *p, unsigned a, unsigned b) {
+    (void)p; (void)b; return a;
+}
+static void collect(struct resource *r) { if (!r->wrapper && !r->file && !r->plane) r->gem=false; }
+static struct drm_client_buffer *drm_client_buffer_create_dumb(
+    struct drm_client_dev *c,unsigned w,unsigned h,unsigned f) {
+    (void)w; (void)h; (void)f;
+    if (create_fail) return (void *)(intptr_t)-12;
+    assert(allocated < 64);
+    struct drm_client_buffer *b=malloc(sizeof(*b)); assert(b);
+    b->resource=allocated++;
+    resources[b->resource]=(struct resource){b,c,true,false,true};
+    return b;
+}
+static void drm_client_buffer_delete(struct drm_client_buffer *b) {
+    if (!b) return;
+    struct resource *r=&resources[b->resource];
+    assert(r->wrapper == b && r->gem);
+    if (!close_fail) {
+        if (!remove_fail) r->plane=false;
+        r->file=false;
+    }
+    r->wrapper=NULL; deleted++; free(b); collect(r);
+}
+static int plane_update(struct output *o,bool show,int x,int y) {
+    (void)x; (void)y; assert(!show);
+    struct resource *r=&resources[o->cursor_buffer->resource];
+    assert(r->gem);
+    if (disable_fail) return -5;
+    r->plane=false; collect(r); return 0;
+}
+static int plane_paint(struct output *o,unsigned shape,unsigned scale) {
+    (void)o; (void)shape; (void)scale; paint_calls++; return paint_fail ? -5 : 0;
+}
+static void desktop_place_outputs(void) {}
+static void desktop_redraw(void) {}
+static bool desktop_commit(void);
+static void drm_client_release(struct drm_client_dev *c) {
+    /* Client close cannot discover an orphaned drm_client_buffer wrapper. */
+    for (unsigned i=0;i<allocated;i++) if (resources[i].client==c) {
+        if (resources[i].file && !remove_fail) resources[i].plane=false;
+        resources[i].file=false; collect(&resources[i]);
+    }
+    release_calls++; free(canvas_from_client(c));
+}
+'''
+
+    bodies = "".join(function(file, name) for file, name in [
+        ("src/canvas/plane.c", "plane_drop"),
+        ("src/canvas/plane.c", "plane_claim"),
+        ("src/canvas/output.c", "output_drop"),
+        ("src/canvas/output.c", "cursor_plane_recover"),
+        ("src/canvas/output.c", "canvas_release"),
+        ("src/canvas/client.c", "client_unregister"),
+    ])
+
+    runner = r'''
+static bool desktop_commit(void) {
+    commit_calls++;
+    if (commit_fail) return false;
+    /* Only cards still represented in desktop.outputs get a client commit. */
+    struct output *o;
+    list_for_each_entry(o,&desktop.outputs,link)
+        for (unsigned i=0;i<allocated;i++) if (resources[i].client==&o->canvas->client) {
+            resources[i].plane=false; collect(&resources[i]);
+        }
+    if (fail_during_commit) {
+        struct output *failed=fail_during_commit; fail_during_commit=NULL;
+        plane_drop(failed);
+    }
+    return true;
+}
+static void dummy(void) {}
+static const struct drm_plane_funcs funcs={dummy,dummy};
+static struct drm_plane plane={&funcs};
+static struct drm_crtc crtc={&plane};
+static struct drm_mode_set mode={&crtc};
+static struct drm_device atomic_device={.atomic=true}, legacy_device={0};
+static struct canvas *card(bool atomic) {
+    struct canvas *c=calloc(1,sizeof(*c)); assert(c);
+    c->client.dev=atomic?&atomic_device:&legacy_device; c->started=true;
+    list_add_tail(&c->link,&canvas_list); return c;
+}
+static struct output *output(struct canvas *c) {
+    struct output *o=calloc(1,sizeof(*o)); assert(o); o->canvas=c; o->mode_set=&mode;
+    o->x=13; o->y=-27;
+    o->buffer=drm_client_buffer_create_dumb(&c->client,640,480,1);
+    plane_claim(&c->client,o);
+    if (o->cursor_plane) { resources[o->cursor_buffer->resource].plane=true; o->cursor_shown=true; }
+    list_add_tail(&o->link,&desktop.outputs); return o;
+}
+static unsigned wrappers(void) {
+    unsigned n=0; for (unsigned i=0;i<allocated;i++) n+=resources[i].wrapper!=NULL; return n;
+}
+static unsigned scanouts(void) {
+    unsigned n=0; for (unsigned i=0;i<allocated;i++) if(resources[i].plane) {
+        assert(resources[i].gem); n++;
+    }
+    return n;
+}
+static unsigned gems(void) {
+    unsigned n=0; for (unsigned i=0;i<allocated;i++) n+=resources[i].gem; return n;
+}
+static unsigned checks, failures;
+static void check(const char *name,bool okay) {
+    checks++; if (!okay) { failures++; printf("FAIL %s\n",name); }
+}
+static void reset(void) {
+    /* Dispose failed-baseline orphans after recording them; keep cases isolated. */
+    for(unsigned i=0;i<allocated;i++) free(resources[i].wrapper);
+    for(unsigned i=0;i<allocated;i++) resources[i]=(struct resource){0};
+    allocated=deleted=paint_calls=release_calls=commit_calls=0;
+    disable_fail=remove_fail=close_fail=commit_fail=create_fail=paint_fail=false;
+    fail_during_commit=NULL; cursor_plane_recovery=false; cursor_plane_failures=0;
+    list_init(&desktop.outputs); list_init(&canvas_list);
+}
+int main(void) {
+    for (unsigned pending=0;pending<2;pending++) for(unsigned failure=0;failure<2;failure++)
+    for(unsigned rmfail=0;rmfail<3;rmfail++) {
+        reset(); struct canvas *c=card(true); struct output *o=output(c);
+        disable_fail=failure; remove_fail=rmfail==1; close_fail=rmfail==2;
+        if (pending) plane_drop(o);
+        output_drop(o);
+        check("retire releases both client buffers",wrappers()==0 && deleted==2);
+        check("retire preserves failed scanout's GEM",scanouts()==(failure&&rmfail));
+        cursor_plane_recover();
+        check("recovery without outputs cannot strand a client buffer",wrappers()==0);
+        client_unregister(&c->client);
+        check("unregister releases canvas after its outputs",release_calls==1 && list_empty(&desktop.outputs));
+        for(unsigned i=0;i<allocated;i++) { resources[i].plane=false; collect(&resources[i]); }
+        check("device shutdown releases final scanout references",gems()==0);
+    }
+    reset(); struct canvas *c=card(true); struct output *o=output(c);
+    disable_fail=true; plane_drop(o); commit_fail=true; cursor_plane_recover();
+    check("live failed commit keeps recovery ownership",wrappers()==2 && o->cursor_recovery==1);
+    commit_fail=false; cursor_plane_recover();
+    check("live recovery releases cursor once",wrappers()==1 && deleted==1 && !o->cursor_recovery);
+    client_unregister(&c->client); check("recovered teardown has no remaining GEM",gems()==0);
+
+    reset(); c=card(true); o=output(c); struct output *second=output(c);
+    disable_fail=true; plane_drop(o); fail_during_commit=second; cursor_plane_recover();
+    check("failure while rearming survives current recovery",second->cursor_recovery==1 && wrappers()==3);
+    cursor_plane_recover(); check("next recovery covers rearm failure",wrappers()==2);
+    client_unregister(&c->client); check("two-output teardown is balanced",gems()==0 && deleted==4);
+
+    reset(); c=card(true); o=output(c); struct canvas *other=card(true); second=output(other);
+    disable_fail=remove_fail=true; plane_drop(o); canvas_release(c); cursor_plane_recover();
+    check("other card's recovery cannot own retired buffers",wrappers()==2 && scanouts()==1);
+    client_unregister(&c->client); client_unregister(&other->client);
+    check("multi-card unregister releases every wrapper",wrappers()==0);
+
+    reset(); c=card(true); o=output(c); disable_fail=remove_fail=true;
+    client_unregister(&c->client);
+    check("unregister after failed disable releases client wrappers",wrappers()==0 && release_calls==1);
+    check("unregister keeps scanout alive until device teardown",scanouts()==1);
+
+    reset(); c=card(false); o=output(c);
+    check("legacy modesetting uses software cursor",!o->cursor_plane && !o->cursor_buffer && !paint_calls);
+    check("software cursor claim leaves placement and allocation unchanged",o->x==13 && o->y==-27 && allocated==1);
+    client_unregister(&c->client); check("software-only teardown is balanced",!gems());
+
+    reset(); c=card(true); o=calloc(1,sizeof(*o)); assert(o); o->canvas=c; o->mode_set=&mode;
+    create_fail=true; plane_claim(&c->client,o);
+    check("allocation failure leaves no cursor owner",!o->cursor_buffer && !o->cursor_plane);
+    create_fail=false; paint_fail=true; plane_claim(&c->client,o);
+    check("paint failure releases unsubmitted buffer",!o->cursor_buffer && !o->cursor_plane && !gems());
+    free(o); client_unregister(&c->client); reset();
+    printf("canvas-lifetime %u/%u\n",checks-failures,checks); return failures?1:0;
+}
+'''
+
+    def run(out):
+        out.mkdir(parents=True, exist_ok=True)
+        unit = out / "canvas-lifetime.c"
+        unit.write_text(prefix + bodies + runner)
+        binary = out / "canvas-lifetime"
+        command = shlex.split(os.environ.get("CC", "cc")) + [
+            "-std=gnu11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+            "-Wno-unused-function", "-fsanitize=address,undefined", str(unit), "-o", str(binary)]
+        subprocess.run(command, check=True)
+        result = subprocess.run([str(binary)], text=True, capture_output=True)
+        (out / "result.json").write_text(json.dumps(dict(source_root=str(args.source_root),
+            spans=spans, command=command, returncode=result.returncode,
+            stdout=result.stdout, stderr=result.stderr), indent=2) + "\n")
+        tally = re.search(r"canvas-lifetime (\d+)/(\d+)", result.stdout)
+        if tally and os.environ.get("TEST_TALLY"):
+            with open(os.environ["TEST_TALLY"], "a") as stream:
+                stream.write("canvas-lifetime " + " ".join(tally.groups()) + "\n")
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        return result.returncode
+
+    if args.output:
+        return run(args.output.resolve())
+    with tempfile.TemporaryDirectory(prefix="canvas-lifetime-") as work:
+        return run(Path(work))
+
+
+def harness_code_map(argv):
+    """Source-atlas regression fixtures; no compiler or production mutation needed.
+
+        python3 test/harness.py code_map [-v]
+
+    The examples assert source facts, rather than a second implementation of the
+    atlas parser. These checks do not turn lexical edges into semantic call edges.
+    The atlas builder, kit/code_map/build.py, is loaded here rather than at import.
+    """
+    SPEC = importlib.util.spec_from_file_location(
+        'code_map_build', HARNESS_ROOT / 'kit/code_map/build.py')
+    build = importlib.util.module_from_spec(SPEC)
+    SPEC.loader.exec_module(build)
+
+
+    class AtlasFixture(unittest.TestCase):
+        def setUp(self):
+            temporary = tempfile.TemporaryDirectory()
+            self.addCleanup(temporary.cleanup)
+            self.root = Path(temporary.name)
+            self.here = self.root / 'kit/code_map'
+            (self.here / 'annotations').mkdir(parents=True)
+            for owner, attribute, value in (
+                    (build, 'ROOT', self.root), (build.audit, 'ROOT', self.root),
+                    (build, 'HERE', self.here)):
+                replacement = patch.object(owner, attribute, value)
+                replacement.start()
+                self.addCleanup(replacement.stop)
+
+        def source(self, text, path='src/fixture.c'):
+            destination = self.root / path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(textwrap.dedent(text).lstrip('\n'))
+            return build.load_source(path)
+
+        def rows(self, text, path='src/fixture.c', definitions=None):
+            source = self.source(text, path)
+            if definitions is None:
+                definitions = (build.audit.ordinary_definitions(self.root / path) +
+                               build.audit.alias_definitions(self.root / path))
+            else:
+                definitions = [build.audit.Definition(path, line, name, kind)
+                               for name, line, kind in definitions]
+            rows = build.c_rows(path, source, definitions)
+            for index, row in enumerate(rows):
+                row.update(index=index, production=path.startswith('src/'),
+                           family='fixture.engine', review_basis='body_reviewed')
+            return source, rows
+
+        def family(self):
+            return {'id': 'fixture.engine', 'title': 'Fixture engine',
+                    'description': 'Small isolated source fixtures.',
+                    'design_question': 'Are source facts represented faithfully?',
+                    'constraints': ['No semantic-equivalence claim.']}
+
+        def annotations(self, rows, name='fixture.json'):
+            functions = [{
+                'id': row['id'], 'family': 'fixture.engine', 'role': 'algorithm',
+                'responsibility': 'Execute the fixture operation.',
+                'review_basis': 'body_reviewed', 'confidence': 'high',
+                'contract_notes': ['Fixture only.']}
+                for row in rows]
+            data = {'schema_version': 1, 'scope': sorted({r['file'] for r in rows}),
+                    'families': [self.family()], 'functions': functions}
+            path = self.here / 'annotations' / name
+            path.write_text(json.dumps(data))
+            return path, data
+
+        def aggregate(self, source, rows, path='src/fixture.c'):
+            files = [{'file': path, 'physical_loc': len(source['lines'])}]
+            families = [self.family()]
+            build.aggregate(rows, files, families, {path: source})
+            return files[0], families[0]
+
+
+    class SourceBoundaryTests(AtlasFixture):
+        def test_braceless_loops_comments_and_literals_preserve_body_boundary(self):
+            source, rows = self.rows('''
+            static const char *text = "not_a_body() { while (;;) }";
+            static int first(int n)
+            {
+                /* fake() { return; } */
+                while (n > 2) n--;
+                for (; n > 1; --n) consume(n);
+                return n;
+            }
+            int second(void) { return 7; }
+        ''')
+            self.assertEqual([(r['name'], r['start'], r['end']) for r in rows],
+                             [('first', 2, 8), ('second', 9, 9)])
+            self.assertEqual(rows[0]['loops'], 2)
+            self.assertEqual(rows[0]['call_names'], ['consume'])
+            self.assertNotIn(4, source['code'])
+            self.assertEqual(rows[0]['max_brace_depth'], 1)
+
+        def test_loop_count_counts_do_while_once_including_nested_loops(self):
+            _, rows = self.rows('''
+            int count(int n) {
+                do { do n--; while (n > 4); } while (n > 2);
+                while (n > 1) n--;
+                for (; n; --n) visit(n);
+                return n;
+            }
+        ''')
+            self.assertEqual(rows[0]['loops'], 4)
+
+        def test_knr_header_retains_multiline_storage_and_return_type(self):
+            _, rows = self.rows('''
+            static
+            int
+            old(a, b)
+            int a;
+            char *b;
+            {
+                return a + b[0];
+            }
+        ''')
+            self.assertEqual([(r['name'], r['line']) for r in rows], [('old', 3)])
+            self.assertEqual(rows[0]['start'], 1)
+            self.assertTrue(rows[0]['signature'].startswith('static int old'))
+            self.assertEqual(rows[0]['loc'], 8)
+
+        def test_separate_macro_invocation_does_not_join_function_header(self):
+            _, rows = self.rows('''
+            CONFIGURE(example)
+            static int handler(int n)
+            {
+                return n;
+            }
+        ''')
+            self.assertEqual([(r['name'], r['start'], r['end']) for r in rows],
+                             [('handler', 2, 5)])
+            self.assertNotIn('CONFIGURE', rows[0]['signature'])
+
+        def test_preprocessor_variants_remain_distinct_with_exact_spans(self):
+            source, rows = self.rows('''
+            #if FAST
+            int choose(void) { return 1; }
+            #else
+            int choose(void) { return 2; }
+            #endif
+        ''')
+            self.assertEqual([(r['name'], r['line'], r['loc']) for r in rows],
+                             [('choose', 2, 1), ('choose', 4, 1)])
+            file, _ = self.aggregate(source, rows)
+            self.assertEqual(file['function_attributed_loc'], 2)
+            self.assertEqual(file['outside_function_loc'], 3)
+
+        def test_multiline_directive_and_comments_have_distinct_code_accounting(self):
+            source, rows = self.rows('''
+            #define VALUE(x) \\
+                ((x) + 1)
+
+            /* retained explanation */
+            int read_value(void)
+            {
+                // a body comment
+                return VALUE(2);
+            }
+        ''')
+            self.assertEqual(source['code'], {1, 2, 5, 6, 8, 9})
+            self.assertEqual(rows[0]['loc'], 5)
+            self.assertEqual(rows[0]['code_lines'], 4)
+            file, _ = self.aggregate(source, rows)
+            self.assertEqual(file['outside_function_loc'], 4)
+
+
+    class AttributionTests(AtlasFixture):
+        def test_aliases_on_one_line_keep_their_targets_and_tokens(self):
+            source, rows = self.rows(
+                'int first(void) __attribute__((alias("base_one"))); '
+                'int second(void) __attribute__((alias("base_two")));\n')
+            self.assertEqual({r['name']: r.get('alias_of') for r in rows},
+                             {'first': 'base_one', 'second': 'base_two'})
+            self.assertTrue(rows[0]['_token_positions'].isdisjoint(
+                rows[1]['_token_positions']))
+            file, family = self.aggregate(source, rows)
+            self.assertEqual(file['function_attributed_loc'], 1)
+            self.assertEqual(sum(r['attributed_loc'] for r in rows), 1)
+            self.assertEqual(sum(r['attributed_code_lines'] for r in rows), 1)
+            self.assertEqual(family['tokens'], len(source['tokens']))
+
+        def test_multiline_alias_includes_full_declarator(self):
+            _, rows = self.rows('''
+            extern
+            int
+            public_name(void)
+                __attribute__((alias("private_name")));
+        ''')
+            self.assertEqual(rows[0]['alias_of'], 'private_name')
+            self.assertEqual((rows[0]['start'], rows[0]['end']), (1, 4))
+            self.assertEqual(rows[0]['tokens'], 16)
+
+        def test_shared_generator_invocation_is_charged_once(self):
+            with patch.dict(build.audit.GENERATORS, {
+                    ('src/fixture.c', 'MAKE_PAIR'): ('{}_read', '{}_write')}):
+                source, rows = self.rows('''
+                #define MAKE_PAIR(name) /* expansion intentionally outside symbols */
+                MAKE_PAIR(
+                    thing)
+            ''', definitions=[('thing_read', 2, 'generated'),
+                                  ('thing_write', 2, 'generated')])
+            self.assertEqual(rows[0]['_token_positions'], rows[1]['_token_positions'])
+            file, family = self.aggregate(source, rows)
+            self.assertEqual([r['attributed_loc'] for r in rows], [2, 0])
+            self.assertEqual(file['outside_function_loc'], 1)
+            self.assertEqual(family['tokens'], 4)
+
+        def test_distinct_same_line_generators_have_distinct_token_ownership(self):
+            with patch.dict(build.audit.GENERATORS, {
+                    ('src/fixture.c', 'MAKE'): ('{}',)}):
+                source, rows = self.rows(
+                    'MAKE(first) MAKE(second)\n',
+                    definitions=[('first', 1, 'generated'), ('second', 1, 'generated')])
+            self.assertTrue(rows[0]['_token_positions'].isdisjoint(
+                rows[1]['_token_positions']))
+            _, family = self.aggregate(source, rows)
+            self.assertEqual(family['attributed_loc'], 1)
+            self.assertEqual(family['tokens'], 8)
+            self.assertEqual(sum(r['attributed_tokens'] for r in rows),
+                             len(source['tokens']))
+
+        def test_shared_body_line_deduplicates_loc_but_preserves_both_bodies(self):
+            source, rows = self.rows(
+                'int first(void) { return 1; } int second(void) { return 2; }\n')
+            self.assertEqual(len(rows), 2)
+            file, family = self.aggregate(source, rows)
+            self.assertEqual([r['loc'] for r in rows], [1, 1])
+            self.assertEqual(sum(r['attributed_loc'] for r in rows), 1)
+            self.assertEqual(family['tokens'], len(source['tokens']))
+            self.assertEqual(file['outside_function_loc'], 0)
+
+        def test_architecture_bodies_and_api_alias_have_disjoint_source_costs(self):
+            path = 'src/library.c'
+            source = self.source('''
+            #if X64
+            ASM_FUNC(copy, void, (void))
+                "ret"
+            ASM_END(copy)
+            #elif ARM64
+            ASM_FUNC(copy, void, (void))
+                "ret"
+            ASM_END(copy)
+            #endif
+            ASM_ALIAS(public_copy, copy)
+        ''', path)
+            rows = build.assembly_rows({path: source})
+            for i, row in enumerate(rows):
+                row.update(index=i, family='fixture.engine', production=True,
+                           review_basis='alias_or_generator')
+            self.assertEqual({r['name'] for r in rows}, {'copy', 'public_copy'})
+            routine = next(r for r in rows if r['name'] == 'copy')
+            alias = next(r for r in rows if r['name'] == 'public_copy')
+            self.assertEqual(routine['spans'], [[2, 4], [6, 8]])
+            self.assertEqual(alias['alias_of'], 'copy')
+            file, family = self.aggregate(source, rows, path)
+            self.assertEqual(file['function_attributed_loc'], 7)
+            self.assertEqual(file['outside_function_loc'], 3)
+            self.assertEqual(family['tokens'], 0)
+
+
+    class ConnectionTests(AtlasFixture):
+        def connected(self, sources):
+            all_sources, rows = {}, []
+            for path, text in sources.items():
+                source, added = self.rows(text, path)
+                all_sources[path] = source
+                rows.extend(added)
+            build.connections(rows, all_sources)
+            return rows
+
+        @staticmethod
+        def targets(rows, row, key):
+            return {(rows[i]['file'], rows[i]['name'], rows[i]['line'])
+                    for i in row[key]}
+
+        def test_same_file_overrides_cross_file_and_retains_configuration_variants(self):
+            rows = self.connected({
+                'src/a.c': '#if FAST\nint pick(void) { return 1; }\n#else\n'
+                           'int pick(void) { return 2; }\n#endif\n'
+                           'int use(void) { return pick(); }\n',
+                'src/b.c': 'int pick(void) { return 3; }\n'})
+            caller = next(r for r in rows if r['name'] == 'use')
+            self.assertEqual(self.targets(rows, caller, 'callees'),
+                             {('src/a.c', 'pick', 2), ('src/a.c', 'pick', 4)})
+
+        def test_cross_file_possible_calls_preserve_production_and_support_scope(self):
+            rows = self.connected({
+                'src/user.c': 'int use(void) { return shared(); }\n',
+                'src/a.c': 'int shared(void) { return 1; }\n',
+                'src/b.c': 'int shared(void) { return 2; }\n',
+                'kit/test.c': 'int shared(void) { return 3; }\n'
+                              'int verify(void) { return shared(); }\n'})
+            caller = next(r for r in rows if r['name'] == 'use')
+            self.assertEqual(self.targets(rows, caller, 'callees'),
+                             {('src/a.c', 'shared', 1), ('src/b.c', 'shared', 1)})
+            check = next(r for r in rows if r['name'] == 'verify')
+            self.assertEqual(self.targets(rows, check, 'callees'),
+                             {('kit/test.c', 'shared', 1)})
+
+        def test_member_callbacks_are_indirect_not_global_calls_or_references(self):
+            rows = self.connected({'src/fixture.c': '''
+            int hook(void) { return 1; }
+            int use(struct callbacks *pointer, struct callbacks value) {
+                return pointer->hook() + value.hook();
+            }
+        '''})
+            caller = next(r for r in rows if r['name'] == 'use')
+            self.assertEqual(caller['indirect_call_names'], ['hook'])
+            self.assertEqual(caller['callees'], [])
+            self.assertEqual(caller['references'], [])
+            self.assertEqual(caller['unresolved_calls'], [])
+
+        def test_member_spelling_does_not_hide_a_separate_callback_reference(self):
+            rows = self.connected({'src/fixture.c': '''
+            int hook(void) { return 1; }
+            int use(struct callbacks *pointer) {
+                register_callback(hook);
+                return pointer->hook();
+            }
+        '''})
+            caller = next(r for r in rows if r['name'] == 'use')
+            self.assertEqual(self.targets(rows, caller, 'references'),
+                             {('src/fixture.c', 'hook', 1)})
+            self.assertEqual(caller['callees'], [])
+            self.assertEqual(caller['unresolved_calls'], ['register_callback'])
+
+        def test_initializer_after_body_on_same_line_is_an_outside_reference(self):
+            rows = self.connected({'src/fixture.c':
+                'int target(void) { return 1; }\n'
+                'int use(void) { return 0; } int (*selected)(void) = target;\n'})
+            target = next(r for r in rows if r['name'] == 'target')
+            self.assertIn('src/fixture.c:2', target['outside_body_references'])
+
+        def test_alias_edge_resolves_target_without_inventing_an_extra_body(self):
+            rows = self.connected({'src/fixture.c':
+                'int target(void) { return 1; }\n'
+                'int public_name(void) __attribute__((alias("target")));\n'})
+            alias = next(r for r in rows if r['name'] == 'public_name')
+            self.assertEqual(alias['kind'], 'alias')
+            self.assertEqual(self.targets(rows, alias, 'callees'),
+                             {('src/fixture.c', 'target', 1)})
+
+
+    class ClassifierAndExportTests(AtlasFixture):
+        def test_classifier_requires_exact_production_ids(self):
+            _, rows = self.rows('int first(void) { return 1; }\n'
+                                'int second(void) { return 2; }\n')
+            path, data = self.annotations(rows)
+            _, coverage = build.classify(copy.deepcopy(rows), False)
+            self.assertEqual(coverage['missing'], [])
+            self.assertEqual(coverage['stale'], [])
+            data['functions'].pop()
+            path.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, '1 missing'):
+                build.classify(copy.deepcopy(rows), False)
+            data['functions'][0]['id'] = 'src/removed.c:stale:1'
+            path.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, '1 stale'):
+                build.classify(copy.deepcopy(rows), False)
+
+        def test_classifier_rejects_duplicate_annotations_and_unknown_family(self):
+            _, rows = self.rows('int first(void) { return 1; }\n')
+            path, data = self.annotations(rows)
+            data['functions'].append(copy.deepcopy(data['functions'][0]))
+            path.write_text(json.dumps(data))
+            with self.assertRaises(AssertionError):
+                build.classify(copy.deepcopy(rows), False)
+            data['functions'].pop()
+            data['functions'][0]['family'] = 'missing.family'
+            path.write_text(json.dumps(data))
+            with self.assertRaises(AssertionError):
+                build.classify(copy.deepcopy(rows), False)
+
+        def test_assembly_symbols_require_annotations_too(self):
+            _, rows = self.rows('int first(void) { return 1; }\n')
+            rows[0].update(kind='assembly', id='src/library.c:first:asm')
+            with self.assertRaisesRegex(ValueError, '1 missing'):
+                build.classify(copy.deepcopy(rows), False)
+            self.annotations(rows)
+            _, coverage = build.classify(rows, False)
+            self.assertEqual(coverage['missing'], [])
+
+        def test_supplied_stale_source_digest_cannot_reuse_same_function_ids(self):
+            _, rows = self.rows('int first(void) { return 1; }\n')
+            path, data = self.annotations(rows)
+            data['source_digest'] = 'old-source-digest'
+            path.write_text(json.dumps(data))
+            with patch.object(build.audit, 'source_digest', return_value='current-source-digest'):
+                for allow_incomplete in (False, True):
+                    with self.subTest(allow_incomplete=allow_incomplete):
+                        with self.assertRaisesRegex(ValueError, 'Stale source digest'):
+                            build.classify(copy.deepcopy(rows), allow_incomplete)
+                data['source_digest'] = 'current-source-digest'
+                path.write_text(json.dumps(data))
+                _, coverage = build.classify(rows, False)
+            self.assertEqual(coverage['annotation_pins'],
+                             {'fixture.json': 'current-source-digest'})
+
+        def test_incomplete_mode_exposes_missing_ids_and_keeps_review_basis_honest(self):
+            _, rows = self.rows('int first(void) { return 1; }\n')
+            _, coverage = build.classify(rows, True)
+            self.assertEqual(coverage['missing'], [rows[0]['id']])
+            self.assertEqual(rows[0]['family'], 'unclassified')
+            self.assertEqual(rows[0]['review_basis'], 'family_rule')
+            self.assertEqual(rows[0]['confidence'], 'low')
+
+        def test_export_has_one_csv_header_and_conserved_physical_loc(self):
+            source, rows = self.rows('''
+            #define CONSTANT 3
+            /* a file-level comment */
+            int global = 3;
+            int first(void) { return CONSTANT; }
+            int second(void) { return first(); }
+        ''')
+            self.annotations(rows)
+            definitions = build.audit.ordinary_definitions(self.root / 'src/fixture.c')
+            output = self.root / 'out'
+            with patch.object(build.audit, 'production_sources', return_value=[self.root / 'src/fixture.c']), \
+                 patch.object(build.audit, 'audited_sources', return_value=[self.root / 'src/fixture.c']), \
+                 patch.object(build.audit, 'inventory', return_value=definitions), \
+                 patch.object(build.audit, 'library_routines', return_value=([], [], [])), \
+                 patch.object(build.audit, 'source_digest', return_value='fixture-digest'), \
+                 patch.object(build, 'git', side_effect=lambda *a: 'src/fixture.c' if a == ('ls-files',) else 'fixture-commit'), \
+                 patch('sys.argv', ['build.py', '--out', str(output), '--no-similarity']), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                build.main()
+            atlas = json.loads((output / 'functions.json').read_text())
+            with (output / 'functions.csv').open(newline='') as stream:
+                exported = list(csv.DictReader(stream))
+            self.assertEqual(len(exported), 2)
+            self.assertEqual({row['id'] for row in exported}, {r['id'] for r in rows})
+            self.assertEqual(atlas['summary']['production_entries'], 2)
+            file = atlas['files'][0]
+            self.assertEqual(file['physical_loc'],
+                             file['function_attributed_loc'] + file['outside_function_loc'])
+            self.assertEqual(sum(r['attributed_tokens'] for r in atlas['functions']),
+                             len(source['tokens']) - 5)
+            self.assertEqual(sum(r['attributed_code_lines'] for r in atlas['functions']), 2)
+            self.assertEqual(file['code_bearing_loc'], 4)
+
+
+    class SimilarityTests(AtlasFixture):
+        def test_renamed_groups_are_syntactic_leads_and_keep_literals(self):
+            def operation(name, call, literal):
+                updates = '\n'.join(f'if (value > {n}) value += {call}(value);'
+                                    for n in range(6))
+                return f'int {name}(int value) {{ {updates} return value + {literal}; }}\n'
+            _, rows = self.rows(operation('first', 'read', 1) +
+                                operation('second', 'destroy', 1) +
+                                operation('third', 'read', 2))
+            result = build.similarities(rows)
+            exact = [{rows[i]['name'] for i in g['functions']}
+                     for g in result['exact_renamed_groups']]
+            self.assertEqual(exact, [{'first', 'second'}])
+            self.assertIn('leads', result['method'])
+            self.assertIn('No NiCad run', result['method'])
+
+        def test_small_or_support_bodies_are_outside_similarity_scope(self):
+            _, rows = self.rows('int one(void) { return 1; }\n'
+                                'int two(void) { return 1; }\n')
+            result = build.similarities(rows)
+            self.assertEqual(result['exact_renamed_groups'], [])
+            for row in rows:
+                row.update(production=False, tokens=1000)
+            result = build.similarities(rows)
+            self.assertEqual(result['exact_renamed_groups'], [])
+            self.assertEqual(result['near_pairs'], [])
+
+    suite = unittest.TestSuite(
+        unittest.defaultTestLoader.loadTestsFromTestCase(case)
+        for case in (SourceBoundaryTests, AttributionTests, ConnectionTests,
+                     ClassifierAndExportTests, SimilarityTests))
+    verbosity = 2 if '-v' in argv else 1
+    return 0 if unittest.TextTestRunner(verbosity=verbosity).run(suite).wasSuccessful() else 1
+
+
 HARNESS_CHECKS = {
     "core_state": harness_core_state,
     "spark_entry": harness_spark_entry,
@@ -2537,6 +3652,10 @@ HARNESS_CHECKS = {
     "native_extract": harness_native_extract,
     "native_extract_test": harness_native_extract_test,
     "surface_coreutils_gap": harness_surface_coreutils_gap,
+    "shell_functions": harness_shell_functions,
+    "audit_shell_functions": harness_audit_shell_functions,
+    "canvas_lifetime": harness_canvas_lifetime,
+    "code_map": harness_code_map,
 }
 
 

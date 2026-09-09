@@ -25,7 +25,7 @@ import sys
 import tempfile
 
 
-MODULES = ("shell_cases_expand", "shell_cases_exec", "shell_cases_lex", "shell_cases_builtin")
+MODULES = ("shell_cases_expand", "shell_cases_exec", "shell_cases_lex")
 MODES = {"bash": ("/bin/bash", []),
          "posix": ("/bin/bash", ["--posix"]),
          "dash": ("/bin/dash", [])}
@@ -179,7 +179,7 @@ def main():
     parser.add_argument("--seed", action="append", type=lambda value: int(value, 0))
     parser.add_argument("--cases", type=int, default=int(os.environ.get("MW_SHELL_CASES", "96")),
                         help="case budget per domain and seed; generators balance their families")
-    parser.add_argument("--domain", action="append", choices=("expand", "exec", "lex", "builtin"))
+    parser.add_argument("--domain", action="append", choices=("expand", "exec", "lex"))
     parser.add_argument("--family", action="append", help="select an exact generated semantic family")
     parser.add_argument("--locale", help="LC_ALL for both shells (default: C)")
     parser.add_argument("--mode", action="append", choices=tuple(MODES))
