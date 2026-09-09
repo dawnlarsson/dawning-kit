@@ -5247,15 +5247,15 @@ static COLD fn shell_shopt_said(writer write, positive which, bool as_commands)
 }
 
 static COLD fn shell_shopt_option_said(writer write, string_address name,
-                                       bool on, bool as_commands)
+                                       bool on, bool as_commands, positive column)
 {
-        /* The name comes from the set namespace and so does its column:
-           Bash pads shopt -o to fifteen, the same width set -o writes, and
-           not to the twenty a shopt name gets. A script cutting the listing
-           on the tab sees one layout for the one namespace. */
+        /* Bash writes shopt -o in two columns, not one: the listing of every
+           option takes the fifteen set -o writes, and a named option takes
+           the twenty a shopt name gets. A script cutting the listing on the
+           tab sees whichever of the two it asked for. */
         shell_option_row(write, name, on,
                          as_commands ? (on ? "set -o " : "set +o ") : null,
-                         15, '\t');
+                         column, '\t');
 }
 
 COLD fn shell_shopt(writer write, string_address input)
@@ -5330,7 +5330,7 @@ COLD fn shell_shopt(writer write, string_address input)
                         if (set_options)
                                 shell_shopt_option_said(
                                     write, shell_option_names[at].name, on,
-                                    as_commands);
+                                    as_commands, 15);
                         else
                                 shell_shopt_said(write, at, as_commands);
                 }
@@ -5348,7 +5348,7 @@ COLD fn shell_shopt(writer write, string_address input)
 
                                 shell_shopt_option_said(
                                     write, shell_extra_options[at].name, on,
-                                    as_commands);
+                                    as_commands, 15);
                         }
 
                 return shell_answer(quiet && !all_on ? 1 : 0);
@@ -5417,7 +5417,7 @@ COLD fn shell_shopt(writer write, string_address input)
                             write, name,
                             which < SHELL_OPTION_NAMES ? shell_option_on(which)
                                                        : shell_extra_on(extra),
-                            as_commands);
+                            as_commands, 20);
                 else
                         shell_shopt_said(write, which, as_commands);
         }
