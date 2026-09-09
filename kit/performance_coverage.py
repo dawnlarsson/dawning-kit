@@ -190,6 +190,10 @@ cover('benchmark_context', 'test/checks.c#BENCH_writer_field', 'writer_field_cor
 cover('benchmark_context', 'test/checks.c#BENCH_writer_text', 'buffered_write_core',
       'private core reached by both directly timed buffer-policy wrappers',
       {'buffered_write_core': 'buffered_write'})
+cover('benchmark_context', 'test/checks.c#BENCH_span_byte', 'memory_span_byte_wide',
+      'the out-of-line SSE and AVX bulk of the directly timed span, which the '
+      'same row reaches for every run past sixteen bytes',
+      {'memory_span_byte_wide': 'memory_span_byte'})
 
 
 # These are deliberately a static classification. Loading a syscall number and
