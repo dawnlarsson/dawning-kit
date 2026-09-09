@@ -1768,7 +1768,13 @@ static bool expand_push_parameter_as(expand_reference reference, bool quoted,
                 if (shell_options & ((positive)1 << ('u' - 'a')))
                 {
                         string_format(writer_stderr_once, "%s: parameter not set\n", expand_reference_text(reference));
-                        expand_fatal_status((shell_bash_compat || (mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
+                        // A command string that dies of nounset leaves 127,
+                        // the same status the other unset-parameter path
+                        // already gives; only the two spellings differed.
+                        expand_fatal_status(
+                            shell_bash_compat
+                                ? (string_is(shell_option_flags, 'c') ? 127 : 1)
+                                : (mode & EXPAND_PARAMETER_INDIRECT) ? 1 : 2);
                 }
 
                 return false;
