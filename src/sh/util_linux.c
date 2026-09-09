@@ -3860,6 +3860,9 @@ static fn ul_table_json(string_address name, address_any rows,
    other table here stops at the last thing it has to say. */
 static bool ul_table_pad_last;
 static positive ul_table_pad_extra;
+/*      ipcs writes the old fixed-width listing: every column is as wide as
+        it is declared whether or not a heading would have been narrower. */
+static bool ul_table_declared_widths;
 
 static fn ul_table_out(address_any rows, positive row_size, positive count,
                        const ul_table_column address_to definitions,
@@ -3877,7 +3880,8 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
         for (positive i = 0; i < column_count; i++)
         {
                 p8 column = columns[i];
-                widths[column] = 0;
+                widths[column] = ul_table_declared_widths
+                    ? definitions[column].width : 0;
                 filled[column] = false;
                 multiline |= definitions[column].multiline;
         }
@@ -13449,12 +13453,14 @@ static fn ul_ipcs_table(p8 type)
         }
         ul_ipcs_columns[UL_IPC_ID].heading = views[type].id;
         ul_table_pad_last = true;
+        ul_table_declared_widths = true;
         ul_table_pad_extra = type == UL_IPC_SHARED ? 1 : 0;
         ul_table_out(ul_ipc.rows + first, sizeof(ul_ipc.rows[0]), rows,
                      ul_ipcs_columns, UL_IPC_COLUMNS,
                      (p8 address_to)views[type].columns, views[type].count,
                      true, false, ul_ipc_field);
         ul_table_pad_last = false;
+        ul_table_declared_widths = false;
         ul_table_pad_extra = 0;
 }
 
