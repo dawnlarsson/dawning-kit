@@ -57,6 +57,23 @@ static COLD fn shell_posix_changed(bool on);
 static COLD fn shell_getopts_index_changed();
 static fn shell_getopts_parameters_changed();
 
+/*
+        The letter an option diagnostic names.
+
+        The shared formatter carries %s, %p, %b and %f and no %c, so a
+        "%c" in a message wrote nothing at all and every one of these
+        read "declare: : invalid option" with the letter missing. A
+        letter is spelled into two bytes and handed over as a string
+        instead. The room is the caller's, because a diagnostic may
+        name two letters at once.
+*/
+static string_address shell_option_spelled(string_address room, p8 letter)
+{
+        room[0] = letter;
+        room[1] = 0;
+        return room;
+}
+
 typedef struct
 {
         bipolar offset;
@@ -3676,6 +3693,9 @@ bool shell_cd_walk(bool physical, bool address_to say,
 
 COLD fn shell_cd(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         p8 letter;
         bool physical = shell_physical_on();
@@ -3707,7 +3727,8 @@ COLD fn shell_cd(writer write, string_address input)
                 else if (letter == 'e')
                         error_if_unnamed = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "cd: bad option: -%c\n", letter));
+                        return shell_answer(string_report(log_error, 2, "cd: bad option: -%s\n",
+                                                        shell_option_spelled(room, letter)));
         }
 
         positive index = walk.index;
@@ -4236,6 +4257,9 @@ fn shell_echo(writer write, string_address input)
 */
 COLD fn shell_exec(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         p8 address_to found = null;
         positive found_room = 0;
         string_address address_to environment;
@@ -4267,8 +4291,8 @@ COLD fn shell_exec(writer write, string_address input)
                 }
                 else
                 {
-                        string_format(log_error,
-                                      "exec: -%c: invalid option\n", which);
+                        string_format(log_error, "exec: -%s: invalid option\n",
+                                      shell_option_spelled(room, which));
                         exec_special_error_note();
                         return shell_answer(2);
                 }
@@ -4385,6 +4409,9 @@ STORAGE_ADAPTER(findfs, storage_findfs_run)
 
 COLD fn shell_pwd(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         p8 out_buffer[4096];
         shell_option_walk walk = {1};
         p8 letter;
@@ -4399,7 +4426,8 @@ COLD fn shell_pwd(writer write, string_address input)
                 else if (letter == 'P')
                         physical = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "pwd: bad option: -%c\n", letter));
+                        return shell_answer(string_report(log_error, 2, "pwd: bad option: -%s\n",
+                                                        shell_option_spelled(room, letter)));
         }
 
         if (!physical && shell_directory_holds())
@@ -5230,6 +5258,9 @@ static COLD fn shell_shopt_option_said(writer write, string_address name,
 
 COLD fn shell_shopt(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         p8 which;
         bool set = false;
@@ -5253,7 +5284,8 @@ COLD fn shell_shopt(writer write, string_address input)
                 else if (which == 'o')
                         set_options = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "shopt: -%c: invalid option\n", which));
+                        return shell_answer(string_report(log_error, 2, "shopt: -%s: invalid option\n",
+                                                        shell_option_spelled(room, which)));
         }
 
         positive index = walk.index;
@@ -5641,6 +5673,9 @@ static bool shell_unset_variable(const_string name, positive length)
 
 COLD fn shell_unset(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         positive index;
         bool functions = false;
@@ -5660,8 +5695,8 @@ COLD fn shell_unset(writer write, string_address input)
                 {
                         // A special builtin, so a letter it does not have
                         // ends the script, as the reference shell's does.
-                        string_format(log_error,
-                                      "unset: Illegal option -%c\n", letter);
+                        string_format(log_error, "unset: Illegal option -%s\n",
+                                      shell_option_spelled(room, letter));
                         exec_special_error_note();
                         shell_answer(2);
                         return;
@@ -6012,6 +6047,10 @@ typedef struct
 
 static bool shell_declare_options(shell_declare_state address_to state)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
+        p8 sign[2];
         shell_option_walk walk = {state->index, null, 0, true};
         bool indexed_told = false;
         bool associative_told = false;
@@ -6034,9 +6073,10 @@ static bool shell_declare_options(shell_declare_state address_to state)
 
                 if (!flag)
                 {
-                        string_format(log_error,
-                                      "%s: %c%c: invalid option\n",
-                                      shell_argv[0], direction, value);
+                        string_format(log_error, "%s: %s%s: invalid option\n",
+                                      shell_argv[0],
+                                      shell_option_spelled(sign, direction),
+                                      shell_option_spelled(room, value));
                         shell_answer(2);
                         return false;
                 }
@@ -7097,6 +7137,9 @@ static fn shell_marked_written(writer write, string_address name,
 
 static COLD fn shell_marked(writer write, p8 mark)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         string_address command = mark == DECLARE_EXPORT ? "export"
                                                         : "readonly";
         bool listed = shell_argc < 2;
@@ -7116,8 +7159,8 @@ static COLD fn shell_marked(writer write, p8 mark)
                          mark == DECLARE_EXPORT && walk.direction == '-')
                         unmark = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "%s: -%c: invalid option\n",
-                                      command, option));
+                        return shell_answer(string_report(log_error, 2, "%s: -%s: invalid option\n",
+                                      command, shell_option_spelled(room, option)));
         }
 
         index = walk.index;
@@ -11858,6 +11901,9 @@ static bool hash_drop(string_address name)
 
 fn shell_hash(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         p8 which;
         b32 bad = 0;
@@ -11890,7 +11936,8 @@ fn shell_hash(writer write, string_address input)
                                                  "argument\n"));
                 }
                 else
-                        return shell_answer(string_report(log_error, 2, "hash: -%c: invalid option\n", which));
+                        return shell_answer(string_report(log_error, 2, "hash: -%s: invalid option\n",
+                                                        shell_option_spelled(room, which)));
         }
 
         positive index = walk.index;
@@ -12464,6 +12511,9 @@ COLD fn shell_type(writer write, string_address input)
 */
 fn shell_command_builtin(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         positive index;
         bool only_say = false;
@@ -12483,8 +12533,8 @@ fn shell_command_builtin(writer write, string_address input)
                 else if (option == 'p')
                         standard_path = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "command: -%c: invalid option\n",
-                                      option));
+                        return shell_answer(string_report(log_error, 2, "command: -%s: invalid option\n",
+                                      shell_option_spelled(room, option)));
         }
 
         index = walk.index;
@@ -13027,6 +13077,9 @@ fn shell_builtin_run(writer write, string_address input)
 */
 fn shell_enable(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         p8 which;
         bool off = false;
@@ -13047,7 +13100,8 @@ fn shell_enable(writer write, string_address input)
                         return shell_answer(string_report(log_error, 2, "enable: not supported\n"));
                 }
                 else
-                        return shell_answer(string_report(log_error, 2, "enable: -%c: invalid option\n", which));
+                        return shell_answer(string_report(log_error, 2, "enable: -%s: invalid option\n",
+                                                        shell_option_spelled(room, which)));
         }
 
         positive index = walk.index;
@@ -13470,6 +13524,9 @@ COLD fn shell_prompt_write(writer write, bool more)
 
 fn shell_help(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         positive index = 1;
         b32 answer = 0;
 
@@ -13484,9 +13541,8 @@ fn shell_help(writer write, string_address input)
                         if (!string_is(letter, 'd') && !string_is(letter, 's') &&
                             !string_is(letter, 'm'))
                         {
-                                string_format(log_error,
-                                              "help: -%c: invalid option\n",
-                                              string_get(letter));
+                                string_format(log_error, "help: -%s: invalid option\n",
+                                              shell_option_spelled(room, string_get(letter)));
                                 return shell_answer(2);
                         }
 
