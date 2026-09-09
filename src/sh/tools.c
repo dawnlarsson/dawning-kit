@@ -7292,6 +7292,11 @@ static b32 tools_dd(void)
                                         digits++;
 
                                 text_flush();
+                                if (string_get(value) == '0' &&
+                                    (string_get(value + 1) == 'x' ||
+                                     string_get(value + 1) == 'X'))
+                                        string_format(writer_stderr,
+                                            "dd: warning: '0x' is a zero multiplier; use '00x' if that is intended\n");
                                 return string_report(writer_stderr, 1,
                                     digits && digits > 19
                                         ? (string_address)"dd: invalid number: '%s': Value too large for defined data type\n"
@@ -7356,6 +7361,12 @@ static b32 tools_dd(void)
         if (!ibs || ibs > positive_max - 31)
         {
                 text_flush();
+                // A leading 0x multiplies by zero, which is rarely meant.
+                if (string_get(input_size) == '0' &&
+                    (string_get(input_size + 1) == 'x' ||
+                     string_get(input_size + 1) == 'X'))
+                        string_format(writer_stderr,
+                            "dd: warning: '0x' is a zero multiplier; use '00x' if that is intended\n");
                 return string_report(writer_stderr, 1,
                                      "dd: invalid number: '%s'\n", input_size);
         }
@@ -8119,6 +8130,15 @@ static bool dump_od_row_width()
                 return true;
         }
 
+        if (dump_arguments.width > DUMP_BLOCK)
+        {
+                string_format(writer_stderr,
+                              "od: warning: invalid width %p; using %p instead\n",
+                              dump_arguments.width, unit);
+                dump_arguments.width = unit;
+                return true;
+        }
+
         if (dump_arguments.width % unit)
         {
                 string_format(writer_stderr,
@@ -8143,8 +8163,7 @@ static bool dump_od_seen(p8 letter, string_address value)
         {
                 positive width;
 
-                if (!dump_number(value, address_of width) || !width ||
-                    width > DUMP_BLOCK)
+                if (!dump_number(value, address_of width) || !width)
                 {
                         text_flush();
                         string_format(writer_stderr, "od: invalid -w argument '%s'\n",
@@ -8870,8 +8889,7 @@ static b32 tools_od(void)
                 if (!width)
                         dump_arguments.width = 32;
                 else if (!dump_number(width, address_of dump_arguments.width) ||
-                         !dump_arguments.width ||
-                         dump_arguments.width > DUMP_BLOCK)
+                         !dump_arguments.width)
                 {
                         string_format(writer_stderr, "od: invalid -w argument '%s'\n",
                                       width);
@@ -8954,7 +8972,7 @@ static b32 tools_od(void)
                                               "od: invalid offset '%s'\n", last);
                                 return text_done(1);
                         }
-                        dump_arguments.skip += offset;
+                        dump_arguments.skip = offset;
                         stop--;
                         operands--;
                 }

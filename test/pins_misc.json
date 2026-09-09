@@ -4737,6 +4737,38 @@
   },
   "case": {
    "argv": [
+    "-l",
+    "root"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "pinky"
+  },
+  "domain": "misc",
+  "id": "f133ba3ae6b91cbf",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: the long format reads the account home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d41a8d6fc75b1881f7ddae7d628f3e54d8a1cdc5b36df2e595f35ccd949b7510"
+  },
+  "utility": "pinky"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-h",
     "-q",
     "-l",
