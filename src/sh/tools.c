@@ -6826,9 +6826,15 @@ static b32 tools_uuidparse()
                 return text_done(1);
         if (output && !tools_uuid_columns(output, columns, address_of column_count))
                 return text_done(string_diagnostic(&text_diagnostic, 1, output, "unknown or excessive output column"));
-        // Nothing to parse prints nothing, not even the heading.
+        // Nothing to parse prints nothing, not even the heading -- but
+        // --json still prints the envelope that holds no uuids.
         if (!file_operand_count)
+        {
+                if (json)
+                        text_put_string("{\n   \"uuids\": [\n\n   ]\n}\n");
+
                 return text_done(0);
+        }
 
         if (json)
         {
@@ -11697,7 +11703,15 @@ static bool diff_option_seen(p8 letter, string_address value)
                 positive style = letter == 'z' ? DIFF_NORMAL : DIFF_UNIFIED;
 
                 if (diff_style_seen && diff_style != style)
-                        return string_diagnostic(&text_diagnostic, 0, null, "conflicting output style options");
+                {
+                        // diff points at its own help after the complaint,
+                        // and puts its name on that line too.
+                        text_flush();
+                        string_format(writer_stderr,
+                                      "diff: conflicting output style options\n"
+                                      "diff: Try 'diff --help' for more information.\n");
+                        return false;
+                }
 
                 diff_style = style;
                 diff_style_seen = true;
@@ -11799,9 +11813,9 @@ static b32 tools_diff(void)
                 string_format(writer_stderr,
                               "diff: missing operand after '%s'\n"
                               "diff: Try 'diff --help' for more information.\n",
-                              text_argument_count - first == 1
-                                  ? program_argument(first)
-                                  : (string_address) "diff");
+                              // The word diff was reading when it ran out,
+                              // which is the last one it was handed.
+                              program_argument(text_argument_count - 1));
                 return text_done(2);
         }
         if (text_argument_count - first > 2)
