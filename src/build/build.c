@@ -2860,6 +2860,7 @@ static b32 build_freestanding_link(string_address source, string_address output,
         merely contained it -- including the watcher and this program.
 */
 static b32 build_watch_application;
+static b32 build_watch_watcher;
 
 static fn build_stop_application()
 {
@@ -2869,6 +2870,31 @@ static fn build_stop_application()
         kill(build_watch_application, BUILD_SIGNAL_TERMINATE);
         build_wait(build_watch_application);
         build_watch_application = 0;
+}
+
+/*
+        Being told to stop.
+
+        Both children are ours and neither ends on its own: the watcher runs
+        until it is killed and the replacement runs until it is replaced. A
+        watch that exits without taking them leaves two processes spinning on
+        somebody's machine, which is what the shell's EXIT/INT/TERM traps were
+        there to prevent. The statuses are the shell's too -- 130 for an
+        interrupt, 143 for a termination -- because that is what a caller
+        reads to tell one from the other.
+*/
+static fn build_watch_caught(b32 number)
+{
+        build_stop_application();
+
+        if (build_watch_watcher > 0)
+        {
+                kill(build_watch_watcher, BUILD_SIGNAL_TERMINATE);
+                build_wait(build_watch_watcher);
+                build_watch_watcher = 0;
+        }
+
+        exit(number == SIGNAL_INTERRUPT ? 130 : 143);
 }
 
 static b32 build_freestanding(string_address address_to arguments, positive count)
@@ -3035,6 +3061,15 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
                 }
 
                 close(pair[1]);
+                build_watch_watcher = child;
+                system_signal_install(SIGNAL_INTERRUPT,
+                                      (positive)build_watch_caught,
+                                      SIGNAL_CATCH_FLAGS, SIGNAL_CATCH_RESTORER,
+                                      null);
+                system_signal_install(BUILD_SIGNAL_TERMINATE,
+                                      (positive)build_watch_caught,
+                                      SIGNAL_CATCH_FLAGS, SIGNAL_CATCH_RESTORER,
+                                      null);
 
                 while (true)
                 {
@@ -3075,10 +3110,11 @@ static b32 build_freestanding(string_address address_to arguments, positive coun
 
                 build_stop_application();
 
-                if (child > 0)
+                if (build_watch_watcher > 0)
                 {
-                        kill(child, BUILD_SIGNAL_TERMINATE);
-                        build_wait(child);
+                        kill(build_watch_watcher, BUILD_SIGNAL_TERMINATE);
+                        build_wait(build_watch_watcher);
+                        build_watch_watcher = 0;
                 }
 
                 close(pair[0]);
