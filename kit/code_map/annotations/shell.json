@@ -10,7 +10,7 @@
     "src/sh/shell.c",
     "src/sh/snapshot.c"
   ],
-  "source_digest": "4690fc035019b719dcc31ba150cba6d34169786f871d273cb077a9eb9915e441",
+  "source_digest": "7fca743f4fae01df406889f619cb18bcc1349adef934b7175c9c18afccfaa9f4",
   "families": [
     {"id": "shell.bindings","title": "Binding cells and mutation","description": "Environment cell indexing, scalar payload storage and attributed writes.","design_question": "Can cell identity, payload ownership and visible-write hooks be described by one explicit contract?","constraints": ["Name lookups may outlive vector growth","Readonly and special-variable effects follow the selected visible binding","Allocation failure must not publish a partial value"]},
     {"id": "shell.references","title": "Nameref and destination resolution","description": "Resolve reference chains and element targets, including hidden declaration destinations.","design_question": "Which callers require reference metadata versus a resolved scalar or element destination?","constraints": ["Reference walks are bounded","Subscript evaluation can mutate visible variables","Hidden destination selection does not replace visible RHS lookup"]},

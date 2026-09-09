@@ -3025,11 +3025,17 @@ static positive cat_line_number;
 static bool cat_blank_before;
 static bool cat_at_line_start;
 
-/* With -v alone TAB and LF also pass through unchanged. Structural flags
-   keep them outside the ordinary printable span. */
-static const b8 cat_visible_span[2][256] = {
-    {[32 ... 126] = 1},
+/* Identity bytes for SHOW/TABS/line-state combinations. TAB and LF may
+   join ordinary spans whenever no selected operation observes them. */
+static const b8 cat_literal_span[8][256] = {
+    {[0 ... 255] = 1},
+    {[0 ... 9] = 1, [11 ... 255] = 1},
+    {[0 ... 8] = 1, [10 ... 255] = 1},
+    {[0 ... 8] = 1, [11 ... 255] = 1},
     {[32 ... 126] = 1, ['\t'] = 1, ['\n'] = 1},
+    {[32 ... 126] = 1, ['\t'] = 1},
+    {[32 ... 126] = 1, ['\n'] = 1},
+    {[32 ... 126] = 1},
 };
 
 static fn cat_number()
@@ -3071,10 +3077,102 @@ static inline INLINE bool cat_line_start(bool blank)
 static fn cat_walked()
 {
         p8 visible[TEXT_VISIBLE_MAX];
-        const b8 address_to literal = cat_visible_span[cat_flags == CAT_SHOW];
+        const b8 address_to literal = cat_literal_span[cat_flags == CAT_SHOW ? 4 : 7];
+        const b8 address_to block_literal = cat_literal_span[
+            ((cat_flags & CAT_SHOW) ? 4 : 0) | ((cat_flags & CAT_TABS) ? 2 : 0) |
+            ((cat_flags & (CAT_NUMBER | CAT_NUMBER_FULL | CAT_SQUEEZE | CAT_ENDS)) != 0)];
 
         while (text_fill())
         {
+                if (!text_out_failed && cat_flags != CAT_SHOW)
+                {
+                        positive room = TEXT_OUT_MAX - text_out_used;
+                        if (room < positive_char_max + 5)
+                                room = TEXT_OUT_MAX;
+                        p8 address_to field = text_reserve(room);
+                        if (field)
+                        {
+                                p8 address_to at = text_input.buffer + text_input.position;
+                                p8 address_to stop = text_input.buffer + text_input.filled;
+                                p8 address_to into = field;
+                                p8 address_to limit = field + room;
+                                bool line_start = cat_at_line_start, blank_before = cat_blank_before;
+                                positive number = cat_line_number;
+                                while (at < stop && (positive)(limit - into) >= positive_char_max + 5)
+                                {
+                                        p8 value = *at;
+                                        if (line_start)
+                                        {
+                                                bool blank = value == '\n';
+                                                if ((cat_flags & CAT_SQUEEZE) && blank && blank_before)
+                                                {
+                                                        at++;
+                                                        continue;
+                                                }
+                                                blank_before = blank;
+                                                if ((cat_flags & CAT_NUMBER_FULL) ? !blank : (cat_flags & CAT_NUMBER))
+                                                {
+                                                        into += positive_into_padded(into, number, 6, ' ');
+                                                        *into++ = '\t';
+                                                        number++;
+                                                }
+                                                line_start = false;
+                                        }
+                                        if (block_literal[value])
+                                        {
+                                                positive run = string_span_max(at,
+                                                    min((positive)(stop - at), (positive)(limit - into)), block_literal);
+                                                memory_copy_apart(into, at, run);
+                                                into += run;
+                                                at += run;
+                                                continue;
+                                        }
+                                        at++;
+                                        if (value == '\n')
+                                        {
+                                                if (cat_flags & CAT_ENDS)
+                                                        *into++ = '$';
+                                                *into++ = '\n';
+                                                line_start = true;
+                                        }
+                                        else if (value == '\t')
+                                        {
+                                                if (cat_flags & CAT_TABS)
+                                                {
+                                                        *into++ = '^';
+                                                        *into++ = 'I';
+                                                }
+                                                else
+                                                        *into++ = '\t';
+                                        }
+                                        else if (cat_flags & CAT_SHOW)
+                                        {
+                                                if (value >= 128)
+                                                {
+                                                        *into++ = 'M';
+                                                        *into++ = '-';
+                                                        value -= 128;
+                                                }
+                                                if (value == 127 || value < 32)
+                                                {
+                                                        *into++ = '^';
+                                                        value = value == 127 ? '?' : value + 64;
+                                                }
+                                                *into++ = value;
+                                        }
+                                        else
+                                                *into++ = value;
+                                }
+                                text_input.position = (positive)(at - text_input.buffer);
+                                text_out_used -= room - (positive)(into - field);
+                                cat_line_number = number;
+                                cat_at_line_start = line_start;
+                                cat_blank_before = blank_before;
+                                continue;
+                        }
+                }
+                /* A failed reservation keeps the original byte/record walker
+                   for the remainder, including later inputs and diagnostics. */
                 /* Numbering and blank squeezing only care where newlines
                    are.  Keep the byte walker for visible/tab/end
                    transformations, but move an untouched record span at a
