@@ -962,8 +962,8 @@ static PURE storage_mount address_to storage_umount_target(
 /* checked says the mount table was consulted and answered for this target.
    util-linux answers 1 when the table alone can say the path is not a mount
    point, and 32 when it took umount(2) and the kernel refused: the modes
-   that bypass the table (--force, --types, --all-targets) therefore answer
-   32 where a plain umount of the same path answers 1. */
+   that bypass the table (--no-mtab, --read-only, --force, --types) therefore
+   answer 32 where a plain umount of the same path answers 1. */
 static b32 storage_umount_one(writer diagnostic, string_address program,
                              string_address target, string_address type,
                              positive flags, bool read_only, bool checked,
@@ -1091,6 +1091,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         bool all_targets = false;
         bool recursive = false;
         bool read_only = false;
+        bool no_mtab = false;
         bool verbose = false;
         bool canonical = true;
         bool quiet = false;
@@ -1144,6 +1145,8 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         all_targets = true;
                 else if (option == 'q')
                         quiet = true;
+                else if (option == 'n')
+                        no_mtab = true;
                 else if (option == 'F')
                         fake = true;
                 else if (option == 'd' || option == 'O')
@@ -1225,7 +1228,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                 }
                 string_address asked = resolved ? (string_address)resolved
                                                 : operand[i];
-                bool bypass = all_targets || types ||
+                bool bypass = types || no_mtab || read_only ||
                               (flags & STORAGE_MNT_FORCE) != 0;
                 if (all_targets)
                 {
@@ -1244,6 +1247,34 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                                     read_only, false, verbose, quiet);
                         }
                         if (!matched)
+                        {
+                                /* --all-targets names a source; a word that
+                                   is not one still names a target. */
+                                storage_mount address_to target =
+                                    storage_umount_target(address_of table, asked);
+                                if (!target && asked != operand[i])
+                                        target = storage_umount_target(
+                                            address_of table, operand[i]);
+                                if (target)
+                                {
+                                        matched = true;
+                                        failed |= storage_umount_one(
+                                            diagnostic, (string_address)"umount",
+                                            target->target, target->type, flags,
+                                            read_only, false, verbose, quiet);
+                                }
+                        }
+                        if (!matched && !bypass)
+                        {
+                                /* A search of the table that found nothing
+                                   says so; it never reaches umount(2). */
+                                if (!quiet)
+                                        string_format(diagnostic,
+                                                      "umount: %s: not mounted.\n",
+                                                      operand[i]);
+                                failed |= 1;
+                        }
+                        else if (!matched)
                                 failed |= storage_umount_one(
                                     diagnostic, (string_address)"umount",
                                     operand[i], null, flags, read_only, false,
