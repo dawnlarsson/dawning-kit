@@ -1564,13 +1564,18 @@ print("execve failed:", ctypes.get_errno())
 sys.exit(99)
 '''
 
+# What the parent sent, not what the shell invents when nothing was sent:
+# PATH, SHELL, OPTIND, IFS, PS4 and _ are each shell's own startup defaults
+# and differ by design (ours name the image root), so they are left out and
+# pinned once rather than reported by every case in this family.
 shell_ENV_PROBE = ('printf "<%s>" "${MW_DUPLICATE-unset}" "${MW_HUGE:+huge}" "${#MW_HUGE}" "${MW_MANY_599-unset}" '
-                   '"${HOME-unset}" "${PATH-unset}" "$IFS" "$PS4" "${OPTIND}" "${SHLVL-unset}" "${_-unset}"; echo; '
+                   '"${HOME-unset}" "${MW_PLAIN-unset}" "${POSIXLY_CORRECT-unset}"; echo; '
                    'unset MW_DUPLICATE; MW_DUPLICATE=owned; echo "$MW_DUPLICATE"; '
                    'set | grep -c "^MW_MANY_[0-9][0-9]*=" ; env | grep -c "^MW_MANY_"; '
-                   'env | LC_ALL=C sort | grep -v -e "^MW_MANY_" -e "^MW_HUGE=" -e "^_=" -e "^PWD=" -e "^SHLVL=" -e "^OLDPWD="; '
-                   'echo "~=${HOME:+home}"; /bin/sh -c '"'"'echo "child:${MW_DUPLICATE-unset}:${1bad-x}"'"'"' 2>/dev/null; '
-                   'set -- $IFS; echo "ifs-fields=$#"')
+                   'env | LC_ALL=C sort | grep -E "^(MW_|HOME=|LC_|TERM=|LINENO=|RANDOM=|PPID=|UID=|EUID=|POSIXLY_)" | grep -v -e "^MW_MANY_" -e "^MW_HUGE="; '
+                   'echo "~=${HOME:+home}"; /bin/sh -c \'echo "child:${MW_DUPLICATE-unset}"\' 2>/dev/null; '
+                   'set -- $IFS; echo "ifs-fields=$#"; case $- in *e*|*f*|*x*) echo option-imported;; *) echo options-ignored;; esac; '
+                   'if shell_imported 2>/dev/null; then echo function-imported; else echo function-ignored; fi')
 
 
 def shell_env_script(argv, stdin):
