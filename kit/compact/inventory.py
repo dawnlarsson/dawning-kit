@@ -1207,11 +1207,24 @@ def main(path, check=False, target='all'):
         _, _, platform_missing, macos_sources = included_audit(path, 'macos')
     platform_gaps = macos_runtime_parity(macos_sources)
 
-    rows, gaps = [], []
+    #       A local is private to the assembly that calls it, and a caller
+    #       lives in one architecture's block, so a local that is missing
+    #       where it is wanted is a label the assembler cannot find -- caught
+    #       by building, not by counting. One architecture reaching for an
+    #       out-of-line section the other two have no use for is therefore not
+    #       a gap in the library's promise: memory_span_byte_wide is the SSE
+    #       and AVX bulk of the x86_64 span, pushed out of line to keep short
+    #       spans hot, and arm64 and riscv64 keep theirs in one body.
+    def architecture_private(name, present):
+        return len(present) == 1 and set().union(
+            *(scopes.get((name, arch), set()) for arch in ARCHES)) == {'local'}
+
+    rows, gaps, private = [], [], []
     for n in sorted(order):
         s = have[n]
         mark = lambda a: 'yes' if a in s else '--'
-        if len(s) < 3: gaps.append(n)
+        if len(s) < 3:
+            (private if architecture_private(n, s) else gaps).append(n)
         kinds = set().union(*(scopes.get((n, arch), set()) for arch in ARCHES))
         scope = next(iter(kinds)) if len(kinds) == 1 else 'mixed'
         rows.append(
@@ -1227,7 +1240,8 @@ def main(path, check=False, target='all'):
 
     body = ['/*', f'        {HEAD}', PREAMBLE.rstrip(),
             '', (f'        {len(order)} routines ({public_count} public, '
-                 f'{local_count} local), {len(order)-len(gaps)} of them on all three.'),
+                 f'{local_count} local), {len(order)-len(gaps)-len(private)} of '
+                 f'them on all three and {len(private)} local to one.'),
             (f'        Raw C purity: {len(direct_bodies) + len(included_bodies)} '
              f'function bodies, {len(direct_objects) + len(included_objects)} '
              f'object definitions, '
@@ -1238,6 +1252,12 @@ def main(path, check=False, target='all'):
                  f'{"arm64":<7} riscv64'),
             (f'          {"-"*30} {"-"*7} {"-"*7} {"-"*7} {"-"*7}')]
     body += rows
+    if private:
+        body += ['', '        Private to one machine, by choice:']
+        names = {'X64': 'x86_64', 'ARM64': 'arm64', 'RISCV64': 'riscv64'}
+        for n in private:
+            where = [names[a] for a in ARCHES if a in have[n]]
+            body.append(f'          {n} -- local to ' + ', '.join(where))
     if gaps:
         body += ['', '        Not yet on every machine:']
         for n in gaps:

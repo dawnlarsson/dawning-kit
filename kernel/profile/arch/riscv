@@ -39,7 +39,8 @@ CONFIG_FPU=y
 #
 #       Instruction set.
 #
-#       Base rv64gc, and no more than that. src/chrn_word.asm counts trailing
+#       Base rv64gc, and no more than that. The riscv64 strchrnul in
+#       src/library.c counts trailing
 #       bytes with a multiply rather than Zbb's ctz for exactly this reason:
 #       QEMU's virt machine reports "riscv: base ISA extensions acdfhim", so a
 #       kernel that assumed Zbb would take an illegal instruction inside

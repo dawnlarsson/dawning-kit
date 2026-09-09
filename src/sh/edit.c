@@ -15,7 +15,7 @@
         cursors, the undo journal, the input decoder and the renderer take
         their bytes from edit_input_byte and leave their bytes in edit_emitted,
         and the only things that touch the kernel are the four routines at the
-        bottom under the driver heading. test/edit.sh drives everything
+        bottom under the driver heading. the edit lane of test/run drives everything
         above that line with no terminal, no pty and no file underneath, by
         feeding what the editor emits straight into term.c's own consume() and
         asserting on the cells that come out.
@@ -4000,7 +4000,7 @@ static fn edit_key(positive key)
         The driver.
 
         Everything above this line is arithmetic on arrays: it can be run with
-        no kernel underneath it, which is what test/edit.sh does. Everything
+        no kernel underneath it, which is what the edit lane of test/run does. Everything
         below it is the four things an editor cannot do without a kernel --
         reading the file, writing the file, putting the terminal into the state
         where keys arrive one at a time, and waiting for one.

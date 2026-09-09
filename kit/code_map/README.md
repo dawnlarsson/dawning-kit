@@ -276,7 +276,7 @@ claim for a changed body without checking it again.
 ```sh
 python3 test/harness.py code_map -v
 python3 kit/function_audit.py --check
-node test/code_map_browser.mjs artifacts/function-map-2026-09-08
+node kit/code_map/browser.mjs artifacts/function-map-2026-09-08
 ```
 
 The browser check uses Node with built-in `fetch`/`WebSocket` and an isolated

@@ -10,7 +10,7 @@ entry.
 
     python3 kit/compact/fixes.py <file.c>
 
-Both were measured on arm64 by test/native.sh. See test/native_FINDING.
+Both were measured on arm64 by sh test/run native. See kit/native_FINDING.
 """
 import sys
 

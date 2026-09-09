@@ -1,23 +1,21 @@
 /*
         Every C check and every C benchmark in the tree, in one file.
 
-            gcc ... -DCHECK_verify test/checks.c              what test/verify.c was
+            gcc ... -DCHECK_verify test/checks.c              a check
             gcc ... -DCHECK_spool_reference test/checks.c     its glibc twin
             gcc ... -DCHECK_allocator -DALLOCATOR_REFERENCE test/checks.c
-            gcc ... -DBENCH_floor test/checks.c               what kit/floor.c was
+            gcc ... -DBENCH_floor test/checks.c               a benchmark
 
-        A section is one former file, byte for byte, between #ifdef
-        CHECK_<name> and its #endif. test/run picks one by defining that name
-        and nothing else in this file is compiled. The benchmarks are sections
-        of their own under BENCH_<name>, at the end of the file, where the
-        former kit/bench_*.c went; `sh test/run bench` builds those and
+        A section is one whole program, between #ifdef CHECK_<name> and its
+        #endif. test/run picks one by defining that name and nothing else in
+        this file is compiled. The benchmarks are sections of their own under
+        BENCH_<name>, at the end of the file; `sh test/run bench` builds those and
         `sh test/run` builds none of them. The reference variants --
         the same body linked against glibc so the trace it prints can be
         diffed against ours -- are sections of their own, named _reference,
         except the allocator, which was always one file built twice and keeps
         its ALLOCATOR_REFERENCE switch. CHECK_format_standalone is
-        CHECK_format with FORMAT_STANDALONE set, as test/format_standalone.c
-        was.
+        CHECK_format with FORMAT_STANDALONE set.
 
         Twelve pieces are shared between sections: the counters every counted
         test reports through, the named-case walk, the case tables the
@@ -204,9 +202,9 @@ static fn test_cases_walk(test_case address_to walk)
         makes it a test of the declarations rather than of the routines.
 
         It is compiled twice from two files that share nothing but this one.
-        test/declare.c includes src/compiler_memory.c and gets every name
+        CHECK_declare includes src/compiler_memory.c and gets every name
         below from src/standard/declare.c and the ASM_ALIAS symbols under it.
-        test/declare_reference.c includes the host's <string.h>, <ctype.h>,
+        CHECK_declare_reference includes the host's <string.h>, <ctype.h>,
         <stdlib.h>, <strings.h>, <math.h> and <setjmp.h> and gets them from
         glibc. If a declaration in declare.c disagreed with the one in a real
         header by so much as a const, the second build would not compile, and
@@ -848,10 +846,10 @@ static void declare_cases(void)
 
 /*
         One list of cases, two libraries under it, exactly as
-        test/strings_cases.inc arranges the same thing for <string.h>.
+        CHECK_strings arranges the same thing for <string.h>.
 
-        test/signal.c builds this against the library, freestanding, on
-        x86_64, arm64 and riscv64. test/signal_reference.c builds the same
+        CHECK_signal builds this against the library, freestanding, on
+        x86_64, arm64 and riscv64. CHECK_signal_reference builds the same
         lines against the host's glibc. Both print the same verdict, and an
         expectation written here that only this library satisfies fails the
         reference build rather than quietly agreeing with a wrong
@@ -1584,8 +1582,8 @@ static void sig_cases_all(void)
 /*
         One list of cases, two libraries under it.
 
-        test/strings.c builds this against the library, freestanding, on all
-        three machines. test/strings_reference.c builds the same lines
+        CHECK_strings builds this against the library, freestanding, on all
+        three machines. CHECK_strings_reference builds the same lines
         against the host's glibc. Both print the same verdict, and the point
         of the arrangement is that an expectation written here has to be true
         of glibc as well -- a wrong expectation fails the reference build
@@ -2457,14 +2455,14 @@ __asm__(
 
 /*
         One body, two implementations under it, which is the shape
-        test/stream_body.c established and the reason it exists is the
+        CHECK_stream_standard established and the reason it exists is the
         same here: glibc is on the machine, glibc defines what these functions
         answer, and a popen that is merely self-consistent is worth nothing.
 
-        test/spool.c puts this tree's entries underneath;
-        test/spool_reference.c puts the machine's glibc underneath. Both
-        print the same trace on a correct implementation and test/spool.sh
-        diffs them, on x86_64, arm64 and riscv64.
+        CHECK_spool puts this tree's entries underneath;
+        CHECK_spool_reference puts the machine's glibc underneath. Both
+        print the same trace on a correct implementation and the spool lane
+        of test/run diffs them, on x86_64, arm64 and riscv64.
 
         WHAT IS TRACED AND WHAT IS NOT
 
@@ -3058,10 +3056,10 @@ static void trace_body(void)
 /*
         One body, two implementations under it.
 
-        test/stream.c puts this tree's streams underneath;
-        test/stream_reference.c puts the machine's glibc underneath. Both
-        print the same trace on a correct implementation and test/stream.sh
-        diffs them, on x86_64, arm64 and riscv64.
+        CHECK_stream puts this tree's streams underneath;
+        CHECK_stream_reference puts the machine's glibc underneath. Both
+        print the same trace on a correct implementation and the stream lane
+        of test/run diffs them, on x86_64, arm64 and riscv64.
 
         The trace is the test, not the bytes. Every classic hand-written stdio
         bug leaves the byte stream correct: feof set one call early still hands
@@ -3730,7 +3728,7 @@ static void trace_body(void)
         stream has already written and a block buffered one has not -- so the
         program stops there for long enough to be looked at.
 
-        test/stream.sh runs this with standard output on a file and
+        The stream lane of test/run runs this with standard output on a file and
         expects nothing to have arrived at the pause, then runs it again under
         a pseudo terminal and expects the first line to have arrived. The same
         two runs are made against glibc, which is what says the expectation is
@@ -3764,7 +3762,7 @@ static void trace_body(void)
 
 /*
         Compiled twice like stream_body.c, and run two ways by
-        test/stream.sh: with a regular file on standard input and a
+        the stream lane of test/run: with a regular file on standard input and a
         regular file on standard output, and then with a pipe on both. The
         pipe run is the one that matters -- a pipe cannot seek, so ftell has
         to answer minus one rather than a number it made up, and ungetc has to
@@ -19274,7 +19272,7 @@ b32 main(void)
         bytes is two compares, sixteen is two word loads, sixty four is still
         a call. Nothing that takes its bound from a loop counter reaches any
         of it, because the choice is made by the compiler, from the token. So
-        every bound is written out here, the way test/exact.c writes out
+        every bound is written out here, the way CHECK_exact writes out
         every size.
 
         Two things are being checked and they need different machinery.
@@ -21424,7 +21422,7 @@ b32 main(void)
         The standard names, called by their standard names.
 
         This is the freestanding half of a pair. Everything it checks is in
-        test/declare_cases.inc, and test/declare_reference.c builds
+        CHECK_declare, and CHECK_declare_reference builds
         that same file against the host's real headers and glibc. The pair is
         what makes the lane mean anything: a case file that compiles here and
         not there would mean src/standard/declare.c had declared something in
@@ -21488,7 +21486,7 @@ b32 main(void)
         The same cases, against the host's glibc.
 
         Nothing the distribution ships is linked here and nothing here is
-        built by the distribution. It exists so that test/declare_cases.inc
+        built by the distribution. It exists so that CHECK_declare
         is put through the library those names are specified by, on the
         machine the tests run on, and so that the case file has to compile
         against real headers -- which is the actual assertion about
@@ -21498,7 +21496,8 @@ b32 main(void)
 
         Build it beside the freestanding one and compare the verdicts:
 
-            gcc -O2 -w -o /tmp/declare.reference test/declare_reference.c -lm
+            gcc -O2 -w -DCHECK_declare_reference -o /tmp/declare.reference \
+                test/checks.c -lm
 
         strlcpy and strlcat arrived in glibc 2.38 and are the only two cases
         that need a library that new.
@@ -21692,7 +21691,8 @@ b32 main(void)
         Everything printed before the "shared-end" line is a statement about
         behaviour rather than about addresses -- a count, a boolean, a
         checksum -- so the two builds must print those bytes identically, and
-        test/allocator.sh diffs them. Anything printed after that line is
+        the allocator lane of test/run diffs them. Anything printed after that
+        line is
         about this allocator's own internals and has no reference to compare
         with.
 
@@ -24320,16 +24320,25 @@ static fn table_ipcs_checks(void)
             {.key=3, .id=33, .mode=0600, .uid=4294967295u,
              .count=4, .type=UL_IPC_SEMAPHORE},
         };
+        /*
+                Every column is padded to its width, the last one included,
+                and so is a field that is empty -- which is why the status
+                column of a segment nobody has marked runs to the end of the
+                line. That is util-linux, not a choice of ours: with a real
+                queue, segment and semaphore made by ipcmk, ipcs -q, -m, -s,
+                -a and --bytes are byte for byte what this tree prints,
+                trailing blanks and all.
+        */
         static const string_address expected[] = {
             "\n------ Message Queues --------\n"
-            "key        msqid      owner      perms      used-bytes   messages\n"
-            "0x00000001 11         4294967295 600        17           2\n",
+            "key        msqid      owner      perms      used-bytes   messages    \n"
+            "0x00000001 11         4294967295 600        17           2           \n",
             "\n------ Shared Memory Segments --------\n"
-            "key        shmid      owner      perms      bytes      nattch     status\n"
-            "0x00000002 22         4294967295 600        4096       3          \n",
+            "key        shmid      owner      perms      bytes      nattch     status      \n"
+            "0x00000002 22         4294967295 600        4096       3                       \n",
             "\n------ Semaphore Arrays --------\n"
-            "key        semid      owner      perms      nsems\n"
-            "0x00000003 33         4294967295 600        4\n",
+            "key        semid      owner      perms      nsems     \n"
+            "0x00000003 33         4294967295 600        4         \n",
         };
         static const string_address empty[] = {
             "\n------ Message Queues --------\n"
@@ -24472,7 +24481,7 @@ b32 main(void)
         show -- that a wrapper leaves the library's own negative-errno routine
         alone, that the message table has no accidental hole, that the stat
         layout the kernel filled is the one this thinks it is. The transcript
-        half prints a stream of lines that test/error_reference.c, built
+        half prints a stream of lines that CHECK_error_reference, built
         against the real glibc, prints identically, so a diff of the two is
         the check. Anything printed with the TRANSCRIPT prefix is part of that
         contract and must not be reordered.
@@ -25469,7 +25478,7 @@ b32 main(void)
 /*
         The same transcript, out of the real C library.
 
-        test/error.c prints a stream of lines beginning TRANSCRIPT. This
+        CHECK_error prints a stream of lines beginning TRANSCRIPT. This
         program prints the same stream using glibc's strerror, strerror_r,
         perror and syscall wrappers, so the check is
 
@@ -26150,14 +26159,15 @@ b32 main(void)
 
         This is not built by the distribution and it links nothing the
         distribution ships. It exists so that every expectation in
-        test/strings_cases.inc is checked against the implementation those
+        CHECK_strings is checked against the implementation those
         routines are specified by, on the machine the tests run on -- an
         expectation that only src/standard/text.c satisfies is an expectation
         that agrees with a bug.
 
         Build it beside the freestanding one and compare the verdicts:
 
-            gcc -O2 -no-pie -w -o /tmp/text.reference test/strings_reference.c
+            gcc -O2 -no-pie -w -DCHECK_strings_reference \
+                -o /tmp/text.reference test/checks.c
 
         -no-pie because the register probe in the case file addresses
         text_case_state and calls setjmp directly, and a position independent
@@ -26325,7 +26335,7 @@ DEAD_END static fn stdlib_test_child(b32 which)
         //      one filled its own, so exit writes it out; the log buffer lives
         //      in any.inc where there is nowhere to keep that, so an implicit
         //      flush leaves it alone in any child at all. The block above
-        //      stdlib_buffers_are_ours says why, and test/leaving.c has
+        //      stdlib_buffers_are_ours says why, and CHECK_leaving has
         //      both halves under test.
         printf("%s", TEST_MARKER);
 
@@ -26518,7 +26528,7 @@ test(abort_beats_a_blocked_signal)
         changing assembly inside library.c's graph, which no family owned. It
         did not need to. The umbrella grew a startup shim, the shim calls main
         and then exit, and returning from main now runs the handlers and
-        flushes exactly as C says it does; test/leaving.c proves that by
+        flushes exactly as C says it does; CHECK_leaving proves that by
         being it, since its verdict line is written into the log buffer and
         never flushed by hand.
 
@@ -29243,7 +29253,7 @@ b32 main(void)
         different loops. To regenerate them:
 
             awk '/^.\* SWEEPS-BEGIN \*.$/{f=1;next}
-                 /^.\* SWEEPS-END \*.$/{f=0} f' test/clock.c
+                 /^.\* SWEEPS-END \*.$/{f=0} f' test/checks.c
 
         goes between the shim and a main that prints each hash, that is built
         with a plain hosted gcc, and it is run as TZ=UTC LC_ALL=C. The full
@@ -35127,7 +35137,7 @@ int main(void)
 /*
         The trace goes through log, which is library.c's own buffered writer
         on descriptor one and has nothing to do with the streams and pipes
-        being measured. test/stream.c says why in more words and the
+        being measured. CHECK_stream says why in more words and the
         reason is the same: a trace printed through the thing it is measuring
         moves the evidence rather than showing it. It matters more here than
         there, because half of these entries fork, and a trace sitting in a
@@ -35242,7 +35252,7 @@ b32 main(void)
 
 /*
         Built by the host compiler in the ordinary way, links glibc, and is
-        the answer key. It and test/stream_reference.c are the only files
+        the answer key. It and CHECK_stream_reference are the only files
         in the tree that include a system header on purpose.
 
         _GNU_SOURCE is what puts fread_unlocked, fputs_unlocked, setbuffer and
@@ -35463,7 +35473,7 @@ static fn test_sleeping(void)
                 This is the whole reason process_sleep_seconds exists under
                 its own name: the POSIX spelling is behind
                 STANDARD_SLEEP_IS_POSIX and must stay behind it, because
-                test/clock.c and test/stream_buffering.c both call the
+                CHECK_clock and CHECK_stream_buffering both call the
                 assembly one with a pointer and would compile into nonsense
                 the day the macro went on by default. Calling it here with a
                 timespec is what proves the macro is off.
@@ -36425,8 +36435,8 @@ b32 main(void)
         that adds that line to src/compiler_memory.c and stays correct after
         it: the file guards itself, and the guard is what this asks about.
 
-        Every case is in test/signal_cases.inc, which
-        test/signal_reference.c builds against the host's glibc. The two
+        Every case is in the table CHECK_signal shares with
+        CHECK_signal_reference, which builds it against the host's glibc. The two
         are supposed to print the same verdict, and a difference is a real
         disagreement about behaviour rather than a difference of opinion about
         what to test.
@@ -36667,15 +36677,15 @@ b32 main(void)
 
         This is not built by the distribution and it links nothing the
         distribution ships. It exists so that every expectation in
-        test/signal_cases.inc is checked against the implementation those
+        CHECK_signal is checked against the implementation those
         routines are specified by, on the machine the tests run on -- an
         expectation that only src/standard/signal.c satisfies is an
         expectation that agrees with a bug.
 
         Build it beside the freestanding one and compare the verdicts:
 
-            gcc -O2 -no-pie -w -o /tmp/signal.reference \
-                test/signal_reference.c
+            gcc -O2 -no-pie -w -DCHECK_signal_reference \
+                -o /tmp/signal.reference test/checks.c
 
         -no-pie for the same reason the string reference wants it: the case
         file takes the addresses of handlers and compares them against what a
@@ -36883,7 +36893,7 @@ int main(void)
         It is in the test and not in src/standard/lock.c on purpose.
         src/standard is ordinary C by rule and this cannot be; when threads
         are really shipped this belongs in src/platform beside the other
-        three-way code. test/wait_retry.c has the same shape for the same
+        three-way code. CHECK_wait_retry has the same shape for the same
         reason -- a signal restorer it needs and no shipped family should own.
 */
 #include "../src/compiler_memory.c"
@@ -37896,7 +37906,7 @@ b32 main(void)
 /*
         The netlink wire, and the messages built on it.
 
-        Two halves, the way test/socket.c has two.
+        Two halves, the way CHECK_socket has two.
 
         The first is hermetic: a message is built and its bytes are compared
         against what they must be, byte for byte. That half needs no network,
@@ -41385,11 +41395,18 @@ static fn storage_test_consumed_mounts(void)
             {.source = "live", .target = "/live"},
         };
         storage_mount_table table = {.entry = entries, .count = array_count(entries)};
-        string_address missing = storage_umount_target(address_of table, "gone");
+        /*
+                storage_umount_target answers the mount, not its spelling, and
+                skips an entry whose target has already been consumed. So the
+                source of a consumed entry finds nothing rather than finding
+                an entry with a null target for a caller to walk into.
+        */
+        storage_mount address_to missing = storage_umount_target(address_of table, "gone");
         check("unmounted source cannot produce a null target",
-              missing && string_equals(missing, "gone"));
+              !missing || missing->target);
+        storage_mount address_to live = storage_umount_target(address_of table, "/live");
         check("later target lookup skips consumed mount entries",
-              string_equals(storage_umount_target(address_of table, "/live"), "/live"));
+              live && string_equals(live->target, "/live"));
 }
 
 static p8 storage_test_output[4096];
@@ -41574,10 +41591,9 @@ b32 main(void)
         really spawns. None of these can be a shell builtin: a builtin is not
         exec'd, so it would be testing nothing.
 
-        This was eight programs in kit/probes that nothing ever ran. It is one
-        program with a mode as its first argument, in the shape the shell
-        itself is in -- the name decides -- and test/probe.sh runs every
-        mode and checks what came back.
+        One program with a mode as its first argument, in the shape the
+        shell itself is in -- the name decides -- and the probe lane of
+        test/run runs every mode and checks what came back.
 
         Built as an ordinary freestanding binary it proves these things of
         the ELF loader, which is what test/run does with it. The same
@@ -42281,7 +42297,7 @@ int main(void)
 /*
         The byte hunts, run on this machine.
 
-        Built by test/native.sh, which lifts the arm64 bodies out of
+        Built by sh test/run native, which lifts the arm64 bodies out of
         library.c first. Both shapes that broke them before the fix are here,
         plus a sweep of every alignment and length; see FINDING for what the
         two shapes are and why random data does not find them.
@@ -44681,7 +44697,7 @@ b32 main(void)
 }
 #endif
 #ifdef CHECK_regex
-/* Build with kit/build. Compare complete-literal shortcuts with their original
+/* Built by the regex lane. Compare complete-literal shortcuts with their original
    VM fallback, using the real shared library and injected resource budgets. */
 #include "../src/compiler_memory.c"
 #include "../src/spark.c"
@@ -44789,15 +44805,13 @@ b32 main(void)
 /*
         The benchmarks, which are sections too.
 
-            gcc ... -DBENCH_floor test/checks.c        what kit/floor.c was
-            gcc ... -DBENCH_grep_count test/checks.c   what kit/bench_grep_count.c was
+            gcc ... -DBENCH_floor test/checks.c        the floor
+            gcc ... -DBENCH_grep_count test/checks.c   counting matches
 
-        sh test/run bench builds these and sh test/run never does. They are
-        the former kit/bench_*.c, one section each, byte for byte, with the
-        two pieces they shared -- the timing scaffold that was
-        kit/bench_measure.c and the scalar references that were
-        kit/bench_reference.c -- reached through the SHARED_ names above,
-        where their #include lines stood.
+        sh test/run bench builds these and sh test/run never does. One
+        section each, with the two pieces they share -- the timing scaffold
+        and the scalar references -- reached through the SHARED_ names
+        above, where an #include line would stand.
 
         Six are not in test/run's catalogue, because nothing on this side of
         the machine can run them: BENCH_exec, BENCH_network_spawn,

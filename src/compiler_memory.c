@@ -89,7 +89,7 @@
         memory_copy is the name memmove is an alias for and the two halves are
         allowed to overlap. An expansion that interleaved would be correct on
         every test that did not overlap, which is most of them, so the check
-        in test/exact.c slides every size through every overlap both ways.
+        in CHECK_exact in test/checks.c slides every size through every overlap both ways.
 
         Which is what the other one is called after. memory_copy_apart was
         memory_copy_fast until now, and "fast" said nothing true: it is not a
@@ -401,7 +401,7 @@ static inline INLINE address_any fill_known(address_any destination,
 //      A sample and not a proof. The condition is still folded later than the
 //      static initializer it guards, so a set the optimiser can read and the
 //      front end cannot would still build a table of zeros; every literal in
-//      test/exact_set.c is there to say that no such set has been found.
+//      CHECK_exact_set in test/checks.c is there to say that no such set has been found.
 #define set_known(members)                                                    \
         (__builtin_constant_p(set_known_length(members)) &&                   \
          __builtin_constant_p(set_known_finds(members, 0xff)) &&              \
@@ -524,7 +524,7 @@ static inline INLINE string_address first_of_set_known(string_address source,
         to sixty seven per cent of the routine timed.
 
         Every length is checked one at a time and by its literal, in
-        test/needle.c, because a test that takes its needle length from a
+        CHECK_needle in test/checks.c, because a test that takes its needle length from a
         loop counter reaches none of this: the choice is made by the compiler,
         from the token. A search writes nothing, so guard bytes cannot show a
         read past the end of the haystack the way they show a write; the test
@@ -778,7 +778,7 @@ static inline INLINE positive length_max_known(string_address source, positive b
 
 /*
         strncmp, and the answer is the magnitude of the difference and not
-        merely its sign, which is what test/verify.c asserts and what the
+        merely its sign, which is what CHECK_verify in test/checks.c asserts and what the
         assembly returns. So no builtin can stand in for this: __builtin_strncmp
         at a constant length emits a call to strncmp under -fno-builtin, and
         the sign-only contract would be the wrong one even if it did not.
@@ -997,7 +997,7 @@ static inline INLINE string_address append_max_known(string_address destination,
         cost room -- sixteen bytes of memcmp written out a byte at a time is
         about sixty instructions where the call is five -- but that is a
         worry about a call site nothing in the tree has: building
-        test/standard.c with all three of these against without them
+        CHECK_standard in test/checks.c with all three of these against without them
         moves .text by 128 bytes down on x86_64, 32 down on arm64 and 32 up
         on riscv64. A build that wants size more than speed should still
         lower the riscv numbers before the others.
@@ -1042,7 +1042,7 @@ static inline INLINE string_address append_max_known(string_address destination,
         multiple of eight overlapping the one before it rather than reaching
         past the end, which is the same shape the copy uses at its tail and
         for the same reason: no length needs a remainder, and nothing is read
-        that the caller did not hand over. test/exact_scan.c lays each
+        that the caller did not hand over. CHECK_exact_scan in test/checks.c lays each
         block against an unmapped page, once at each end, so that a read of
         one byte too far stops the program rather than passing.
 */
@@ -1906,7 +1906,7 @@ static inline INLINE positive into_base_known(p8 address_to into,
         These keep the full int contract, including EOF. The bit forms avoid
         compiler builtins because RV64 lowers them to unavailable libgcc calls
         and because this library defines the zero cases those builtins leave
-        undefined. test/single.c compares every expansion with its
+        undefined. CHECK_single in test/checks.c compares every expansion with its
         addressable assembly routine.
 */
 static inline INLINE b32 known_is_digit(b32 value)
@@ -2075,7 +2075,7 @@ static inline INLINE b32 known_first_set(b32 value)
         cover every length from eight to sixteen and write nothing outside
         them, which matters here more than anywhere else in this file: the
         bytes past the one memccpy stopped on belong to the caller, and
-        test/standard.c compares the whole destination room against a
+        CHECK_standard in test/checks.c compares the whole destination room against a
         model to say so. Leaving the copy as a call and writing out only the
         scan was measured too and is 84.7% of the routine at sixteen bytes,
         which is not enough to be worth a second body.
@@ -2426,7 +2426,7 @@ static inline INLINE address_any copy_until_known(address_any destination,
         token through the nested expansion it is handed to. Do not fold the
         indirection away by hand -- the reason it works is a rule about
         rescanning, not about how the text looks, and the check that it does
-        work is the unfolded call in test/single.c.
+        work is the unfolded call in CHECK_single in test/checks.c.
 
         Function-like, so each only fires where a call is written, and a bare
         name still takes the address of the routine.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write test/exact_scan.c -- every length known at the call site.
+"""Write CHECK_exact_scan in test/checks.c -- every length known at the call site.
 
 The shape is the CHECK_exact section of test/checks.c: a literal per line, because a size taken
 from a loop counter never reaches the expansion at all.
@@ -8,7 +8,7 @@ import pathlib
 
 TOP = 160
 
-HEAD = r'''#include "../compiler_memory.c"
+HEAD = r'''#include "../src/compiler_memory.c"
 /*
         Every length that is known where the call is written.
 
@@ -458,5 +458,17 @@ for name in bands:
     body += "        %s();\n" % name
 body += "}\n"
 
-pathlib.Path('exact_scan.c').write_text(HEAD + body + TAIL)
-print('wrote exact_scan.c')
+#       The section lives inside test/checks.c between its guards, so write it
+#       back where it stands rather than leaving a file beside it.
+BEGIN = "#ifdef CHECK_exact_scan\n"
+END = "#endif /* CHECK_exact_scan */"
+checks = pathlib.Path(__file__).resolve().parents[1] / "test/checks.c"
+text = checks.read_text()
+begin = text.index(BEGIN) + len(BEGIN)
+end = text.index(END, begin)
+section = HEAD + body + TAIL
+if text[begin:end] == section:
+    print("CHECK_exact_scan is already what this generates")
+else:
+    checks.write_text(text[:begin] + section + text[end:])
+    print("rewrote CHECK_exact_scan in", checks)
