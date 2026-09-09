@@ -91,37 +91,66 @@ DOMAIN_FLOOR = {
     #
     #       The fourth field is how far above the floor a run may land before
     #       it is a gain rather than a good day. A handful of cases still flip
-    #       that the unstable list has not caught -- three runs of the shell
-    #       gave 10664 and a fourth, with the rest of the suite competing for
-    #       the machine, 10662 -- so the floor sits a little under the lowest
-    #       and says how much of what is above it to ignore. Without that a
-    #       green run nags on every pass, and a gate that always speaks is one
-    #       nobody reads.
-    "shell": (10660, 19190, 8,
-              "the pseudo-terminal families: a transcript carries the prompt and "
-              "job notices a terminal interleaves by timing, and bash writes its "
-              "history on exit, so the answers need a normaliser before their "
-              "divergences mean anything"),
-    "util_linux": (16737, 17775, 8,
-                   "the column families of lsfd, findmnt and lsblk: 2.42 lists "
-                   "ASSOC, XMODE, SOURCE and MNTID by default where these list "
-                   "FD and MODE, so a default listing differs in every row"),
+    #       that the unstable list has not caught -- two runs of the shell gave
+    #       16105 and 16108, one of them with four other agents' suites
+    #       competing for the machine -- so the floor sits a little under the
+    #       lowest and says how much of what is above it to ignore. Without
+    #       that a green run nags on every pass, and a gate that always speaks
+    #       is one nobody reads.
+    "shell": (16095, 25681, 20,
+              "the process-surface families, and the interactive surface a script never "
+              "reaches. startup and set_options hold about six of every ten cases that do "
+              "not agree, and one answer holds most of that: an option nobody has -- and "
+              "three in five of startup's option sets carry one -- is answered by bash "
+              "with its whole usage banner, which the family replays, where this shell "
+              "writes the one diagnostic line and nothing else. The pseudo-terminal "
+              "families are no longer the prompt, the interleaving of the job notices or "
+              "the history file, which are normalised away now: what is left is the job "
+              "listing, printed in bash's columns under every name, so that a dash "
+              "session differs in every notice it writes; a terminal that goes away, "
+              "which kills bash with the hangup and leaves this one exiting zero; and "
+              "the line editing an interactive session reaches and a script never asks "
+              "for."),
+    "util_linux": (76645, 80852, 30,
+                   "the mount namespace and what a process can watch inside it. "
+                   "The column families this floor used to name are not the gap "
+                   "and mostly never were: lsblk's default listing is the "
+                   "reference's byte for byte, tree and all, and findmnt's "
+                   "default columns are TARGET SOURCE FSTYPE OPTIONS as 2.42's "
+                   "are -- what findmnt lacks is the tree, so its plain listing "
+                   "is exactly the reference's --list. Only lsfd differs by "
+                   "columns, and matching them alone would gate nothing: 2.42 "
+                   "lists exe, cwd, rtd, the pidfd, every namespace and every "
+                   "file-backed mapping beside the numbered descriptors, where "
+                   "this one lists the numbered descriptors, so the rows differ "
+                   "before the columns do. What is left, in order: umount_live "
+                   "and mount_live (1695 of the 4186), where --all-targets "
+                   "reaches mounts the reference leaves alone and a bind or a "
+                   "remount that half succeeds is 1 to the reference and 32 "
+                   "here; flock_live and flock, the lock a second process holds "
+                   "and -E read at each occurrence rather than the last; "
+                   "findmnt_live, still the tree; ipcrm_live and ipcs_live, the "
+                   "verbose removals and the Times, Creators and PIDs listings; "
+                   "lsfd_live, the row set above; and the long usage banners of "
+                   "rfkill and uclampset, which are a page of text each"),
     "misc": (18223, 20044, 8,
              "script's transcript timing, cksum --check combinations, and od "
              "and numfmt corners"),
-    "files": (57900, 73330, 100,
+    "files": (58260, 73330, 100,
               "the domain moved from singles to full in one pass, so most of "
-              "what pairwise, three-wise and the powerset found is answered "
-              "but not yet pinned: mkdir and mktemp read -m, -p and --tmpdir "
-              "as one value each where the reference reads every occurrence, "
-              "kill's option order is util-linux's own hand-rolled one, "
-              "whereis calls combinations bad usage that these accept, "
-              "realpath and readlink differ on a path whose middle is missing, "
-              "shred, touch, truncate and csplit refuse values these take, and "
-              "chmod, chown and chgrp walk no symbolic link under -R where -L "
-              "asks them to. The slack is wide because the run's own "
-              "denominator moves: sixty to eighty cases a run are dropped as "
-              "invalid oracles when the reference runs out of time"),
+              "what pairwise, three-wise and the powerset first reached is "
+              "answered but not yet pinned. Where it was looked at: mkdir and "
+              "mktemp read -m, -p and --tmpdir as one value each where the "
+              "reference reads every occurrence of them; kill's option order "
+              "is util-linux's own hand-rolled one and not a getopt; whereis "
+              "calls combinations bad usage that these accept; cp --debug "
+              "names the transfer method the kernel chose; and chmod, chown "
+              "and chgrp walk no symbolic link under -R, so -L asks for a "
+              "traversal they do not do. realpath, shred, touch, truncate, "
+              "csplit, rm and rename have not been looked at. The slack is "
+              "wide because the denominator itself moves: seventy or so cases "
+              "a run are dropped as invalid oracles, and which ones depends "
+              "on how loaded the machine is"),
 }
 DOMAINS = ("text", "files", "misc", "util_linux", "shell", "builtins", "awk")
 SHELL_MODES = {"bash": ("/bin/bash", [], "bash"),
@@ -121096,7 +121125,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "907dd90fa109740da98be0b1cfde2d662bfe9ebd0f8b4b4eb7f23c1c3b96bb64"
+   "stdout": "783ab23446a7fff7e18e08a5334f0461f3b862a80501727a2d91873a25147027"
   },
   "case": {
    "argv": [
@@ -121116,6 +121145,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r233",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "background-wait-invalid"
  },
  {
@@ -121148,7 +121178,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "907dd90fa109740da98be0b1cfde2d662bfe9ebd0f8b4b4eb7f23c1c3b96bb64"
+   "stdout": "783ab23446a7fff7e18e08a5334f0461f3b862a80501727a2d91873a25147027"
   },
   "case": {
    "argv": [
@@ -121168,6 +121198,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r233",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "background-wait-invalid"
  },
  {
@@ -121744,32 +121775,6 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "829b15355f9962f0bf8c6eda8d58480bdbb37cdc55a53d3a5223f60dc4541dbc",
-   "status": 0,
-   "stdout": "2f0a4317f4b78419a9bf45470a37302baceddc4cb635581f79ff77b7450b5e4a"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "mkdir -p real/child search; ln -sfn real/child link; ln -sfn ../real/child search/place; ln -sfn loop loop\nROOT=$PWD\ncd '' 2>/dev/null; echo $?; pwd | sed \"s#$ROOT##\"\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "directory-policy-empty-operand",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "f111d7fc5794d610",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r232",
-  "utility": "directory-policy-empty-operand"
- },
- {
-  "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "01edbaf3fd6493035321d915f7bc7bbb9c4397faddcf85c5bcc30bea74cdeed8"
@@ -121819,58 +121824,6 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r232",
   "utility": "dollar-single-word"
- },
- {
-  "candidate": {
-   "effects": "f470da569dec3d03b5ada68c0c46edc87a1d22f1ef9bdf08a2ed46c6ea1b6257",
-   "status": 1,
-   "stdout": "61d78f97823e549c9b4e5d1ed8536004c043a408ca6d1e7e70498ae079ba964d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "printf 'echo in:$#:${1-none}; v=set\\n' > f; printf 'return 7; echo never\\n' > r; printf 'set -- replaced\\n' > s; mkdir -p d; printf 'echo pathfile\\n' > d/p; printf 'echo local\\n' > p; printf 'echo \"unclosed\\n' > bad\n. -- ./f; echo \"$?\"; . -x ./f; echo \"$?\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "dot-source-option-end",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "3a05b9116ae27c66",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r230",
-  "utility": "dot-source-option-end"
- },
- {
-  "candidate": {
-   "effects": "f470da569dec3d03b5ada68c0c46edc87a1d22f1ef9bdf08a2ed46c6ea1b6257",
-   "status": 0,
-   "stdout": "f121ffc41dc17644527f43d1f777ba2d1ffad4eddabe69e144f0f451fed449ad"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "printf 'echo in:$#:${1-none}; v=set\\n' > f; printf 'return 7; echo never\\n' > r; printf 'set -- replaced\\n' > s; mkdir -p d; printf 'echo pathfile\\n' > d/p; printf 'echo local\\n' > p; printf 'echo \"unclosed\\n' > bad\n. -- ./f; echo \"$?\"; . -x ./f; echo \"$?\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "dot-source-option-end",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "840a44e0b21c8ccd",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r230",
-  "utility": "dot-source-option-end"
  },
  {
   "candidate": {
@@ -128588,7 +128541,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "eb4232385958a8b6883a99827277108fa356467c00bd2f11165a51a7bfe5a3bc"
+   "stdout": "59178c3a5babb43479d56212bf8e99b453abb51e31846d234d90bcf716802328"
   },
   "case": {
    "argv": [
@@ -128608,13 +128561,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "special-builtin-fatality"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "c447087d27f6ab5c6705a6870dc07e0b8955fc0bbebe9fd6937659c95da12b87"
+   "stdout": "391d870065440927619f0b2038ebc1704070f9fb5f8687535c5ee61071011db2"
   },
   "case": {
    "argv": [
@@ -128634,13 +128588,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "special-builtin-fatality"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "eb4232385958a8b6883a99827277108fa356467c00bd2f11165a51a7bfe5a3bc"
+   "stdout": "59178c3a5babb43479d56212bf8e99b453abb51e31846d234d90bcf716802328"
   },
   "case": {
    "argv": [
@@ -128660,13 +128615,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "special-builtin-fatality"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "c447087d27f6ab5c6705a6870dc07e0b8955fc0bbebe9fd6937659c95da12b87"
+   "stdout": "391d870065440927619f0b2038ebc1704070f9fb5f8687535c5ee61071011db2"
   },
   "case": {
    "argv": [
@@ -128686,6 +128642,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "special-builtin-fatality"
  },
  {
@@ -134802,7 +134759,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "c6aa38b8c25d7fcf24bbc4dc216358de422e13342a7f21df3a5aa9254bb711cb"
+   "stdout": "e2147b3a57cba290bd75765168ec3d78d847f9835ccb97bf9e8629071b514915"
   },
   "case": {
    "argv": [
@@ -134823,6 +134780,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "The corners these families found and this pass did not close: bash holds a process substitution's descriptor open for the life of the shell, so a file its writer fills is still empty to a later command in the same script, where this one closes the descriptor when the command it belonged to ended and the writer has already finished; an EXIT trap set inside the last stage of a pipeline runs here and does not in bash; and a here-document ended by the end of the input is warned about under every name where dash says nothing.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -134866,7 +134824,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "6b76bf30fe4893df66e5e3958f80714f2eef93bae50fee479c6098776d589986"
+   "stdout": "fd1c8a01f2e6975f5836a9cfb177f44902075cb0d3805f8777b6b7f10538b41c"
   },
   "case": {
    "argv": [
@@ -134887,6 +134845,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "The corners these families found and this pass did not close: bash holds a process substitution's descriptor open for the life of the shell, so a file its writer fills is still empty to a later command in the same script, where this one closes the descriptor when the command it belonged to ended and the writer has already finished; an EXIT trap set inside the last stage of a pipeline runs here and does not in bash; and a here-document ended by the end of the input is warned about under every name where dash says nothing.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -134930,33 +134889,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "45327683d474aaf92c6c21ef096050219e3c1eb2b704f14ba70ef9d07c6be061"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "sh -c 'trap \"\" USR1; exec \"$0\" -c \"trap - USR1; trap \\\"echo caught\\\" USR1; kill -USR1 \\$\\$; echo alive; trap -p USR1\"' \"$(readlink /proc/$$/exe)\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-ignore-inherited",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "594194778634e13a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r239",
-  "utility": "traps-ignore-inherited"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "45327683d474aaf92c6c21ef096050219e3c1eb2b704f14ba70ef9d07c6be061"
+   "stdout": "9a637308bfc9bf54207ea989f103bc3561a0df795312f60e0ab1ec90ca9d3ffa"
   },
   "case": {
    "argv": [
@@ -134976,13 +134909,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "traps-ignore-inherited"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "45327683d474aaf92c6c21ef096050219e3c1eb2b704f14ba70ef9d07c6be061"
+   "stdout": "9a637308bfc9bf54207ea989f103bc3561a0df795312f60e0ab1ec90ca9d3ffa"
   },
   "case": {
    "argv": [
@@ -135002,34 +134936,8 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
-  "utility": "traps-ignore-inherited"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "654c8f7b9ae7bb0748e9058623b3fdfcf0104ca095c022ef20a6c8b2ce180274"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo n' 1; trap 1; trap; sh -c 'kill -1 $$; echo survived'; echo \"$?\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-numeric-unset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "6c554945fafdadb7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r239",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "utility": "traps-numeric-unset"
+  "utility": "traps-ignore-inherited"
  },
  {
   "candidate": {
@@ -135139,60 +135047,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb412d96ce39d07bb5cd67f71f8b06256546ff437fe19eb9d2878dacfd7ba377"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo t1\ntrap - USR1\necho t2' USR1; kill -USR1 $$; trap -p USR1; trap | wc -l 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-self-removing",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "3e6e5343cd75fe49",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r239",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "utility": "traps-self-removing"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "a1e06bd681fdaf5a144d86cfd4cc2ea088e24f943b4385eab533729a308c0306"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo t1\ntrap - USR1\necho t2' USR1; kill -USR1 $$; trap -p USR1; trap | wc -l 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-self-removing",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "e217907a80d58e18",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r239",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "utility": "traps-self-removing"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
    "stdout": "3dd06e8e0e4753eaff36387d6d9a77d56545d3715f50b898721ef7295b691771"
   },
   "case": {
@@ -135215,86 +135069,6 @@ PINNED = r"""
   "reason_id": "r239",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "traps-several-signals"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "40ab08d136ac4b5d0bf95d5300d475f29c16b80217eaa591ac6e1c6d799d7b9b"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo trapped' USR1; v=$(kill -USR1 $$; echo sub); echo \"$v\"; echo \"$(trap -p USR1)\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-trap-in-subst",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "1cd8f63f3205d283",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r239",
-  "utility": "traps-trap-in-subst"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "d4e50f54f5b4934805254a993f1380854fe7bff571a083b9b18850a1eb651339"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo a; echo b' 18; trap -p 18; trap -p; trap -p | wc -l 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-trap-p",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "1a9f11defc652ca9",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r239",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "utility": "traps-trap-p"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "88c989e965bb37c8b040b96fb48d22f0a02f5eac30d85c809e48ea8ad898b48c"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo a; echo b' 18; trap -p 18; trap -p; trap -p | wc -l 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-trap-p",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "6c7615613a52bb77",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r239",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "utility": "traps-trap-p"
  },
  {
   "candidate": {

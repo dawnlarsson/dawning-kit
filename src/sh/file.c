@@ -10245,8 +10245,11 @@ static string_address chown_spec;
 static bipolar chown_from_user = -1;
 static bipolar chown_from_group = -1;
 
+static p8 chown_traverse_option;
+
 static const file_supersede chown_supersedes[] = {
     {(string_address) "dh", address_of chown_dereference_option},
+    {(string_address) "HLP", address_of chown_traverse_option},
     {null, null},
 };
 
@@ -10418,7 +10421,11 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
         if (string_is(who + length, ':') || string_is(who + length, '.'))
                 rest = who + length + 1;
 
-        if (rest && !string_get(rest))
+        //      "user:" names a group by that user's own login group, which
+        //      needs a database this image has not got. A colon with nothing
+        //      on either side of it names nobody in particular, which is
+        //      what --from= means and is not a refusal.
+        if (length && rest && !string_get(rest))
                 return string_report(log_error, false, "%s: invalid spec: '%s'\n",
                                      chown_program, who);
 
@@ -10466,6 +10473,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
         chown_from_group = -1;
         chown_status = 0;
         chown_dereference_option = 'd';
+        chown_traverse_option = 0;
         chown_program = program;
         chown_groups_only = groups_only;
         chown_spec = (string_address) "";
@@ -10480,6 +10488,16 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
         if (!file_take(address_of taking))
                 return 1;
+
+        //      A recursive walk that was told to follow links has to be
+        //      told which ones, and the last of -H, -L and -P is the one
+        //      that answers: -P, or none at all, leaves the question open
+        //      and the reference refuses the pair.
+        if ((taking.flags & FILE_FLAG('R')) && (taking.flags & FILE_FLAG('d')) &&
+            chown_traverse_option != 'H' && chown_traverse_option != 'L')
+                return string_report(log_error, 1,
+                                     "%s: -R --dereference requires either -H or -L\n",
+                                     program);
 
         string_address from = file_option_value(address_of taking, 'F');
 
