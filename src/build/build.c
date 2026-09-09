@@ -55,6 +55,11 @@ typedef struct build_setting
 } build_setting;
 
 static build_setting build_settings[BUILD_SETTING_ROOM] = {
+        /*      What the built system calls itself. */
+        {"name", "moonwater"},
+        {"version", "25"},
+        {"full_name", "moonwater-25"},
+
         /*      Where a build puts things. */
         {"artifacts", "artifacts"},
         {"image_root", "fs"},
@@ -62,19 +67,65 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
         {"kernel_tree", "linux"},
         {"profile_root", "kernel/profile"},
 
-        /*      The kernel this tree builds on, and where it comes from. */
+        /*      The kernel this tree builds on, and where it comes from.
+
+                The signature is pinned here rather than downloaded next to
+                the tarball. Fetching both would still verify, but only that
+                the archive is signed by a trusted key -- pinning ties the
+                build to this exact release, so a validly signed but different
+                kernel cannot be substituted.
+
+                To move to a new release: take the .sign file from the
+                mirror's linux-VERSION.tar.sign and paste it here along with
+                the version. */
         {"kernel_version", "7.2"},
         {"kernel_mirror", "https://cdn.kernel.org/pub/linux/kernel"},
         {"kernel_keys", "torvalds@kernel.org gregkh@kernel.org"},
+        {"kernel_signature",
+         "-----BEGIN PGP SIGNATURE-----\n"
+         "Comment: This signature is for the .tar version of the archive\n"
+         "Comment: git archive --format tar --prefix=linux-7.2/ v7.2\n"
+         "Comment: git version 2.55.0\n"
+         "\n"
+         "iQIzBAABCgAdFiEEZH8oZUiU471FcZm+ONu9yGCSaT4FAmqCjM4ACgkQONu9yGCS\n"
+         "aT6jEBAAi+dDv3sQNuZPoSOjnv3be79xilhgbYRjXjYGyYr/axHwyCfRxYkV/sL0\n"
+         "SHOXT9ZGKp/GPjc8i21Pgca4c4UhckX48RTH7xNO3dR9X8n3g+8OLqP8FF2iFqdv\n"
+         "TWnagMo6CFyMmWj75WRwcZGKw2fOjCr9tSTSklAkLc8gytgUyHJKxcDHrYDpcdRF\n"
+         "GbhXn9GauSYu0ablmf6pSInjicXDMzPj9QVSt9NkO6FcrSoAfUfmU4c9EEsKW9T6\n"
+         "K5LsiyhRgcQfE0zrw1hYQBr2gFSXt8pa2u2XPVVukIBB9XSPdSG2x228b+yHmp/Y\n"
+         "zPRUzPDVkkK1BkU1D7XJdVmt2C3kfeBUJEcAlVKcDWf9rY80SU6FVyc45TwRfw8h\n"
+         "kq86+ERAmWOCwYsZjMK4i3PK4Zs60Q0rQZgmMY/mfqSxzMoCV2O9FGea8ZZQIlGH\n"
+         "m3qZw79igreY852bLihddRDgXAz47VFAwRnqzKaSJVMtUdigEPb34idC2ZE0yp07\n"
+         "PnHgCqFYktDu3+Enpm7RItsK0b0oQHdmeB8eOPgGSJ3gcJVmGKVaS4zd46gGDgJC\n"
+         "yt0LTonkwQO8q3jTN/2ffkVjzdrvk4IeYX5k3SQ6rinfebi0OMCQ9xDyR7MYvdwu\n"
+         "wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=\n"
+         "=D53G\n"
+         "-----END PGP SIGNATURE-----\n"},
 
-        /*      Linking a freestanding binary of this tree's own shape. */
+        /*      Linking a freestanding binary of this tree's own shape.
+                The head and tail are separate so the whole-program flags land
+                where they always have. Flag order does not change the output,
+                but a diff of two build logs should not claim it did. */
         {"link_script", "kit/spark.ld"},
         {"entry", "_start"},
-        {"program_source", "programs/shell.c"},
+        {"freestanding_source", "src/main.c"},
+        {"freestanding_output", "bin"},
+        {"freestanding_flags",
+         "-static -s -flto -nostdlib -nostartfiles -ffreestanding -fno-builtin"
+         " -Qn -Wl,--build-id=none -Wl,--gc-sections -Wl,--strip-all"
+         " -Wl,--strip-debug -Wl,-x -Wl,-s -Wl,--no-warn-rwx-segments"
+         " -Wl,-nmagic -O2"},
+        {"whole_program_flags", "-fwhole-program -fipa-pta"},
+        {"freestanding_flags_tail",
+         "-fno-asynchronous-unwind-tables -fomit-frame-pointer"
+         " -fno-stack-protector -fno-semantic-interposition"
+         " -D_FORTIFY_SOURCE=0 -fno-unwind-tables -fno-plt -fno-PIE -fno-pie"
+         " -fno-stack-clash-protection"},
 
         /*      The ISA floor the library promises, and what must not be in it.
                 Read by `build floor`; the lane in test/run calls that. */
         {"floor_arch", "riscv64"},
+        {"floor_prefix", "rv64"},
         {"floor_march", "rv64imafd_zicsr_zicntr"},
         {"floor_mabi", "lp64d"},
         {"floor_source", "src/library.c"},
@@ -83,6 +134,48 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
 
         /*      What the build needs before it starts. */
         {"required", "bison flex bc gpg make gcc clang rustc"},
+
+        /*      The sources and scripts a build reads. */
+        {"tool_registry", "src/sh/tools.inc"},
+        {"shell_source", "programs/shell"},
+        {"utilities_source", "programs/utilities"},
+        {"monitor_source", "programs/monitor.sh"},
+        {"patch_script", "kernel/patch/apply"},
+        {"replace_script", "kernel/replace/apply"},
+
+        /*      Booting the built image, and where the module's own build
+                products land beside its source. */
+        {"emulator", "qemu-system-x86_64"},
+        {"emulator_flags", "-m 2G -smp 2 -cpu Nehalem"},
+        {"emulator_devices",
+         "-vga none -device virtio-gpu-pci -device qemu-xhci"
+         " -device usb-tablet -device usb-kbd -no-reboot"},
+        {"kernel_cmdline", "console=ttyS0 drm_client_lib.active="},
+        {"default_image", "dist/bootx64.efi"},
+        {"module_root", "src"},
+        {"clean_patterns",
+         "[!.]*.a [!.]*.o [!.]*.o.d [!.]*.cmd [!.]*.order"
+         " [!.]*.S [!.]*.asm_tmp"},
+
+        /*      What a remote build does not need a copy of: the upstream
+                kernel tree, its artifacts and the built filesystem are large
+                and none of them belong to this checkout. */
+        {"remote_excludes", ".git .claude linux artifacts fs dist"},
+
+        /*      The image's own layout: the directories every build makes and
+                the device nodes it boots with, as name, type, major, minor.
+                The spark minor has to match SPARK_DEVICE_MINOR in src/spark.c. */
+        {"image_directories",
+         "sys proc dev tmp etc root bin sbin usr lib lib64 var opt bowls/bin"},
+        {"image_nodes",
+         "dev/tty c 5 0"
+         " dev/console c 5 1"
+         " dev/null c 1 3"
+         " dev/zero c 1 5"
+         " dev/random c 1 8"
+         " dev/urandom c 1 9"
+         " dev/kmsg c 1 11"
+         " dev/spark c 10 250"},
 
         /*      The profiles composed ahead of whatever was asked for, in this
                 order, so the last two win the choices the earlier ones touch. */
@@ -2636,6 +2729,2470 @@ static b32 build_spark(string_address source, string_address output,
         return 0;
 }
 
+//      SIGTERM. The shell's header names the three signals it traps and this
+//      is not one of them, so it is spelled here rather than borrowed.
+#define BUILD_SIGNAL_TERMINATE 15
+
+//      getcwd has no wrapper in the standard layer, and the only caller is
+//      the default output name, which is the working directory's own.
+static string_address build_working_directory()
+{
+        p8 address_to into = build_text_take(4096);
+        bipolar got = (bipolar)system_call_2(syscall(getcwd), (positive)into,
+                                             4096);
+
+        if (got <= 0)
+                return ".";
+
+        into[got ? got - 1 : 0] = end;
+
+        return (string_address)into;
+}
+
+static string_address build_directory_of(string_address path)
+{
+        string_address copy = build_join(path, null);
+        p8 address_to cut = (p8 address_to)string_last_of(copy, '/');
+
+        if (!cut)
+                return ".";
+
+        address_to cut = end;
+
+        return copy[0] ? copy : (string_address)"/";
+}
+
+static string_address build_name_of(string_address path)
+{
+        string_address cut = string_last_of(path, '/');
+
+        return cut ? cut + 1 : path;
+}
+
+/*
+        Building one freestanding binary, and optionally running it.
+
+        This is the ordinary static link, not the spark one: it takes link
+        time optimisation, which the spark path must not, because -flto
+        discards the section layout that linker script depends on.
+*/
+static string_address build_whole_program_flags(string_address compiler)
+{
+        string_address words[4];
+
+        words[0] = compiler;
+        words[1] = "--version";
+        words[2] = null;
+
+        if (build_capture_words((string_address address_to)words, build_file_two,
+                                BUILD_FILE_ROOM) < 0)
+                return "";
+
+        {
+                positive length = string_length((string_address)build_file_two);
+
+                //      clang first: it answers "clang version" and also names
+                //      GCC nowhere, while gcc's banner says gcc and GCC both.
+                if (memory_search(build_file_two, length, "clang", 5) ||
+                    memory_search(build_file_two, length, "Clang", 5))
+                        return "";
+
+                if (memory_search(build_file_two, length, "gcc", 3) ||
+                    memory_search(build_file_two, length, "GCC", 3))
+                        return build_setting_get("whole_program_flags");
+        }
+
+        return "";
+}
+
+static b32 build_freestanding_link(string_address source, string_address output,
+                                   bool loud)
+{
+        string_address compiler = build_compiler();
+        string_address words[BUILD_ARGUMENT_ROOM];
+        positive count = 0;
+
+        build_tool("mkdir", "-p", build_directory_of(output), null);
+
+        words[count++] = compiler;
+        words[count++] = source;
+        words[count++] = "-o";
+        words[count++] = output;
+        count = build_add_split((string_address address_to)words, count,
+                                BUILD_ARGUMENT_ROOM,
+                                build_setting_get("freestanding_flags"));
+        count = build_add_split((string_address address_to)words, count,
+                                BUILD_ARGUMENT_ROOM,
+                                build_whole_program_flags(compiler));
+        count = build_add_split((string_address address_to)words, count,
+                                BUILD_ARGUMENT_ROOM,
+                                build_setting_get("freestanding_flags_tail"));
+        words[count++] = build_join("-Wl,-e,", build_setting_get("entry"), null);
+        words[count] = null;
+
+        if (build_run_words((string_address address_to)words, null))
+        {
+                string_format(log_error, "build: compilation failed\n");
+                log_flush();
+                return 1;
+        }
+
+        build_tool("chmod", "+x", output, null);
+
+        if (loud)
+                build_size(output);
+
+        return 0;
+}
+
+/*
+        Watching.
+
+        The pid of what was started is tracked rather than matched by name.
+        Matching on the output path used to catch anything whose command line
+        merely contained it -- including the watcher and this program.
+*/
+static b32 build_watch_application;
+
+static fn build_stop_application()
+{
+        if (build_watch_application <= 0)
+                return;
+
+        kill(build_watch_application, BUILD_SIGNAL_TERMINATE);
+        build_wait(build_watch_application);
+        build_watch_application = 0;
+}
+
+static b32 build_freestanding(string_address address_to arguments, positive count)
+{
+        string_address source = null;
+        string_address output = null;
+        bool loud = false;
+        bool run = false;
+        bool watch = false;
+        bool options = true;
+        positive positional = 0;
+
+        for (positive at = 0; at < count; at++)
+        {
+                string_address word = arguments[at];
+
+                if (options)
+                {
+                        if (word_is(word, "-v"))
+                        {
+                                loud = true;
+                                continue;
+                        }
+
+                        if (word_is(word, "--run"))
+                        {
+                                run = true;
+                                continue;
+                        }
+
+                        if (word_is(word, "--watch"))
+                        {
+                                run = true;
+                                watch = true;
+                                continue;
+                        }
+
+                        if (word_is(word, "--"))
+                        {
+                                options = false;
+                                continue;
+                        }
+
+                        if (word[0] == '-' && word[1] == '-')
+                        {
+                                string_format(log_error,
+                                              "build: unknown option %s\n", word);
+                                log_flush();
+                                return 1;
+                        }
+                }
+
+                if (positional == 0)
+                        source = word;
+                else if (positional == 1)
+                        output = word;
+                else
+                {
+                        string_format(log_error, "build: too many paths\n");
+                        log_flush();
+                        return 1;
+                }
+
+                positional++;
+        }
+
+        if (!source)
+                source = build_setting_get("freestanding_source");
+
+        if (!output)
+                output = build_join(build_setting_get("freestanding_output"), "/",
+                                    build_name_of(build_working_directory()),
+                                    null);
+
+        //      The compiler accepts a bare output filename; executing it must
+        //      still refer to this directory rather than searching PATH for a
+        //      different program.
+        if (output[0] != '/' &&
+            !(output[0] == '.' && (output[1] == '/' ||
+                                   (output[1] == '.' && output[2] == '/'))))
+                output = build_join("./", output, null);
+
+        if (!build_is_file(source))
+        {
+                string_format(log_error, "build: no such source file: %s\n",
+                              source);
+                log_flush();
+                return 1;
+        }
+
+        if (!watch)
+        {
+                b32 answer = build_freestanding_link(source, output, loud);
+
+                if (answer || !run)
+                        return answer;
+
+                answer = build_run(output, null);
+
+                if (answer)
+                {
+                        string_format(log, "Exited with %p\n", (positive)answer);
+                        log_flush();
+                }
+
+                return answer;
+        }
+
+        {
+                string_address watcher;
+                string_address directory = build_directory_of(source);
+                string_address words[10];
+                b32 pair[2];
+                b32 child;
+                positive at = 0;
+
+                if (build_have("inotifywait"))
+                        watcher = "inotifywait";
+                else if (build_have("fswatch"))
+                        watcher = "fswatch";
+                else
+                {
+                        string_format(log_error,
+                                      "build: --watch needs inotifywait (inotify-tools) or fswatch\n");
+                        log_flush();
+                        return 1;
+                }
+
+                if (pipe(pair) < 0)
+                        return 1;
+
+                words[at++] = watcher;
+
+                if (word_is(watcher, "inotifywait"))
+                {
+                        words[at++] = "-q";
+                        words[at++] = "-m";
+                        words[at++] = "-r";
+                        words[at++] = "-e";
+                        words[at++] = "modify,create,delete,move";
+                }
+                else
+                        words[at++] = "-r";
+
+                words[at++] = directory;
+                words[at] = null;
+
+                log_flush();
+                child = fork();
+
+                if (child == 0)
+                {
+                        string_address found = build_resolve(words[0]);
+
+                        close(pair[0]);
+                        dup2(pair[1], 1);
+                        close(pair[1]);
+
+                        if (found)
+                                execve(found, (string_address address_to)words,
+                                       environ);
+
+                        exit(127);
+                }
+
+                close(pair[1]);
+
+                while (true)
+                {
+                        p8 byte = 0;
+                        bipolar got;
+
+                        build_stop_application();
+                        string_format(log, "\033[H\033[2J");
+                        log_flush();
+
+                        if (!build_freestanding_link(source, output, loud))
+                        {
+                                string_address only[2];
+
+                                only[0] = output;
+                                only[1] = null;
+                                build_watch_application =
+                                        build_spawn((string_address address_to)only,
+                                                    null);
+                        }
+                        else
+                        {
+                                string_format(log_error,
+                                              "build: waiting for the next change\n");
+                                log_flush();
+                        }
+
+                        //      One line of the watcher's output is one change.
+                        //      A byte at a time, because a buffered read can
+                        //      hold two events and rebuild once for both.
+                        do
+                                got = read(pair[0], address_of byte, 1);
+                        while (got == 1 && byte != '\n');
+
+                        if (got <= 0)
+                                break;
+                }
+
+                build_stop_application();
+
+                if (child > 0)
+                {
+                        kill(child, BUILD_SIGNAL_TERMINATE);
+                        build_wait(child);
+                }
+
+                close(pair[0]);
+        }
+
+        return 0;
+}
+
+/*
+        The ISA floor, proved rather than asserted.
+
+        Compile the library at the floor it advertises and read the ISA
+        attribute back out of the object. A normal toolchain defaults to
+        something richer -- rv64gc, say -- which would let both a compressed
+        instruction and an extension above the floor enter unnoticed. The
+        explicit march makes the assembler reject those; the attribute check
+        proves a driver default did not put them back.
+
+        This is the piece nothing else does, and it is why it belongs in the
+        tool rather than in a test lane: what must be present and what must be
+        absent are settings, so another tree points them at its own floor and
+        gets the same proof. It answers 2 when nothing here has that back end,
+        which is a skip and not a pass -- a check that manufactures a pass when
+        it cannot run is worse than no check.
+
+        An extension is present when the ISA string carries it as its own
+        component: gcc writes rv64i2p1_m2p0_a2p1_f2p2_d2p2_zicsr2p0_zicntr2p0,
+        so the components are separated by underscores and each is a name
+        followed by its version. The first carries the rvNN base in front of
+        it. Reading it this way rather than by substring is what keeps "a"
+        from matching the "a" inside "zicsr" -- and keeps "c" from matching
+        the one in "zicntr", which is the check that matters most here.
+*/
+static bool build_isa_holds(string_address isa, string_address name)
+{
+        positive at = 0;
+        positive length = string_length(isa);
+        positive want = string_length(name);
+
+        //      Past the rvNN that opens the string; everything after is
+        //      components separated by underscores.
+        if (length > 2 && isa[0] == 'r' && isa[1] == 'v')
+        {
+                at = 2;
+
+                while (at < length && isa[at] >= '0' && isa[at] <= '9')
+                        at++;
+        }
+
+        while (at < length)
+        {
+                positive letters = 0;
+
+                while (at + letters < length &&
+                       ((isa[at + letters] >= 'a' && isa[at + letters] <= 'z') ||
+                        (isa[at + letters] >= 'A' && isa[at + letters] <= 'Z')))
+                        letters++;
+
+                if (letters == want && !memory_compare(isa + at, name, want))
+                        return true;
+
+                //      On to the next underscore, or the end.
+                while (at < length && isa[at] != '_')
+                        at++;
+
+                while (at < length && isa[at] == '_')
+                        at++;
+        }
+
+        return false;
+}
+
+static b32 build_floor(string_address arch)
+{
+        string_address source = build_setting_get("floor_source");
+        string_address march = build_setting_get("floor_march");
+        string_address mabi = build_setting_get("floor_mabi");
+        string_address require = build_setting_get("floor_require");
+        string_address forbid = build_setting_get("floor_forbid");
+        string_address prefix = build_setting_get("floor_prefix");
+        string_address compiler = null;
+        string_address reader = null;
+        string_address target = null;
+        string_address work;
+        string_address object;
+        string_address words[BUILD_ARGUMENT_ROOM];
+        string_address attributes = null;
+        positive count = 0;
+        b32 answer = 0;
+
+        if (!arch || !*arch)
+                arch = build_setting_get("floor_arch");
+
+        {
+                string_address named = build_join(arch, "-linux-gnu-gcc", null);
+
+                if (build_have(named))
+                {
+                        compiler = named;
+                        reader = build_join(arch, "-linux-gnu-readelf", null);
+                }
+        }
+
+        work = build_temporary_directory("floor");
+
+        if (!work)
+                return build_die("floor: cannot make a working directory");
+
+        object = build_join(work, "/floor.o", null);
+
+        if (!compiler)
+        {
+                //      Apple clang does not carry every back end. Try the
+                //      clang on PATH, then the two usual package manager
+                //      locations; an empty translation unit separates an
+                //      unavailable target from a real failure to compile.
+                string_address tries[4];
+                string_address named = string_get_environment(environ, "CLANG");
+                positive which = 0;
+
+                tries[which++] = named && *named ? named : (string_address)"clang";
+                tries[which++] = "/opt/homebrew/opt/llvm/bin/clang";
+                tries[which++] = "/usr/local/opt/llvm/bin/clang";
+                tries[which] = null;
+
+                target = build_join("--target=", arch, "-unknown-linux-gnu", null);
+
+                for (which = 0; tries[which]; which++)
+                {
+                        if (!build_have(tries[which]))
+                                continue;
+
+                        if (build_run(tries[which], target,
+                                      build_join("-march=", march, null),
+                                      build_join("-mabi=", mabi, null),
+                                      "-x", "c", "-c", "-o",
+                                      build_join(work, "/probe.o", null),
+                                      "/dev/null", null))
+                                continue;
+
+                        compiler = tries[which];
+                        reader = build_join(build_directory_of(
+                                                    build_resolve(tries[which])),
+                                            "/llvm-readelf", null);
+                        break;
+                }
+
+                if (!compiler)
+                {
+                        build_remove_tree(work);
+                        string_format(log,
+                                      "%s floor: NOT RUN -- no compiler with a %s back end\n",
+                                      arch, arch);
+                        log_flush();
+                        return 2;
+                }
+        }
+
+        if (!build_have(reader))
+        {
+                if (build_have("llvm-readelf"))
+                        reader = "llvm-readelf";
+                else if (build_have("readelf"))
+                        reader = "readelf";
+                else
+                {
+                        build_remove_tree(work);
+                        string_format(log,
+                                      "%s floor: NOT RUN -- no ELF attribute reader\n",
+                                      arch);
+                        log_flush();
+                        return 2;
+                }
+        }
+
+        words[count++] = compiler;
+
+        if (target)
+                words[count++] = target;
+
+        words[count++] = build_join("-march=", march, null);
+        words[count++] = build_join("-mabi=", mabi, null);
+        words[count++] = "-c";
+        words[count++] = "-O2";
+        words[count++] = "-DSTANDARD_NO_PLATFORM";
+        words[count++] = "-ffreestanding";
+        words[count++] = "-fno-builtin";
+        words[count++] = "-fno-stack-protector";
+        words[count++] = "-w";
+        words[count++] = "-o";
+        words[count++] = object;
+        words[count++] = source;
+        words[count] = null;
+
+        if (build_run_words((string_address address_to)words, null))
+        {
+                build_remove_tree(work);
+                string_format(log, "%s does not compile at the %s floor\n",
+                              source, arch);
+                log_flush();
+                return 1;
+        }
+
+        count = 0;
+        words[count++] = reader;
+        words[count++] = "-A";
+        words[count++] = object;
+        words[count] = null;
+
+        if (build_capture_words((string_address address_to)words, build_file_one,
+                                BUILD_FILE_ROOM) < 0)
+        {
+                build_remove_tree(work);
+                string_format(log, "the %s ELF attributes could not be read\n",
+                              arch);
+                log_flush();
+                return 1;
+        }
+
+        build_remove_tree(work);
+
+        //      GNU readelf calls this Tag_RISCV_arch and quotes the value;
+        //      llvm-readelf prints a TagName line and then a Value. Both put
+        //      the ISA string in a word of its own, so the word is what this
+        //      looks for rather than either layout.
+        {
+                build_lines walk;
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                positive wanted = string_length(prefix);
+
+                build_lines_open(address_of walk, (string_address)build_file_one);
+
+                while (build_lines_next(address_of walk) && !attributes)
+                {
+                        string_address found[BUILD_ARGUMENT_ROOM];
+                        positive parts = build_words_of(walk.line, walk.length,
+                                                        (string_address address_to)found,
+                                                        BUILD_ARGUMENT_ROOM,
+                                                        store, BUILD_WORD_ROOM);
+
+                        for (positive at = 0; at < parts; at++)
+                        {
+                                string_address word = found[at];
+                                positive length = string_length(word);
+
+                                if (length > 1 && word[0] == '"')
+                                {
+                                        p8 address_to trimmed =
+                                                build_text_take(length + 1);
+
+                                        memory_copy(trimmed, word + 1, length - 1);
+                                        trimmed[length - 1] = end;
+
+                                        if (length >= 2 &&
+                                            trimmed[length - 2] == '"')
+                                                trimmed[length - 2] = end;
+
+                                        word = (string_address)trimmed;
+                                        length = string_length(word);
+                                }
+
+                                if (length > wanted &&
+                                    !memory_compare(word, prefix, wanted))
+                                {
+                                        attributes = word;
+                                        break;
+                                }
+                        }
+                }
+        }
+
+        if (!attributes)
+        {
+                string_format(log, "%s ELF floor: missing attribute\n", arch);
+                log_flush();
+                return 1;
+        }
+
+        {
+                string_address wanted[BUILD_ARGUMENT_ROOM];
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                positive parts = build_words_of(require, string_length(require),
+                                                (string_address address_to)wanted,
+                                                BUILD_ARGUMENT_ROOM, store,
+                                                BUILD_WORD_ROOM);
+
+                for (positive at = 0; at < parts; at++)
+                        if (!build_isa_holds(attributes, wanted[at]))
+                        {
+                                string_format(log, "%s ELF floor lacks %s: %s\n",
+                                              arch, wanted[at], attributes);
+                                log_flush();
+                                answer = 1;
+                        }
+        }
+
+        {
+                string_address banned[BUILD_ARGUMENT_ROOM];
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                positive parts = build_words_of(forbid, string_length(forbid),
+                                                (string_address address_to)banned,
+                                                BUILD_ARGUMENT_ROOM, store,
+                                                BUILD_WORD_ROOM);
+
+                for (positive at = 0; at < parts; at++)
+                        if (build_isa_holds(attributes, banned[at]))
+                        {
+                                string_format(log,
+                                              "%s ELF floor unexpectedly requires %s: %s\n",
+                                              arch, banned[at], attributes);
+                                log_flush();
+                                answer = 1;
+                        }
+        }
+
+        if (!answer)
+        {
+                string_format(log, "%s floor: %s\n", arch, attributes);
+                log_flush();
+        }
+
+        return answer;
+}
+
+/*
+        Asking one of ours for an answer rather than for an effect.
+
+        A tool writes to its standard output, which is fine when the point is
+        that somebody reads it and no use at all when the build needs the
+        number. The fork is what makes that safe: the tool runs in a child
+        with its output on a pipe, so this address space never has two tools
+        in it and the static arenas they keep stay theirs alone.
+
+        Only for short answers. A tool that writes more than a pipe will hold
+        before the parent reads would deadlock, and every caller here wants a
+        word.
+*/
+static bipolar build_tool_capture(string_address address_to words,
+                                  p8 address_to into, positive capacity)
+{
+        b32 pair[2];
+        b32 child;
+        positive used = 0;
+
+        if (!capacity)
+                return -1;
+
+        into[0] = end;
+
+        if (pipe(pair) < 0)
+                return -1;
+
+        log_flush();
+        child = fork();
+
+        if (child == 0)
+        {
+                close(pair[0]);
+                dup2(pair[1], 1);
+                close(pair[1]);
+                exit(build_tool_words(words));
+        }
+
+        close(pair[1]);
+
+        if (child < 0)
+        {
+                close(pair[0]);
+                return -1;
+        }
+
+        while (used + 1 < capacity)
+        {
+                bipolar got = read(pair[0], into + used, capacity - used - 1);
+
+                if (got <= 0)
+                        break;
+
+                used += (positive)got;
+        }
+
+        into[used] = end;
+        close(pair[0]);
+        build_wait(child);
+
+        //      A tool's answer is a line; the caller wants the word on it.
+        while (used && (into[used - 1] == '\n' || into[used - 1] == '\r'))
+                into[--used] = end;
+
+        return (bipolar)used;
+}
+
+static string_address build_tool_answer(string_address name, ...)
+{
+        string_address words[BUILD_ARGUMENT_ROOM];
+        p8 address_to into = build_text_take(4096);
+        positive count = 0;
+        string_address piece = name;
+        var_args rest;
+
+        var_list(rest, name);
+
+        while (piece && count + 1 < BUILD_ARGUMENT_ROOM)
+        {
+                words[count++] = piece;
+                piece = var_list_get(rest, string_address);
+        }
+
+        var_list_end(rest);
+        words[count] = null;
+
+        if (build_tool_capture((string_address address_to)words, into, 4096) < 0)
+                return "";
+
+        return (string_address)into;
+}
+
+static positive build_processors()
+{
+        string_address answer = build_tool_answer("nproc", null);
+        positive count = string_to_positive(answer);
+
+        return count ? count : 1;
+}
+
+/*
+        A key whose value is a command.
+
+        pre and post carry shell source, not an argument vector -- a profile
+        writes `#> post sh kernel/profile/post/rpi.sh` -- so this is the one
+        place a shell is still the right thing to run. Nothing is passed to
+        it but the text.
+*/
+static fn build_shell_key(string_address name)
+{
+        string_address value = build_key(name);
+
+        if (!value || !*value)
+                return;
+
+        build_run("sh", "-c", value, null);
+}
+
+/*
+        Installing a compiler that is not there.
+
+        Checks which system this is and picks the command that installs
+        things on it. Kept because the shell build had it and a first build on
+        a fresh machine is where it earns its place.
+*/
+static bool build_install(string_address what)
+{
+        string_address words[BUILD_ARGUMENT_ROOM];
+        string_address command = null;
+        positive count = 0;
+        positive at;
+
+        if (build_is_file("/etc/debian_version"))
+                command = "sudo apt-get install";
+        else if (build_is_file("/etc/redhat-release"))
+                command = "sudo yum install";
+        else if (build_is_file("/etc/arch-release"))
+                command = "sudo pacman -S";
+        else if (build_is_file("/etc/alpine-release"))
+                command = "sudo apk add";
+        else if (build_is_file("/etc/SuSE-release"))
+                command = "sudo zypper install";
+        else if (build_is_file("/etc/gentoo-release"))
+                command = "sudo emerge";
+        else if (build_have("brew"))
+                command = "brew install";
+        else
+        {
+                string_format(log,
+                              "Unknown distribution, unable to set up build environment.\n");
+                log_flush();
+                exit(1);
+        }
+
+        count = build_add_split((string_address address_to)words, 0,
+                                BUILD_ARGUMENT_ROOM, command);
+        words[count++] = what;
+        words[count] = null;
+        at = (positive)build_run_words((string_address address_to)words, null);
+
+        return at == 0;
+}
+
+/*
+        Running something with a working directory, an environment or a
+        muzzle.
+
+        The shell build reached for a subshell whenever it needed one of the
+        three -- `( cd linux && make ... )`, `env $make_flags sh ...`,
+        `> /dev/null`. Each was a process whose only job was to change one
+        thing about the next one. Here they are fields.
+*/
+typedef struct build_command
+{
+        string_address address_to words;
+        string_address directory;
+        string_address address_to environment;
+        bool quiet;
+        bool privileged;
+} build_command;
+
+static bool build_root()
+{
+        return geteuid() == 0;
+}
+
+static b32 build_execute(build_command address_to what)
+{
+        string_address raised[BUILD_ARGUMENT_ROOM];
+        string_address address_to words = what->words;
+        string_address path;
+        b32 child;
+
+        //      sudo only when we are not already it. Under the documented
+        //      invocation this program is root and the prefix is a no-op; run
+        //      as somebody else, it asks, which is what the shell did.
+        if (what->privileged && !build_root())
+        {
+                positive count = 0;
+
+                raised[count++] = "sudo";
+
+                while (words[count - 1] && count + 1 < BUILD_ARGUMENT_ROOM)
+                {
+                        raised[count] = words[count - 1];
+                        count++;
+                }
+
+                raised[count] = null;
+                words = (string_address address_to)raised;
+        }
+
+        path = build_resolve(words[0]);
+
+        if (!path)
+        {
+                string_format(log_error, "build: %s not found\n", words[0]);
+                log_flush();
+                return -1;
+        }
+
+        if (string_get_environment(environ, "BUILD_TRACE"))
+        {
+                string_format(log, "+ %s", path);
+
+                for (positive at = 1; words[at]; at++)
+                        string_format(log, " %s", words[at]);
+
+                string_format(log, "\n");
+        }
+
+        log_flush();
+        child = fork();
+
+        if (child == 0)
+        {
+                if (what->directory && chdir(what->directory) < 0)
+                        exit(126);
+
+                if (what->quiet)
+                {
+                        b32 sink = open("/dev/null", O_WRONLY, 0);
+
+                        if (sink >= 0)
+                        {
+                                dup2(sink, 1);
+                                close(sink);
+                        }
+                }
+
+                execve(path, words,
+                       what->environment ? what->environment : environ);
+                exit(127);
+        }
+
+        return build_wait(child);
+}
+
+//      environ with a few more entries on the end, for the two places the
+//      shell wrote `env NAME=value command`.
+static string_address address_to build_environment_with(string_address address_to extra,
+                                                        positive count)
+{
+        positive have = 0;
+        string_address address_to answer;
+
+        while (environ[have])
+                have++;
+
+        answer = (string_address address_to)build_text_take(
+                (have + count + 1) * sizeof(string_address));
+
+        for (positive at = 0; at < have; at++)
+                answer[at] = environ[at];
+
+        for (positive at = 0; at < count; at++)
+                answer[have + at] = extra[at];
+
+        answer[have + count] = null;
+
+        return answer;
+}
+
+/*
+        The tool registry as a file rather than as this program's own table.
+
+        src/sh/tools.inc is the compiled dispatch registry and the installed
+        surface both, including the category each name belongs to. This
+        program has the table linked in, but filtered by its own build's
+        component macros and without the categories, so the image's surface is
+        read from the source of truth instead.
+*/
+typedef struct build_tool_entry
+{
+        string_address category;
+        string_address name;
+} build_tool_entry;
+
+#define BUILD_TOOL_ROOM 512
+
+static build_tool_entry build_tool_table[BUILD_TOOL_ROOM];
+static positive build_tool_count;
+
+static bool build_tools_read()
+{
+        build_lines walk;
+        p8 address_to store;
+
+        if (build_tool_count)
+                return true;
+
+        if (build_slurp(build_setting_get("tool_registry"), build_file_two,
+                        BUILD_FILE_ROOM) < 0)
+                return false;
+
+        store = build_text_take(BUILD_WORD_ROOM);
+        build_lines_open(address_of walk, (string_address)build_file_two);
+
+        while (build_lines_next(address_of walk) &&
+               build_tool_count < BUILD_TOOL_ROOM)
+        {
+                string_address words[BUILD_ARGUMENT_ROOM];
+                positive parts;
+                positive at = 0;
+                positive length = walk.length;
+                p8 address_to flat = build_text_take(length + 1);
+
+                //      The shell split on "[(),[:space:]]+", so the separators
+                //      are turned into blanks and the ordinary word splitter
+                //      does the rest.
+                for (positive which = 0; which < length; which++)
+                {
+                        p8 byte = walk.line[which];
+
+                        flat[which] = (byte == '(' || byte == ')' || byte == ',')
+                                              ? ' '
+                                              : byte;
+                }
+
+                flat[length] = end;
+                parts = build_words_of((string_address)flat, length,
+                                       (string_address address_to)words,
+                                       BUILD_ARGUMENT_ROOM, store,
+                                       BUILD_WORD_ROOM);
+
+                if (parts < 3 || !word_is(words[0], "SHELL_TOOL"))
+                        continue;
+
+                build_tool_table[build_tool_count].category =
+                        build_join(words[1], null);
+                build_tool_table[build_tool_count].name = build_join(words[2], null);
+                build_tool_count++;
+                (void)at;
+        }
+
+        return true;
+}
+
+/*
+        The build.
+
+        Everything below is build.sh's local path, step for step and label for
+        label. Where it ran a utility, this calls ours; where it ran the
+        toolchain, make, tar or QEMU, this spawns those.
+*/
+static bool build_moon_core;
+static bool build_moon_shell;
+static bool build_moon_utilities;
+static bool build_moon_util_linux;
+static bool build_moon_shell_monitor;
+
+//      An existing build tree has no lines for newly added symbols until
+//      olddefconfig next runs; their Kconfig defaults are y, while the core
+//      must be explicitly built in for the initial filesystem to use it.
+static fn build_components(string_address config)
+{
+        build_lines walk;
+
+        build_moon_core = false;
+        build_moon_shell = true;
+        build_moon_utilities = true;
+        build_moon_util_linux = true;
+        build_moon_shell_monitor = true;
+
+        if (build_slurp(config, build_file_two, BUILD_FILE_ROOM) < 0)
+                return;
+
+        build_lines_open(address_of walk, (string_address)build_file_two);
+
+        while (build_lines_next(address_of walk))
+        {
+                string_address name = null;
+                positive length = 0;
+                bool on = false;
+
+                if (walk.length > 18 &&
+                    !memory_compare(walk.line, "CONFIG_MOONWATER_", 17) &&
+                    walk.line[walk.length - 2] == '=' &&
+                    walk.line[walk.length - 1] == 'y')
+                {
+                        name = walk.line + 17;
+                        length = walk.length - 17 - 2;
+                        on = true;
+                }
+                else if (walk.length > 30 &&
+                         !memory_compare(walk.line, "# CONFIG_MOONWATER_", 19) &&
+                         !memory_compare(walk.line + walk.length - 12,
+                                         " is not set", 11))
+                {
+                        name = walk.line + 19;
+                        length = walk.length - 19 - 11;
+                        on = false;
+                }
+
+                if (!name)
+                        continue;
+
+                if (length == 4 && !memory_compare(name, "CORE", 4))
+                        build_moon_core = on;
+                else if (length == 5 && !memory_compare(name, "SHELL", 5))
+                        build_moon_shell = on;
+                else if (length == 9 && !memory_compare(name, "UTILITIES", 9))
+                        build_moon_utilities = on;
+                else if (length == 10 && !memory_compare(name, "UTIL_LINUX", 10))
+                        build_moon_util_linux = on;
+                else if (length == 13 && !memory_compare(name, "SHELL_MONITOR", 13))
+                        build_moon_shell_monitor = on;
+        }
+}
+
+static bool build_category_installed(string_address category)
+{
+        if (word_is(category, "GENERAL"))
+                return true;
+
+        if (word_is(category, "MONITOR"))
+                return build_moon_shell_monitor;
+
+        if (word_is(category, "UTIL_BIN") || word_is(category, "UTIL_SBIN"))
+                return build_moon_util_linux;
+
+        return false;
+}
+
+static b32 build_link(string_address target, string_address path)
+{
+        return build_tool("ln", "-sf", target, path, null);
+}
+
+static b32 build_kernel_source()
+{
+        string_address artifacts = build_setting_get("artifacts");
+        string_address tree = build_setting_get("kernel_tree");
+        string_address version = build_setting_get("kernel_version");
+        string_address series;
+        string_address archive;
+        string_address tarball;
+        string_address download;
+        string_address required = build_setting_get("required");
+        string_address names[BUILD_ARGUMENT_ROOM];
+        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+        positive count = build_words_of(required, string_length(required),
+                                        (string_address address_to)names,
+                                        BUILD_ARGUMENT_ROOM, store,
+                                        BUILD_WORD_ROOM);
+        bool present;
+
+        //      Derived rather than written out, so moving to another release
+        //      means editing the version and the signature and nothing else.
+        //      kernel.org lays every series out under vMAJOR.x.
+        {
+                positive major = 0;
+
+                while (version[major] && version[major] != '.')
+                        major++;
+
+                series = build_join("v", build_join(null, null), null);
+                {
+                        p8 address_to into = build_text_take(major + 4);
+
+                        into[0] = 'v';
+                        memory_copy(into + 1, version, major);
+                        into[major + 1] = '.';
+                        into[major + 2] = 'x';
+                        into[major + 3] = end;
+                        series = (string_address)into;
+                }
+        }
+
+        tarball = build_join(artifacts, "/linux-", version, ".tar", null);
+        archive = build_join(tarball, ".xz", null);
+        download = build_join(build_setting_get("kernel_mirror"), "/", series,
+                              "/linux-", version, ".tar.xz", null);
+
+        //      Checked here rather than after the early exit below, which is
+        //      where it used to sit -- so it never ran on any build after the
+        //      first.
+        for (positive at = 0; at < count; at++)
+                if (!build_have(names[at]))
+                {
+                        string_format(log_error,
+                                      "%s is required to build the kernel. Please install it and try again.\n",
+                                      names[at]);
+                        log_flush();
+                        exit(1);
+                }
+
+        //      A Makefile is the marker that the tree is really there. Testing
+        //      only for the directory treated an empty or half extracted tree
+        //      as a finished extraction.
+        present = build_is_file(build_join(tree, "/Makefile", null));
+
+        if (present)
+        {
+                string_format(log, "%s Kernel already extracted... %s\n",
+                              BUILD_BOLD, BUILD_RESET);
+                log_flush();
+        }
+
+        build_tool("mkdir", "-p", artifacts, null);
+        build_tool("mkdir", "-p", tree, null);
+
+        if (present)
+                return 0;
+
+        if (!build_is_file(archive))
+        {
+                //      curl, and not our own fetch: fetch speaks HTTP without
+                //      TLS and does not follow redirects, and this URL is
+                //      https and redirects. The signature below is what makes
+                //      the download trustworthy either way, but a fetch that
+                //      cannot reach the mirror at all is not a substitute.
+                if (build_run("curl", "-fL", download, "-o", archive, null))
+                {
+                        string_format(log_error, "ERROR: failed to download %s\n",
+                                      download);
+                        log_flush();
+                        build_tool("rm", "-f", archive, null);
+                        exit(1);
+                }
+        }
+
+        string_format(log, "%s Checking kernel signature %s\n", BUILD_BOLD,
+                      BUILD_RESET);
+        log_flush();
+
+        /*
+                Every step below gates the next one. None of these exit
+                statuses were checked before, so a failed download, a failed
+                key fetch or a failed signature verification all still ended in
+                a compiled kernel.
+        */
+        {
+                string_address keys = build_setting_get("kernel_keys");
+                string_address named[BUILD_ARGUMENT_ROOM];
+                p8 address_to holder = build_text_take(BUILD_WORD_ROOM);
+                positive many = build_words_of(keys, string_length(keys),
+                                               (string_address address_to)named,
+                                               BUILD_ARGUMENT_ROOM, holder,
+                                               BUILD_WORD_ROOM);
+                string_address words[BUILD_ARGUMENT_ROOM];
+                positive at = 0;
+
+                words[at++] = "gpg";
+                words[at++] = "--locate-keys";
+
+                for (positive which = 0; which < many; which++)
+                        words[at++] = named[which];
+
+                words[at] = null;
+
+                if (build_run_words((string_address address_to)words, null))
+                {
+                        string_format(log_error,
+                                      BUILD_RED
+                                      "ERROR: could not fetch the kernel signing keys (%s).\n",
+                                      keys);
+                        string_format(log_error,
+                                      "Refusing to build an unverified kernel." BUILD_RESET "\n");
+                        log_flush();
+                        exit(1);
+                }
+        }
+
+        if (build_run("unxz", "-k", archive, null))
+        {
+                string_format(log_error,
+                              BUILD_RED "ERROR: could not decompress %s" BUILD_RESET "\n",
+                              archive);
+                log_flush();
+                exit(1);
+        }
+
+        {
+                string_address signature = build_setting_get("kernel_signature");
+
+                build_write_file(build_join(tarball, ".sign", null), signature,
+                                 string_length(signature));
+        }
+
+        if (build_run("gpg", "--verify", build_join(tarball, ".sign", null),
+                      tarball, null))
+        {
+                string_format(log_error,
+                              BUILD_RED "ERROR: SIGNATURE VERIFICATION FAILED for %s\n",
+                              tarball);
+                string_format(log_error,
+                              "The archive does not match the signature pinned in this tool.\n");
+                string_format(log_error,
+                              "Refusing to extract or build it. Delete %s and retry."
+                              BUILD_RESET "\n", archive);
+                log_flush();
+                build_tool("rm", "-f", tarball, null);
+                exit(1);
+        }
+
+        if (build_run("tar", "-xf", tarball, "--strip-components=1", "-C", tree,
+                      null))
+        {
+                string_format(log_error,
+                              BUILD_RED "ERROR: could not extract %s" BUILD_RESET "\n",
+                              tarball);
+                log_flush();
+                build_tool("rm", "-f", tarball, null);
+                exit(1);
+        }
+
+        build_tool("rm", tarball, null);
+        string_format(log, "%s Kernel extracted to %s %s\n", BUILD_BOLD, tree,
+                      BUILD_RESET);
+        log_flush();
+
+        return 0;
+}
+
+static b32 build_userspace()
+{
+        string_address image = build_setting_get("image_root");
+        string_address applet = null;
+        string_address flags = build_join(null, null);
+
+        /*
+                What was here last time, gone.
+
+                Nothing ever removed a build product from the image tree, so
+                anything that stopped being built stayed in it forever: an 857
+                kilobyte binary from a fortnight ago was still shipping, along
+                with every program that had since become a name for the shell.
+                Only the top level and only files and links -- the directories
+                below hold the device nodes and are made once.
+        */
+        {
+                string_address where[4];
+
+                where[0] = image;
+                where[1] = build_join(image, "/bin", null);
+                where[2] = build_join(image, "/sbin", null);
+                where[3] = build_join(image, "/usr", null);
+
+                for (positive at = 0; at < 4; at++)
+                        if (build_tool("find", where[at], "-maxdepth", "1", "(",
+                                       "-type", "f", "-o", "-type", "l", ")",
+                                       "-delete", null))
+                                return build_die(build_join("clearing ",
+                                                            where[at], null));
+        }
+
+        build_components(build_join(build_setting_get("kernel_tree"), "/.config",
+                                    null));
+
+        if (!build_tools_read())
+                return build_die("cannot read the tool registry");
+
+        if (build_moon_core && build_moon_shell)
+        {
+                //      Every program in the default image is spark, including
+                //      the one the kernel execs as /init, so no ELF is loaded
+                //      on its boot path.
+                if (!build_moon_utilities)
+                        flags = build_join(flags, " -DSHELL_NO_UTILITIES", null);
+
+                if (!build_moon_util_linux)
+                        flags = build_join(flags, " -DSHELL_NO_UTIL_LINUX", null);
+
+                if (!build_moon_shell_monitor)
+                        flags = build_join(flags, " -DSHELL_NO_MONITOR", null);
+
+                build_setting_set("spark_cppflags", flags);
+
+                if (build_spark(build_setting_get("shell_source"),
+                                build_join(image, "/shell", null), null))
+                        return build_die("building the shell");
+
+                applet = "shell";
+
+                //      Scripts need a real interpreter path: /shell is the
+                //      image's binary, but a #!/bin/sh shebang is resolved by
+                //      the kernel before the shell gets any say.
+                {
+                        string_address names[3];
+
+                        names[0] = "sh";
+                        names[1] = "dash";
+                        names[2] = "bash";
+
+                        for (positive at = 0; at < 3; at++)
+                                if (build_link("../shell",
+                                               build_join(image, "/bin/", names[at],
+                                                          null)))
+                                        return build_die(build_join("linking /bin/",
+                                                                    names[at], null));
+                }
+
+                if (build_link("../bin", build_join(image, "/usr/bin", null)))
+                        return build_die("linking /usr/bin");
+
+                if (build_link("../sbin", build_join(image, "/usr/sbin", null)))
+                        return build_die("linking /usr/sbin");
+
+                for (positive at = 0; at < build_tool_count; at++)
+                        if (word_is(build_tool_table[at].category, "SYSTEM") &&
+                            build_link("shell",
+                                       build_join(image, "/",
+                                                  build_tool_table[at].name, null)))
+                                return build_die(build_join("linking ",
+                                                            build_tool_table[at].name,
+                                                            null));
+
+                if (build_moon_shell_monitor && build_moon_utilities)
+                {
+                        string_address monitor = build_setting_get("monitor_source");
+
+                        if (build_tool("cp", monitor,
+                                       build_join(image, "/monitor.sh", null),
+                                       null))
+                                return build_die("installing /monitor.sh");
+
+                        if (build_tool("chmod", "0755",
+                                       build_join(image, "/monitor.sh", null),
+                                       null))
+                                return build_die("making /monitor.sh executable");
+
+                        if (build_link("monitor.sh",
+                                       build_join(image, "/mointor.sh", null)) ||
+                            build_link("../monitor.sh",
+                                       build_join(image, "/bin/monitor.sh", null)) ||
+                            build_link("../monitor.sh",
+                                       build_join(image, "/bin/mointor.sh", null)))
+                                return build_die("linking the monitor");
+                }
+        }
+        else if (build_moon_core && build_moon_utilities)
+        {
+                flags = build_join(flags, " -DSHELL_NO_MONITOR", null);
+
+                if (!build_moon_util_linux)
+                        flags = build_join(flags, " -DSHELL_NO_UTIL_LINUX", null);
+
+                build_setting_set("spark_cppflags", flags);
+
+                if (build_spark(build_setting_get("utilities_source"),
+                                build_join(image, "/shell", null), null))
+                        return build_die("building the utilities");
+
+                //      The kernel's SPAWN_TOOL ABI accelerates through this
+                //      fixed path. This binary has no shell fallback.
+                applet = "shell";
+
+                if (build_link("../bin", build_join(image, "/usr/bin", null)))
+                        return build_die("linking /usr/bin");
+
+                if (build_link("../sbin", build_join(image, "/usr/sbin", null)))
+                        return build_die("linking /usr/sbin");
+        }
+
+        /*
+                Utilities are one multicall Spark program under other names.
+
+                With the shell present they share its binary. A utility-only
+                image has the same dispatch table but no shell fallback.
+        */
+        if (build_moon_core && build_moon_utilities)
+        {
+                for (positive at = 0; at < build_tool_count; at++)
+                {
+                        build_tool_entry address_to one = address_of build_tool_table[at];
+
+                        if (!build_category_installed(one->category))
+                                continue;
+
+                        if (build_link(applet,
+                                       build_join(image, "/", one->name, null)))
+                                return build_die(build_join("linking ", one->name,
+                                                            null));
+                }
+
+                //      Conventional paths for absolute commands and
+                //      /usr/bin/env shebangs. The registry selects enabled
+                //      categories; every alias shares the same binary.
+                for (positive at = 0; at < build_tool_count; at++)
+                {
+                        build_tool_entry address_to one = address_of build_tool_table[at];
+                        string_address directory = null;
+
+                        if (word_is(one->category, "GENERAL"))
+                                directory = "bin";
+                        else if (build_moon_util_linux &&
+                                 word_is(one->category, "UTIL_BIN"))
+                                directory = "bin";
+                        else if (build_moon_util_linux &&
+                                 word_is(one->category, "UTIL_SBIN"))
+                                directory = "sbin";
+
+                        if (!directory)
+                                continue;
+
+                        if (build_link(build_join("../", applet, null),
+                                       build_join(image, "/", directory, "/",
+                                                  one->name, null)))
+                                return build_die(build_join("linking /", directory,
+                                                            "/", one->name, null));
+                }
+        }
+
+        return 0;
+}
+
+static b32 build_local(string_address address_to profiles, positive count)
+{
+        string_address artifacts = build_setting_get("artifacts");
+        string_address image = build_setting_get("image_root");
+        string_address tree = build_setting_get("kernel_tree");
+        string_address output = build_setting_get("output");
+        string_address make_flags;
+        string_address compiler;
+        string_address kernel_image;
+        string_address kernel_export;
+        string_address chosen[BUILD_ARGUMENT_ROOM];
+        positive chosen_count = 0;
+
+        //      Only this path needs it. Booting an image, writing a stick and
+        //      driving a build on another machine all run as you.
+        if (!build_root())
+        {
+                build_label("", BUILD_YELLOW " WARNING !!!");
+                string_format(log_error,
+                              "Building here wants root: sudo sh build.sh\n");
+                log_flush();
+                string_format(log, "\n");
+                log_flush();
+        }
+
+        {
+                string_address system = build_join(null, null);
+                string_address words[3];
+
+                words[0] = "uname";
+                words[1] = null;
+                build_capture_words((string_address address_to)words,
+                                    build_file_two, BUILD_FILE_ROOM);
+                system = (string_address)build_file_two;
+
+                if (memory_compare(system, "Linux", 5))
+                        return build_die(
+                                "building a kernel wants a Linux toolchain and a case\n"
+                                "sensitive filesystem. Name a machine that has them with\n"
+                                "--host, or set MOONWATER_BUILD_HOST.");
+        }
+
+        build_label("", "REPOSITORY SETUP");
+        string_format(log, "Building %s\n", build_setting_get("full_name"));
+        log_flush();
+
+        if (build_tool("mkdir", "-p", artifacts, image, output, null))
+                return build_die("repository setup");
+
+        build_label("", "DISTRO INFO");
+
+        {
+                string_address text = build_join(
+                        "CONFIG_LOCALVERSION=\"", build_setting_get("full_name"),
+                        "\"\nCONFIG_DEFAULT_HOSTNAME=\"",
+                        build_setting_get("name"), "-box\"\n", null);
+
+                build_write_file(build_join(artifacts, "/info", null), text,
+                                 string_length(text));
+        }
+
+        /*
+                The device nodes the image boots with. mknod fails when the
+                node already exists, which made every rebuild after the first
+                noisy and, under set -e, fatal -- so each is created only when
+                missing.
+
+                tmp, etc and root because everything expects them to be there:
+                a redirection into /tmp is the first thing anybody tries. The
+                empty runtime directories are mount targets for Bowl's fast
+                merged view; /bowls is where distribution roots live.
+        */
+        {
+                string_address directories = build_setting_get("image_directories");
+                string_address names[BUILD_ARGUMENT_ROOM];
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                positive many = build_words_of(directories,
+                                               string_length(directories),
+                                               (string_address address_to)names,
+                                               BUILD_ARGUMENT_ROOM, store,
+                                               BUILD_WORD_ROOM);
+                string_address words[BUILD_ARGUMENT_ROOM];
+                positive at = 0;
+
+                words[at++] = "mkdir";
+                words[at++] = "-p";
+
+                for (positive which = 0; which < many; which++)
+                        words[at++] = build_join(image, "/", names[which], null);
+
+                words[at] = null;
+
+                if (build_tool_words((string_address address_to)words))
+                        return build_die("filesystem setup");
+        }
+
+        {
+                string_address nodes = build_setting_get("image_nodes");
+                string_address names[BUILD_ARGUMENT_ROOM];
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                positive many = build_words_of(nodes, string_length(nodes),
+                                               (string_address address_to)names,
+                                               BUILD_ARGUMENT_ROOM, store,
+                                               BUILD_WORD_ROOM);
+
+                for (positive at = 0; at + 3 < many + 1; at += 4)
+                {
+                        string_address path = build_join(image, "/", names[at],
+                                                         null);
+
+                        if (build_is_file(path) || build_is_directory(path) ||
+                            access(path, 0) >= 0)
+                                continue;
+
+                        if (build_tool("mknod", path, names[at + 1], names[at + 2],
+                                       names[at + 3], null))
+                                return build_die(build_join("making ", path, null));
+                }
+        }
+
+        build_label("", "KERNEL SOURCE");
+
+        if (build_kernel_source())
+                return 1;
+
+        build_label("", "KERNEL CONFIGURATION");
+
+        {
+                string_address always = build_setting_get("profiles_always");
+                string_address names[BUILD_ARGUMENT_ROOM];
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                positive many = build_words_of(always, string_length(always),
+                                               (string_address address_to)names,
+                                               BUILD_ARGUMENT_ROOM, store,
+                                               BUILD_WORD_ROOM);
+
+                for (positive at = 0; at < many; at++)
+                        chosen[chosen_count++] = names[at];
+
+                if (!count)
+                {
+                        /*
+                                serial is last on purpose, and it is not
+                                optional. The boot lane of test/run drives the
+                                image over a serial line and reads its answers
+                                back, so a default image without the 8250 has
+                                no way to be tested at all: the kernel comes
+                                up, runs /init, and says nothing. Last, because
+                                it also asks for the loglevel and the
+                                timestamps that make the transcript readable,
+                                and debug_none quietens both.
+                        */
+                        string_address preset = build_setting_get("profiles_default");
+                        p8 address_to holder = build_text_take(BUILD_WORD_ROOM);
+                        positive some = build_words_of(preset,
+                                                       string_length(preset),
+                                                       (string_address address_to)names,
+                                                       BUILD_ARGUMENT_ROOM,
+                                                       holder, BUILD_WORD_ROOM);
+
+                        for (positive at = 0; at < some; at++)
+                                chosen[chosen_count++] = names[at];
+                }
+                else
+                        for (positive at = 0; at < count; at++)
+                                chosen[chosen_count++] = profiles[at];
+
+                chosen[chosen_count] = null;
+        }
+
+        /*
+                Always compose the selected profiles. Reusing the last
+                configuration made a plain default build inherit whichever
+                special profile had run before it -- notably leaving Canvas
+                disabled after a server build even though a bare build promises
+                the defaults. Composition preserves incremental builds when the
+                result is unchanged, so deterministic selection costs no
+                rebuild by itself.
+        */
+        if (build_config((string_address address_to)chosen, chosen_count))
+                return build_die("configuration");
+
+        make_flags = build_key("make_flags");
+
+        build_label("", "BUILD ENVIRONMENT CHECK");
+        compiler = build_key("compiler");
+
+        if (!build_have(compiler))
+        {
+                build_label("", BUILD_YELLOW " WARNING !!!");
+                string_format(log, "%s not found. Attempting to install it.\n\n",
+                              compiler);
+                log_flush();
+
+                if (!build_install(compiler))
+                        string_format(log,
+                                      "ERROR: Unable to install %s. Please install it manually.\n",
+                                      compiler);
+        }
+        else
+        {
+                string_format(log, "Using compiler: %s%s\n", BUILD_BOLD, compiler);
+                log_flush();
+        }
+
+        build_label("", "KERNEL CONFIG");
+
+        /*
+                Every edit made to Linux's own source lives in the patch
+                script, because everything that touches the kernel belongs
+                under kernel/ and nothing else does. What was once here was a
+                hundred and eighty lines of claims, displacements and grafts,
+                which is the answer to "what did you change about the kernel"
+                and was findable only by reading a build script.
+        */
+        if (build_run("sh", build_setting_get("patch_script"), null))
+                return build_die("patching the kernel source");
+
+        if (build_is_newer(build_join(artifacts, "/.config", null),
+                           build_join(tree, "/.config", null)))
+        {
+                string_address extra[BUILD_ARGUMENT_ROOM];
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                positive many = build_words_of(make_flags,
+                                               string_length(make_flags),
+                                               (string_address address_to)extra,
+                                               BUILD_ARGUMENT_ROOM, store,
+                                               BUILD_WORD_ROOM);
+                string_address words[BUILD_ARGUMENT_ROOM];
+                build_command what = {null, tree, null, true, true};
+                positive at;
+
+                at = 0;
+                words[at++] = "make";
+                words[at++] = "allnoconfig";
+
+                for (positive which = 0; which < many; which++)
+                        words[at++] = extra[which];
+
+                words[at] = null;
+                what.words = (string_address address_to)words;
+
+                if (build_execute(address_of what))
+                        return build_die("kernel configuration");
+
+                /*
+                        Quiet: merge_config compares the combined fragment
+                        against an allnoconfig baseline and calls most of what
+                        the profiles ask for a "redefinition" -- 125 lines
+                        meaning nothing. The composition step reports the
+                        disagreements that matter, between profiles.
+
+                        make_flags go in the environment, not on the command
+                        line: merge_config.sh reads trailing arguments as
+                        fragment paths, so "ARCH=arm64" became a file that did
+                        not exist and stopped every cross build.
+                */
+                at = 0;
+                words[at++] = "sh";
+                words[at++] = "scripts/kconfig/merge_config.sh";
+                words[at++] = "-m";
+                words[at++] = ".config";
+                words[at++] = build_join("../", artifacts, "/.config", null);
+                words[at] = null;
+
+                what.words = (string_address address_to)words;
+                what.privileged = false;
+                what.environment = build_environment_with(
+                        (string_address address_to)extra, many);
+
+                if (build_execute(address_of what))
+                        return build_die("kernel configuration");
+
+                at = 0;
+                words[at++] = "make";
+                words[at++] = "olddefconfig";
+
+                for (positive which = 0; which < many; which++)
+                        words[at++] = extra[which];
+
+                words[at] = null;
+                what.words = (string_address address_to)words;
+                what.privileged = true;
+                what.environment = null;
+
+                if (build_execute(address_of what))
+                        return build_die("kernel configuration");
+        }
+        else
+        {
+                string_format(log, "No changes\n");
+                log_flush();
+        }
+
+        build_label("", "CONFIGURATION CHECK");
+
+        /*
+                merge_config and olddefconfig drop unmet options without a
+                word, so anything a profile asked for and did not get is
+                reported here rather than discovered later as hardware that
+                does not work.
+
+                Called with no profiles, which is what the shell did: the
+                variable it expanded here was never assigned, so this has
+                always reported on an empty list and said "All 0 requested
+                options took effect." That is preserved rather than fixed,
+                because fixing it changes what every build prints and belongs
+                in a change that is about this check rather than about who
+                runs it. `build verify-config <config> <profile ...>` is the
+                same code with the list supplied.
+        */
+        build_verify_config(build_join(tree, "/.config", null), null, 0);
+
+        build_label("", "ASSEMBLY");
+
+        //      Where a profile asked for a .asm from src/ to stand in for a
+        //      file the kernel already builds. The .asm files that belong to
+        //      the module rather than to the kernel need nothing here -- the
+        //      module's Makefile builds those as part of it.
+        {
+                string_address words[3];
+                build_command what = {null, null, null, false, true};
+
+                words[0] = "sh";
+                words[1] = build_setting_get("replace_script");
+                words[2] = null;
+                what.words = (string_address address_to)words;
+
+                if (build_execute(address_of what))
+                        return build_die("assembly");
+        }
+
+        build_label("", "PRE BUILD");
+        build_shell_key("pre");
+
+        build_label("", "USER SPACE BUILD");
+
+        if (build_userspace())
+                return 1;
+
+        build_label("", "KERNEL BUILD");
+
+        make_flags = build_key("make_flags");
+
+        //      The kernel used to be built with whatever its own Makefile
+        //      chose, because nothing reached the C compiler. KCFLAGS is that
+        //      gap closed.
+        {
+                string_address cores;
+                string_address kernel_cflags = build_key("kernel_cflags");
+                string_address extra[BUILD_ARGUMENT_ROOM];
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                positive many = build_words_of(make_flags,
+                                               string_length(make_flags),
+                                               (string_address address_to)extra,
+                                               BUILD_ARGUMENT_ROOM, store,
+                                               BUILD_WORD_ROOM);
+                string_address words[BUILD_ARGUMENT_ROOM];
+                build_command what = {null, tree, null, false, false};
+                positive at = 0;
+                bool good = true;
+
+                cores = build_number(build_processors());
+                kernel_image = build_key_one("kernel_image", address_of good);
+                kernel_export = build_key_one("kernel_export", address_of good);
+
+                if (!good || !*kernel_image || !*kernel_export)
+                        return build_die(
+                                "kernel_image / kernel_export not set in the configuration");
+
+                words[at++] = "make";
+                words[at++] = build_join("-j", cores, null);
+
+                for (positive which = 0; which < many; which++)
+                        words[at++] = extra[which];
+
+                words[at++] = build_join("KCFLAGS=", kernel_cflags, null);
+                words[at] = null;
+                what.words = (string_address address_to)words;
+
+                /*
+                        make's exit status was discarded once, so a failed
+                        build fell through to the copy below and shipped
+                        whatever image was left over from the run before.
+
+                        KCPPFLAGS, KAFLAGS, LDFLAGS and RUSTFLAGS were passed
+                        here too, from keys no profile has ever set -- four
+                        empty variables handed to make on every build.
+                */
+                if (build_execute(address_of what))
+                        return build_die("kernel build");
+        }
+
+        if (!build_is_file(kernel_image))
+                return build_die(build_join("expected image '", kernel_image,
+                                            "' was not produced", null));
+
+        build_tool("mkdir", "-p", build_directory_of(kernel_export), null);
+
+        {
+                string_address words[4];
+                build_command what = {null, null, null, false, true};
+
+                words[0] = "cp";
+                words[1] = kernel_image;
+                words[2] = kernel_export;
+                words[3] = null;
+                what.words = (string_address address_to)words;
+
+                //      Our cp, unless we are not root, in which case the copy
+                //      into a root-owned directory needs sudo and sudo needs a
+                //      program to run.
+                if (build_root())
+                {
+                        if (build_tool("cp", kernel_image, kernel_export, null))
+                                return build_die("exporting the kernel image");
+                }
+                else if (build_execute(address_of what))
+                        return build_die("exporting the kernel image");
+        }
+
+        build_label("", "POST BUILD");
+        build_shell_key("post");
+        string_format(log, "%sDone Building Kernel%s\n", BUILD_BOLD, BUILD_GREEN);
+        log_flush();
+        build_size(build_key("kernel_export"));
+        string_format(log, "%s\n", BUILD_RESET);
+        log_flush();
+
+        return 0;
+}
+
+//      grep -qw, for the one-word-per-line answers QEMU gives to -accel help
+//      and -display help.
+static bool build_word_listed(string_address text, string_address word)
+{
+        build_lines walk;
+        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+
+        if (!text)
+                return false;
+
+        build_lines_open(address_of walk, text);
+
+        while (build_lines_next(address_of walk))
+        {
+                string_address found[BUILD_ARGUMENT_ROOM];
+                positive parts = build_words_of(walk.line, walk.length,
+                                                (string_address address_to)found,
+                                                BUILD_ARGUMENT_ROOM, store,
+                                                BUILD_WORD_ROOM);
+
+                for (positive at = 0; at < parts; at++)
+                        if (word_is(found[at], word))
+                                return true;
+        }
+
+        return false;
+}
+
+/*
+        The same checksum the shell took of this tree's path.
+
+        One build directory per source tree, not one per machine. This used to
+        be one path for everybody: two people, or two sessions, or a person and
+        an agent building at the same time wrote their objects and their image
+        into the same place and neither was told. An incremental build then
+        reuses whatever is there -- the userspace half from one tree and the
+        kernel module from another, linked into one image that matches no
+        checkout anybody has, and every measurement taken off it is about a
+        tree that does not exist.
+
+        The suffix is a checksum of this tree's own path, so the same checkout
+        always gets the same directory and two checkouts never share one. It is
+        our cksum, called as a function on the bytes rather than run on a file
+        written only to be checksummed, and it is the POSIX one, so a directory
+        made by the shell build is the directory this finds.
+*/
+static positive build_path_mark(string_address text)
+{
+        positive length = string_length(text);
+        p32 crc;
+        p64 count = length;
+
+        cksum_crc_prepare();
+        crc = cksum_crc_block((p8 address_to)text, length, 0);
+
+        while (count)
+        {
+                p8 byte = (p8)count;
+
+                crc = (crc << 8) ^ cksum_crc_table[0][(crc >> 24) ^ byte];
+                count >>= 8;
+        }
+
+        return (positive)(p32)~crc;
+}
+
+//      ssh takes shell source, not an argument vector. Keep empty words,
+//      quotes and newlines intact.
+static string_address build_quote(string_address address_to words, positive count)
+{
+        positive total = 0;
+        p8 address_to into;
+        p8 address_to at;
+
+        for (positive which = 0; which < count; which++)
+                total += string_length(words[which]) * 4 + 4;
+
+        into = build_text_take(total + 1);
+        at = into;
+
+        for (positive which = 0; which < count; which++)
+        {
+                string_address word = words[which];
+
+                if (which)
+                        *at++ = ' ';
+
+                *at++ = '\'';
+
+                for (positive step = 0; word[step]; step++)
+                {
+                        if (word[step] != '\'')
+                        {
+                                *at++ = word[step];
+                                continue;
+                        }
+
+                        *at++ = '\'';
+                        *at++ = '\\';
+                        *at++ = '\'';
+                        *at++ = '\'';
+                }
+
+                *at++ = '\'';
+        }
+
+        *at = end;
+
+        return (string_address)into;
+}
+
+/*
+        Building somewhere else.
+
+        Only reached when a host was named. The remote command carries no host
+        of its own and ssh does not forward the environment, so the build over
+        there is an ordinary local one and this cannot recurse.
+*/
+static string_address build_remote_image;
+
+static b32 build_remote(string_address host, string_address remote,
+                        string_address address_to profiles, positive count)
+{
+        string_address quoted = build_quote(address_of remote, 1);
+        string_address arguments = build_quote(profiles, count);
+        string_address stock = string_get_environment(environ, "MOONWATER_STOCK");
+
+        build_say(build_join("Checking ", host, null));
+
+        if (build_run("ssh", "-n", "-o", "BatchMode=yes", "-o",
+                      "ConnectTimeout=20", host, "true", null))
+                return build_die(build_join("cannot reach ", host,
+                                            " over ssh", null));
+
+        build_say(build_join("Copying the tree to ", host, ":", remote, null));
+
+        /*
+                The kernel source, its artifacts and the built filesystem stay
+                on the build host: they are large, and none of them belong to
+                this checkout. The upstream tree is not part of this
+                repository.
+        */
+        {
+                string_address words[BUILD_ARGUMENT_ROOM];
+                string_address excluded = build_setting_get("remote_excludes");
+                string_address names[BUILD_ARGUMENT_ROOM];
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+                positive many = build_words_of(excluded, string_length(excluded),
+                                               (string_address address_to)names,
+                                               BUILD_ARGUMENT_ROOM, store,
+                                               BUILD_WORD_ROOM);
+                positive at = 0;
+
+                words[at++] = "rsync";
+                words[at++] = "-az";
+                words[at++] = "--delete";
+                words[at++] = build_join("--rsync-path=mkdir -p -- ", quoted,
+                                         " && cd -- ", quoted, " && rsync", null);
+
+                for (positive which = 0; which < many; which++)
+                {
+                        words[at++] = "--exclude";
+                        words[at++] = names[which];
+                }
+
+                words[at++] = "./";
+                words[at++] = build_join(host, ":./", null);
+                words[at] = null;
+
+                if (build_run_words((string_address address_to)words, null))
+                        return build_die("copying the tree failed");
+        }
+
+        build_say(build_join("Building on ", host, ": ", arguments, null));
+
+        /*
+                -n so the build does not swallow this program's stdin. Without
+                it the USB prompts read nothing, because ssh forwards whatever
+                is on stdin to the remote command.
+
+                sudo drops the environment, so anything the remote build has to
+                know is named here. env rather than a VAR=value prefix, which
+                sudo only passes when it has been configured to.
+        */
+        if (build_run("ssh", "-n", host,
+                      build_join("cd -- ", quoted, " && sudo env ",
+                                 stock && *stock ? "MOONWATER_STOCK=1" : "",
+                                 " sh build.sh ", arguments, null),
+                      null))
+                return build_die(build_join("the build failed on ", host, null));
+
+        /*
+                The host which built the configured profile is authoritative
+                about its export. A stale local configuration may describe
+                another architecture entirely -- an ARM Mac commonly names
+                kernel8.img.
+        */
+        {
+                string_address words[8];
+                positive at = 0;
+
+                words[at++] = "ssh";
+                words[at++] = "-n";
+                words[at++] = host;
+                words[at++] = build_join("cd -- ", quoted,
+                                         " && ./build key-one kernel_export", null);
+                words[at] = null;
+
+                if (build_capture_words((string_address address_to)words,
+                                        build_file_two, BUILD_FILE_ROOM) < 0)
+                        return build_die("could not identify the built image");
+
+                {
+                        positive length = string_length((string_address)build_file_two);
+
+                        while (length && (build_file_two[length - 1] == '\n' ||
+                                          build_file_two[length - 1] == '\r'))
+                                build_file_two[--length] = end;
+
+                        build_remote_image = build_join((string_address)build_file_two,
+                                                        null);
+                }
+        }
+
+        {
+                string_address expected = build_join(build_setting_get("output"),
+                                                     "/", null);
+                positive length = string_length(expected);
+
+                if (string_length(build_remote_image) <= length ||
+                    memory_compare(build_remote_image, expected, length))
+                        return build_die(build_join(
+                                "remote build reported an invalid image path: ",
+                                build_remote_image, null));
+        }
+
+        build_say(build_join("Fetching ", build_remote_image, null));
+        build_tool("mkdir", "-p", build_directory_of(build_remote_image), null);
+
+        {
+                string_address words[8];
+                positive at = 0;
+                b32 handle;
+                b32 child;
+
+                words[at++] = "ssh";
+                words[at++] = "-n";
+                words[at++] = host;
+                words[at++] = build_join("cd -- ", quoted, " && cat -- ",
+                                         build_quote(address_of build_remote_image, 1),
+                                         null);
+                words[at] = null;
+
+                handle = open(build_remote_image, O_WRONLY | O_CREAT | O_TRUNC,
+                              0644);
+
+                if (handle < 0)
+                        return build_die("could not fetch the built image");
+
+                log_flush();
+                child = fork();
+
+                if (child == 0)
+                {
+                        string_address found = build_resolve(words[0]);
+
+                        dup2(handle, 1);
+                        close(handle);
+
+                        if (found)
+                                execve(found, (string_address address_to)words,
+                                       environ);
+
+                        exit(127);
+                }
+
+                close(handle);
+
+                if (build_wait(child))
+                        return build_die("could not fetch the built image");
+        }
+
+        return 0;
+}
+
+/*
+        Removing what a build produced.
+
+        The artifacts directory keeps the downloaded kernel tarball and is left
+        alone on purpose: throwing it away means fetching a hundred and fifty
+        megabytes again to get back where you were.
+*/
+static b32 build_clean()
+{
+        string_address artifacts = build_setting_get("artifacts");
+        string_address leftovers = build_setting_get("clean_patterns");
+        string_address names[BUILD_ARGUMENT_ROOM];
+        p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+        positive many;
+
+        build_say("Removing build output");
+
+        build_tool("rm", "-rf", build_setting_get("output"),
+                   build_setting_get("image_root"),
+                   build_setting_get("kernel_tree"),
+                   build_join(artifacts, "/merge.config", null),
+                   build_join(artifacts, "/.config", null),
+                   build_join(artifacts, "/info", null),
+                   build_join(artifacts, "/asm.applied", null),
+                   build_join(artifacts, "/asm.arch", null),
+                   build_join(artifacts, "/asm.requested", null), null);
+
+        /*
+                The build products beside the module's source, including the
+                .S each .asm becomes -- which kbuild writes there because that
+                directory is the kernel tree's own module directory.
+
+                The patterns begin [!.] because a shell glob does not match a
+                leading dot and find's -name does. kbuild's own .o.cmd files
+                are dotfiles and the shell never removed them; neither does
+                this.
+        */
+        many = build_words_of(leftovers, string_length(leftovers),
+                              (string_address address_to)names,
+                              BUILD_ARGUMENT_ROOM, store, BUILD_WORD_ROOM);
+
+        for (positive at = 0; at < many; at++)
+                build_tool("find", build_setting_get("module_root"), "-maxdepth",
+                           "1", "-name", names[at], "-delete", null);
+
+        return 0;
+}
+
+/*
+        Writing to a USB stick.
+
+        The image is already an EFI application -- the kernel is built with the
+        EFI stub, which is why it is called bootx64.efi -- so firmware can load
+        it directly and there is no bootloader to install. It goes at the path
+        the UEFI spec reserves for removable media, \\EFI\\BOOT\\BOOTX64.EFI,
+        which is what a machine looks for when told to boot from USB.
+
+        This lists the candidates and prints the command rather than running
+        it. Writing to a raw block device with the wrong name destroys the
+        wrong disk, and there is no honest way to claim care against an
+        untested lsblk and dd, so the last step stays in your hands.
+*/
+static b32 build_usb(string_address image)
+{
+        build_say("Removable disks");
+
+        if (build_have("lsblk"))
+        {
+                string_address words[8];
+                positive at = 0;
+                build_lines walk;
+                p8 address_to store = build_text_take(BUILD_WORD_ROOM);
+
+                words[at++] = "lsblk";
+                words[at++] = "-dno";
+                words[at++] = "NAME,SIZE,RM,MODEL";
+                words[at] = null;
+
+                if (build_capture_words((string_address address_to)words,
+                                        build_file_one, BUILD_FILE_ROOM) >= 0)
+                {
+                        build_lines_open(address_of walk,
+                                         (string_address)build_file_one);
+
+                        while (build_lines_next(address_of walk))
+                        {
+                                string_address found[BUILD_ARGUMENT_ROOM];
+                                positive parts = build_words_of(
+                                        walk.line, walk.length,
+                                        (string_address address_to)found,
+                                        BUILD_ARGUMENT_ROOM, store,
+                                        BUILD_WORD_ROOM);
+
+                                if (parts < 3 || !word_is(found[2], "1"))
+                                        continue;
+
+                                string_format(log, "  /dev/%s  %s  %s\n",
+                                              found[0], found[1],
+                                              parts > 3 ? found[3]
+                                                        : (string_address)"");
+                        }
+                }
+        }
+        else
+                string_format(log, "  (lsblk is missing; find the device yourself)\n");
+
+        string_format(log, "\n");
+        string_format(log, "Write it with, replacing sdX with the stick:\n");
+        string_format(log, "\n");
+        string_format(log,
+                      "  sudo mkfs.vfat -F32 /dev/sdX1        # after partitioning it GPT/ESP\n");
+        string_format(log, "  sudo mount /dev/sdX1 /mnt\n");
+        string_format(log, "  sudo mkdir -p /mnt/EFI/BOOT\n");
+        string_format(log, "  sudo cp %s /mnt/EFI/BOOT/BOOTX64.EFI\n", image);
+        string_format(log, "  sudo umount /mnt\n");
+        string_format(log, "\n");
+        string_format(log,
+                      "Check the device name twice. This erases whatever it names.\n");
+        log_flush();
+
+        return 0;
+}
+
+/*
+        Booting it here.
+
+        Every one of these flags is a requirement rather than a preference, and
+        they are settings so another tree can boot its own image with its own:
+
+        virtio-gpu rather than the default VGA, because it is the only device
+        here that offers a hardware cursor plane, which is what lets the
+        compositor move the pointer without repainting anything. usb-tablet
+        reports absolute positions, so the pointer inside the guest follows the
+        one on the host instead of drifting. -vga none matters: without it QEMU
+        also creates a standard VGA device, the window shows that one because
+        it is the boot VGA, and the compositor ends up drawing on the other
+        card where nobody can see it.
+
+        -cpu Nehalem, not the default. The kernel is compiled -march=x86-64-v2,
+        whose floor is Nehalem, and QEMU's default model is qemu64 -- SSE3-era,
+        no POPCNT. There are 334 popcnt instructions in vmlinux, so on the
+        default model the image takes an invalid opcode before the console
+        exists and prints nothing whatsoever. This line is what stands between
+        that and here.
+
+        drm_client_lib.active= on the command line stops the fbdev client
+        claiming the display. It has to be built, but it must not take the
+        screen, or the compositor is drawing underneath something else.
+*/
+static b32 build_boot(string_address image, bool console)
+{
+        string_address emulator = build_setting_get("emulator");
+        string_address words[BUILD_ARGUMENT_ROOM];
+        string_address accelerators = "";
+        string_address display = null;
+        positive count = 0;
+
+        if (!build_have(emulator))
+                return build_die(build_join(emulator, " is not installed", null));
+
+        build_say(build_join("Booting ", image, null));
+        build_size(image);
+
+        words[count++] = emulator;
+        count = build_add_split((string_address address_to)words, count,
+                                BUILD_ARGUMENT_ROOM,
+                                build_setting_get("emulator_flags"));
+        words[count++] = "-kernel";
+        words[count++] = image;
+        count = build_add_split((string_address address_to)words, count,
+                                BUILD_ARGUMENT_ROOM,
+                                build_setting_get("emulator_devices"));
+
+        //      Hardware acceleration where this QEMU has it. -cpu host
+        //      replaces the model above, which is what you want when the guest
+        //      is running on the real one.
+        {
+                string_address ask[4];
+
+                ask[0] = emulator;
+                ask[1] = "-accel";
+                ask[2] = "help";
+                ask[3] = null;
+
+                if (build_capture_words((string_address address_to)ask,
+                                        build_file_one, BUILD_FILE_ROOM) >= 0)
+                        accelerators = (string_address)build_file_one;
+        }
+
+        if (build_word_listed(accelerators, "hvf"))
+        {
+                words[count++] = "-accel";
+                words[count++] = "hvf";
+                words[count++] = "-cpu";
+                words[count++] = "host";
+        }
+        else if (build_word_listed(accelerators, "kvm") &&
+                 access("/dev/kvm", W_OK) >= 0)
+        {
+                words[count++] = "-accel";
+                words[count++] = "kvm";
+                words[count++] = "-cpu";
+                words[count++] = "host";
+        }
+
+        words[count++] = "-append";
+        words[count++] = build_setting_get("kernel_cmdline");
+
+        if (console)
+        {
+                build_say("Console on this terminal, ctrl-a x to quit");
+                words[count++] = "-display";
+                words[count++] = "none";
+                words[count++] = "-serial";
+                words[count++] = "mon:stdio";
+                words[count] = null;
+
+                return build_run_words((string_address address_to)words, null);
+        }
+
+        {
+                string_address ask[4];
+                string_address available = "";
+
+                ask[0] = emulator;
+                ask[1] = "-display";
+                ask[2] = "help";
+                ask[3] = null;
+
+                if (build_capture_words((string_address address_to)ask,
+                                        build_file_two, BUILD_FILE_ROOM) >= 0)
+                        available = (string_address)build_file_two;
+
+                if (build_word_listed(available, "gtk"))
+                        display = "gtk";
+                else if (build_word_listed(available, "sdl"))
+                        display = "sdl";
+                else
+                        return build_die(
+                                "this QEMU has no graphical display backend -- use --shell");
+        }
+
+        build_say("Window opening, ctrl-alt-g releases the mouse");
+        words[count++] = "-display";
+        words[count++] = display;
+        words[count++] = "-serial";
+        words[count++] = "mon:stdio";
+        words[count] = null;
+
+        return build_run_words((string_address address_to)words, null);
+}
+
 /*
         Every path in this tool is relative to the repository root, so running
         it from anywhere else quietly writes into the wrong place. Checked by
@@ -2803,13 +5360,167 @@ b32 main()
                 return 0;
         }
 
+        if (command && word_is(command, "freestanding"))
+        {
+                build_config_load();
+
+                return build_freestanding((string_address address_to)(arguments + 2),
+                                          count - 2);
+        }
+
+        if (command && word_is(command, "floor"))
+        {
+                build_is_safe();
+
+                return build_floor(count > 2 ? arguments[2] : null);
+        }
+
         if (command && (word_is(command, "--help") || word_is(command, "-h")))
         {
                 build_usage();
                 return 0;
         }
 
-        build_usage();
+        /*
+                The build.
 
-        return 0;
+                Anything that is not an option is a profile name, so the two
+                can be mixed in any order: `build --run desktop`.
+        */
+        {
+                string_address profiles[BUILD_ARGUMENT_ROOM];
+                string_address host = string_get_environment(environ,
+                                                             "MOONWATER_BUILD_HOST");
+                string_address remote = string_get_environment(environ,
+                                                               "MOONWATER_BUILD_DIR");
+                string_address image = null;
+                positive chosen = 0;
+                bool run = false;
+                bool make = true;
+                bool clean = false;
+                bool usb = false;
+                bool console = false;
+
+                build_is_safe();
+
+                for (positive at = 1; at < count; at++)
+                {
+                        string_address word = arguments[at];
+
+                        if (word_is(word, "--clean"))
+                                clean = true;
+                        else if (word_is(word, "--run"))
+                                run = true;
+                        else if (word_is(word, "--boot"))
+                        {
+                                run = true;
+                                make = false;
+                        }
+                        else if (word_is(word, "--shell"))
+                                console = true;
+                        else if (word_is(word, "--usb"))
+                                usb = true;
+                        else if (word_is(word, "--host"))
+                        {
+                                if (at + 1 >= count)
+                                        return build_die(
+                                                "--host wants a machine to build on");
+
+                                host = arguments[++at];
+                        }
+                        else if (!memory_compare(word, "--host=", 7))
+                                host = word + 7;
+                        else if (!memory_compare(word, "--set", 5) &&
+                                 (word[5] == end || word[5] == '='))
+                        {
+                                //      --set name=value overrides one setting
+                                //      for this run, which is how a tree that
+                                //      is not this one points the tool at its
+                                //      own paths without editing anything.
+                                string_address pair = word[5] == '='
+                                                              ? word + 6
+                                                              : (at + 1 < count
+                                                                         ? arguments[++at]
+                                                                         : null);
+                                p8 address_to cut;
+
+                                if (!pair)
+                                        return build_die("--set wants name=value");
+
+                                pair = build_join(pair, null);
+                                cut = (p8 address_to)string_first_of(pair, '=');
+
+                                if (!cut)
+                                        return build_die("--set wants name=value");
+
+                                address_to cut = end;
+                                build_setting_set(pair, (string_address)(cut + 1));
+                        }
+                        else if (word[0] == '-' && word[1] == '-')
+                                return build_die(build_join("unknown option ",
+                                                            word, null));
+                        else if (chosen + 1 < BUILD_ARGUMENT_ROOM)
+                                profiles[chosen++] = word;
+                }
+
+                profiles[chosen] = null;
+
+                if (!remote || !*remote)
+                        remote = build_join("/tmp/", build_setting_get("name"),
+                                            "-",
+                                            build_name_of(build_working_directory()),
+                                            "-",
+                                            build_number(build_path_mark(
+                                                    build_working_directory())),
+                                            null);
+
+                if (clean)
+                        return build_clean();
+
+                build_config_load();
+
+                if (make)
+                {
+                        if (host && *host)
+                        {
+                                if (build_remote(host, remote,
+                                                 (string_address address_to)profiles,
+                                                 chosen))
+                                        return 1;
+
+                                image = build_remote_image;
+                        }
+                        else if (build_local((string_address address_to)profiles,
+                                             chosen))
+                                return 1;
+                }
+
+                if (!usb && !run)
+                        return 0;
+
+                /*
+                        Where the image ended up. A remote build set this from
+                        its own generated configuration. A local build, or
+                        --boot without a build, asks the local configuration
+                        and finally falls back to the default export.
+                */
+                if (!image)
+                {
+                        build_config_load();
+                        image = build_key_one("kernel_export", null);
+                }
+
+                if (!image || !*image)
+                        image = build_setting_get("default_image");
+
+                if (!build_is_file(image))
+                        return build_die(build_join("no image at ", image,
+                                                    " -- build one first, or drop --boot",
+                                                    null));
+
+                if (usb)
+                        return build_usb(image);
+
+                return build_boot(image, console);
+        }
 }
