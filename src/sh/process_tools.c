@@ -333,7 +333,9 @@ static bool stdbuf_mode(string_address text, bool input,
         if (string_is(text, 'L') && !string_get(text + 1))
         {
                 if (input)
-                        return string_report(log_error, false, "stdbuf: line buffering stdin is meaningless\n");
+                        return string_report(log_error, false,
+                                             "stdbuf: line buffering standard input is meaningless\n"
+                                             "Try 'stdbuf --help' for more information.\n");
 
                 assignment[10] = 'L';
                 assignment[11] = end;
@@ -423,6 +425,23 @@ static bool stdbuf_preload(string_address library)
         return true;
 }
 
+/* coreutils checks each mode as the option is read, so an invalid one is
+   refused even when a later option for the same stream would supersede it. */
+static bool process_stdbuf_seen(p8 letter, string_address value)
+{
+        p8 scratch[64];
+
+        if (!value)
+                return true;
+        if (letter == 'i')
+                return stdbuf_mode(value, true, 'I', scratch);
+        if (letter == 'o')
+                return stdbuf_mode(value, false, 'O', scratch);
+        if (letter == 'e')
+                return stdbuf_mode(value, false, 'E', scratch);
+        return true;
+}
+
 static b32 process_stdbuf()
 {
         file_taking taking = {
@@ -430,6 +449,7 @@ static b32 process_stdbuf()
             .allowed = (string_address) "ioe",
             .valued = (string_address) "ioe",
             .longs = process_stdbuf_longs,
+            .seen = process_stdbuf_seen,
         };
 
         if (!file_take(address_of taking))
@@ -439,10 +459,13 @@ static b32 process_stdbuf()
                          (FILE_FLAG('i') | FILE_FLAG('o') | FILE_FLAG('e'));
         positive count = (positive)program_argument_count();
 
-        if (!modes)
-                return string_report(log_error, 125, "stdbuf: you must specify a buffering mode option\n");
         if (taking.first >= count)
-                return string_report(log_error, 125, "stdbuf: missing operand\n");
+                return string_report(log_error, 125, "stdbuf: missing operand\n"
+                                                     "Try 'stdbuf --help' for more information.\n");
+        if (!modes)
+                return string_report(log_error, 125,
+                                     "stdbuf: you must specify a buffering mode option\n"
+                                     "Try 'stdbuf --help' for more information.\n");
 
         bool input = (modes & FILE_FLAG('i')) == 0 ||
                      stdbuf_mode(file_option_value(address_of taking, 'i'),
@@ -530,7 +553,8 @@ static b32 process_chroot()
         if (!file_take(address_of taking))
                 return 125;
         if (taking.first >= count)
-                return string_report(log_error, 125, "chroot: missing operand\n");
+                return string_report(log_error, 125, "chroot: missing operand\n"
+                                                     "Try 'chroot --help' for more information.\n");
 
         string_address root = program_argument((b32)taking.first++);
 
@@ -628,7 +652,8 @@ static b32 process_nohup()
         if (!file_take(address_of taking))
                 return 125;
         if (taking.first >= count)
-                return string_report(log_error, 125, "nohup: missing operand\n");
+                return string_report(log_error, 125, "nohup: missing operand\n"
+                                                     "Try 'nohup --help' for more information.\n");
 
         bool input_terminal = stream_is_terminal(0);
         bool output_terminal = stream_is_terminal(1);
@@ -792,48 +817,60 @@ static b32 process_pipesz()
                        (FILE_FLAG('f') | FILE_FLAG('n') | FILE_FLAG('i') |
                         FILE_FLAG('o') | FILE_FLAG('e'))) != 0;
 
+        /* util-linux parses every option before it opens a file, refuses a
+           descriptor that is not an integer whatever --quiet says, and lets
+           a negative one through to fcntl, which refuses it in turn. */
+        p8 fd_label[32];
+        bipolar named_descriptor = 0;
+        if (taking.flags & FILE_FLAG('n'))
+        {
+                string_address value = file_option_value(address_of taking, 'n');
+
+                if (!file_signed_decimal(value, address_of named_descriptor) ||
+                    named_descriptor > b32_max || named_descriptor < -(bipolar)b32_max)
+                        return string_report(log_error, 1, "pipesz: invalid fd argument: '%s'\n",
+                                             value);
+
+                positive at = (positive)(memory_copy_end(
+                    fd_label, (address_any)"fd ", 3) - fd_label);
+                if (named_descriptor < 0)
+                        fd_label[at++] = '-';
+                positive_into_string(fd_label + at,
+                                     (positive)(named_descriptor < 0
+                                                    ? -named_descriptor
+                                                    : named_descriptor));
+        }
+
+        if (getting && (taking.flags & FILE_FLAG('v')))
+                log("pipe\tsize\tunread\n", 17);
+
         if (taking.flags & FILE_FLAG('f'))
         {
                 string_address path = file_option_value(address_of taking, 'f');
                 bipolar descriptor = system_open_at(
-                    AT_FDCWD, path, FILE_READ_WRITE | O_NONBLOCK | O_CLOEXEC);
+                    AT_FDCWD, path, FILE_READ | O_NONBLOCK | O_CLOEXEC);
 
                 if (descriptor < 0)
                 {
-                        if (!(taking.flags & FILE_FLAG('q')))
+                        if (!(taking.flags & FILE_FLAG('q')) ||
+                            (taking.flags & FILE_FLAG('c')))
                                 string_format(log_error,
-                                              "pipesz: cannot open '%s': %s\n",
+                                              "pipesz: cannot open %s: %s\n",
                                               path, file_reason(descriptor));
                         if (taking.flags & FILE_FLAG('c'))
+                        {
+                                log_flush();
                                 return 1;
+                        }
                 }
                 else
                         targets[used++] = (process_pipe_target){
                             descriptor, path, true};
         }
 
-        p8 fd_label[32];
         if (taking.flags & FILE_FLAG('n'))
-        {
-                positive descriptor;
-                string_address value = file_option_value(address_of taking, 'n');
-
-                if (!string_digits_exact(value, address_of descriptor) ||
-                    descriptor > b32_max)
-                {
-                        for (positive at = 0; at < used; at++)
-                                if (targets[at].close)
-                                        system_close(targets[at].descriptor);
-                        return string_report(log_error, 1, "pipesz: invalid file descriptor: '%s'\n",
-                                      value);
-                }
-
-                positive at = (positive)(memory_copy_end(
-                    fd_label, (address_any)"fd ", 3) - fd_label);
-                positive_into_string(fd_label + at, descriptor);
                 targets[used++] = (process_pipe_target){
-                    (bipolar)descriptor, (string_address)fd_label, false};
-        }
+                    named_descriptor, (string_address)fd_label, false};
         if (taking.flags & FILE_FLAG('i'))
                 targets[used++] = (process_pipe_target){0, (string_address)"fd 0", false};
         if (taking.flags & FILE_FLAG('o'))
@@ -847,8 +884,6 @@ static b32 process_pipesz()
                     false};
 
         bool failed = false;
-        if (getting && (taking.flags & FILE_FLAG('v')))
-                log("pipe\tsize\tunread\n", 17);
 
         for (positive i = 0; i < used; i++)
         {
@@ -861,7 +896,8 @@ static b32 process_pipesz()
                 if (answer < 0)
                 {
                         failed = true;
-                        if (!(taking.flags & FILE_FLAG('q')))
+                        if (!(taking.flags & FILE_FLAG('q')) ||
+                            (taking.flags & FILE_FLAG('c')))
                                 string_format(
                                     log_error,
                                     "pipesz: cannot %s pipe buffer size of %s: %s\n",
@@ -962,34 +998,45 @@ static fn process_coresched_cookie(writer write, p64 cookie)
 static b32 process_coresched()
 {
         enum { CORE_GET, CORE_NEW, CORE_COPY } operation = CORE_GET;
-        positive first = 1;
-        positive count = (positive)program_argument_count();
 
-        if (first < count)
-        {
-                string_address word = program_argument((b32)first);
-                if (string_equals(word, (string_address)"get"))
-                        first++;
-                else if (string_equals(word, (string_address)"new"))
-                {
-                        operation = CORE_NEW;
-                        first++;
-                }
-                else if (string_equals(word, (string_address)"copy"))
-                {
-                        operation = CORE_COPY;
-                        first++;
-                }
-        }
-
+        /* util-linux reads the options wherever they stand; the first bare
+           word may name the function and the rest is the command. */
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address)"coresched",
             .allowed = (string_address)"sdtvhV",
             .valued = (string_address)"sdt",
             .longs = process_coresched_longs,
+            .operand = file_operand,
         };
-        if (!file_take_from(address_of taking, first))
+        if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
+
+        positive first_word = 0;
+        if (file_operand_count)
+        {
+                string_address word = file_operand_at(0);
+                if (string_equals(word, (string_address)"get"))
+                        first_word = 1;
+                else if (string_equals(word, (string_address)"new"))
+                {
+                        operation = CORE_NEW;
+                        first_word = 1;
+                }
+                else if (string_equals(word, (string_address)"copy"))
+                {
+                        operation = CORE_COPY;
+                        first_word = 1;
+                }
+        }
+
+        string_address words[256];
+        positive word_count = file_operand_count - first_word;
+        if (word_count >= array_count(words))
+                return string_report(log_error, 1, "coresched: too many arguments\n");
+        for (positive at = 0; at < word_count; at++)
+                words[at] = file_operand_at(first_word + at);
+        words[word_count] = null;
 
         if (file_meta(address_of taking, "[get] [--source PID]\n"
                       "       coresched new [-t TYPE] --dest PID|-- COMMAND\n"
@@ -1016,11 +1063,12 @@ static b32 process_coresched()
                 return string_report(log_error, 1, "coresched: invalid destination type: '%s'\n",
                               file_option_value(address_of taking, 't'));
 
-        bool command = taking.first < count;
+        bool command = word_count > 0;
         if (operation == CORE_GET)
         {
-                if (command || destination ||
-                    (taking.flags & FILE_FLAG('t')))
+                // A destination type is accepted and ignored here, as in
+                // util-linux.
+                if (command || destination)
                         return string_report(log_error, 1, "coresched: bad usage of the get function\n");
 
                 p64 cookie = 0;
@@ -1096,9 +1144,7 @@ static b32 process_coresched()
         }
 
         if (command)
-                return process_tool_exec(
-                    (string_address)"coresched",
-                    program_argument_list() + taking.first);
+                return process_tool_exec((string_address)"coresched", words);
         return 0;
 }
 
@@ -1291,49 +1337,115 @@ static fn process_timeout_signal(b32 child, b32 signal, bool foreground,
                       (positive)signal);
 }
 
+/* GNU's duration: a float with an optional s/m/h/d, where strtod also
+   takes inf (no deadline at all) and a 0x hexadecimal. */
+static bool process_timeout_duration(string_address text,
+                                     positive address_to duration)
+{
+        if (string_equals(text, "inf") || string_equals(text, "INF") ||
+            string_equals(text, "infinity") || string_equals(text, "+inf"))
+        {
+                address_to duration = 0;
+                return true;
+        }
+        if (string_is(text, '0') && (text[1] == 'x' || text[1] == 'X'))
+        {
+                string_address at = text + 2;
+                positive value;
+                positive unit = 1;
+
+                if (!string_digits_checked(address_of at, 16, address_of value))
+                        return false;
+                if (string_get(at) == 'm')
+                        unit = 60;
+                else if (string_get(at) == 'h')
+                        unit = 3600;
+                else if (string_get(at) == 'd')
+                        unit = 86400;
+                else if (string_get(at) && string_get(at) != 's')
+                        return false;
+                if (string_get(at) && string_get(at + 1))
+                        return false;
+                if (value > positive_max / (unit * 1000000000u))
+                        return false;
+                address_to duration = value * unit * 1000000000u;
+                return true;
+        }
+        return file_duration_read(text, true, duration);
+}
+
+/* coreutils validates each --signal and --kill-after as it is read. */
+static bool process_timeout_seen(p8 letter, string_address value)
+{
+        if (letter == 's' && value)
+        {
+                bipolar named = ul_signal_number(value);
+
+                if (named < 0 || named > 64)
+                {
+                        string_format(log_error, "timeout: '%s': invalid signal\n"
+                                                 "Try 'timeout --help' for more information.\n",
+                                      value);
+                        return false;
+                }
+        }
+        if (letter == 'k' && value)
+        {
+                positive after;
+
+                if (!process_timeout_duration(value, address_of after))
+                {
+                        string_format(log_error, "timeout: invalid time interval '%s'\n"
+                                                 "Try 'timeout --help' for more information.\n",
+                                      value);
+                        return false;
+                }
+        }
+        return true;
+}
+
 static b32 process_timeout()
 {
         file_taking taking = {
             .program = (string_address) "timeout",
-            .allowed = (string_address) "ksv",
+            .allowed = (string_address) "kpfsv",
             .valued = (string_address) "ks",
             .longs = process_timeout_longs,
+            .seen = process_timeout_seen,
         };
         positive count = (positive)program_argument_count();
 
         if (!file_take(address_of taking))
                 return 125;
+        /* coreutils answers a missing duration or command with the usage
+           hint alone, and names the offending value in the other three. */
         if (taking.first >= count)
-                return string_report(log_error, 125, "timeout: missing operand\n");
+                return string_report(log_error, 125, "Try 'timeout --help' for more information.\n");
 
         positive duration;
+        string_address interval = program_argument((b32)taking.first++);
 
-        if (!file_duration_read(program_argument((b32)taking.first++), true,
-                                      address_of duration))
-                return string_report(log_error, 125, "timeout: invalid time interval\n");
+        if (!process_timeout_duration(interval, address_of duration))
+                return string_report(log_error, 125, "timeout: invalid time interval '%s'\n"
+                                                     "Try 'timeout --help' for more information.\n",
+                                     interval);
         if (taking.first >= count)
-                return string_report(log_error, 125, "timeout: missing command\n");
+                return string_report(log_error, 125, "Try 'timeout --help' for more information.\n");
 
         b32 signal = SIGTERM;
         string_address signal_text = file_option_value(address_of taking, 's');
 
         if (signal_text)
-        {
-                bipolar named = ul_signal_number(signal_text);
-
-                if (named <= 0 || named > SIGNAL_HIGHEST)
-                        return string_report(log_error, 125, "timeout: invalid signal '%s'\n",
-                                      signal_text);
-                signal = (b32)named;
-        }
+                signal = (b32)ul_signal_number(signal_text);
 
         bool escalate = (taking.flags & FILE_FLAG('k')) != 0;
         positive kill_after = 0;
 
-        if (escalate &&
-            !file_duration_read(file_option_value(address_of taking, 'k'), true,
-                                      address_of kill_after))
-                return string_report(log_error, 125, "timeout: invalid time interval for --kill-after\n");
+        if (escalate)
+                process_timeout_duration(file_option_value(address_of taking, 'k'),
+                                         address_of kill_after);
+        // Zero disables the second signal, as it disables the first.
+        escalate = escalate && kill_after;
 
         bool foreground = (taking.flags & FILE_FLAG('f')) != 0;
         bool preserve = (taking.flags & FILE_FLAG('p')) != 0;
@@ -1758,6 +1870,18 @@ static bool process_script_command_text(p8 address_to into, positive room,
         return true;
 }
 
+/* Whether a log names a regular file, the only kind two logs may not
+   share. */
+static bool process_script_log_regular(process_script_log address_to log_file)
+{
+        file_facts facts;
+
+        return log_file && log_file->handle >= 0 &&
+               file_look(log_file->handle, (string_address)"", AT_EMPTY_PATH,
+                         address_of facts) &&
+               (facts.mode & MODE_FORMAT) == MODE_FILE;
+}
+
 static b32 process_script_child(string_address command,
                                 positive command_first, b32 master, b32 slave,
                                 bipolar signal_fd, bipolar pidfd,
@@ -1771,13 +1895,15 @@ static b32 process_script_child(string_address command,
                 return string_report(log_error, 1, "script: cannot establish pseudo-terminal: %s\n",
                               file_reason(prepared));
 
+        // The shell is named by its last component, as util-linux names
+        // it, which is how bash spells itself in its diagnostics.
+        string_address shell = file_environment((string_address)"SHELL");
+        if (!shell || !*shell)
+                shell = (string_address)"/bin/sh";
+        string_address shell_name = file_last_component(shell);
         if (command)
         {
-                string_address shell = file_environment(
-                    (string_address)"SHELL");
-                if (!shell || !*shell)
-                        shell = (string_address)"/bin/sh";
-                string_address words[] = {shell, (string_address)"-c",
+                string_address words[] = {shell_name, (string_address)"-c",
                                           command, null};
                 return process_tool_exec_environment(
                     (string_address)"script", words, file_environment_all(),
@@ -1790,10 +1916,7 @@ static b32 process_script_child(string_address command,
                     file_environment_all(),
                     file_environment((string_address)"PATH"));
 
-        string_address shell = file_environment((string_address)"SHELL");
-        if (!shell || !*shell)
-                shell = (string_address)"/bin/sh";
-        string_address words[] = {shell, (string_address)"-i", null};
+        string_address words[] = {shell_name, (string_address)"-i", null};
         return process_tool_exec_environment(
             (string_address)"script", words, file_environment_all(),
             file_environment((string_address)"PATH"));
@@ -1891,6 +2014,12 @@ static b32 process_script_record(process_script_state address_to state,
         positive input_at = 0, input_length = 0;
         bool input_end = false, eot = false, master_end = false;
         bool child_done = false, failed = false;
+        /* An end of file on our own input becomes the terminal's end-of-file
+           character, which only means that to a command that has already
+           taken the terminal. Hold it until the session has spoken once, or
+           a command started with its input already exhausted never sees it
+           and waits for a line that cannot come. */
+        bool session_spoke = false;
         positive status = 0;
 
         while (!master_end)
@@ -1898,10 +2027,11 @@ static b32 process_script_record(process_script_state address_to state,
                 process_timeout_poll waited[4];
                 positive count = 0;
                 positive master_index = count;
+                bool sending = input_at < input_length &&
+                               (!eot || session_spoke);
                 waited[count++] = (process_timeout_poll){
                     master, (b16)(PROCESS_POLL_IN |
-                                   ((input_at < input_length)
-                                        ? PROCESS_POLL_OUT : 0)), 0};
+                                   (sending ? PROCESS_POLL_OUT : 0)), 0};
                 positive input_index = positive_max;
                 if (!input_end && input_at == input_length)
                 {
@@ -1970,7 +2100,7 @@ static b32 process_script_record(process_script_state address_to state,
 
                 if (waited[master_index].returned & PROCESS_POLL_OUT)
                 {
-                        if (input_at < input_length)
+                        if (sending)
                         {
                                 bipolar wrote = system_write_once(
                                     (positive)master, input + input_at,
@@ -2161,9 +2291,10 @@ static b32 process_script()
         }
         else if (separator < count)
         {
+                // A bare -- with nothing after it means the shell itself.
                 positive before = separator > taking.first
                                       ? separator - taking.first : 0;
-                if (before > 1 || separator + 1 >= count)
+                if (before > 1)
                         return string_report(log_error, 1, "%s: %s\n", "script", "invalid command operands");
                 if (before)
                         positional = program_argument((b32)taking.first);
@@ -2226,7 +2357,21 @@ static b32 process_script()
         string_address input_path = null;
         string_address combined_path = file_option_value(address_of taking, 'B');
         if (combined_path)
+        {
+                // --log-io names both streams; a separate log for one of
+                // them, wherever it stands, takes that stream over.
                 output_path = input_path = combined_path;
+                if (file_option_value(address_of taking, 'O'))
+                {
+                        output_path = file_option_value(address_of taking, 'O');
+                        combined_path = null;
+                }
+                if (file_option_value(address_of taking, 'I'))
+                {
+                        input_path = file_option_value(address_of taking, 'I');
+                        combined_path = null;
+                }
+        }
         else
         {
                 output_path = file_option_value(address_of taking, 'O');
@@ -2239,12 +2384,12 @@ static b32 process_script()
         string_address old_timing = file_option_value(address_of taking, 't');
         if (!timing_path && old_timing)
                 timing_path = old_timing;
-        if ((!combined_path && output_path && input_path &&
-             string_equals(output_path, input_path)) ||
-            (timing_path &&
-             ((output_path && string_equals(timing_path, output_path)) ||
-              (input_path && string_equals(timing_path, input_path)))))
-                return string_report(log_error, 1, "%s: %s\n", "script", "log and timing paths must be distinct");
+        // util-linux takes the same path for a log and the timing (the
+        // typical case being /dev/null for both); only the two logs are
+        // kept apart, which --log-io exists for.
+        if (!combined_path && output_path && input_path &&
+            string_equals(output_path, input_path))
+                return string_report(log_error, 1, "%s: %s\n", "script", "log paths must be distinct");
 
         string_address paths[] = {
             output_path, combined_path ? null : input_path, timing_path};
@@ -2275,9 +2420,11 @@ static b32 process_script()
                 timing->path = (string_address)"/dev/stderr";
         }
 
-        if (process_script_log_same(state.out, state.in) ||
-            process_script_log_same(state.out, timing) ||
-            process_script_log_same(state.in, timing))
+        // Two names for one device (the usual /dev/null twice) are no
+        // conflict; util-linux minds only a shared regular file.
+        if (process_script_log_regular(state.out) &&
+            (process_script_log_same(state.out, state.in) ||
+             process_script_log_same(state.out, timing)))
         {
                 string_report(log_error, 1, "%s: %s\n", "script", "log files must name distinct objects");
                 goto close_logs;
@@ -2290,6 +2437,10 @@ static b32 process_script()
                 string_report(log_error, 1, "%s: %s\n", "script", "command is too long");
                 goto close_logs;
         }
+        // util-linux hands a -- command to the shell as one line, the
+        // words joined by spaces, exactly as --command does.
+        if (!command && command_first < count)
+                command = display;
 
         p8 stamp[64];
         process_script_stamp(stamp, sizeof(stamp));
@@ -2481,8 +2632,14 @@ static bool process_replay_skip_header(
                 used += take;
                 if (take < room)
                 {
+                        if (!matches || used < 18)
+                        {
+                                // No opening line: nothing was consumed.
+                                reader->at -= used;
+                                return true;
+                        }
                         reader->at++;
-                        return matches && used >= 18;
+                        return true;
                 }
         }
         reader->failed = true;
@@ -2649,6 +2806,12 @@ static b32 process_scriptreplay()
         }
 
         string_address out_path = file_option_value(address_of taking, 'O');
+        if (out_path && file_option_value(address_of taking, 's'))
+        {
+                log_error("scriptreplay: options --log-out and --typescript cannot be combined\n",
+                          0);
+                return 1;
+        }
         if (!out_path)
                 out_path = file_option_value(address_of taking, 's');
         string_address in_path = file_option_value(address_of taking, 'I');
@@ -2660,11 +2823,10 @@ static b32 process_scriptreplay()
         if (!out_path && !in_path)
                 out_path = (string_address)"typescript";
 
+        // Operands past the divisor are ignored, as util-linux ignores them.
         string_address divisor_text = file_option_value(address_of taking, 'd');
         if (!divisor_text && operand < argument_count)
                 divisor_text = program_argument((b32)operand++);
-        if (operand < argument_count)
-                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "extra operand");
         positive divisor = 1000000000;
         if (divisor_text &&
             (!file_duration_read(divisor_text, false, address_of divisor) || !divisor))
@@ -2754,9 +2916,12 @@ static b32 process_scriptreplay()
                 if (kind == 'S')
                         continue;
 
-                process_replay_reader address_to source = both_path || kind == 'O'
-                                                              ? address_of output
-                                                              : address_of input;
+                // A classic timing file has no stream letters; with only an
+                // input log to play, its entries play that log.
+                process_replay_reader address_to source =
+                    both_path || (kind == 'O' && output.handle >= 0)
+                        ? address_of output
+                        : address_of input;
                 if (source->handle < 0)
                         continue;
                 if (!process_replay_payload(source, length, kind == selected,
@@ -2854,6 +3019,32 @@ static b32 process_ctrlaltdel()
         b32 answer;
         if (ul_options_done(address_of taking, "hard|soft", address_of answer))
                 return answer;
+
+        /* Without an operand util-linux reports the current setting, which
+           the kernel publishes as 0 (soft) or 1 (hard). */
+        if (taking.first == count)
+        {
+                string_address knob = (string_address)"/proc/sys/kernel/ctrl-alt-del";
+                p8 setting[16];
+                bipolar handle = system_open_at(AT_FDCWD, knob,
+                                                FILE_READ | O_CLOEXEC);
+                bipolar got = handle < 0
+                                  ? handle
+                                  : system_read_retry((positive)handle, setting,
+                                                      sizeof(setting) - 1);
+
+                if (handle >= 0)
+                        system_close(handle);
+                if (got < 0)
+                {
+                        string_format(log_error, "ctrlaltdel: cannot read %s: %s\n",
+                                      knob, file_reason(got));
+                        return 1;
+                }
+                log(got > 0 && setting[0] == '1' ? "hard\n" : "soft\n", 5);
+                log_flush();
+                return 0;
+        }
         if (taking.first + 1 != count)
                 return string_report(log_error, 1, "%s: %s\n", (string_address)"ctrlaltdel", (string_address)"expected hard or soft");
 

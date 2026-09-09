@@ -19,6 +19,16 @@
 static bipolar dns_resolve_any(string_address path, string_address name,
                                p32 address_to found, positive seconds);
 
+/* coreutils' complaint about a surplus word, with the usage hint. */
+static b32 tools_extra_operand(string_address program, string_address word)
+{
+        text_flush();
+        string_format(writer_stderr,
+                      "%s: extra operand '%s'\nTry '%s --help' for more information.\n",
+                      program, word, program);
+        return text_done(1);
+}
+
 // hostid ----------------------------------------------------
 
 /* Linux gethostid first accepts the native four-byte /etc/hostid.  Without
@@ -75,7 +85,8 @@ static b32 tools_hostid()
                 return text_done(1);
 
         if (taking.first < (positive)program_argument_count())
-                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument((b32)taking.first), "extra operand"));
+                return tools_extra_operand("hostid",
+                                           program_argument((b32)taking.first));
 
         positive_to_base_field(text_put, tools_hostid_value(), 16, 8, -1,
                                (positive)1 << 28);
@@ -132,6 +143,7 @@ enum
 typedef struct
 {
         bipolar handle;
+        bipolar last_error;
         positive priority;
         positive process;
         positive maximum;
@@ -195,6 +207,27 @@ static fn logger_build_positive(logger_builder address_to build, positive value)
         p8 digits[24];
         positive length = positive_into(digits, value);
         logger_build_bytes(build, digits, length);
+}
+
+/* The clock's own opinion of itself, which RFC 5424's time quality reports:
+   a discipline without STA_UNSYNC is synchronised, and maxerror is the bound
+   it claims. struct timex is one 32-bit mode word padded out to the long
+   fields, so maxerror is the fourth word and status the sixth. */
+#define LOGGER_TIMEX_WORDS 26
+#define LOGGER_TIMEX_MAXERROR 3
+#define LOGGER_TIMEX_STATUS 5
+#define LOGGER_CLOCK_UNSYNCHRONISED 0x40
+
+static bool logger_clock_synced(positive address_to accuracy)
+{
+        positive words[LOGGER_TIMEX_WORDS] = {0};
+
+        if (system_call_1(syscall(adjtimex), (positive)words) < 0 ||
+            ((p32)words[LOGGER_TIMEX_STATUS] & LOGGER_CLOCK_UNSYNCHRONISED))
+                return false;
+
+        address_to accuracy = words[LOGGER_TIMEX_MAXERROR];
+        return true;
 }
 
 static fn logger_build_padded(logger_builder address_to build, positive value,
@@ -425,8 +458,22 @@ static bool logger_header(logger_control address_to control,
                                                         : (string_address)"-");
                 logger_build_character(address_of build, ' ');
                 if (control->rfc_quality)
-                        logger_build_string(address_of build,
-                            "[timeQuality tzKnown=\"1\" isSynced=\"0\"]");
+                {
+                        // util-linux asks the kernel's NTP state: a
+                        // synchronised clock also reports its error bound.
+                        positive accuracy;
+
+                        if (logger_clock_synced(address_of accuracy))
+                        {
+                                logger_build_string(address_of build,
+                                    "[timeQuality tzKnown=\"1\" isSynced=\"1\" syncAccuracy=\"");
+                                logger_build_positive(address_of build, accuracy);
+                                logger_build_string(address_of build, "\"]");
+                        }
+                        else
+                                logger_build_string(address_of build,
+                                    "[timeQuality tzKnown=\"1\" isSynced=\"0\"]");
+                }
                 else
                         logger_build_character(address_of build, '-');
                 logger_build_character(address_of build, ' ');
@@ -557,16 +604,40 @@ static bool logger_connect(logger_control address_to control)
         if (control->transport != LOGGER_TRANSPORT_STREAM)
                 control->handle = logger_connect_kind(control,
                                                      LOGGER_TRANSPORT_DGRAM);
+        if (control->handle < 0)
+                control->last_error = control->handle;
         if (control->handle < 0 && control->transport != LOGGER_TRANSPORT_DGRAM)
+        {
                 control->handle = logger_connect_kind(control,
                                                      LOGGER_TRANSPORT_STREAM);
+                if (control->handle < 0)
+                        control->last_error = control->handle;
+        }
 
         if (control->handle >= 0)
                 return true;
 
-        if (control->server || control->socket_errors)
-                return string_diagnostic(&text_diagnostic, 0, control->server ? control->server
-                                           : control->socket_path, "cannot connect to logging socket");
+        if (control->server)
+        {
+                text_flush();
+                string_format(writer_stderr,
+                              "logger: failed to connect to %s port %s\n",
+                              control->server,
+                              control->port ? control->port
+                              : control->transport == LOGGER_TRANSPORT_STREAM
+                                  ? (string_address)"601"
+                                  : (string_address)"514");
+                return false;
+        }
+        if (control->socket_errors)
+        {
+                text_flush();
+                string_format(writer_stderr, "logger: socket %s: %s\n",
+                              control->socket_path ? control->socket_path
+                                                   : (string_address)"/dev/log",
+                              file_reason(control->last_error));
+                return false;
+        }
         return true;
 }
 
@@ -665,8 +736,31 @@ static bool logger_message_id_valid(string_address message_id)
 static bool logger_stream(logger_control address_to control,
                           string_address path)
 {
+        if (path)
+        {
+                bipolar opened = text_open_handle(path, FILE_READ, 0);
+
+                if (opened < 0)
+                {
+                        text_flush();
+                        string_format(writer_stderr, "logger: file %s: %s\n",
+                                      path, file_reason(opened));
+                        return false;
+                }
+                system_close((positive)opened);
+        }
         if (!text_open(path))
                 return false;
+
+        // util-linux reads a directory as an empty file, without a word.
+        file_facts facts;
+        if (path && file_look(text_input.handle, (string_address)"",
+                              AT_EMPTY_PATH, address_of facts) &&
+            (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+        {
+                text_close();
+                return true;
+        }
 
         bool answer = true;
         positive default_priority = control->priority;
@@ -720,15 +814,15 @@ static bool logger_stream(logger_control address_to control,
         return answer;
 }
 
-static bool logger_operands(logger_control address_to control, positive first)
+static bool logger_operands(logger_control address_to control)
 {
-        positive count = (positive)program_argument_count();
+        positive count = file_operand_count;
         positive used = 0;
         bool answer = true;
 
-        for (positive index = first; index < count; index++)
+        for (positive index = 0; index < count; index++)
         {
-                string_address word = program_argument((b32)index);
+                string_address word = file_operand_at(index);
                 positive length = string_length(word);
 
                 if (length > control->maximum)
@@ -805,6 +899,23 @@ static bool logger_journald(logger_control address_to control,
         if (!entry || failed)
                 return false;
 
+        for (positive at = 0; at < length;)
+        {
+                positive stop = at + memory_span_without_byte(entry + at, '\n',
+                                                              length - at);
+                positive name = memory_span_without_byte(entry + at, '=',
+                                                         stop - at);
+
+                if (stop > at && (name == stop - at || !name))
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "logger: journald entry could not be written\n");
+                        return false;
+                }
+                at = stop < length ? stop + 1 : length;
+        }
+
         if (control->standard_error)
         {
                 text_out_to(2);
@@ -840,6 +951,8 @@ static b32 tools_logger()
             {(string_address)"34", address_of chosen_protocol},
             {null, null},
         };
+        // Options after the message are still options, as with getopt.
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address)"logger",
             .allowed = (string_address)"efipSstudTnP",
@@ -848,11 +961,12 @@ static b32 tools_logger()
             .long_optional = (string_address)"I4J",
             .longs = logger_longs,
             .supersedes = supersedes,
+            .operand = file_operand,
         };
 
         text_begin("logger");
         text_delimiter = '\n';
-        if (!file_take(address_of taking))
+        if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
 
         if (taking.flags & (FILE_FLAG('D') | FILE_FLAG('X')))
@@ -897,7 +1011,14 @@ static b32 tools_logger()
 
         string_address priority_text = file_option_value(address_of taking, 'p');
         if (priority_text && !logger_priority(priority_text, address_of control.priority))
-                return text_done(string_diagnostic(&text_diagnostic, 1, priority_text, "unknown priority"));
+        {
+                string_address level = string_first_of(priority_text, '.');
+
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "logger: unknown priority name: %s\n",
+                    level ? level + 1 : priority_text));
+        }
 
         string_address size_text = file_option_value(address_of taking, 'S');
         if (size_text && !logger_size(size_text, address_of control.maximum))
@@ -914,10 +1035,23 @@ static b32 tools_logger()
                 else if (!string_compare(socket_errors, "off"))
                         control.socket_errors = false;
                 else if (string_compare(socket_errors, "auto"))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, socket_errors, "invalid socket error mode"));
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "logger: invalid argument: %s: using automatic errors\n",
+                            socket_errors);
+                        socket_errors = (string_address)"auto";
+                }
         }
-        else
-                control.socket_errors = control.standard_error || control.no_action;
+        if (!socket_errors || !string_compare(socket_errors, "auto"))
+        {
+                // util-linux's auto: report when the journal's socket says a
+                // logging daemon is expected to be there.
+                file_facts journal;
+                control.socket_errors = file_look_at(
+                    (string_address)"/run/systemd/journal/socket",
+                    address_of journal);
+        }
 
         if (taking.flags & FILE_FLAG('i'))
                 control.process = (positive)system_call(syscall(getpid));
@@ -928,7 +1062,20 @@ static b32 tools_logger()
                 {
                         if (!string_digits_exact(identity, address_of control.process) ||
                             !control.process || control.process > p32_max)
-                                return text_done(string_diagnostic(&text_diagnostic, 1, identity, "invalid process id"));
+                        {
+                                positive parsed;
+                                bool numeric = string_digits_exact(identity,
+                                                                   address_of parsed);
+
+                                text_flush();
+                                return text_done(numeric
+                                    ? string_report(writer_stderr, 1,
+                                          "logger: failed to parse id: '%s': Numerical result out of range\n",
+                                          identity)
+                                    : string_report(writer_stderr, 1,
+                                          "logger: failed to parse id: '%s'\n",
+                                          identity));
+                        }
                 }
                 else
                         control.process = (positive)system_call(syscall(getpid));
@@ -939,7 +1086,12 @@ static b32 tools_logger()
 
         string_address rfc_flags = file_option_value(address_of taking, '4');
         if (rfc_flags && !logger_rfc_flags(address_of control, rfc_flags))
-                return text_done(string_diagnostic(&text_diagnostic, 1, rfc_flags, "unsupported RFC 5424 qualifier"));
+        {
+                text_flush();
+                string_format(writer_stderr,
+                              "logger: ignoring unknown option argument: %s\n",
+                              rfc_flags);
+        }
 
         if (!control.tag)
         {
@@ -955,6 +1107,13 @@ static b32 tools_logger()
         if (control.protocol == LOGGER_PROTOCOL_5424 &&
             string_length(control.tag) > 48)
                 return text_done(string_diagnostic(&text_diagnostic, 1, control.tag, "tag is too long for RFC 5424"));
+
+        if (file_operand_count && file_option_value(address_of taking, 'f'))
+        {
+                text_flush();
+                string_format(writer_stderr,
+                    "logger: --file <file> and <message> are mutually exclusive; file is ignored\n");
+        }
 
         if (taking.flags & FILE_FLAG('J'))
         {
@@ -981,9 +1140,8 @@ static b32 tools_logger()
                 return text_done(1);
 
         bool answer;
-        positive count = (positive)program_argument_count();
-        if (taking.first < count)
-                answer = logger_operands(address_of control, taking.first);
+        if (file_operand_count)
+                answer = logger_operands(address_of control);
         else
                 answer = logger_stream(address_of control,
                                        file_option_value(address_of taking, 'f'));
@@ -1098,7 +1256,8 @@ static bool login_records(string_address path, bool check_processes,
 
         if (input < 0)
         {
-                if (missing_ok && input == -ERROR_NO_ENTRY)
+                if (missing_ok && (input == -ERROR_NO_ENTRY ||
+                                   input == -ERROR_ACCESS))
                         return true;
 
                 return string_diagnostic(&text_diagnostic, 0, path ? path : (string_address)"standard input", file_reason(input));
@@ -1112,6 +1271,11 @@ static bool login_records(string_address path, bool check_processes,
                 bipolar got = system_read_retry((positive)input,
                                                 file_transfer + held,
                                                 sizeof(file_transfer) - held);
+
+                // A directory opens and then has no records: the system
+                // readers walk it as an empty database, without a word.
+                if (got == -ERROR_IS_DIRECTORY)
+                        break;
 
                 if (got < 0)
                 {
@@ -2013,6 +2177,7 @@ static b32 tools_wall()
         bool banner = true;
         if (taking.flags & FILE_FLAG('n'))
         {
+                // util-linux warns and goes on with the banner.
                 if (!system_call(syscall(geteuid)))
                         banner = false;
                 else
@@ -2282,6 +2447,16 @@ static fn login_utmpdump_field(p8 address_to field, positive length,
         text_put_string("] ");
 }
 
+/* util-linux shows a byte that is not printable, or that would be taken
+   for a field bracket, as a question mark. */
+static fn login_utmpdump_cleanse(p8 address_to field, positive length)
+{
+        for (positive at = 0; at < length; at++)
+                if (!byte_is_printable(field[at]) || field[at] == '[' ||
+                    field[at] == ']')
+                        field[at] = '?';
+}
+
 static bool login_utmpdump_visit(login_record address_to record)
 {
         p8 number[32], identity[5], user[33], line[33], host[257];
@@ -2297,18 +2472,21 @@ static bool login_utmpdump_visit(login_record address_to record)
 
         length = login_field(identity, sizeof(identity), record->identity,
                              sizeof(record->identity), false);
+        login_utmpdump_cleanse(identity, length);
         login_utmpdump_field(identity, length, 4);
+        /* util-linux pads these three to a column but prints a longer
+           value whole; only the four-byte id is cut. */
         length = login_field(user, sizeof(user), record->user,
                              sizeof(record->user), false);
-        if (length > 8) length = 8;
+        login_utmpdump_cleanse(user, length);
         login_utmpdump_field(user, length, 8);
         length = login_field(line, sizeof(line), record->line,
                              sizeof(record->line), false);
-        if (length > 12) length = 12;
+        login_utmpdump_cleanse(line, length);
         login_utmpdump_field(line, length, 12);
         length = login_field(host, sizeof(host), record->host,
                              sizeof(record->host), false);
-        if (length > 20) length = 20;
+        login_utmpdump_cleanse(host, length);
         login_utmpdump_field(host, length, 20);
 
         length = login_address_text(address, record->address);
@@ -2330,36 +2508,58 @@ static const file_long login_utmpdump_longs[] = {
     {null, 0},
 };
 
+static bipolar login_utmpdump_output;
+
+/* util-linux opens each -o file as the option is read, so a bad one is
+   refused before a later good one could supersede it. */
+static bool login_utmpdump_seen(p8 letter, string_address value)
+{
+        if (letter != 'o')
+                return true;
+        if (login_utmpdump_output > 2)
+                system_close(login_utmpdump_output);
+        login_utmpdump_output = text_open_handle(value, FILE_WRITE, 0666);
+        if (login_utmpdump_output < 0)
+        {
+                string_format(writer_stderr, "utmpdump: cannot open %s: %s\n", value,
+                              file_reason(login_utmpdump_output));
+                return false;
+        }
+        return true;
+}
+
 static b32 tools_utmpdump()
 {
         file_operands_begin();
+        login_utmpdump_output = -1;
         file_taking taking = {
             .program = (string_address)"utmpdump",
             .allowed = (string_address)"frohV",
             .valued = (string_address)"o",
             .longs = login_utmpdump_longs,
             .operand = file_operand,
+            .seen = login_utmpdump_seen,
         };
         text_begin("utmpdump");
         if (!file_take(address_of taking) || file_operand_failed)
+        {
+                if (login_utmpdump_output > 2)
+                        system_close(login_utmpdump_output);
                 return text_done(1);
+        }
         if (file_meta(address_of taking, "[options] [filename]", text_put))
                 return text_done(0);
-        if (file_operand_count > 1)
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_operand_at(1), "extra operand"));
         if (taking.flags & FILE_FLAG('r'))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "reverse import is not supported; binary login state is never mutated"));
         if (taking.flags & FILE_FLAG('f'))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "follow mode is not supported"));
 
+        // util-linux dumps the first operand and ignores any others.
         positive output_handle = 1;
         string_address output = file_option_value(address_of taking, 'o');
         if (output)
         {
-                bipolar opened = text_open_handle(output, FILE_WRITE, 0666);
-                if (opened < 0)
-                        return text_done(string_diagnostic(&text_diagnostic, 1, output, file_reason(opened)));
-                output_handle = (positive)opened;
+                output_handle = (positive)login_utmpdump_output;
                 text_out_to(output_handle);
         }
 
@@ -2385,6 +2585,7 @@ enum
         LOGIN_LAST_END_CRASH,
         LOGIN_LAST_END_STILL,
         LOGIN_LAST_END_GONE,
+        LOGIN_LAST_END_LOGGED,
 };
 
 enum
@@ -2392,6 +2593,7 @@ enum
         LOGIN_LAST_TIME_SHORT,
         LOGIN_LAST_TIME_FULL,
         LOGIN_LAST_TIME_ISO,
+        LOGIN_LAST_TIME_NONE,
 };
 
 typedef struct
@@ -2673,7 +2875,9 @@ static fn login_last_line(string_address user, string_address line,
                                  separator);
 
         p8 start_text[64], end_text[64], duration[64];
-        positive start_length = login_last_time(start_text, start, false);
+        bool timeless = login_last.time_format == LOGIN_LAST_TIME_NONE;
+        positive start_length = timeless
+            ? 0 : login_last_time(start_text, start, false);
         text_put(start_text, start_length);
 
         bool ended = end_kind == LOGIN_LAST_END_LOGOUT ||
@@ -2682,7 +2886,26 @@ static fn login_last_line(string_address user, string_address line,
         positive duration_length = ended
             ? login_last_duration(duration, start, finish) : 0;
 
-        if (login_last.tabs)
+        if (timeless)
+        {
+                // Both time columns are empty but keep their separators;
+                // the last word is the one the wide layouts spell after
+                // "still" or "gone -".
+                text_put_character(separator);
+                text_put_character(separator);
+                if (ended)
+                {
+                        text_put_character(' ');
+                        text_put(duration, duration_length);
+                }
+                else if (end_kind == LOGIN_LAST_END_STILL)
+                        text_put_string("running");
+                else if (end_kind == LOGIN_LAST_END_LOGGED)
+                        text_put_string("logged in");
+                else
+                        text_put_string("no logout");
+        }
+        else if (login_last.tabs)
         {
                 text_put_character('\t');
                 if (end_kind == LOGIN_LAST_END_LOGOUT)
@@ -2704,6 +2927,8 @@ static fn login_last_line(string_address user, string_address line,
                 }
                 else if (end_kind == LOGIN_LAST_END_STILL)
                         text_put_string("  still\trunning");
+                else if (end_kind == LOGIN_LAST_END_LOGGED)
+                        text_put_string("  still\tlogged in");
                 else
                         text_put_string("   gone\t- no logout");
         }
@@ -2741,18 +2966,51 @@ static fn login_last_line(string_address user, string_address line,
         }
         else if (end_kind == LOGIN_LAST_END_STILL)
                 text_put_string("   still running");
+        else if (end_kind == LOGIN_LAST_END_LOGGED)
+                text_put_string("   still logged in");
         else
-                text_put_string("    gone - no logout");
+                text_put_string(login_last.time_format == LOGIN_LAST_TIME_SHORT
+                                    ? "    gone - no logout"
+                                    : "   gone - no logout");
 
         if (!login_last.no_host && login_last.host_last && *host)
         {
-                positive gap = ended ? 5
-                                     : end_kind == LOGIN_LAST_END_STILL ? 6
-                                                                        : 2;
-                writer_fill(text_put, gap, ' ');
+                // The closing word sits in a twelve-wide column.
+                positive word = ended ? 1 + duration_length
+                                : end_kind == LOGIN_LAST_END_STILL ? 7
+                                : end_kind == LOGIN_LAST_END_LOGGED ? 9
+                                                                     : 11;
+                writer_fill(text_put, word < 13 ? 13 - word : 1, ' ');
                 text_put_string(host);
         }
         text_put_character('\n');
+}
+
+/* util-linux calls a login with no logout a phantom when it predates the
+   running system's boot, names no account, or its terminal is no longer
+   that account's; only otherwise is the user still logged in. */
+static bool login_last_alive(login_record address_to record,
+                             string_address user, string_address line)
+{
+        p64 real = system_clock_ns(0);
+        p64 boot = system_clock_ns(7);
+        b64 booted = real > boot ? (b64)((real - boot) / SYSTEM_NANOSECONDS)
+                                 : 0;
+
+        if (record->seconds < booted)
+                return false;
+
+        bipolar owner = file_user_id(user);
+
+        if (owner < 0)
+                return false;
+
+        p8 path[FILE_PATH_MAX];
+        file_facts facts;
+
+        path_join(path, FILE_PATH_MAX, (string_address)"/dev", line);
+        return file_look_at(path, address_of facts) &&
+               (positive)facts.owner == (positive)owner;
 }
 
 static bool login_last_emit(login_record address_to record,
@@ -2789,6 +3047,8 @@ static b32 tools_last()
             .valued = (string_address)"fnpstz",
             .longs = login_last_longs,
             .operand = file_operand,
+            // last -3 is the line limit said without its letter.
+            .digits = 'n',
         };
         text_begin("last");
         if (!file_take(address_of taking) || file_operand_failed)
@@ -2812,6 +3072,12 @@ static b32 tools_last()
                                      ? LOGIN_LAST_TIME_FULL
                                      : LOGIN_LAST_TIME_SHORT;
         string_address format = file_option_value(address_of taking, 'z');
+        if (format && (taking.flags & FILE_FLAG('F')))
+        {
+                writer_stderr("last: options --fulltimes and --time-format cannot be combined\n",
+                          0);
+                return text_done(1);
+        }
         if (format)
         {
                 if (string_equals(format, "short"))
@@ -2820,8 +3086,11 @@ static b32 tools_last()
                         login_last.time_format = LOGIN_LAST_TIME_FULL;
                 else if (string_equals(format, "iso"))
                         login_last.time_format = LOGIN_LAST_TIME_ISO;
+                else if (string_equals(format, "notime"))
+                        login_last.time_format = LOGIN_LAST_TIME_NONE;
                 else
-                        return text_done(string_diagnostic(&text_diagnostic, 1, format, "time format is unsupported (use short, full, or iso)"));
+                        return text_done(string_diagnostic(&text_diagnostic, 1, format,
+                            "time format is unsupported (use notime, short, full, or iso)"));
         }
         login_last.full_names = (taking.flags & FILE_FLAG('w')) != 0;
         login_last.no_host = (taking.flags & FILE_FLAG('R')) != 0;
@@ -2838,6 +3107,18 @@ static b32 tools_last()
         bipolar loaded = login_last_reader_open(path, address_of reader);
         if (loaded < 0)
                 return text_done(string_diagnostic(&text_diagnostic, 1, path, file_reason(loaded)));
+
+        // util-linux warns about a directory and goes on to say when the
+        // (empty) database begins.
+        file_facts kind;
+        if (file_look(reader.handle, (string_address)"", AT_EMPTY_PATH,
+                      address_of kind) &&
+            (kind.mode & MODE_FORMAT) == MODE_DIRECTORY)
+        {
+                string_format(writer_stderr, "last: cannot read %s: Is a directory\n",
+                              path);
+                reader.records = 0;
+        }
 
         login_record record;
         for (positive at = reader.records; at; at--)
@@ -2907,12 +3188,11 @@ static b32 tools_last()
                                 kind = login_last.boundary_kind;
                                 finish = login_last.boundary;
                         }
-                        if (!kind && login_last.latest_boot >
-                                         login_last.latest_shutdown &&
-                            record.seconds >= login_last.latest_boot)
-                                kind = LOGIN_LAST_END_STILL;
                         if (!kind)
-                                kind = LOGIN_LAST_END_GONE;
+                                kind = login_last_alive(address_of record, user,
+                                                        line)
+                                           ? LOGIN_LAST_END_LOGGED
+                                           : LOGIN_LAST_END_GONE;
                         login_last_emit(address_of record, user, line, host,
                                         kind, finish);
                         ending = login_last_end_for(line, true);
@@ -2924,14 +3204,17 @@ static b32 tools_last()
                 }
                 if (record.type == LOGIN_BOOT_TIME)
                 {
-                        p8 kind = login_last.boundary
+                        // A boot ends at the shutdown that followed it; a
+                        // later boot without one is a crash and util-linux
+                        // leaves the earlier system "still running".
+                        p8 kind = login_last.boundary &&
+                                          login_last.boundary_kind ==
+                                              LOGIN_LAST_END_DOWN
                                       ? LOGIN_LAST_END_LOGOUT
-                                      : record.seconds == login_last.latest_boot &&
-                                                login_last.latest_boot >
-                                                    login_last.latest_shutdown
-                                            ? LOGIN_LAST_END_STILL
-                                            : LOGIN_LAST_END_GONE;
-                        login_last_emit(address_of record, "reboot",
+                                      : LOGIN_LAST_END_STILL;
+                        // The record's own user, which init writes as
+                        // reboot; util-linux prints whatever is there.
+                        login_last_emit(address_of record, user,
                                         "system boot", host, kind,
                                         login_last.boundary);
                         login_last.newer_boot = record.seconds;
@@ -2962,9 +3245,11 @@ static b32 tools_last()
                         p8 wanted = (p8)record.process;
                         if (byte_is_printable(wanted))
                                 level[8] = wanted;
-                        p8 kind = login_last.boundary
+                        p8 kind = login_last.boundary &&
+                                          login_last.boundary_kind ==
+                                              LOGIN_LAST_END_DOWN
                                       ? LOGIN_LAST_END_LOGOUT
-                                      : LOGIN_LAST_END_GONE;
+                                      : LOGIN_LAST_END_STILL;
                         login_last_emit(address_of record, "runlevel", level,
                                         host, kind, login_last.boundary);
                 }
@@ -3098,10 +3383,7 @@ static bool login_who_visit(login_record address_to record)
         if (record->type == LOGIN_BOOT_TIME)
                 login_who.boottime = (b64)record->seconds;
 
-        if (login_who.my_line &&
-            (!login_who.tty || !login_ends_with(line, login_who.tty)))
-                return true;
-
+        // -q counts every login name whatever else was asked, -m included.
         if (login_who.count)
         {
                 if (record->type == LOGIN_USER_PROCESS)
@@ -3114,6 +3396,10 @@ static bool login_who_visit(login_record address_to record)
                 }
                 return true;
         }
+
+        if (login_who.my_line &&
+            (!login_who.tty || !login_ends_with(line, login_who.tty)))
+                return true;
 
         login_time(time, record->seconds);
 
@@ -3204,7 +3490,13 @@ static bool login_who_visit(login_record address_to record)
         return true;
 }
 
+static const file_long login_pinky_longs[] = {
+    {(string_address) "lookup", 'L'},
+    {null, 0},
+};
+
 static const file_long login_who_longs[] = {
+    {(string_address) "lookup", 'L'},
     {(string_address) "all", 'a'},
     {(string_address) "boot", 'b'},
     {(string_address) "count", 'q'},
@@ -3227,7 +3519,7 @@ static b32 tools_who()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "who",
-            .allowed = (string_address) "abdlmpqrstuwHT",
+            .allowed = (string_address) "abdlmpqrstuwHTL",
             .valued = (string_address) "",
             .longs = login_who_longs,
             .operand = file_operand,
@@ -3240,7 +3532,7 @@ static b32 tools_who()
                 return text_done(1);
 
         if (file_operand_count > 2)
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_operand_at(2), "extra operand"));
+                return tools_extra_operand("who", file_operand_at(2));
 
         positive flags = taking.flags;
         bool all = (flags & FILE_FLAG('a')) != 0;
@@ -3355,7 +3647,7 @@ static b32 tools_users()
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
         if (file_operand_count > 1)
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_operand_at(1), "extra operand"));
+                return tools_extra_operand("users", file_operand_at(1));
 
         string_address path = file_operand_count
                                   ? file_operand_at(0)
@@ -3538,9 +3830,10 @@ static b32 tools_pinky()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "pinky",
-            .allowed = (string_address) "sfwiqbhlp",
+            .allowed = (string_address) "sfwiqbhlpL",
             .valued = (string_address) "",
             .operand = file_operand,
+            .longs = login_pinky_longs,
             .seen = login_pinky_seen,
         };
 
@@ -3739,7 +4032,8 @@ static b32 tools_tsort()
         positive arguments = (positive)program_argument_count() - taking.first;
 
         if (arguments > 1)
-                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument((b32)taking.first + 1), "extra operand"));
+                return tools_extra_operand("tsort",
+                                           program_argument((b32)taking.first + 1));
 
         string_address path = arguments
                                   ? program_argument((b32)taking.first)
@@ -4585,7 +4879,48 @@ static fn numfmt_invalid_value(p8 address_to bytes, positive length)
                 positive take = min(length, sizeof(shown) - 1);
                 memory_copy(shown, bytes, take);
                 shown[take] = end;
-                string_diagnostic(&text_diagnostic, 0, shown, "invalid number");
+
+                /* GNU names the failure: no number at all, a scale letter
+                   refused for want of --from, a scale lacking the i of
+                   --from=iec-i, or a suffix that is no scale. */
+                positive at = length && bytes[0] == '-';
+                positive digits = string_span_max(bytes + at, length - at,
+                                                  string_set_digits);
+                positive rest = at + digits;
+                if (rest < length && bytes[rest] == '.')
+                {
+                        rest++;
+                        digits++;
+                        rest += string_span_max(bytes + rest, length - rest,
+                                                string_set_digits);
+                }
+                string_address reason = "invalid number";
+                string_address note = "";
+                positive power;
+
+                text_flush();
+                if (digits && rest < length &&
+                    numfmt_power_letter(bytes[rest], address_of power))
+                {
+                        if (numfmt.from == NUMFMT_SCALE_NONE)
+                        {
+                                reason = "rejecting suffix in input";
+                                note = " (consider using --from)";
+                        }
+                        else if (numfmt.from == NUMFMT_SCALE_IEC_I &&
+                                 !(rest + 1 < length && bytes[rest + 1] == 'i'))
+                        {
+                                reason = "missing 'i' suffix in input";
+                                note = " (e.g Ki/Mi/Gi)";
+                        }
+                        else
+                                reason = "invalid suffix in input";
+                }
+                else if (digits && rest < length)
+                        reason = "invalid suffix in input";
+
+                string_format(writer_stderr, "numfmt: %s: '%s'%s\n", reason, shown,
+                              note);
         }
 
         if (numfmt.invalid == NUMFMT_INVALID_ABORT ||
@@ -4879,6 +5214,31 @@ static fn numfmt_record(p8 address_to bytes, positive length)
         }
 }
 
+/* GNU refuses a bad delimiter or header count as it reads the option, even
+   when a later one would supersede it. */
+static bool numfmt_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'd' && value && string_length(value) > 1)
+        {
+                text_flush();
+                writer_stderr("numfmt: the delimiter must be a single character\n", 0);
+                return false;
+        }
+        if (letter == 'h' && value)
+        {
+                positive header;
+
+                if (!string_digits_exact(value, address_of header) || !header)
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                                      "numfmt: invalid header value '%s'\n", value);
+                        return false;
+                }
+        }
+        return true;
+}
+
 static b32 tools_numfmt()
 {
         file_operands_begin();
@@ -4889,6 +5249,7 @@ static b32 tools_numfmt()
             .long_optional = (string_address) "h",
             .longs = numfmt_longs,
             .operand = file_operand,
+            .seen = numfmt_option_seen,
         };
 
         text_begin("numfmt");
@@ -4970,7 +5331,18 @@ static b32 tools_numfmt()
         if (numfmt.grouping && numfmt.have_format)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "--grouping cannot be combined with --format"));
         if (numfmt.grouping && numfmt.to != NUMFMT_SCALE_NONE)
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--grouping cannot be combined with --to"));
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "numfmt: grouping cannot be combined with --to\n"));
+        }
+        if (numfmt.have_format && numfmt.format.grouping &&
+            numfmt.to != NUMFMT_SCALE_NONE)
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "numfmt: grouping cannot be combined with --to\n"));
+        }
 
         value = file_option_value(address_of taking, 'd');
         if (flags & FILE_FLAG('d'))
@@ -4989,6 +5361,9 @@ static b32 tools_numfmt()
         value = file_option_value(address_of taking, 'f');
         if (!value)
                 value = (string_address) "1";
+        // A lone dash is every field.
+        if (string_equals(value, "-"))
+                value = (string_address) "1-";
         if (!text_list_parse(value))
                 return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid field specification"));
 
@@ -5004,12 +5379,26 @@ static b32 tools_numfmt()
 
         text_delimiter = (flags & FILE_FLAG('z')) ? '\0' : '\n';
 
+        // GNU's two warnings about options that another option overrides,
+        // both of which it prints only under --debug.
+        if (numfmt.debug && numfmt.have_format && numfmt.format.width && numfmt.padding)
+        {
+                text_flush();
+                writer_stderr("numfmt: --format padding overriding --padding\n", 0);
+        }
+        if (numfmt.debug && (flags & FILE_FLAG('h')) && file_operand_count)
+        {
+                text_flush();
+                writer_stderr("numfmt: --header ignored with command-line input\n", 0);
+        }
+
         if (file_operand_count)
         {
+                // Each operand is a record: fields and their padding apply.
                 for (positive at = 0; at < file_operand_count && !numfmt.stop; at++)
                 {
                         string_address word = file_operand_at(at);
-                        numfmt_convert(word, string_length(word), 0);
+                        numfmt_record((p8 address_to)word, string_length(word));
                         if (!numfmt.stop)
                                 text_put_character(text_delimiter);
                 }
@@ -5020,12 +5409,20 @@ static b32 tools_numfmt()
 
                 while (!numfmt.stop && text_line_next(text_line, 0))
                 {
+                        // A newline inside a NUL-delimited record is blank
+                        // space between fields, and GNU rewrites it as one.
+                        if (text_delimiter == '\0' && !numfmt.delimiter_given)
+                                for (positive at = 0; at < text_line_length; at++)
+                                        if (text_line[at] == '\n')
+                                                text_line[at] = ' ';
+
                         if (records++ < numfmt.header)
                                 text_put(text_line, text_line_length);
                         else
                                 numfmt_record(text_line, text_line_length);
 
-                        if (!numfmt.stop)
+                        // A last record the input left unterminated stays so.
+                        if (!numfmt.stop && text_line_ended)
                                 text_put_character(text_delimiter);
                 }
 
@@ -5422,11 +5819,40 @@ static bool factor_number(p8 address_to bytes, positive length,
 
 invalid:
         {
-                p8 shown[64];
-                positive take = min(length, sizeof(shown) - 1);
-                memory_copy(shown, bytes, take);
+                p8 shown[256];
+                positive take = 0;
+
+                for (positive at = 0; at < length && take + 4 < sizeof(shown); at++)
+                {
+                        p8 byte = bytes[at];
+
+                        if (byte_is_printable(byte))
+                                shown[take++] = byte;
+                        else
+                        {
+                                shown[take++] = '\\';
+                                shown[take++] = (p8)('0' + (byte >> 6));
+                                shown[take++] = (p8)('0' + ((byte >> 3) & 7));
+                                shown[take++] = (p8)('0' + (byte & 7));
+                        }
+                }
                 shown[take] = end;
-                string_diagnostic(&text_diagnostic, 0, shown, "not a valid positive native-word integer");
+
+                // Digits alone overflowed the native word, this factor's
+                // stated ceiling; anything else is GNU's own complaint.
+                positive digits = start;
+                while (digits < length && byte_is_digit(bytes[digits]))
+                        digits++;
+
+                text_flush();
+                if (digits == length && length > start)
+                        string_format(writer_stderr,
+                                      "factor: %s: not a valid positive native-word integer\n",
+                                      shown);
+                else
+                        string_format(writer_stderr,
+                                      "factor: '%s' is not a valid positive integer\n",
+                                      shown);
         }
         return false;
 }
@@ -5708,17 +6134,19 @@ static bool tools_uuidgen_hex_name(string_address text,
 
 static b32 tools_uuidgen()
 {
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address)"uuidgen",
             .allowed = (string_address)"rtmnNsC67x",
             .valued = (string_address)"nNC",
             .longs = tools_uuidgen_longs,
+            .operand = file_operand,
         };
 
         text_begin("uuidgen");
         text_arena_used = 0;
 
-        if (!file_take(address_of taking))
+        if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -5989,7 +6417,7 @@ static bool tools_uuid_columns(string_address text, p8 address_to columns,
         return name_list_select(
             text, tools_uuid_column_names, sizeof(tools_uuid_column_names[0]),
             array_count(tools_uuid_column_names), columns, count, 32,
-            NAME_LIST_CASE_SENSITIVE | NAME_LIST_REJECT_TRAILING);
+            NAME_LIST_REJECT_TRAILING);
 }
 
 static string_address tools_uuid_cell(tools_uuid_record address_to record,
@@ -6045,8 +6473,14 @@ static b32 tools_uuidparse()
         };
         positive column_count = 4;
         string_address output = file_option_value(address_of taking, 'o');
+        // util-linux fails an empty list without a word.
+        if (output && !string_get(output))
+                return text_done(1);
         if (output && !tools_uuid_columns(output, columns, address_of column_count))
                 return text_done(string_diagnostic(&text_diagnostic, 1, output, "unknown or excessive output column"));
+        // Nothing to parse prints nothing, not even the heading.
+        if (!file_operand_count)
+                return text_done(0);
 
         if (json)
         {
@@ -6164,6 +6598,24 @@ static fn tools_mcookie_mix(file_random_state address_to random,
         }
 }
 
+/* util-linux parses each --max-size as it is read, so a bad one is refused
+   even when a later one would supersede it. */
+static bool tools_mcookie_seen(p8 letter, string_address value)
+{
+        positive maximum;
+
+        if (letter == 'm' && value &&
+            !(string_is(value, '0') && !string_get(value + 1)) &&
+            !split_size(value, address_of maximum))
+        {
+                string_format(writer_stderr,
+                              "mcookie: failed to parse length: '%s': Invalid argument\n",
+                              value);
+                return false;
+        }
+        return true;
+}
+
 static b32 tools_mcookie()
 {
         file_taking taking = {
@@ -6171,6 +6623,7 @@ static b32 tools_mcookie()
             .allowed = (string_address)"fmv",
             .valued = (string_address)"fm",
             .longs = tools_mcookie_longs,
+            .seen = tools_mcookie_seen,
         };
 
         text_begin("mcookie");
@@ -6179,10 +6632,18 @@ static b32 tools_mcookie()
 
         positive maximum = 4096;
         string_address maximum_text = file_option_value(address_of taking, 'm');
-        if (maximum_text &&
-            !(string_is(maximum_text, '0') && !string_get(maximum_text + 1)) &&
-            !split_size(maximum_text, address_of maximum))
+        if (maximum_text && string_is(maximum_text, '0') &&
+            !string_get(maximum_text + 1))
+                maximum = 0;
+        else if (maximum_text && !split_size(maximum_text, address_of maximum))
                 return text_done(string_diagnostic(&text_diagnostic, 1, maximum_text, "invalid maximum size"));
+
+        if (maximum_text && maximum && !file_option_value(address_of taking, 'f'))
+        {
+                text_flush();
+                string_format(writer_stderr,
+                              "mcookie: --max-size ignored when used without --file\n");
+        }
 
         file_random_state random;
         if (!file_random_seed(address_of random))
@@ -6213,6 +6674,8 @@ static b32 tools_mcookie()
                         string_diagnostic(&text_diagnostic, 0, path, file_reason(handle));
                 else
                 {
+                        // A seed that cannot be read contributes nothing;
+                        // util-linux says so only under --verbose.
                         while (mixed < maximum)
                         {
                                 positive want = min(maximum - mixed,
@@ -6220,10 +6683,7 @@ static b32 tools_mcookie()
                                 bipolar got = system_read_retry(
                                     (positive)handle, file_transfer, want);
                                 if (got < 0)
-                                {
-                                        string_diagnostic(&text_diagnostic, 0, path, file_reason(got));
                                         break;
-                                }
                                 if (!got)
                                         break;
                                 tools_mcookie_mix(address_of random,
@@ -6277,6 +6737,18 @@ static b32 tools_mcookie()
 #define DD_LCASE 0x080
 #define DD_UCASE 0x100
 #define DD_SWAB 0x200
+// Accepted for GNU's sake: a regular file comes out the same either way.
+#define DD_SPARSE 0x400
+// open(2) flags shared by iflag and oflag, above each group's own bits.
+#define DD_DIRECT 0x004
+#define DD_DIRECTORY 0x008
+#define DD_DSYNC 0x010
+#define DD_SYNC_IO 0x020
+#define DD_NONBLOCK 0x040
+#define DD_NOATIME 0x080
+#define DD_NOCACHE 0x100
+#define DD_NOCTTY 0x200
+#define DD_NOFOLLOW 0x400
 
 #define DD_FULLBLOCK 0x001
 #define DD_COUNT_BYTES 0x002
@@ -6284,6 +6756,15 @@ static b32 tools_mcookie()
 #define DD_APPEND 0x001
 #define DD_SEEK_BYTES 0x002
 #define DD_O_APPEND 02000
+// The open(2) bits the iflag/oflag names stand for, on Linux.
+#define DD_O_NOCTTY 0400
+#define DD_O_NONBLOCK 04000
+#define DD_O_DSYNC 010000
+#define DD_O_DIRECT 040000
+#define DD_O_DIRECTORY 0200000
+#define DD_O_NOFOLLOW 0400000
+#define DD_O_SYNC 04010000
+#define DD_O_NOATIME 01000000
 
 #define DD_STATUS_ALL 0
 #define DD_STATUS_NOXFER 1
@@ -6485,13 +6966,43 @@ static bool dd_size(string_address text, positive address_to out)
 // A final B on count, skip or seek changes the unit from blocks to bytes.
 // It is still part of the ordinary size grammar (3KB is 3000), so parsing is
 // shared and only this last-byte fact is carried separately.
+/* The open(2) bits an iflag or oflag word asks for. */
+static positive dd_open_flags(positive flags)
+{
+        return ((flags & DD_DIRECT) ? DD_O_DIRECT : 0) |
+               ((flags & DD_DIRECTORY) ? DD_O_DIRECTORY : 0) |
+               ((flags & DD_DSYNC) ? DD_O_DSYNC : 0) |
+               ((flags & DD_SYNC_IO) ? DD_O_SYNC : 0) |
+               ((flags & DD_NONBLOCK) ? DD_O_NONBLOCK : 0) |
+               ((flags & DD_NOATIME) ? DD_O_NOATIME : 0) |
+               ((flags & DD_NOCTTY) ? DD_O_NOCTTY : 0) |
+               ((flags & DD_NOFOLLOW) ? DD_O_NOFOLLOW : 0);
+}
+
+static bool dd_refused;
+
 static bool dd_quantity(string_address text, positive address_to out,
                         bool address_to bytes)
 {
+        dd_refused = false;
         positive length = string_length(text);
 
         address_to bytes = length && text[length - 1] == 'B';
-        return dd_size(text, out);
+        if (!dd_size(text, out))
+                return false;
+
+        // An offset the kernel's own signed type cannot hold is refused
+        // where it is written, whatever a later operand would say.
+        if (address_to out > (positive)bipolar_max)
+        {
+                text_flush();
+                string_format(writer_stderr,
+                    "dd: invalid number: '%s': Value too large for defined data type\n",
+                    text);
+                dd_refused = true;
+                return false;
+        }
+        return true;
 }
 
 // name=value, which is the grammar an environment entry has.
@@ -6537,15 +7048,33 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
             {"fsync", DD_FSYNC, 0}, {"excl", DD_EXCL, 0},
             {"nocreat", DD_NOCREAT, 0}, {"lcase", DD_LCASE, 0},
             {"ucase", DD_UCASE, 0}, {"swab", DD_SWAB, 0},
+            {"sparse", DD_SPARSE, 0},
             {"fullblock", DD_FULLBLOCK, 1}, {"count_bytes", DD_COUNT_BYTES, 1},
             {"skip_bytes", DD_SKIP_BYTES, 1},
             {"append", DD_APPEND, 2}, {"seek_bytes", DD_SEEK_BYTES, 2},
+            // The open(2) flags, meaningful for either side.
+            {"direct", DD_DIRECT, 1}, {"direct", DD_DIRECT, 2},
+            {"directory", DD_DIRECTORY, 1}, {"directory", DD_DIRECTORY, 2},
+            {"dsync", DD_DSYNC, 1}, {"dsync", DD_DSYNC, 2},
+            {"sync", DD_SYNC_IO, 1}, {"sync", DD_SYNC_IO, 2},
+            {"nonblock", DD_NONBLOCK, 1}, {"nonblock", DD_NONBLOCK, 2},
+            {"noatime", DD_NOATIME, 1}, {"noatime", DD_NOATIME, 2},
+            {"nocache", DD_NOCACHE, 1}, {"nocache", DD_NOCACHE, 2},
+            {"noctty", DD_NOCTTY, 1}, {"noctty", DD_NOCTTY, 2},
+            {"nofollow", DD_NOFOLLOW, 1}, {"nofollow", DD_NOFOLLOW, 2},
         };
 
         do
         {
-                if (!*value && !group)
-                        return true;
+                if (!*value)
+                {
+                        text_flush();
+                        return string_report(writer_stderr, false,
+                            "dd: invalid %s: ''\nTry 'dd --help' for more information.\n",
+                            group == 0 ? (string_address)"conversion"
+                            : group == 1 ? (string_address)"input flag"
+                                         : (string_address)"output flag");
+                }
                 positive word = 0;
                 while (word < array_count(words) &&
                        (words[word].group != group ||
@@ -6569,7 +7098,25 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
 static positive dd_output(positive handle, string_address name,
                           p8 address_to bytes, positive length, bool copied)
 {
-        positive wrote = system_write_all(handle, bytes, length);
+        positive wrote = 0;
+        bipolar code = 0;
+
+        // Written a piece at a time so the kernel's reason for a refusal
+        // reaches the complaint, as coreutils' does.
+        while (wrote < length)
+        {
+                bipolar got = system_write_once(handle, bytes + wrote,
+                                                length - wrote);
+
+                if (got == LOGIN_ERROR_INTERRUPTED)
+                        continue;
+                if (got <= 0)
+                {
+                        code = got;
+                        break;
+                }
+                wrote += (positive)got;
+        }
 
         if (copied)
                 dd_written += wrote;
@@ -6577,8 +7124,13 @@ static positive dd_output(positive handle, string_address name,
         if (wrote != length)
         {
                 text_flush();
-                string_format(writer_stderr, "dd: error writing '%s'\n",
-                              name ? name : (string_address)"standard output");
+                if (code < 0)
+                        string_format(writer_stderr, "dd: error writing '%s': %s\n",
+                                      name ? name : (string_address)"standard output",
+                                      file_reason(code));
+                else
+                        string_format(writer_stderr, "dd: error writing '%s'\n",
+                                      name ? name : (string_address)"standard output");
         }
 
         return wrote;
@@ -6659,6 +7211,8 @@ static b32 tools_dd(void)
 {
         string_address input = null;
         string_address output = null;
+        string_address input_size = (string_address) "512";
+        string_address output_size = (string_address) "512";
         positive ibs = 512;
         positive obs = 512;
         positive bs = 0;
@@ -6681,16 +7235,18 @@ static b32 tools_dd(void)
                 string_address name;
                 positive address_to value;
                 bool address_to bytes, address_to seen;
+                // Where to keep the spelling, for the complaint that names it.
+                string_address address_to spelling;
         } numbers[] = {
-            {"ibs", &ibs, null, null},
-            {"obs", &obs, null, null},
-            {"bs", &bs, null, &bs_set},
-            {"count", &count, &count_bytes, &count_set},
-            {"skip", &skip, &skip_bytes, null},
-            {"iseek", &skip, &skip_bytes, null},
-            {"seek", &seek, &seek_bytes, null},
-            {"oseek", &seek, &seek_bytes, null},
-            {"cbs", &cbs, null, null},
+            {"ibs", &ibs, null, null, &input_size},
+            {"obs", &obs, null, null, &output_size},
+            {"bs", &bs, null, &bs_set, null},
+            {"count", &count, &count_bytes, &count_set, null},
+            {"skip", &skip, &skip_bytes, null, null},
+            {"iseek", &skip, &skip_bytes, null, null},
+            {"seek", &seek, &seek_bytes, null, null},
+            {"oseek", &seek, &seek_bytes, null, null},
+            {"cbs", &cbs, null, null, null},
         };
 
         text_begin("dd");
@@ -6723,9 +7279,36 @@ static b32 tools_dd(void)
                         if (numbers[n].bytes
                                 ? !dd_quantity(value, numbers[n].value, numbers[n].bytes)
                                 : !dd_size(value, numbers[n].value))
-                                return string_diagnostic(&text_diagnostic, 1, argument, "invalid number");
+                        {
+                                if (dd_refused)
+                                        return 1;
+
+                                // Digits alone that overflow the word are
+                                // the kernel type's limit, not a misspelling.
+                                string_address at = value;
+                                positive digits = 0;
+
+                                while (byte_is_digit(string_get(at + digits)))
+                                        digits++;
+
+                                text_flush();
+                                if (string_get(value) == '0' &&
+                                    (string_get(value + 1) == 'x' ||
+                                     string_get(value + 1) == 'X'))
+                                        string_format(writer_stderr,
+                                            "dd: warning: '0x' is a zero multiplier; use '00x' if that is intended\n");
+                                return string_report(writer_stderr, 1,
+                                    digits && digits > 19
+                                        ? (string_address)"dd: invalid number: '%s': Value too large for defined data type\n"
+                                        : (string_address)"dd: invalid number: '%s'\n",
+                                    value);
+                        }
                         if (numbers[n].seen)
                                 *numbers[n].seen = true;
+                        if (numbers[n].spelling)
+                                *numbers[n].spelling = value;
+                        else if (numbers[n].value == &bs)
+                                input_size = output_size = value;
                 }
                 else if (dd_operand(argument, "if", address_of value))
                         input = value;
@@ -6775,9 +7358,24 @@ static b32 tools_dd(void)
         if ((conv & DD_LCASE) && (conv & DD_UCASE))
                 return string_diagnostic(&text_diagnostic, 1, null, "cannot combine lcase and ucase");
 
-        if (!ibs || !obs || ibs > positive_max - 31 || obs > positive_max - 31)
+        if (!ibs || ibs > positive_max - 31)
         {
-                return string_diagnostic(&text_diagnostic, 1, null, "invalid number");
+                text_flush();
+                // A leading 0x multiplies by zero, which is rarely meant.
+                if (string_get(input_size) == '0' &&
+                    (string_get(input_size + 1) == 'x' ||
+                     string_get(input_size + 1) == 'X'))
+                        string_format(writer_stderr,
+                            "dd: warning: '0x' is a zero multiplier; use '00x' if that is intended\n");
+                return string_report(writer_stderr, 1,
+                                     "dd: invalid number: '%s'\n", input_size);
+        }
+
+        if (!obs || obs > positive_max - 31)
+        {
+                text_flush();
+                return string_report(writer_stderr, 1,
+                                     "dd: invalid number: '%s'\n", output_size);
         }
 
         if ((count_set && count > (positive)bipolar_max) ||
@@ -6796,7 +7394,8 @@ static b32 tools_dd(void)
 
         if (input)
         {
-                bipolar opened = text_open_handle(input, FILE_READ, 0);
+                bipolar opened = text_open_handle(input,
+                    FILE_READ | dd_open_flags(iflags), 0);
 
                 if (opened < 0)
                 {
@@ -6820,6 +7419,8 @@ static b32 tools_dd(void)
 
                 if (oflags & DD_APPEND)
                         flags |= DD_O_APPEND;
+
+                flags |= dd_open_flags(oflags);
 
                 // coreutils cuts the file at the seek rather than at its
                 // start when the seek is whole blocks, and only then: a byte
@@ -6902,7 +7503,9 @@ static b32 tools_dd(void)
                 if (short_of_it && dd_status_level != DD_STATUS_NONE)
                 {
                         text_flush();
-                        string_format(writer_stderr, "dd: '%s': cannot skip to specified offset\n",
+                        string_format(writer_stderr,
+                            input ? (string_address)"dd: %s: cannot skip to specified offset\n"
+                                  : (string_address)"dd: '%s': cannot skip to specified offset\n",
                                       input ? input : (string_address)"standard input");
                 }
         }
@@ -7128,7 +7731,12 @@ static b32 tools_dd(void)
                 positive wrote = dd_output(out_handle, output, obuf, held, true);
 
                 if (wrote)
-                        dd_out_partial++;
+                {
+                        if (held == obs)
+                                dd_out_full++;
+                        else
+                                dd_out_partial++;
+                }
 
                 if (wrote != held)
                         result = 1;
@@ -7203,7 +7811,12 @@ static b32 tools_dd(void)
         Canonical hexdump is a special row; all the integer and character
         rows share the same loader and field emitters.
 */
-#define DUMP_BLOCK 16
+/* The widest row od -w accepts, the canonical hexdump row, and a line
+   that holds the widest row in any format with its printable tail. */
+#define DUMP_BLOCK 256
+#define DUMP_CANONICAL_WIDTH 16
+#define DUMP_DEFAULT_WIDTH 16
+#define DUMP_LINE_MAX (DUMP_BLOCK * 6 + 64)
 #define DUMP_FORMAT_MAX 16
 #define DUMP_INTEGER 0
 #define DUMP_CHARACTER 1
@@ -7230,12 +7843,17 @@ typedef struct
         positive count;
         positive skip;
         positive limit;
+        // Bytes per output row: hexdump's fixed sixteen, od's -w or the
+        // sixteen rounded to a multiple of the widest type.
+        positive width;
         p8 address_base;
         p8 address_width;
         bool address_none;
         bool duplicates;
         bool od;
         bool failed;
+        bool width_given;
+        bool big_endian;
 } dump_options;
 
 static dump_options dump_arguments;
@@ -7299,9 +7917,92 @@ static fn dump_add_canonical()
         });
 }
 
+/* GNU's byte counts take a 0x prefix for hexadecimal, and the multiplier
+   suffixes after it; dd's x is a product there, so hex is read here. */
 static bool dump_number(string_address source, positive address_to value)
 {
-        return source && dd_size(source, value);
+        if (!source)
+                return false;
+
+        if (source[0] == '0' && (source[1] == 'x' || source[1] == 'X'))
+        {
+                string_address at = source + 2;
+                positive parsed;
+
+                if (!string_digits_checked(address_of at, 16, address_of parsed))
+                        return false;
+
+                if (!string_get(at))
+                {
+                        address_to value = parsed;
+                        return true;
+                }
+
+                p8 rest[16] = "1";
+                positive length = string_length(at);
+                positive multiple;
+
+                if (length >= sizeof(rest) - 1)
+                        return false;
+
+                memory_copy(rest + 1, at, length + 1);
+                if (!dd_size(rest, address_of multiple) ||
+                    (multiple && parsed > positive_max / multiple))
+                        return false;
+
+                address_to value = parsed * multiple;
+                return true;
+        }
+
+        return dd_size(source, value);
+}
+
+/* od's traditional offset operand: octal unless a 0x prefix (hex) or a
+   trailing . (decimal) says otherwise, and a trailing b counts blocks. */
+static bool dump_od_offset(string_address text, positive address_to value)
+{
+        positive base = 8;
+        positive multiple = 1;
+        p8 digits[64];
+        positive length;
+
+        if (string_is(text, '+'))
+                text++;
+        length = string_length(text);
+        if (!length || length >= sizeof(digits))
+                return false;
+        memory_copy(digits, text, length + 1);
+
+        if (digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X'))
+        {
+                base = 16;
+                memory_copy(digits, digits + 2, length - 1);
+                length -= 2;
+        }
+        if (length && digits[length - 1] == 'b')
+        {
+                multiple = 512;
+                digits[--length] = end;
+        }
+        if (length && digits[length - 1] == '.')
+        {
+                if (base == 16)
+                        return false;
+                base = 10;
+                digits[--length] = end;
+        }
+        if (!length)
+                return false;
+
+        string_address at = digits;
+        positive parsed;
+
+        if (!string_digits_checked(address_of at, base, address_of parsed) ||
+            string_get(at) || parsed > positive_max / multiple)
+                return false;
+
+        address_to value = parsed * multiple;
+        return true;
 }
 
 /* GNU's integer type widths are the width of the widest value, including a
@@ -7402,13 +8103,74 @@ static const file_long dump_od_longs[] = {
     {(string_address) "read-bytes", 'N'},
     {(string_address) "format", 't'},
     {(string_address) "output-duplicates", 'v'},
+    {(string_address) "width", 'w'},
+    {(string_address) "endian", 'E'},
+    {(string_address) "strings", 'S'},
+    {(string_address) "traditional", 'T'},
     {null, 0},
 };
+
+/* GNU rounds the row to the widest type: sixteen bytes made a multiple of
+   the least common multiple of the sizes, or the multiple itself when it is
+   wider. A requested width that is not such a multiple is a warning and
+   the multiple is used instead. */
+static bool dump_od_row_width()
+{
+        positive unit = 1;
+
+        for (positive at = 0; at < dump_arguments.count; at++)
+                if (dump_arguments.format[at].size > unit)
+                        unit = dump_arguments.format[at].size;
+
+        if (!dump_arguments.width_given)
+        {
+                dump_arguments.width = unit < DUMP_DEFAULT_WIDTH
+                                           ? unit * (DUMP_DEFAULT_WIDTH / unit)
+                                           : unit;
+                return true;
+        }
+
+        if (dump_arguments.width > DUMP_BLOCK)
+        {
+                string_format(writer_stderr,
+                              "od: warning: invalid width %p; using %p instead\n",
+                              dump_arguments.width, unit);
+                dump_arguments.width = unit;
+                return true;
+        }
+
+        if (dump_arguments.width % unit)
+        {
+                string_format(writer_stderr,
+                              "od: warning: invalid width %p; using %p instead\n",
+                              dump_arguments.width, unit);
+                dump_arguments.width = unit;
+        }
+
+        return true;
+}
 
 static bool dump_od_seen(p8 letter, string_address value)
 {
         if (letter == 't' && !dump_od_types(value))
                 return string_diagnostic(&text_diagnostic, 0, value, "unsupported output format");
+
+        // -E is --endian, read after the walk; -e is GNU's float alias.
+        if (letter == 'E')
+                return true;
+
+        if (letter == 'w' && value)
+        {
+                positive width;
+
+                if (!dump_number(value, address_of width) || !width)
+                {
+                        text_flush();
+                        string_format(writer_stderr, "od: invalid -w argument '%s'\n",
+                                      value);
+                        return false;
+                }
+        }
 
         if (letter == 'e' || letter == 'F' || letter == 'f')
                 return string_diagnostic(&text_diagnostic, 0, null, "floating point output is unsupported");
@@ -7437,9 +8199,11 @@ static const file_long dump_hex_longs[] = {
     {(string_address) "two-bytes-decimal", 'd'},
     {(string_address) "two-bytes-octal", 'o'},
     {(string_address) "two-bytes-hex", 'x'},
+    {(string_address) "one-byte-hex", 'X'},
     {(string_address) "length", 'n'},
     {(string_address) "skip", 's'},
     {(string_address) "no-squeezing", 'v'},
+    {(string_address) "color", 'L'},
     {null, 0},
 };
 
@@ -7458,6 +8222,7 @@ static bool dump_hex_seen(p8 letter, string_address value)
         case 'd': dump_add_integer(10, 2, 5, 3, false, true, false, true); break;
         case 'o': dump_add_integer(8, 2, 6, 2, false, true, false, true); break;
         case 'x': dump_add_integer(16, 2, 4, 4, false, true, false, true); break;
+        case 'X': dump_add_integer(16, 1, 2, 2, false, true, false, true); break;
         }
 
         if (dump_arguments.failed)
@@ -7518,7 +8283,17 @@ static positive dump_value(p8 address_to bytes, positive have, positive size)
                 have = size;
 
         /* All three supported ABIs are little-endian.  Loading explicitly
-           also avoids an unaligned word load at every field. */
+           also avoids an unaligned word load at every field.  --endian=big
+           reads the bytes the other way round, a short final unit padding
+           its low end with zeros as GNU does. */
+        if (dump_arguments.big_endian)
+        {
+                for (positive at = 0; at < size; at++)
+                        value = (value << 8) | (at < have ? bytes[at] : 0);
+
+                return value;
+        }
+
         for (positive at = 0; at < have; at++)
                 value |= (positive)bytes[at] << (at * 8);
 
@@ -7596,14 +8371,14 @@ static fn dump_canonical_line(p8 address_to bytes, positive length,
         p8 address_to line = text_reserve(96);
         if (!line)
                 return;
-        p8 hex[DUMP_BLOCK * 2];
+        p8 hex[DUMP_CANONICAL_WIDTH * 2];
         memory_into_hex(hex, bytes, length);
         positive made = dump_unsigned_field(line, address, 16, 8, '0');
 
         line[made++] = ' ';
         line[made++] = ' ';
 
-        for (positive at = 0; at < DUMP_BLOCK; at++)
+        for (positive at = 0; at < DUMP_CANONICAL_WIDTH; at++)
         {
                 if (at == 8)
                         line[made++] = ' ';
@@ -7633,10 +8408,10 @@ static fn dump_regular_line(dump_format address_to format,
                             p8 address_to bytes, positive length,
                             positive address, bool first)
 {
-        p8 line[192];
+        p8 line[DUMP_LINE_MAX];
         positive made = 0;
         positive fields = (length + format->size - 1) / format->size;
-        positive full_fields = DUMP_BLOCK / format->size;
+        positive full_fields = dump_arguments.width / format->size;
         positive gap = format->gap;
 
         /* With several od formats GNU aligns their value columns to the
@@ -7656,7 +8431,7 @@ static fn dump_regular_line(dump_format address_to format,
                                 continue;
 
                         positive span = (other->gap + other->width) *
-                                        (DUMP_BLOCK / other->size);
+                                        (dump_arguments.width / other->size);
 
                         if (span > widest)
                                 widest = span;
@@ -7795,10 +8570,32 @@ static positive dump_skip_input(positive wanted)
         return taken;
 }
 
-static b32 dump_run(positive first)
+/* A directory opens and then refuses to be read.  GNU od says so and fails;
+   util-linux hexdump says so and goes on with its status unchanged. */
+static bool dump_input_is_directory(string_address name)
+{
+        file_facts facts;
+
+        if (!file_look(text_input.handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                return false;
+
+        text_flush();
+        string_format(writer_stderr, "%s: %s: Is a directory\n",
+                      dump_arguments.od ? (string_address)"od"
+                                        : (string_address)"hexdump",
+                      name ? name : (string_address)"standard input");
+        if (dump_arguments.od)
+                text_status = 1;
+        return true;
+}
+
+static b32 dump_run(positive first, positive count)
 {
         p8 block[DUMP_BLOCK];
         p8 previous[DUMP_BLOCK];
+        positive width = dump_arguments.width;
         positive held = 0;
         positive offset = 0;
         positive skip = dump_arguments.skip;
@@ -7807,8 +8604,8 @@ static b32 dump_run(positive first)
         bool starred = false;
         bool wrote = false;
         bool opened = false;
+        bool attempted = false;
         bool read_failed = false;
-        positive count = (positive)text_argument_count;
         positive inputs = first < count ? count - first : 1;
 
         for (positive which = 0; which < inputs; which++)
@@ -7820,17 +8617,36 @@ static b32 dump_run(positive first)
                                           ? program_argument((b32)(first + which))
                                           : null;
 
+                // util-linux hexdump knows no dash for standard input.
+                if (!dump_arguments.od && name && string_equals(name, "-"))
+                {
+                        text_flush();
+                        writer_stderr("hexdump: -: No such file or directory\n", 0);
+                        text_status = 1;
+                        continue;
+                }
+
+                attempted = true;
+
                 if (!text_open(name))
                         continue;
 
                 opened = true;
 
+                if (dump_input_is_directory(name))
+                {
+                        text_close();
+                        continue;
+                }
+
                 if (skip)
                 {
                         positive taken = dump_skip_input(skip);
 
-                        skip -= taken;
-                        offset += taken;
+                        // od reports a skip it could not reach; hexdump
+                        // takes the offset as its own and reads nothing.
+                        offset += dump_arguments.od ? taken : skip;
+                        skip -= dump_arguments.od ? taken : skip;
                 }
 
                 if (!left)
@@ -7848,7 +8664,7 @@ static b32 dump_run(positive first)
 
                         while (available)
                         {
-                                positive take = DUMP_BLOCK - held;
+                                positive take = width - held;
 
                                 if (take > available)
                                         take = available;
@@ -7862,15 +8678,15 @@ static b32 dump_run(positive first)
                                 available -= take;
                                 left -= take;
 
-                                if (held == DUMP_BLOCK)
+                                if (held == width)
                                 {
                                         positive row_address = offset;
-                                        offset += DUMP_BLOCK;
+                                        offset += width;
 
                                         if (!dump_arguments.duplicates &&
                                             have_previous &&
                                             !memory_compare(previous, block,
-                                                            DUMP_BLOCK))
+                                                            width))
                                         {
                                                 if (!starred)
                                                 {
@@ -7880,10 +8696,10 @@ static b32 dump_run(positive first)
                                         }
                                         else
                                         {
-                                                dump_row(block, DUMP_BLOCK,
+                                                dump_row(block, width,
                                                          row_address);
                                                 memory_copy(previous, block,
-                                                            DUMP_BLOCK);
+                                                            width);
                                                 have_previous = true;
                                                 starred = false;
                                                 wrote = true;
@@ -7904,6 +8720,13 @@ static b32 dump_run(positive first)
 
         if (skip && dump_arguments.od)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "cannot skip past end of combined input"));
+
+        if (!dump_arguments.od && attempted && !opened)
+        {
+                text_flush();
+                writer_stderr("hexdump: all input file arguments failed\n", 0);
+                text_status = 1;
+        }
 
         if (held)
         {
@@ -7930,12 +8753,122 @@ static b32 dump_run(positive first)
         return text_done(text_status);
 }
 
+#define DUMP_STRING_MAX 65536
+
+static fn dump_string_line(positive offset, p8 address_to bytes, positive length)
+{
+        if (!dump_arguments.address_none)
+        {
+                p8 field[32];
+                positive made = dump_unsigned_field(field, offset,
+                                                    dump_arguments.address_base,
+                                                    dump_arguments.address_width, '0');
+
+                field[made++] = ' ';
+                text_put(field, made);
+        }
+
+        text_put(bytes, length);
+        text_put_character('\n');
+}
+
+/* od -S: every NUL-terminated run of at least MINIMUM printable bytes with
+   the offset it starts at.  GNU resumes after the byte that broke a run
+   rather than one past the run's start, stops once no more than a run's
+   worth of bytes remains within -N, and prints a run that -N cuts short.
+   Only 0x20 through 0x7e are printable in the C locale, so no escapes. */
+static b32 dump_strings(positive first, positive count, positive minimum)
+{
+        static p8 held[DUMP_STRING_MAX];
+        positive have = 0;
+        positive address = 0;
+        positive skip = dump_arguments.skip;
+        positive left = dump_arguments.limit;
+        bool limited = left != TEXT_UNSET;
+        positive inputs = first < count ? count - first : 1;
+        bool done = false;
+
+        for (positive which = 0; which < inputs && !done; which++)
+        {
+                string_address name = first < count
+                                          ? program_argument((b32)(first + which))
+                                          : null;
+
+                if (!text_open(name))
+                        continue;
+
+                if (dump_input_is_directory(name))
+                {
+                        text_close();
+                        continue;
+                }
+
+                if (skip)
+                {
+                        positive taken = dump_skip_input(skip);
+
+                        skip -= taken;
+                        address += taken;
+                }
+
+                while (!skip && !done && text_fill())
+                {
+                        positive available = text_input.filled - text_input.position;
+
+                        while (available && !done)
+                        {
+                                if (!have && limited && left <= minimum)
+                                {
+                                        done = true;
+                                        break;
+                                }
+
+                                p8 byte = text_input.buffer[text_input.position++];
+
+                                available--;
+                                address++;
+                                if (limited)
+                                        left--;
+
+                                if (byte >= ' ' && byte <= '~' && have < DUMP_STRING_MAX)
+                                        held[have++] = byte;
+                                else if (!byte && have >= minimum)
+                                {
+                                        dump_string_line(address - have - 1, held, have);
+                                        have = 0;
+                                }
+                                else
+                                        have = 0;
+
+                                if (limited && !left)
+                                {
+                                        if (have >= minimum)
+                                                dump_string_line(address - have, held, have);
+                                        done = true;
+                                }
+                        }
+                }
+
+                text_close();
+        }
+
+        if (skip)
+        {
+                string_diagnostic(&text_diagnostic, 0, null, "cannot skip past end of combined input");
+                return text_done(1);
+        }
+
+        return text_done(text_status);
+}
+
 static b32 tools_od(void)
 {
         file_taking taking = {
             .program = (string_address) "od",
-            .allowed = (string_address) "AaBbcDdeFfhHiIjlLNoOstvxX",
-            .valued = (string_address) "AjNt",
+            .allowed = (string_address) "AaBbcDdeEFfhHiIjlLNoOSsTtvwxX",
+            .valued = (string_address) "AEjNSt",
+            .optional = (string_address) "w",
+            .long_optional = (string_address) "Sw",
             .longs = dump_od_longs,
             .seen = dump_od_seen,
         };
@@ -7950,15 +8883,47 @@ static b32 tools_od(void)
         if (!file_take(address_of taking))
                 return text_done(1);
 
+        if (taking.flags & FILE_FLAG('w'))
+        {
+                string_address width = file_option_value(address_of taking, 'w');
+
+                dump_arguments.width_given = true;
+                if (!width)
+                        dump_arguments.width = 32;
+                else if (!dump_number(width, address_of dump_arguments.width) ||
+                         !dump_arguments.width)
+                {
+                        string_format(writer_stderr, "od: invalid -w argument '%s'\n",
+                                      width);
+                        return text_done(1);
+                }
+        }
+
+        string_address order = file_option_value(address_of taking, 'E');
+
+        if (order)
+        {
+                if (string_equals(order, "big"))
+                        dump_arguments.big_endian = true;
+                else if (!string_equals(order, "little"))
+                {
+                        string_format(writer_stderr,
+                                      "od: invalid argument '%s' for '--endian'\n"
+                                      "Valid arguments are:\n  - 'big'\n  - 'little'\n"
+                                      "Try 'od --help' for more information.\n",
+                                      order);
+                        return text_done(1);
+                }
+        }
+
         string_address radix = file_option_value(address_of taking, 'A');
 
         if (radix)
         {
-                if (radix[0] == 'n' && !radix[1])
+                if (radix[0] == 'n')
                         dump_arguments.address_none = true;
-                else if (!radix[1] &&
-                         (radix[0] == 'd' || radix[0] == 'o' ||
-                          radix[0] == 'x'))
+                else if (radix[0] == 'd' || radix[0] == 'o' ||
+                         radix[0] == 'x')
                 {
                         dump_arguments.address_base = radix[0] == 'd' ? 10
                                                       : radix[0] == 'o' ? 8
@@ -7966,7 +8931,12 @@ static b32 tools_od(void)
                         dump_arguments.address_width = radix[0] == 'x' ? 6 : 7;
                 }
                 else
-                        return text_done(string_diagnostic(&text_diagnostic, 1, radix, "invalid radix"));
+                {
+                        text_flush();
+                        return text_done(string_report(writer_stderr, 1,
+                            "od: invalid output address radix '%c'; it must be one character from [doxn]\n",
+                            radix[0]));
+                }
         }
 
         if ((taking.flags & FILE_FLAG('j')) &&
@@ -7981,18 +8951,83 @@ static b32 tools_od(void)
 
         dump_arguments.duplicates = (taking.flags & FILE_FLAG('v')) != 0;
 
+        /* The traditional second form: a last operand beginning with + (or
+           a digit, when it is the second of two) is an offset, not a file. */
+        positive stop = (positive)text_argument_count;
+        positive operands = stop - taking.first;
+
+        bool traditional = (taking.flags & FILE_FLAG('T')) != 0;
+
+        if (operands >= 1 && operands <= 2)
+        {
+                string_address last = program_argument((b32)(stop - 1));
+
+                if (string_is(last, '+') ||
+                    (traditional && operands == 2 &&
+                     byte_is_digit(string_get(last))))
+                {
+                        positive offset;
+
+                        if (!dump_od_offset(last, address_of offset))
+                        {
+                                string_format(writer_stderr,
+                                              "od: invalid offset '%s'\n", last);
+                                return text_done(1);
+                        }
+                        dump_arguments.skip = offset;
+                        stop--;
+                        operands--;
+                }
+        }
+
+        if (traditional && operands > 1)
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "od: extra operand '%s'\nod: compatibility mode supports at most one file\n"
+                    "Try 'od --help' for more information.\n",
+                    program_argument((b32)(taking.first + 1))));
+        }
+
+        if (taking.flags & FILE_FLAG('S'))
+        {
+                if (dump_arguments.count)
+                {
+                        text_flush();
+                        return text_done(string_report(writer_stderr, 1,
+                            "od: no type may be specified when dumping strings\n"));
+                }
+
+                string_address wanted = file_option_value(address_of taking, 'S');
+                positive minimum = 3;
+
+                if (wanted && !dump_number(wanted, address_of minimum))
+                {
+                        string_format(writer_stderr,
+                                      "od: invalid minimum string length: '%s'\n",
+                                      wanted);
+                        return text_done(1);
+                }
+
+                return dump_strings(taking.first, stop, minimum);
+        }
+
         if (!dump_arguments.count)
                 dump_add_integer(8, 2, 6, 1, false, true, false, false);
 
-        return dump_run(taking.first);
+        dump_od_row_width();
+
+        return dump_run(taking.first, stop);
 }
 
 static b32 tools_hexdump(void)
 {
         file_taking taking = {
             .program = (string_address) "hexdump",
-            .allowed = (string_address) "bcCdoxnsv",
+            .allowed = (string_address) "bcCdoxXnsvL",
             .valued = (string_address) "ns",
+            .optional = (string_address) "L",
+            .long_optional = (string_address) "L",
             .longs = dump_hex_longs,
             .seen = dump_hex_seen,
         };
@@ -8000,11 +9035,20 @@ static b32 tools_hexdump(void)
         text_begin("hexdump");
         memory_fill(address_of dump_arguments, 0, sizeof(dump_arguments));
         dump_arguments.limit = TEXT_UNSET;
+        dump_arguments.width = DUMP_DEFAULT_WIDTH;
         dump_arguments.address_base = 16;
         dump_arguments.address_width = 7;
 
         if (!file_take(address_of taking))
                 return text_done(1);
+
+        /* --color only interprets the specifiers of a custom -e format, and
+           the stock displays carry none, so the mode is checked and inert. */
+        if ((taking.flags & FILE_FLAG('L')) &&
+            file_color_when(file_option_value(address_of taking, 'L'),
+                            FILE_COLOR_AUTO) < 0)
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'L'),
+                                                   "invalid color mode"));
 
         if ((taking.flags & FILE_FLAG('n')) &&
             !dump_number(file_option_value(address_of taking, 'n'),
@@ -8018,13 +9062,15 @@ static b32 tools_hexdump(void)
 
         dump_arguments.duplicates = (taking.flags & FILE_FLAG('v')) != 0;
 
+        // The stock display is two-byte hex a single space apart; -x is the
+        // same numbers spread three spaces apart.
         if (!dump_arguments.count)
-                dump_add_integer(16, 2, 4, 4, false, true, false, true);
+                dump_add_integer(16, 2, 4, 1, false, true, false, true);
 
         if (dump_arguments.format[0].kind == DUMP_CANONICAL)
                 dump_arguments.address_width = 8;
 
-        return dump_run(taking.first);
+        return dump_run(taking.first, (positive)text_argument_count);
 }
 
 // diff ------------------------------------------------------
@@ -8969,6 +10015,66 @@ static fn diff_put_line(diff_side address_to side, bipolar middle, string_addres
                 text_put_string("\n\\ No newline at end of file\n");
 }
 
+fn shell_quoted(writer write, string_address value);
+
+/* GNU quotes a name a shell would not take whole: C-style in the command
+   line it writes as a title, shell-style in an "Only in" report. */
+static bool diff_name_special(string_address name)
+{
+        for (string_address at = name; string_get(at); at++)
+        {
+                p8 byte = string_get(at);
+
+                if (byte <= ' ' || byte >= 127 ||
+                    string_first_of("!\"#$&'()*;<=>?[\\]^`{|}~", byte))
+                        return true;
+        }
+        return false;
+}
+
+static fn diff_name_c_quoted(string_address name)
+{
+        if (!diff_name_special(name))
+        {
+                text_put_string(name);
+                return;
+        }
+
+        text_put_character('"');
+        for (string_address at = name; string_get(at); at++)
+        {
+                p8 byte = string_get(at);
+
+                if (byte == '"' || byte == '\\')
+                {
+                        text_put_character('\\');
+                        text_put_character(byte);
+                }
+                else if (byte == '\n')
+                        text_put_string("\\n");
+                else if (byte == '\t')
+                        text_put_string("\\t");
+                else if (byte < ' ' || byte == 127)
+                {
+                        p8 octal[5] = {'\\', (p8)('0' + (byte >> 6)),
+                                       (p8)('0' + ((byte >> 3) & 7)),
+                                       (p8)('0' + (byte & 7)), end};
+                        text_put_string(octal);
+                }
+                else
+                        text_put_character(byte);
+        }
+        text_put_character('"');
+}
+
+static fn diff_name_shell_quoted(string_address name)
+{
+        if (diff_name_special(name))
+                shell_quoted(text_put, name);
+        else
+                text_put_string(name);
+}
+
 static fn diff_title(string_address left, string_address right)
 {
         if (!diff_titled)
@@ -8977,9 +10083,9 @@ static fn diff_title(string_address left, string_address right)
         text_put_string("diff");
         text_put(diff_switches, diff_switches_used);
         text_put_character(' ');
-        text_put_string(left);
+        diff_name_c_quoted(left);
         text_put_character(' ');
-        text_put_string(right);
+        diff_name_c_quoted(right);
         text_put_character('\n');
 }
 
@@ -9162,6 +10268,13 @@ static fn diff_unified_output(string_address left, string_address right)
 static fn diff_announce(string_address head, string_address left,
                         string_address right, string_address tail)
 {
+        // --label renames a file everywhere diff speaks of it, the brief
+        // and identical reports included.
+        if (diff_labels[0])
+                left = diff_labels[0];
+        if (diff_labels[1])
+                right = diff_labels[1];
+
         text_put_string(head);
         text_put_string(left);
         text_put_string(" and ");
@@ -9572,9 +10685,9 @@ static b32 diff_one_sided(string_address left, string_address right,
         }
 
         text_put_string("Only in ");
-        text_put_string(inside);
+        diff_name_shell_quoted(inside);
         text_put_string(": ");
-        text_put_string(name);
+        diff_name_shell_quoted(name);
         text_put_character('\n');
         text_flush();
 
@@ -9774,7 +10887,12 @@ static bool diff_context_set(string_address value)
 
         if (!string_digits_checked(address_of at, 10, address_of context) || string_get(at) ||
             context > (positive_max - 1) / 2)
-                return string_diagnostic(&text_diagnostic, 0, value, "invalid context length");
+        {
+                text_flush();
+                return string_report(writer_stderr, false,
+                    "diff: invalid context length '%s'\n"
+                    "diff: Try 'diff --help' for more information.\n", value);
+        }
 
         diff_context = context;
         return true;
@@ -9787,7 +10905,11 @@ static bool diff_option_seen(p8 letter, string_address value)
         if (letter == 'L')
         {
                 if (diff_label_count >= 2)
-                        return string_diagnostic(&text_diagnostic, 0, value, "too many file label options");
+                {
+                        text_flush();
+                        return string_report(writer_stderr, false,
+                            "diff: too many file label options\n");
+                }
 
                 diff_labels[diff_label_count++] = value;
                 return true;
@@ -9894,12 +11016,52 @@ static b32 tools_diff(void)
                 }
         }
 
-        if (text_argument_count - first != 2)
-                return text_done(string_diagnostic(&text_diagnostic, 2, null, "missing operand"));
+        if (text_argument_count - first < 2)
+        {
+                text_flush();
+                string_format(writer_stderr,
+                              "diff: missing operand after '%s'\n"
+                              "diff: Try 'diff --help' for more information.\n",
+                              text_argument_count - first == 1
+                                  ? program_argument(first)
+                                  : (string_address) "diff");
+                return text_done(2);
+        }
+        if (text_argument_count - first > 2)
+        {
+                text_flush();
+                string_format(writer_stderr,
+                              "diff: extra operand '%s'\n"
+                              "diff: Try 'diff --help' for more information.\n",
+                              program_argument(first + 2));
+                return text_done(2);
+        }
 
         string_address left = program_argument(first);
         string_address right = program_argument(first + 1);
         string_address joined;
+        file_facts present;
+
+        // A pair that is absent from both sides is nothing to compare, and
+        // --new-file has no side to take it from.
+        if (!string_equals(left, "-") && !string_equals(right, "-") &&
+            !file_look_at(left, address_of present) &&
+            !file_look_at(right, address_of present))
+        {
+                text_flush();
+                string_format(writer_stderr, "diff: %s: No such file or directory\n",
+                              left);
+                return text_done(2);
+        }
+
+        // The same directory twice is identical without a walk.
+        file_facts left_facts, right_facts;
+        if (file_look_at(left, address_of left_facts) &&
+            file_look_at(right, address_of right_facts) &&
+            (left_facts.mode & MODE_FORMAT) == MODE_DIRECTORY &&
+            (right_facts.mode & MODE_FORMAT) == MODE_DIRECTORY &&
+            file_same_identity(address_of left_facts, address_of right_facts))
+                return text_done(0);
 
         // diff dir file and diff file dir both mean the same file inside the
         // directory, which is the one place the two names are not the pair.
@@ -10429,6 +11591,9 @@ typedef struct
 {
         positive address_to values;
         positive count, room;
+        // How many selector operands contributed, which decides whether
+        // the written order is the listing order.
+        positive lists;
 } ps_ids;
 
 static bool ps_pid_list(string_address list, ps_ids address_to ids,
@@ -10436,7 +11601,9 @@ static bool ps_pid_list(string_address list, ps_ids address_to ids,
 {
         ps_list_cursor item = {.at = list};
         bool any = false;
-        positive before = ids->count;
+        positive address_to fresh = null;
+        positive fresh_count = 0;
+        positive fresh_room = 0;
 
         while (ps_list_next(address_of item, (string_address) ", "))
         {
@@ -10456,19 +11623,24 @@ static bool ps_pid_list(string_address list, ps_ids address_to ids,
                         but repeated selection operands are unioned. Other
                         numeric selectors are sets in both shapes.
                 */
-                bool seen = ps_value_has(ids->values,
-                                         pid_selector
-                                             ? before
-                                             : ids->count,
-                                         value);
-
-                if (!seen && !ps_value_add(&ids->values, &ids->count, &ids->room, value))
-                        return false;
-
                 any = true;
+                if (ps_value_has(ids->values, ids->count, value) ||
+                    (!pid_selector && ps_value_has(fresh, fresh_count, value)))
+                        continue;
+
+                if (!ps_value_add(&fresh, &fresh_count, &fresh_room, value))
+                        return false;
         }
 
-        return any;
+        if (!any)
+                return false;
+
+        for (positive at = 0; at < fresh_count; at++)
+                if (!ps_value_add(&ids->values, &ids->count, &ids->room, fresh[at]))
+                        return false;
+
+        ids->lists++;
+        return true;
 }
 
 static bool ps_string_add(string_address address_to address_to values,
@@ -10622,7 +11794,7 @@ static bool ps_format_list(string_address list,
                 {
                         string_address header_from = ++item.at;
                         positive header_length = string_span_without_set(
-                            item.at, (string_address) ",");
+                            item.at, (string_address) ", ");
 
                         item.at += header_length;
                         p8 address_to made =
@@ -10697,10 +11869,12 @@ static b32 tools_ps(void)
         positive command_room = 0;
         bool every = false;
         bool full = false;
+        bool jobs = false;
         bool no_headers = false;
         bool force_headers = false;
         bool reverse = false;
         bool sorted = false;
+        positive heading_options = 0;
 
         text_begin("ps");
         text_arena_used = 0;
@@ -10752,7 +11926,7 @@ static b32 tools_ps(void)
                               option == 's' || option == 'C';
                 if (!option || (long_option && cursor.attached && !valued) ||
                     (!long_option && (option > 255 ||
-                     !string_first_of("eAfwhopC", (p8)option) ||
+                     !string_first_of("eAfjwhopC", (p8)option) ||
                      (option == 'C' && *cursor.word != '-'))))
                 {
                         // Other BSD personalities also change the display
@@ -10765,11 +11939,17 @@ static b32 tools_ps(void)
                 case 'e':
                 case 'A': every = true; break;
                 case 'f': full = true; break;
+                case 'j': jobs = true; break;
                 case 'w': break;
-                case 'H': force_headers = true; no_headers = false; break;
+                case 'H':
+                        force_headers = true;
+                        no_headers = false;
+                        heading_options++;
+                        break;
                 case 'h':
                         no_headers = true;
                         if (long_option) force_headers = false;
+                        heading_options++;
                         break;
                 case 'p':
                 case 'P':
@@ -10791,10 +11971,23 @@ static b32 tools_ps(void)
                         if (!value)
                                 return text_done(string_diagnostic(&text_diagnostic, 1, null, long_option ? "option requires an argument -- format"
                                                             : "option requires an argument -- o"));
+                        if (!string_get(value))
+                                return text_done(string_diagnostic(&text_diagnostic, 1, null, "format specification must follow -o"));
+                        // An empty item anywhere in the list is a syntax
+                        // error to procps, not an absent column.
+                        if (string_is(value, ',') || string_search(value, ",,") ||
+                            value[string_length(value) - 1] == ',')
+                                return text_done(string_diagnostic(&text_diagnostic, 1, null, "improper format list"));
                         if (!ps_format_list(value, &fields, &field_count, &field_room))
                                 return text_done(1);
                         break;
                 }
+        }
+
+        if (heading_options > 1)
+        {
+                string_diagnostic(&text_diagnostic, 0, null, "only one heading option may be specified");
+                return text_done(1);
         }
 
         /*
@@ -10818,9 +12011,24 @@ static b32 tools_ps(void)
                     {PS_FIELD_PID, null, false},   {PS_FIELD_TTY, null, false},
                     {PS_FIELD_TIME, null, false},  {PS_FIELD_COMM, "CMD", true},
                 };
-                const ps_selected address_to preset = full ? ps_full_preset
-                                                           : ps_plain_preset;
-                positive presets = full ? 8 : 4;
+                // -j adds the process group and session: after the parent
+                // in the full listing, ahead of the terminal otherwise.
+                static const ps_selected ps_full_jobs_preset[] = {
+                    {PS_FIELD_USER, "UID", true},  {PS_FIELD_PID, null, false},
+                    {PS_FIELD_PPID, null, false},  {PS_FIELD_PGID, null, false},
+                    {PS_FIELD_SID, null, false},   {PS_FIELD_CPU, null, false},
+                    {PS_FIELD_STIME, null, false}, {PS_FIELD_TTY, null, false},
+                    {PS_FIELD_TIME, null, false},  {PS_FIELD_ARGS, "CMD", true},
+                };
+                static const ps_selected ps_jobs_preset[] = {
+                    {PS_FIELD_PID, null, false},   {PS_FIELD_PGID, null, false},
+                    {PS_FIELD_SID, null, false},   {PS_FIELD_TTY, null, false},
+                    {PS_FIELD_TIME, null, false},  {PS_FIELD_COMM, "CMD", true},
+                };
+                const ps_selected address_to preset =
+                    full ? (jobs ? ps_full_jobs_preset : ps_full_preset)
+                         : (jobs ? ps_jobs_preset : ps_plain_preset);
+                positive presets = full ? (jobs ? 10 : 8) : (jobs ? 6 : 4);
 
                 ps_columns[PS_FIELD_TTY].header = "TTY";
                 ps_columns[PS_FIELD_TTY].width = 8;
@@ -10925,6 +12133,36 @@ static b32 tools_ps(void)
 
         bool matched = false;
 
+        // Processes named by one -p list come out in the order they were
+        // named, repeats included; procps reads exactly those entries.
+        // Separate selector operands are a set, gathered in process order.
+        if (pids.count && pids.lists == 1 && !alternate_selectors && !every && !sorted)
+        {
+                for (positive at = 0; at < pids.count; at++)
+                        for (positive p = 0; p < ps_count; p++)
+                        {
+                                struct snapshot_process address_to process =
+                                    ps_snapshot.processes + p;
+
+                                if (process->pid != pids.values[at])
+                                        continue;
+
+                                matched = true;
+                                ps_detail detail = {0};
+
+                                for (positive f = 0; f < field_count; f++)
+                                        ps_column_out(process, address_of detail,
+                                                      fields[f].field,
+                                                      ps_column_width(fields + f, null),
+                                                      f + 1 == field_count);
+
+                                text_put_character('\n');
+                                break;
+                        }
+
+                return text_done(ps_failed || !matched ? 1 : 0);
+        }
+
         for (positive at = 0; at < ps_count; at++)
         {
                 positive p = reverse ? ps_count - at - 1 : at;
@@ -10976,7 +12214,8 @@ static b32 tools_ps(void)
                 }
         }
 
-        return text_done(ps_failed || (selectors && !matched) ? 1 : 0);
+        // procps fails when no process was listed, whatever selected them.
+        return text_done(ps_failed || !matched ? 1 : 0);
 }
 
 // dmesg -----------------------------------------------------
@@ -11025,6 +12264,7 @@ typedef struct
         bool json;
         bool noescape;
         bool color;
+        bool iso;
         bool previous_known;
 } tools_dmesg_state;
 
@@ -11111,7 +12351,7 @@ static bool tools_dmesg_span_number(p8 address_to address_to cursor,
 }
 
 static bool tools_dmesg_legacy_record(p8 address_to bytes, positive length,
-                                      p32 inherited,
+                                      p32 inherited, bool first,
                                       tools_dmesg_record address_to record)
 {
         memory_fill(record, 0, sizeof(*record));
@@ -11133,7 +12373,7 @@ static bool tools_dmesg_legacy_record(p8 address_to bytes, positive length,
                 record->priority = (p32)priority;
                 record->priority_known = true;
         }
-        else
+        else if (!first)
                 record->continuation = true;
 
         p8 address_to stamp = at;
@@ -11362,10 +12602,11 @@ static fn tools_dmesg_calendar(tools_dmesg_state address_to state,
 static fn tools_dmesg_message(p8 address_to bytes, positive length,
                               bool noescape)
 {
+        // util-linux escapes every byte that is not printable ASCII.
         if (noescape)
                 text_put(bytes, length);
         else
-                writer_hex_escaped(text_put, bytes, length, HEX_CONTROL);
+                writer_hex_escaped(text_put, bytes, length, HEX_CONTROL | HEX_HIGH);
 }
 
 static fn tools_dmesg_emit(tools_dmesg_state address_to state,
@@ -11461,11 +12702,11 @@ static fn tools_dmesg_emit(tools_dmesg_state address_to state,
                                         tools_dmesg_timestamp(delta, true,
                                                               delta_negative);
                         }
-                        if (state->ctime)
+                        if (state->ctime || state->iso)
                                 tools_dmesg_calendar(state,
                                                      record->microseconds,
                                                      false);
-                        if (!state->relative && !state->ctime)
+                        if (!state->relative && !state->ctime && !state->iso)
                         {
                                 if (state->color)
                                         text_put_string("\033[32m");
@@ -11518,7 +12759,7 @@ static fn tools_dmesg_buffer(tools_dmesg_state address_to state,
                     ? tools_dmesg_kmsg_record(bytes + at, record_length,
                                                address_of record)
                     : tools_dmesg_legacy_record(bytes + at, record_length,
-                                                inherited,
+                                                inherited, at == 0,
                                                 address_of record);
                 if (valid)
                 {
@@ -11549,6 +12790,15 @@ static b32 tools_dmesg_read_file(tools_dmesg_state address_to state,
         system_close(handle);
         if (!bytes)
                 return text_done(1);
+
+        // util-linux maps the file, and an empty one cannot be mapped.
+        if (!length)
+        {
+                text_flush();
+                string_format(writer_stderr, "dmesg: cannot mmap: %s: Invalid argument\n",
+                              path);
+                return text_done(1);
+        }
 
         if (state->json)
                 text_put_string("{\n   \"dmesg\": [\n");
@@ -11621,6 +12871,7 @@ static b32 tools_dmesg_main()
             .program = (string_address)"dmesg",
             .allowed = (string_address)"CcDEFKfHjkLlnoPprSsuwWxdeTtJVh",
             .valued = (string_address)"FKflnsqab",
+            .optional = (string_address)"L",
             .long_optional = (string_address)"L",
             .longs = tools_dmesg_longs,
         };
@@ -11642,9 +12893,21 @@ static b32 tools_dmesg_main()
             (flags & (FILE_FLAG('x') | FILE_FLAG('t') | FILE_FLAG('T') |
                       FILE_FLAG('e') | FILE_FLAG('d') | FILE_FLAG('J'))))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "--raw cannot be combined with decoded output"));
-        if ((flags & FILE_FLAG('J')) &&
-            (flags & (FILE_FLAG('T') | FILE_FLAG('e') | FILE_FLAG('d'))))
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "JSON time transformations are not supported"));
+        // util-linux filters raw records only where the kernel supplies
+        // their priority in a form it trusts.
+        if ((flags & FILE_FLAG('r')) && (flags & (FILE_FLAG('F') | FILE_FLAG('K'))) &&
+            (flags & (FILE_FLAG('l') | FILE_FLAG('f') | FILE_FLAG('k') | FILE_FLAG('u'))))
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "dmesg: --raw can be used together with --level or --facility only when reading messages from /dev/kmsg\n"));
+        }
+        if ((flags & FILE_FLAG('p')) && (flags & FILE_FLAG('F')))
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "dmesg: only kmsg supports multi-line messages\n"));
+        }
         if (flags & (FILE_FLAG('a') | FILE_FLAG('b')))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "--since and --until are not supported"));
 
@@ -11706,6 +12969,8 @@ static b32 tools_dmesg_main()
                         state.relative = true;
                 else if (string_equals(value, "delta"))
                         state.delta = true;
+                else if (string_equals(value, "iso"))
+                        state.iso = true;
                 else if (!string_equals(value, "raw"))
                         return text_done(string_diagnostic(&text_diagnostic, 1, value, "unsupported time format"));
         }
@@ -11730,7 +12995,8 @@ static b32 tools_dmesg_main()
                         state.facilities |= 0xfffffe;
         }
 
-        b32 color = file_color_when(file_option_value(address_of taking, 'L'),
+        string_address when = file_option_value(address_of taking, 'L');
+        b32 color = file_color_when(when && string_is(when, '=') ? when + 1 : when,
                                     FILE_COLOR_AUTO);
         if (color < 0)
                 return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'L'), "invalid color mode"));
@@ -11745,19 +13011,24 @@ static b32 tools_dmesg_main()
         value = file_option_value(address_of taking, 's');
         if (value && (!text_unsigned_option(value, false,
                                              address_of capacity) ||
-                      !capacity || capacity >= TEXT_ARENA_BYTES))
+                      capacity >= TEXT_ARENA_BYTES))
                 return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid buffer size"));
 
         string_address file = file_option_value(address_of taking, 'F');
         string_address kmsg_file = file_option_value(address_of taking, 'K');
+        if (flags & FILE_FLAG('S'))
+                file = null;
         if (file || kmsg_file)
         {
-                if (flags & (FILE_FLAG('c') | FILE_FLAG('w') |
-                             FILE_FLAG('W') | FILE_FLAG('p')))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "selected mode requires a live kernel log"));
-                return tools_dmesg_read_file(address_of state,
-                                             file ? file : kmsg_file,
-                                             kmsg_file != null);
+                // --follow is inert on a file; --read-clear prints the file
+                // and then asks the kernel, which is where it may fail.
+                b32 shown = tools_dmesg_read_file(address_of state,
+                                                  file ? file : kmsg_file,
+                                                  kmsg_file != null);
+                if (shown || !(flags & FILE_FLAG('c')))
+                        return shown;
+                return tools_dmesg_control(DMESG_CLEAR, 0,
+                                           "clear kernel buffer failed");
         }
 
         if (flags & (FILE_FLAG('w') | FILE_FLAG('W')))
@@ -11941,10 +13212,9 @@ static bool tools_fincore_one(string_address path,
                 system_close(handle);
                 return false;
         }
+        // util-linux skips anything but a regular file without a word.
         if ((facts.mode & MODE_FORMAT) != MODE_FILE)
         {
-                string_format(log_error,
-                              "fincore: not a regular file: %s\n", path);
                 system_close(handle);
                 return false;
         }
@@ -12081,6 +13351,8 @@ static b32 tools_fincore_main()
         p8 columns[TOOLS_FINCORE_COLUMNS];
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
+        if (output && !string_get(output))
+                return 1;
         if (!ul_table_column_list(
                 output, tools_fincore_columns, TOOLS_FINCORE_COLUMNS,
                 defaults, array_count(defaults), columns,

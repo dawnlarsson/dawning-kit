@@ -792,6 +792,15 @@ static bipolar ul_path_write(string_address path, address_any bytes,
              : (positive)wrote == length ? 0 : -ERROR_INVALID;
 }
 
+/* A usage error, as upstream spells it: the complaint and the try line.
+   A value that failed to parse is not one of these. */
+static COLD b32 ul_usage_error(string_address program, string_address message)
+{
+        return string_report(log_error, 1,
+                             "%s: %s\nTry '%s --help' for more information.\n",
+                             program, message, program);
+}
+
 static bool ul_meta(file_taking address_to taking, string_address syntax,
                     b32 address_to answer)
 {
@@ -2099,6 +2108,13 @@ static const file_long ul_flock_longs[] = {
     {(string_address)"version", 'V'}, {null, 0},
 };
 
+static COLD b32 ul_flock_usage()
+{
+        return string_report(log_error, 64,
+                             "flock: bad usage\n"
+                             "Try 'flock --help' for more information.\n");
+}
+
 static b32 util_linux_flock()
 {
         file_taking taking = {
@@ -2128,7 +2144,7 @@ static b32 util_linux_flock()
 
         positive count = (positive)program_argument_count();
         if (taking.first >= count)
-                return 64;
+                return ul_flock_usage();
 
         b32 conflict = 1;
         positive parsed;
@@ -2136,17 +2152,31 @@ static b32 util_linux_flock()
         {
                 if (!ul_unsigned(file_option_value(address_of taking, 'E'), 255,
                                  address_of parsed))
-                        return 64;
+                        return string_report(log_error, 64, "%s: %s\n", "flock",
+                                             "exit code out of range (expected 0 to 255)");
                 conflict = (b32)parsed;
         }
 
         bool timed = file_option_value(address_of taking, 'w') != null;
         positive timeout = 0;
-        if (timed && !file_duration_read(file_option_value(address_of taking, 'w'), false,
-                                  address_of timeout))
+        if (timed)
         {
-                string_report(log_error, 1, "%s: %s\n", "flock", "invalid timeout");
-                return 64;
+                string_address text = file_option_value(address_of taking, 'w');
+                while (byte_is_space(string_get(text)))
+                        text++;
+                /* util-linux hands a negative timeout to the timer, which
+                   refuses it: an operating system error, not a usage one. */
+                if (string_is(text, '-') && text[1] >= '0' && text[1] <= '9')
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock",
+                                      "cannot set up timer: Invalid argument");
+                        return 71;
+                }
+                if (!file_duration_read(text, false, address_of timeout))
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock", "invalid timeout");
+                        return 64;
+                }
         }
 
         bool fcntl = (taking.flags & FILE_FLAG('L')) ||
@@ -2175,19 +2205,24 @@ static b32 util_linux_flock()
             string_equals(program_argument((b32)taking.first + 1), "-c"))
         {
                 if (taking.first + 3 != count)
-                        return 64;
+                        return ul_flock_usage();
                 command_text = program_argument((b32)taking.first + 2);
                 command_option = true;
         }
         else if (command_option && taking.first + 1 != count)
-                return 64;
+                return ul_flock_usage();
         bool descriptor = false;
         bipolar descriptor_number = 0;
         if (!command_option && taking.first + 1 == count)
         {
                 if (!ul_signed(target, b32_min, b32_max,
                                address_of descriptor_number))
+                {
+                        string_format(log_error,
+                                      "flock: bad file descriptor: '%s'\n",
+                                      target);
                         return 64;
+                }
                 descriptor = true;
         }
         b32 handle;
@@ -2251,7 +2286,7 @@ static b32 util_linux_flock()
         if ((!words[0]) || (!command_option && taking.first + 1 >= count))
         {
                 system_close(handle);
-                return 64;
+                return ul_flock_usage();
         }
         if (verbose)
                 string_format(log, "flock: executing %s\n", words[0]);
@@ -2277,14 +2312,14 @@ static b32 util_linux_flock()
                 return 1;
         }
 
-        if (!close_child)
-                system_close(handle);
-
+        /* The parent holds the lock until the command has exited, as
+           util-linux does: the lock survives a command that closes its
+           inherited descriptors, and lslocks resolves the path through
+           the holder. */
         positive status = 0;
         answer = system_wait4_retry(child, address_of status, 0, null) < 0
                    ? 1 : wait_status_code(status);
-        if (close_child)
-                system_close(handle);
+        system_close(handle);
         return answer;
 }
 
@@ -2494,11 +2529,37 @@ static bool ul_setarch_verbose;
 static bool ul_setarch_list;
 static bool ul_setarch_do_show;
 
+static p8 ul_setarch_immediate;
+static string_address ul_setarch_shown;
+
+static fn ul_setarch_list_write()
+{
+        for (positive i = 0; ul_arches[i].name; i++)
+                string_format(log, "%s\n", ul_arches[i].name);
+        log_flush();
+}
+
 static bool ul_setarch_take(p8 letter, string_address value)
 {
         if (letter == 'v') ul_setarch_verbose = true;
-        else if (letter == 'l') ul_setarch_list = true;
-        else if (letter == 's') ul_setarch_do_show = true;
+        else if (letter == 'l')
+        {
+                /* Answered where it stands: the words after it are never
+                   looked at, malformed or not. */
+                ul_setarch_list = true;
+                ul_setarch_immediate = 'l';
+                return false;
+        }
+        else if (letter == 's')
+        {
+                ul_setarch_do_show = true;
+                if (value)
+                {
+                        ul_setarch_shown = value;
+                        ul_setarch_immediate = 's';
+                        return false;
+                }
+        }
         else if (letter == 'u') {
                 ul_setarch_options |= UL_UNAME26;
                 if (ul_setarch_verbose) string_format(log, "Switching on UNAME26.\n");
@@ -2532,14 +2593,24 @@ static b32 util_linux_setarch()
                 arch = program_argument((b32)first++);
         ul_setarch_options = 0;
         ul_setarch_verbose = ul_setarch_list = ul_setarch_do_show = false;
-        if (!file_take_from(address_of taking, first)) return 1;
+        ul_setarch_immediate = 0;
+        ul_setarch_shown = null;
+        if (!file_take_from(address_of taking, first))
+        {
+                if (ul_setarch_immediate == 'l')
+                {
+                        ul_setarch_list_write();
+                        return 0;
+                }
+                if (ul_setarch_immediate == 's')
+                        return ul_setarch_show(ul_setarch_shown, 0);
+                return 1;
+        }
         if (ul_meta(address_of taking,
                     "[<arch>] [options] [<program> [argument ...]]",
                     address_of answer)) return answer;
         if (ul_setarch_list) {
-                for (positive i = 0; ul_arches[i].name; i++)
-                        string_format(log, "%s\n", ul_arches[i].name);
-                log_flush();
+                ul_setarch_list_write();
                 return 0;
         }
         if (taking.flags & FILE_FLAG('p')) {
@@ -2547,7 +2618,12 @@ static b32 util_linux_setarch()
                             "setarch", "PID", address_of pid) || !pid) return 1;
         }
         if (ul_setarch_do_show)
-                return ul_setarch_show(file_option_value(address_of taking, 's'), pid);
+        {
+                /* --show=VALUE names the personality outright; only a bare
+                   --show reads one from a process. */
+                string_address shown = file_option_value(address_of taking, 's');
+                return ul_setarch_show(shown, shown ? 0 : pid);
+        }
         if (pid) return string_report(log_error, 1, "%s: %s\n", "setarch", "use -p/--pid option with --show option");
         if (!arch && !ul_setarch_options) return string_report(log_error, 1, "%s: %s\n", "setarch", "no architecture argument or personality flags specified");
 
@@ -3549,6 +3625,11 @@ static fn ul_table_json(string_address name, address_any rows,
         log("\n   ]\n}\n", 8);
 }
 
+/* The legacy ipcs projection is fixed width to the end of the line; every
+   other table here stops at the last thing it has to say. */
+static bool ul_table_pad_last;
+static positive ul_table_pad_extra;
+
 static fn ul_table_out(address_any rows, positive row_size, positive count,
                        const ul_table_column address_to definitions,
                        positive definition_count, p8 address_to columns,
@@ -3650,16 +3731,23 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                                         bool number =
                                             definitions[column].number;
                                         bool last_text =
+                                            !ul_table_pad_last &&
                                             field + 1 == column_count &&
                                             !number;
                                         bool empty_last =
+                                            !ul_table_pad_last &&
                                             field + 1 == column_count &&
                                             !bytes;
 
-                                        ul_lsns_safe_span_field(
-                                            value, bytes,
+                                        positive pad =
                                             (last_text || empty_last)
-                                                ? 0 : widths[column],
+                                                ? 0 : widths[column];
+                                        if (ul_table_pad_last && !heading &&
+                                            field + 1 == column_count)
+                                                pad += ul_table_pad_extra;
+
+                                        ul_lsns_safe_span_field(
+                                            value, bytes, pad,
                                             !number, definitions[column].printable ||
                                                 (!heading && definitions[column].decimal));
                                 }
@@ -4092,6 +4180,14 @@ static b32 util_linux_lsclocks()
         if (taking.first < (positive)program_argument_count())
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, program_argument((b32)taking.first), "unexpected operand"));
 
+        /* Every argument is read before any of them is answered, so a bad
+           PID is named even when --time would have printed and left. */
+        string_address cpu_text = file_option_value(address_of taking, 'c');
+        positive cpu_pid = 0;
+        if (cpu_text && (!ul_unsigned(cpu_text, b32_max, address_of cpu_pid) || !cpu_pid))
+                return text_done(string_diagnostic(address_of text_diagnostic, 1,
+                                                   cpu_text, "invalid PID"));
+
         string_address time_name = file_option_value(address_of taking, 't');
         if (time_name)
         {
@@ -4158,12 +4254,10 @@ static b32 util_linux_lsclocks()
         string_address rtc = file_option_value(address_of taking, 'x');
         if (rtc && !ul_lsclock_add_path(rows, address_of count, rtc, true, true))
                 return text_done(1);
-        string_address pid_text = file_option_value(address_of taking, 'c');
+        string_address pid_text = cpu_text;
         if (pid_text)
         {
-                positive pid;
-                if (!ul_unsigned(pid_text, b32_max, address_of pid) || !pid)
-                        return text_done(string_diagnostic(address_of text_diagnostic, 1, pid_text, "invalid PID"));
+                positive pid = cpu_pid;
                 p8 path[64]; file_facts facts;
                 system_process_path(path, (p32)pid, null, "");
                 if (!file_look_at(path, address_of facts))
@@ -7283,9 +7377,13 @@ static const file_long ul_getopt_longs[] = {
     {"name", 'n'},        {"options", 'o'},
     {"quiet", 'q'},       {"quiet-output", 'Q'},
     {"shell", 's'},       {"test", 'T'},
-    {"unquoted", 'u'},    {"help", 'h'},
-    {"version", 'V'},     {null, 0},
+    {"unquoted", 'u'},    {"unknown", 'U'},
+    {"help", 'h'},        {"version", 'V'},
+    {null, 0},
 };
+
+/* -U keeps an option getopt(3) rejects as a quoted word in the output. */
+static bool ul_getopt_keep_unknown;
 
 /* file_taking deliberately keeps only the last value for an option.  getopt
    is the exception: each -l contributes another comma-separated name list.
@@ -7295,8 +7393,21 @@ static string_address address_to ul_getopt_long_lists;
 static positive ul_getopt_long_count;
 static positive ul_getopt_long_room;
 
+static bool ul_getopt_shell_known(string_address shell)
+{
+        return string_equals(shell, "sh") || string_equals(shell, "bash") ||
+               string_equals(shell, "csh") || string_equals(shell, "tcsh");
+}
+
 static bool ul_getopt_seen(p8 letter, string_address value)
 {
+        /* Each occurrence is checked where it stands: keeping only the last
+           value must not let an unknown shell through on the way. */
+        if (letter == 's' && !ul_getopt_shell_known(value))
+        {
+                string_report(log_error, 2, "getopt: %s\n" "Try 'getopt --help' for more information.\n", "unknown shell after -s or --shell argument");
+                return false;
+        }
         if (letter != 'l')
                 return true;
 
@@ -7544,6 +7655,10 @@ static bool ul_getopt_short(string_address word, string_address next,
                 if (letter == '?' || letter == ':')
                 {
                         okay = false;
+                        /* The word the unknown letter stands in, which is
+                           what upstream keeps; never this program's name. */
+                        if (ul_getopt_keep_unknown)
+                                ul_getopt_value(word, unquoted, csh, output);
                         if (optind >= 2)
                                 break;
                         continue;
@@ -7590,11 +7705,15 @@ static bool ul_getopt_long(string_address word, p8 dashes,
                         string_format(log_error,
                                       "%s: unrecognized option '%s'\n",
                                       name, word);
+                if (ul_getopt_keep_unknown)
+                        ul_getopt_value(word, unquoted, csh, output);
                 return false;
         }
 
         if (match.matches > 1 && !match.exact)
         {
+                if (ul_getopt_keep_unknown)
+                        ul_getopt_value(word, unquoted, csh, output);
                 if (!quiet)
                 {
                         string_format(log_error, "%s: option '%s' is ambiguous",
@@ -7616,6 +7735,8 @@ static bool ul_getopt_long(string_address word, p8 dashes,
 
         if (!match.argument && equal)
         {
+                if (ul_getopt_keep_unknown)
+                        ul_getopt_value(word, unquoted, csh, output);
                 if (!quiet)
                 {
                         string_format(log_error, "%s: option '", name);
@@ -7630,6 +7751,8 @@ static bool ul_getopt_long(string_address word, p8 dashes,
         {
                 if (!has_next)
                 {
+                        if (ul_getopt_keep_unknown)
+                                ul_getopt_value(word, unquoted, csh, output);
                         if (!quiet)
                         {
                                 string_format(log_error, "%s: option '", name);
@@ -7668,6 +7791,7 @@ static b32 util_linux_getopt()
         string_address diagnostic_name = "getopt";
 
         text_arena_used = 0;
+        ul_getopt_keep_unknown = false;
         ul_getopt_long_count = 0;
         ul_getopt_long_room = count;
         ul_getopt_long_lists = count
@@ -7685,7 +7809,7 @@ static b32 util_linux_getopt()
         else
         {
                 file_taking taking = {
-                    .program = "getopt", .allowed = "alnoqQsTuhV",
+                    .program = "getopt", .allowed = "alnoqQsTuUhV",
                     .valued = "lnos", .longs = ul_getopt_longs,
                     .seen = ul_getopt_seen,
                 };
@@ -7713,7 +7837,9 @@ static b32 util_linux_getopt()
                 }
 
                 alternative = (taking.flags & FILE_FLAG('a')) != 0;
-                quiet = (taking.flags & FILE_FLAG('q')) != 0;
+                ul_getopt_keep_unknown = (taking.flags & FILE_FLAG('U')) != 0;
+                quiet = (taking.flags & FILE_FLAG('q')) != 0 ||
+                        ul_getopt_keep_unknown;
                 quiet_output = (taking.flags & FILE_FLAG('Q')) != 0;
                 unquoted = (taking.flags & FILE_FLAG('u')) != 0;
                 if (file_option_value(address_of taking, 'n'))
@@ -7722,14 +7848,8 @@ static b32 util_linux_getopt()
 
                 string_address shell = file_option_value(address_of taking, 's');
                 if (shell)
-                {
-                        if (string_equals(shell, "csh") ||
-                            string_equals(shell, "tcsh"))
-                                csh = true;
-                        else if (!string_equals(shell, "sh") &&
-                                 !string_equals(shell, "bash"))
-                                return string_report(log_error, 2, "getopt: %s\n" "Try 'getopt --help' for more information.\n", "unknown shell after -s or --shell argument");
-                }
+                        csh = string_equals(shell, "csh") ||
+                              string_equals(shell, "tcsh");
         }
 
         bool address_to deferred = count
@@ -7986,7 +8106,7 @@ static b32 ul_partition_program(string_address program, b32 operation)
         positive wanted = operation == UL_BLKPG_ADD ? 4
                           : operation == UL_BLKPG_DELETE ? 2 : 3;
         if (count - taking.first != wanted)
-                return string_report(log_error, 1, "%s: %s\n", program, "not enough arguments");
+                return ul_usage_error(program, "not enough arguments");
 
         string_address device = program_argument((b32)taking.first);
         positive partition;
@@ -8135,12 +8255,14 @@ static const ul_blockdev_descriptor ul_blockdev_descriptors[] = {
 typedef struct
 {
         const ul_blockdev_descriptor address_to descriptor;
-        positive argument;
+        string_address text;
+        p8 verbosity;
 } ul_blockdev_command;
 
 #define UL_BLOCKDEV_COMMANDS 32
 static ul_blockdev_command ul_blockdev_commands[UL_BLOCKDEV_COMMANDS];
 static positive ul_blockdev_command_count;
+static p8 ul_blockdev_verbosity;
 
 static const ul_blockdev_descriptor address_to ul_blockdev_find(p8 letter)
 {
@@ -8152,6 +8274,13 @@ static const ul_blockdev_descriptor address_to ul_blockdev_find(p8 letter)
 
 static bool ul_blockdev_seen(p8 letter, string_address value)
 {
+        /* Verbosity is a command like any other: it holds from where it
+           stands until the next one changes it. */
+        if (letter == 'q' || letter == 'v')
+        {
+                ul_blockdev_verbosity = letter;
+                return true;
+        }
         const ul_blockdev_descriptor address_to descriptor =
             ul_blockdev_find(letter);
         if (!descriptor)
@@ -8161,14 +8290,10 @@ static bool ul_blockdev_seen(p8 letter, string_address value)
                 string_report(log_error, 1, "%s: %s\n", "blockdev", "too many commands");
                 return false;
         }
-        positive argument = letter == '1' ? 1 : 0;
-        if (value && !ul_unsigned(value, positive_max, address_of argument))
-        {
-                string_report(log_error, 1, "%s: %s\n", "blockdev", "invalid command argument");
-                return false;
-        }
+        /* The argument is read when the command runs, so the commands before
+           it run first, exactly as they were asked to. */
         ul_blockdev_commands[ul_blockdev_command_count++] =
-            (ul_blockdev_command){descriptor, argument};
+            (ul_blockdev_command){descriptor, value, ul_blockdev_verbosity};
         return true;
 }
 
@@ -8184,7 +8309,6 @@ static const file_long ul_blockdev_longs[] = {
     {"help", 'h'}, {"version", 'V'}, {null, 0},
 };
 
-static p8 ul_blockdev_verbosity;
 static const file_supersede ul_blockdev_supersedes[] = {
     {"qv", address_of ul_blockdev_verbosity}, {null, null},
 };
@@ -8242,7 +8366,7 @@ static bipolar ul_blockdev_set_pointer(
         return system_control(handle, descriptor->request, address_of value);
 }
 
-static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
+static b32 ul_blockdev_one(string_address path)
 {
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_CLOEXEC);
@@ -8256,8 +8380,22 @@ static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
                     ul_blockdev_commands + at;
                 const ul_blockdev_descriptor address_to descriptor =
                     command->descriptor;
-                p64 value = command->argument;
+                bool verbose = command->verbosity == 'v';
+                bool quiet = command->verbosity == 'q';
+                positive argument = descriptor->letter == '1' ? 1 : 0;
                 bipolar result;
+
+                if (command->text &&
+                    !ul_unsigned(command->text, positive_max, address_of argument))
+                {
+                        system_close(handle);
+                        log_flush();
+                        return string_report(
+                            log_error, 1,
+                            "blockdev: failed to parse command argument: '%s'\n",
+                            command->text);
+                }
+                p64 value = argument;
 
                 if (descriptor->operation <= UL_BLOCK_QUERY_SIGNED32)
                         result = ul_blockdev_query(handle, descriptor,
@@ -8273,10 +8411,10 @@ static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
                 if (result < 0)
                 {
                         system_close(handle);
-                        if (verbose &&
-                            descriptor->operation > UL_BLOCK_QUERY_SIGNED32)
+                        if (verbose && descriptor->letter != '0')
                                 string_format(log, "%s failed.\n",
                                               descriptor->description);
+                        log_flush();
                         if (descriptor->letter == '0')
                                 log_error("blockdev: could not get device size\n",
                                           sizeof("blockdev: could not get device size\n") - 1);
@@ -8315,13 +8453,19 @@ typedef struct
         b32 status;
 } ul_blockdev_report_context;
 
-static b32 ul_blockdev_report_one(string_address path)
+static b32 ul_blockdev_report_one(string_address path, bool quiet)
 {
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
+        {
+                /* Reporting every device names none of them: the ones this
+                   user cannot open are simply not in the table. */
+                if (quiet)
+                        return 1;
                 return string_report(log_error, 1, "blockdev: cannot open %s: %s\n",
                               path, file_reason(handle));
+        }
         const p8 letters[] = {'3', 'G', '5', 'B', 'E'};
         p64 values[array_count(letters)];
         for (positive at = 0; at < array_count(letters); at++)
@@ -8363,7 +8507,7 @@ static bool ul_blockdev_report_visit(string_address path, address_any opaque)
 {
         ul_blockdev_report_context address_to context =
             (ul_blockdev_report_context address_to)opaque;
-        context->status |= ul_blockdev_report_one(path);
+        context->status |= ul_blockdev_report_one(path, true);
         return true;
 }
 
@@ -8384,12 +8528,14 @@ static b32 util_linux_blockdev()
 
         bool report = (taking.flags & FILE_FLAG('R')) != 0;
         positive count = (positive)program_argument_count();
+        /* Nothing at all is not enough arguments; anything else that names
+           no device is a device that was not named. */
+        if (count < 2)
+                return ul_usage_error("blockdev", "not enough arguments");
+        if (!report && taking.first == count)
+                return ul_usage_error("blockdev", "no device specified");
         if (report && ul_blockdev_command_count)
                 return string_report(log_error, 1, "%s: %s\n", "blockdev", "--report cannot be combined with commands");
-        if (!report && ul_blockdev_command_count && taking.first == count)
-                return string_report(log_error, 1, "%s: %s\n", "blockdev", "no device specified");
-        bool verbose = ul_blockdev_verbosity == 'v';
-        bool quiet = ul_blockdev_verbosity == 'q';
 
         b32 status = 0;
         if (report)
@@ -8406,13 +8552,12 @@ static b32 util_linux_blockdev()
                 else
                         while (taking.first < count)
                                 status |= ul_blockdev_report_one(
-                                    program_argument((b32)taking.first++));
+                                    program_argument((b32)taking.first++), false);
         }
         else
                 while (taking.first < count && !status)
                         status = ul_blockdev_one(
-                            program_argument((b32)taking.first++),
-                            verbose, quiet);
+                            program_argument((b32)taking.first++));
         log_flush();
         return status;
 }
@@ -8440,14 +8585,16 @@ static b32 util_linux_isosize()
         if (taking.first == count)
                 return string_report(log_error, 1, "%s: %s\n", "isosize", "no device specified");
 
-        positive divisor = 0;
+        /* util-linux takes a signed 32-bit divisor: a negative one divides. */
+        bipolar divisor = 0;
         string_address divisor_text = file_option_value(address_of taking, 'd');
         if (divisor_text &&
-            !ul_unsigned(divisor_text, positive_max, address_of divisor))
+            !ul_signed(divisor_text, -(bipolar)2147483648, 2147483647,
+                       address_of divisor))
                 return string_report(log_error, 1, "%s: %s\n", "isosize", "invalid divisor argument");
 
         bool several = count - taking.first > 1;
-        b32 status = 0;
+        positive failed = 0, answered = 0;
         while (taking.first < count)
         {
                 string_address path = program_argument((b32)taking.first++);
@@ -8458,7 +8605,7 @@ static b32 util_linux_isosize()
                         string_format(log_error,
                                       "isosize: cannot open %s: %s\n",
                                       path, file_reason(handle));
-                        status = 32;
+                        failed++;
                         continue;
                 }
 
@@ -8476,9 +8623,11 @@ static b32 util_linux_isosize()
                                       path);
                 if (read_bytes != sizeof(descriptor))
                 {
+                        /* A short descriptor has no size to report. */
                         string_format(log_error,
                                       "isosize: read error on %s\n", path);
-                        status = 32;
+                        failed++;
+                        continue;
                 }
 
                 if (several)
@@ -8490,15 +8639,16 @@ static b32 util_linux_isosize()
                                       (positive)volume.sector_size);
                 else
                 {
-                        positive bytes = (positive)volume.sectors *
-                                         (positive)volume.sector_size;
-                        positive_to_string(log, divisor ? bytes / divisor : bytes);
-                        log("\n", 1);
+                        bipolar bytes = (bipolar)volume.sectors *
+                                        (bipolar)volume.sector_size;
+                        string_format(log, "%b\n",
+                                      divisor ? bytes / divisor : bytes);
                 }
+                answered++;
         }
 
         log_flush();
-        return status;
+        return failed ? (answered ? 64 : 32) : 0;
 }
 
 enum
@@ -9077,7 +9227,8 @@ static b32 util_linux_swaplabel()
                     address_of answer))
                 return answer;
         positive count = (positive)program_argument_count();
-        if (taking.first + 1 != count)
+        /* One device is read; util-linux ignores whatever follows it. */
+        if (taking.first >= count)
                 return string_report(log_error, 1, "%s: %s\n", "swaplabel", "expected exactly one device");
 
         string_address path = program_argument((b32)taking.first);
@@ -12052,6 +12203,9 @@ typedef struct
 static ul_ipc_snapshot ul_ipc;
 static bool ul_ipc_bytes;
 static bool ul_ipc_numeric_permissions;
+/* lsipc --numeric-perms writes a whole mode, ipcs's legacy column the
+   digits alone. */
+static bool ul_ipc_octal_prefix;
 
 static const string_address ul_ipc_paths[] = {
     (string_address)"/proc/sysvipc/msg",
@@ -12262,9 +12416,11 @@ static string_address ul_ipc_permissions(p8 address_to text, positive mode)
 {
         if (ul_ipc_numeric_permissions)
         {
-                positive length = positive_into_base(text, mode & 0777,
-                                                     8, false);
-                text[length] = end;
+                positive at = 0;
+                if (ul_ipc_octal_prefix)
+                        text[at++] = '0';
+                at += positive_into_base(text + at, mode & 0777, 8, false);
+                text[at] = end;
                 return text;
         }
         static const positive bits[] = {0400, 0200, 0100, 0040, 0020,
@@ -12755,6 +12911,7 @@ static b32 util_linux_lsipc()
         ul_ipc_bytes = (taking.flags & FILE_FLAG('b')) != 0;
         ul_ipc_numeric_permissions =
             (taking.flags & FILE_FLAG('P')) != 0;
+        ul_ipc_octal_prefix = ul_ipc_numeric_permissions;
         bool json = (taking.flags & FILE_FLAG('J')) != 0;
         bool newline = (taking.flags & FILE_FLAG('n')) != 0;
         bool raw = (taking.flags & FILE_FLAG('r')) != 0;
@@ -12785,10 +12942,10 @@ static ul_table_column ul_ipcs_columns[UL_IPC_COLUMNS] = {
     [UL_IPC_PERMS] = {"perms", "perms", 10},
     [UL_IPC_SIZE] = {"bytes", "bytes", 10},
     [UL_IPC_NATTCH] = {"nattch", "nattch", 10},
-    [UL_IPC_STATUS] = {"status", "status", 0},
+    [UL_IPC_STATUS] = {"status", "status", 12},
     [UL_IPC_USEDBYTES] = {"used", "used-bytes", 12},
-    [UL_IPC_MSGS] = {"messages", "messages", 0},
-    [UL_IPC_NSEMS] = {"nsems", "nsems", 0},
+    [UL_IPC_MSGS] = {"messages", "messages", 12},
+    [UL_IPC_NSEMS] = {"nsems", "nsems", 10},
 };
 
 static fn ul_ipcs_table(p8 type)
@@ -12822,10 +12979,14 @@ static fn ul_ipcs_table(p8 type)
                 return;
         }
         ul_ipcs_columns[UL_IPC_ID].heading = views[type].id;
+        ul_table_pad_last = true;
+        ul_table_pad_extra = type == UL_IPC_SHARED ? 1 : 0;
         ul_table_out(ul_ipc.rows + first, sizeof(ul_ipc.rows[0]), rows,
                      ul_ipcs_columns, UL_IPC_COLUMNS,
                      (p8 address_to)views[type].columns, views[type].count,
                      true, false, ul_ipc_field);
+        ul_table_pad_last = false;
+        ul_table_pad_extra = 0;
 }
 
 static const file_long ul_ipcs_longs[] = {
@@ -12861,6 +13022,7 @@ static b32 util_linux_ipcs()
                 return string_report(log_error, 1, "%s: %s\n", "ipcs", "cannot read System V IPC snapshot");
         ul_ipc_bytes = !(taking.flags & FILE_FLAG('H'));
         ul_ipc_numeric_permissions = true;
+        ul_ipc_octal_prefix = false;
         if (types & UL_IPC_MESSAGE_BIT) ul_ipcs_table(UL_IPC_MESSAGE);
         if (types & UL_IPC_SHARED_BIT) ul_ipcs_table(UL_IPC_SHARED);
         if (types & UL_IPC_SEMAPHORE_BIT) ul_ipcs_table(UL_IPC_SEMAPHORE);

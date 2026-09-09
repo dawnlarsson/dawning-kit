@@ -44400,4 +44400,213 @@ int main(void)
 }
 #endif /* CHECK_native_reserve */
 
+
+#ifdef CHECK_lexer_spans
+/* Counted lexer views borrow input; parser text must survive its reuse.
+   Build with kit/build or the shell lane's freestanding-checks runner. */
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#include "../src/sh/shell.c"
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+static fn lexer_span_owned(p8 *line, p8 *continuation,
+                           string_address const *words, positive count)
+{
+        parse_reset();
+        bool ready = parse_feed(line);
+        if (ready && continuation) ready = parse_feed(continuation);
+        check("parser accepts source", ready);
+        if (!ready) return;
+        memory_fill(line, 'x', string_length(line));
+        if (continuation) memory_fill(continuation, 'y', string_length(continuation));
+        check("parser token count", parse_token_count == count + 1);
+        if (parse_token_count != count + 1) return;
+        for (positive i = 0; i < count; i++)
+                check("parser owns terminated spelling",
+                      parse_tokens[i].kind == PT_WORD &&
+                      parse_tokens[i].length == string_length(words[i]) &&
+                      !string_compare(parse_tokens[i].text, words[i]));
+}
+
+b32 main(void)
+{
+        shell_bash_compat = true;
+        static const struct { string_address text; positive length; b32 kind; } cases[] = {
+#define SPAN(word, kind) {word ";tail", sizeof(word) - 1, kind}
+            SPAN("plain", LEX_WORD), SPAN("'one two'", LEX_WORD),
+            SPAN("\"${x:-two words}\"", LEX_WORD), SPAN("escaped\\ word", LEX_WORD),
+            SPAN("a[1 + 2]=x", LEX_WORD), SPAN("a=(one 'two three')", LEX_WORD),
+            SPAN("[[ x == x ]]", LEX_CONDITIONAL), SPAN("((a=1+2))", LEX_ARITHMETIC),
+            SPAN("\"$(cat <<'E'\ninside ) text\nE\n)\"", LEX_WORD),
+#undef SPAN
+        };
+        for (positive i = 0; i < array_count(cases); i++)
+        {
+                b32 count = lex_line(cases[i].text);
+                check("word, separator, tail", count == 3);
+                if (count != 3) continue;
+                check("whole token borrows exact source", lex_tokens[0].kind == cases[i].kind &&
+                      lex_tokens[0].text == cases[i].text && lex_tokens[0].length == cases[i].length);
+                check("counted end is a separator", lex_tokens[0].text[lex_tokens[0].length] == ';' &&
+                      lex_tokens[1].kind == LEX_OPERATOR && lex_tokens[1].op == OP_SEMI);
+                check("following token retains its own span", lex_tokens[2].kind == LEX_WORD &&
+                      lex_tokens[2].text == cases[i].text + cases[i].length + 1 && lex_tokens[2].length == 4);
+        }
+
+        p8 *pages = memory(3 * 4096);
+        check("guard allocation", (bipolar)(positive)pages > 0);
+        if ((bipolar)(positive)pages <= 0) return test_report(null);
+        bool guarded = !system_call_3(syscall(mprotect), (positive)pages, 4096, 0) &&
+            !system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0);
+        check("guard protection", guarded);
+        if (guarded)
+        {
+                static const positive sizes[] = {1,2,3,4,7,8,15,16,31,32,63,64,127,128,255,256};
+                for (positive i = 0; i < array_count(sizes); i++)
+                {
+                        positive length = sizes[i];
+                        p8 *line = pages + 8191 - length;
+                        memory_fill(line, 'a', length);
+                        line[length] = 0;
+                        check("guarded word borrows complete span", lex_line(line) == 1 &&
+                              lex_tokens[0].text == line && lex_tokens[0].length == length);
+                }
+        }
+        memory_free(pages, 3 * 4096);
+
+        static p8 many[2049];
+        for (positive i = 0; i < 1024; i++) { many[2*i] = 'a'; many[2*i+1] = ' '; }
+        b32 grown = lex_line(many);
+        check("grown token table", grown == 1024);
+        if (grown != 1024) return test_report(null);
+        for (positive i = 0; i < 1024; i++)
+                check("table growth preserves each source address",
+                      lex_tokens[i].text == many + 2*i && lex_tokens[i].length == 1);
+        lex_token held = lex_tokens[500];
+        lex_frame frame;
+        lex_nest_enter(&frame);
+        check("nested lexer input", lex_line("'nested source'") == 1);
+        lex_nest_leave(&frame);
+        check("outer table restored", lex_count == 1025 && lex_tokens[500].text == held.text &&
+              lex_tokens[500].length == held.length && lex_tokens[500].text[0] == 'a');
+
+        p8 plain[] = ": plain 'quoted word' \\x";
+        string_address plain_words[] = {":", "plain", "'quoted word'", "\\x"};
+        lexer_span_owned(plain, null, plain_words, array_count(plain_words));
+        p8 first[] = ": 'held", second[] = "more' tail";
+        string_address held_words[] = {":", "'held\nmore'", "tail"};
+        lexer_span_owned(first, second, held_words, array_count(held_words));
+        p8 nested[] = ": \"$(cat <<'E'\ninside\nE\n)\" tail";
+        string_address nested_words[] = {":", "\"$(cat <<'E'\ninside\nE\n)\"", "tail"};
+        lexer_span_owned(nested, null, nested_words, array_count(nested_words));
+        return test_report(null);
+}
+#endif
+#ifdef CHECK_regex
+/* Build with kit/build. Compare complete-literal shortcuts with their original
+   VM fallback, using the real shared library and injected resource budgets. */
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#include "../src/sh/shell.c"
+
+static positive proof_checks, proof_failures;
+
+static fn proof_check(bool condition)
+{
+        proof_checks++;
+        proof_failures += !condition;
+}
+
+b32 main(void)
+{
+        static string_address patterns[] = {
+            "(ab){32}", "((ab){4}){8}", "(ab){128}", "(ab){129}",
+            "(a){1}", "a{0}b", "(a())b", "(a)(b)", "(ab){32}z",
+            "(ab){1,2}", "(ab)*", "(a|b){2}", "(ab){2}\\1", "(^ab){2}",
+        };
+        static string_address subjects[] = {
+            "", "a", "ab", "abab", "aabb", "xabab", "ABAB", "ab\nab",
+        };
+        static positive budgets[] = {0, 1, 5, 50, 100000000};
+        static p32 capacities[] = {0, 2, RX_NODE_MAX - 1, RX_NODE_MAX};
+        p8 repeated[260];
+        for (positive i = 0; i < sizeof(repeated); i++)
+                repeated[i] = i & 1 ? 'b' : 'a';
+
+        for (positive p = 0; p < array_count(patterns); p++)
+        for (b32 fold = 0; fold < 2; fold++)
+        {
+                regex_pool.used = (rx_mark){0};
+                regex_program program;
+                bool compiled = rx_compile(&regex_pool, &program, patterns[p], true, fold, true,
+                                           REGEX_POLICY_DEFAULT);
+                proof_check(compiled);
+                if (!compiled)
+                        continue;
+                if (p < 4)
+                {
+                        proof_check(!(program.flags & RX_LITERAL_PROVES));
+                        proof_check(program.hints->literal_length == 2 &&
+                                    !memory_compare(program.hints->literal, "ab", 2));
+                        proof_check(program.hints->fixed_length == (p < 2 ? 64 : p == 2 ? 256 : 258));
+                        proof_check(program.hints->fixed_work != 0);
+                }
+                rx_hints interpreter_hints = *program.hints;
+                interpreter_hints.fixed_work = 0;
+                regex_program interpreter = program;
+                interpreter.hints = &interpreter_hints;
+                for (positive s = 0; s < array_count(subjects) + 5; s++)
+                {
+                        string_address bytes = s < array_count(subjects) ? subjects[s] : repeated;
+                        positive length = s < array_count(subjects) ? string_length(bytes) :
+                            s == array_count(subjects) ? 63 :
+                            s == array_count(subjects) + 1 ? 64 :
+                            s == array_count(subjects) + 2 ? 65 :
+                            s == array_count(subjects) + 3 ? 256 : 258;
+                        for (p8 mode = REGEX_FIRST; mode <= REGEX_EXACT_LONGEST; mode++)
+                        for (p8 boundary = REGEX_BOUNDARY_NONE; boundary <= REGEX_BOUNDARY_LINE; boundary++)
+                        for (p8 capture = 0; capture < 2; capture++)
+                        for (p8 pending = 0; pending < 2; pending++)
+                        for (positive work = 0; work < array_count(budgets); work++)
+                        for (positive room = 0; room < array_count(capacities); room++)
+                        {
+                                program.boundary = interpreter.boundary = boundary;
+                                rx_match fast = regex_match;
+                                fast.work_limit = budgets[work];
+                                fast.frame_capacity = capacities[room];
+                                fast.choice_capacity = fast.undo_capacity = room ? REGEX_SCRATCH_MAX : 0;
+                                fast.pending_exhaustion = pending;
+                                rx_match slow = fast;
+                                p8 one = rx_find(&fast, &program, mode, capture, bytes, length, 0);
+                                p8 two = rx_find(&slow, &interpreter, mode, capture, bytes, length, 0);
+                                proof_check(one == two && fast.pending_exhaustion == slow.pending_exhaustion);
+                                if (one == RX_MATCH && two == RX_MATCH)
+                                        proof_check(!memory_compare(fast.slots, slow.slots,
+                                            (capture ? (program.groups + 1) * 2 : 2) * sizeof(positive)));
+                        }
+                }
+        }
+        /* Reuse the same hint after its complete buffer held a maximal
+           literal. Short, empty-count and unsupported proofs must not see it. */
+        p8 longest[RX_NODE_MAX];
+        memory_fill(longest, 'a', sizeof(longest) - 1);
+        longest[sizeof(longest) - 1] = 0;
+        string_address reuse_patterns[] = {longest, "(ab){2}", "a{0}b", "[a-z]+", "((a){0}b){2}"};
+        string_address reuse_subjects[] = {longest, "abab", "b", "xyz", "bb"};
+        regex_retained = (rx_mark){0};
+        for (positive round = 0; round < 4; round++)
+        for (positive i = 0; i < array_count(reuse_patterns); i++)
+        {
+                proof_check(regex_compile(reuse_patterns[i], true, false, true, REGEX_POLICY_DEFAULT));
+                positive length = string_length(reuse_subjects[i]);
+                proof_check(regex_find(REGEX_LONGEST, reuse_subjects[i], length, 0));
+                proof_check(regex_slots[0] == 0 && regex_slots[1] == length);
+        }
+        string_format(log, "%p checks, %p failures\n", proof_checks, proof_failures);
+        log_flush();
+        return proof_failures != 0;
+}
+#endif
 #endif

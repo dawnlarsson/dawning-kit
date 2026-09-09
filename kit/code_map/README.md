@@ -263,7 +263,7 @@ the changed source before updating pins. Do not preserve a `body_reviewed`
 claim for a changed body without checking it again.
 
 ```sh
-python3 test/code_map.py -v
+python3 test/harness.py code_map -v
 python3 kit/function_audit.py --check
 node test/code_map_browser.mjs artifacts/function-map-2026-09-08
 ```

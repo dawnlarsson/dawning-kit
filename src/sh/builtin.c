@@ -57,6 +57,23 @@ static COLD fn shell_posix_changed(bool on);
 static COLD fn shell_getopts_index_changed();
 static fn shell_getopts_parameters_changed();
 
+/*
+        The letter an option diagnostic names.
+
+        The shared formatter carries %s, %p, %b and %f and no %c, so a
+        "%c" in a message wrote nothing at all and every one of these
+        read "declare: : invalid option" with the letter missing. A
+        letter is spelled into two bytes and handed over as a string
+        instead. The room is the caller's, because a diagnostic may
+        name two letters at once.
+*/
+static string_address shell_option_spelled(string_address room, p8 letter)
+{
+        room[0] = letter;
+        room[1] = 0;
+        return room;
+}
+
 typedef struct
 {
         bipolar offset;
@@ -3681,6 +3698,9 @@ bool shell_cd_walk(bool physical, bool address_to say,
 
 COLD fn shell_cd(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         p8 letter;
         bool physical = shell_physical_on();
@@ -3712,7 +3732,8 @@ COLD fn shell_cd(writer write, string_address input)
                 else if (letter == 'e')
                         error_if_unnamed = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "cd: bad option: -%c\n", letter));
+                        return shell_answer(string_report(log_error, 2, "cd: bad option: -%s\n",
+                                                        shell_option_spelled(room, letter)));
         }
 
         positive index = walk.index;
@@ -4241,6 +4262,9 @@ fn shell_echo(writer write, string_address input)
 */
 COLD fn shell_exec(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         p8 address_to found = null;
         positive found_room = 0;
         string_address address_to environment;
@@ -4272,8 +4296,8 @@ COLD fn shell_exec(writer write, string_address input)
                 }
                 else
                 {
-                        string_format(log_error,
-                                      "exec: -%c: invalid option\n", which);
+                        string_format(log_error, "exec: -%s: invalid option\n",
+                                      shell_option_spelled(room, which));
                         exec_special_error_note();
                         return shell_answer(2);
                 }
@@ -4390,6 +4414,9 @@ STORAGE_ADAPTER(findfs, storage_findfs_run)
 
 COLD fn shell_pwd(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         p8 out_buffer[4096];
         shell_option_walk walk = {1};
         p8 letter;
@@ -4404,7 +4431,8 @@ COLD fn shell_pwd(writer write, string_address input)
                 else if (letter == 'P')
                         physical = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "pwd: bad option: -%c\n", letter));
+                        return shell_answer(string_report(log_error, 2, "pwd: bad option: -%s\n",
+                                                        shell_option_spelled(room, letter)));
         }
 
         if (!physical && shell_directory_holds())
@@ -5224,17 +5252,22 @@ static COLD fn shell_shopt_said(writer write, positive which, bool as_commands)
 }
 
 static COLD fn shell_shopt_option_said(writer write, string_address name,
-                                       bool on, bool as_commands)
+                                       bool on, bool as_commands, positive column)
 {
-        /* shopt uses its own twenty-column listing even when -o selects the
-           set-option namespace. `set -o` retains the POSIX/dash layout. */
+        /* Bash writes shopt -o in two columns, not one: the listing of every
+           option takes the fifteen set -o writes, and a named option takes
+           the twenty a shopt name gets. A script cutting the listing on the
+           tab sees whichever of the two it asked for. */
         shell_option_row(write, name, on,
                          as_commands ? (on ? "set -o " : "set +o ") : null,
-                         20, '\t');
+                         column, '\t');
 }
 
 COLD fn shell_shopt(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         p8 which;
         bool set = false;
@@ -5258,7 +5291,8 @@ COLD fn shell_shopt(writer write, string_address input)
                 else if (which == 'o')
                         set_options = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "shopt: -%c: invalid option\n", which));
+                        return shell_answer(string_report(log_error, 2, "shopt: -%s: invalid option\n",
+                                                        shell_option_spelled(room, which)));
         }
 
         positive index = walk.index;
@@ -5278,6 +5312,16 @@ COLD fn shell_shopt(writer write, string_address input)
                 if (quiet)
                         return shell_answer(0);
 
+                // shopt -o with nothing named is the view set -o writes, in
+                // the same order and the same field; only -s or -u filtering
+                // needs the table walk below.
+                if (set_options && !set && !unset)
+                {
+                        shell_options_listed(write, as_commands);
+
+                        return shell_answer(0);
+                }
+
                 for (positive at = 0; at < count; at++)
                 {
                         bool on = set_options ? shell_option_on(at)
@@ -5291,7 +5335,7 @@ COLD fn shell_shopt(writer write, string_address input)
                         if (set_options)
                                 shell_shopt_option_said(
                                     write, shell_option_names[at].name, on,
-                                    as_commands);
+                                    as_commands, 15);
                         else
                                 shell_shopt_said(write, at, as_commands);
                 }
@@ -5309,7 +5353,7 @@ COLD fn shell_shopt(writer write, string_address input)
 
                                 shell_shopt_option_said(
                                     write, shell_extra_options[at].name, on,
-                                    as_commands);
+                                    as_commands, 15);
                         }
 
                 return shell_answer(quiet && !all_on ? 1 : 0);
@@ -5378,7 +5422,7 @@ COLD fn shell_shopt(writer write, string_address input)
                             write, name,
                             which < SHELL_OPTION_NAMES ? shell_option_on(which)
                                                        : shell_extra_on(extra),
-                            as_commands);
+                            as_commands, 20);
                 else
                         shell_shopt_said(write, which, as_commands);
         }
@@ -5462,6 +5506,17 @@ COLD fn shell_set(writer write, string_address input)
 
                 if (word_is(word, "--"))
                 {
+                        operands = true;
+                        index++;
+                        break;
+                }
+
+                // A lone - also ends the options, and POSIX has it turn off
+                // -x and -v on the way; neither reference keeps it as $1.
+                if (word_is(word, "-"))
+                {
+                        shell_option_letter_told('x', false);
+                        shell_option_letter_told('v', false);
                         operands = true;
                         index++;
                         break;
@@ -5625,9 +5680,13 @@ static bool shell_unset_variable(const_string name, positive length)
 
 COLD fn shell_unset(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         positive index;
         bool functions = false;
+        bool variables = false;
         bool reference = false;
         p8 letter;
 
@@ -5636,20 +5695,26 @@ COLD fn shell_unset(writer write, string_address input)
                 if (letter == 'f')
                         functions = true;
                 else if (letter == 'v')
-                        functions = false;
+                        variables = true;
                 else if (letter == 'n')
                         reference = true;
                 else
                 {
                         // A special builtin, so a letter it does not have
                         // ends the script, as the reference shell's does.
-                        string_format(log_error,
-                                      "unset: Illegal option -%c\n", letter);
+                        string_format(log_error, "unset: Illegal option -%s\n",
+                                      shell_option_spelled(room, letter));
                         exec_special_error_note();
                         shell_answer(2);
                         return;
                 }
         }
+
+        //      Bash refuses to be told both at once; the reference shell lets
+        //      the later letter win, so only the Bash personality complains.
+        if (functions && variables && shell_bash_compat)
+                return shell_answer(string_report(log_error, 1,
+                    "unset: cannot simultaneously unset a function and a variable\n"));
 
         index = walk.index;
 
@@ -5989,7 +6054,13 @@ typedef struct
 
 static bool shell_declare_options(shell_declare_state address_to state)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
+        p8 sign[2];
         shell_option_walk walk = {state->index, null, 0, true};
+        bool indexed_told = false;
+        bool associative_told = false;
         p8 value;
 
         while (shell_option_letter(address_of walk, address_of value))
@@ -6009,12 +6080,21 @@ static bool shell_declare_options(shell_declare_state address_to state)
 
                 if (!flag)
                 {
-                        string_format(log_error,
-                                      "%s: %c%c: invalid option\n",
-                                      shell_argv[0], direction, value);
+                        string_format(log_error, "%s: %s%s: invalid option\n",
+                                      shell_argv[0],
+                                      shell_option_spelled(sign, direction),
+                                      shell_option_spelled(room, value));
                         shell_answer(2);
                         return false;
                 }
+
+                //      Asking for both array kinds at once is refused, and
+                //      Bash names -a whichever order the two arrived in.
+                if (attribute == SHELL_ARRAY_INDEXED && direction == '-')
+                        indexed_told = true;
+
+                if (attribute == SHELL_ARRAY_ASSOCIATIVE && direction == '-')
+                        associative_told = true;
 
                 // Upper and lower fold in opposite directions and an array
                 // has one kind, so asking for one of a pair withdraws the
@@ -6043,6 +6123,19 @@ static bool shell_declare_options(shell_declare_state address_to state)
                         state->set |= flag;
                 else
                         state->clear |= flag;
+        }
+
+        //      Asking for both array kinds at once is refused, and Bash
+        //      names -a whichever order the two arrived in. Weighed after
+        //      the walk and not inside it, because -p may still arrive:
+        //      "declare -A -a -p v" is a listing to Bash, which reads the
+        //      attributes it holds rather than the pair it was handed.
+        if (indexed_told && associative_told && !(state->set & DECLARE_PRINT))
+        {
+                string_format(log_error, "%s: -a: invalid option\n",
+                              shell_argv[0]);
+                shell_answer(2);
+                return false;
         }
 
         state->index = walk.index;
@@ -6151,8 +6244,10 @@ static COLD fn shell_declare_elements(writer write, string_address name,
         // Bash leaves one space before the bracket of a keyed listing and
         // none before an indexed one. A listing is meant to be a line the
         // shell could be fed back, and a diff of two shells' listings should
-        // show nothing, so the difference is kept rather than tidied.
-        if (keyed)
+        // show nothing, so the difference is kept rather than tidied. An
+        // empty keyed array has no bracket to stand before, and Bash writes
+        // that one as =() with nothing between.
+        if (keyed && count)
                 write(" ", 1);
 
         write(")", 1);
@@ -6570,7 +6665,8 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                                   : global_meta ? global_meta->attributes : shell_variable_attributes(word, length);
 
                 if ((state->attributes_set & SHELL_ARRAY_NAMEREF) &&
-                    (held_attributes & SHELL_ARRAY_EITHER))
+                    ((held_attributes & SHELL_ARRAY_EITHER) ||
+                     (scoped && (state->attributes_set & SHELL_ARRAY_EITHER))))
                 {
                         string_format(log_error, "%s: %s: reference variable cannot be an array\n",
                                       shell_argv[0], word);
@@ -7054,6 +7150,9 @@ static fn shell_marked_written(writer write, string_address name,
 
 static COLD fn shell_marked(writer write, p8 mark)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         string_address command = mark == DECLARE_EXPORT ? "export"
                                                         : "readonly";
         bool listed = shell_argc < 2;
@@ -7073,8 +7172,8 @@ static COLD fn shell_marked(writer write, p8 mark)
                          mark == DECLARE_EXPORT && walk.direction == '-')
                         unmark = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "%s: -%c: invalid option\n",
-                                      command, option));
+                        return shell_answer(string_report(log_error, 2, "%s: -%s: invalid option\n",
+                                      command, shell_option_spelled(room, option)));
         }
 
         index = walk.index;
@@ -7537,6 +7636,11 @@ bool test_compare(positive kind, string_address left, string_address right)
 
         if (!first_good || !second_good)
         {
+                //      Both references complain about the operand that is not
+                //      a number; being silent read as a false rather than an
+                //      error to anything watching the diagnostic.
+                string_format(log_error, "%s: Illegal number: %s\n",
+                              shell_argv[0], first_good ? right : left);
                 test_bad = true;
                 return false;
         }
@@ -7858,6 +7962,25 @@ RETURNS_NONNULL string_address printf_escape(writer write, string_address step)
                 write(address_of value, 1);
 
                 return step;
+        }
+
+        // \xHH is one or two hexadecimal digits, in the format, a %b argument
+        // and echo -e alike -- both references read it in all three. A bare
+        // \x with no digit falls through and stays the two bytes it was.
+        if (string_is(step, 'x'))
+        {
+                positive used;
+                positive number = string_digits_hexadecimal_escape_max(
+                    step + 1, 2, address_of used);
+
+                if (used)
+                {
+                        step += used + 1;
+                        value = (p8)number;
+                        write(address_of value, 1);
+
+                        return step;
+                }
         }
 
         value = string_get(step);
@@ -8761,6 +8884,7 @@ COLD fn shell_read(writer write, string_address input)
         bool quieted = false;
         terminal_modes quiet_held;
         b32 descriptor = 0;
+        string_address prompt = null;
         string_address ifs;
         p8 ifs_default[] = " \t\n";
 
@@ -8797,7 +8921,16 @@ COLD fn shell_read(writer write, string_address input)
                         array_name = value;
                 }
                 else if (which == 'p')
-                        log_error(value, 0);
+                {
+                        //      A prompt is for someone to read, so it is
+                        //      held until the descriptor is known and
+                        //      written only when that descriptor is a
+                        //      terminal. Bash is silent down a pipe, and
+                        //      writing it anyway put the prompt in the
+                        //      error stream of every script that read a
+                        //      file.
+                        prompt = value;
+                }
                 else if (which == 'i')
                 {
                         // The editor would put it in front of what is
@@ -8839,6 +8972,14 @@ COLD fn shell_read(writer write, string_address input)
         }
         index = options.index;
 
+        if (prompt)
+        {
+                p8 settings[64];
+
+                if (system_control(descriptor, BUILTIN_TCGETS, settings) == 0)
+                        log_error(prompt, 0);
+        }
+
         names = index;
 
         // A malformed operand is not a variable assignment and can be
@@ -8857,8 +8998,13 @@ COLD fn shell_read(writer write, string_address input)
                 {
                         positive length = string_length(shell_argv[name]);
 
+                        //      An operand that is not a name is a usage
+                        //      error to the Debian shell and a plain
+                        //      failure to Bash, which answers 1.
                         if (!shell_valid_name(shell_argv[name], length))
-                                return shell_answer(string_report(log_error, 2, "read: bad variable name: %s\n",
+                                return shell_answer(string_report(log_error,
+                                              shell_bash_compat ? 1 : 2,
+                                              "read: bad variable name: %s\n",
                                               shell_argv[name]));
 
                 }
@@ -9984,11 +10130,27 @@ static fn trap_write_condition(writer write, positive number,
 
         write(" ", 1);
 
+        //      Bash writes a signal as SIGINT and a condition as EXIT; dash
+        //      and Bash's POSIX mode write the bare name for both, and this
+        //      listing is compared against whichever shell was invoked.
+        if (shell_bash_compat && !shell_posix_on() && number &&
+            number <= TRAP_NUMBER_MAX)
+                write("SIG", 3);
+
         if (number < TRAP_NAMES - 1)
                 string_format(write, "%s", trap_names[number]);
         else if (number >= TRAP_ERR && number <= TRAP_DEBUG)
                 string_format(write, "%s", trap_condition_names[number -
                                                                 TRAP_ERR]);
+        else if (number <= TRAP_NUMBER_MAX)
+        {
+                //      The real-time signals have no entry in the name table
+                //      and are spelled RTMIN+n and RTMAX, as kill -l has them.
+                p8 name[16];
+
+                kill_name(number, name);
+                write(name, string_length(name));
+        }
         else
                 positive_to_string(write, number);
 
@@ -10157,7 +10319,9 @@ COLD fn shell_trap(writer write, string_address input)
                 // Without -p only non-default conditions are listed.  Query
                 // inherited dispositions as well as the explicit table: an
                 // ignored-on-entry signal has never needed a table entry.
-                for (positive number = 0; number < TRAP_NAMES - 1; number++)
+                // Every number a trap can be set on is walked, so a trap on
+                // a real-time signal past the named ones is listed too.
+                for (positive number = 0; number <= TRAP_NUMBER_MAX; number++)
                 {
                         string_address recorded = trap_action(number);
 
@@ -10414,7 +10578,9 @@ COLD fn shell_alias(writer write, string_address input)
                                 alias_written(write, at);
                         }
                         else
-                                answer = 1;
+                                answer = string_report(log_error, 1,
+                                                       "alias: %s: not found\n",
+                                                       word);
                 }
 
                 index++;
@@ -10427,6 +10593,11 @@ COLD fn shell_unalias(writer write, string_address input)
 {
         positive index = 1;
         b32 status = 0;
+
+        // Nothing named is a usage error in both references, not a success.
+        if (shell_argc < 2)
+                return shell_answer(string_report(log_error, 2,
+                                                  "unalias: usage: unalias [-a] name [name ...]\n"));
 
         while (index < shell_argc)
         {
@@ -10454,7 +10625,8 @@ COLD fn shell_unalias(writer write, string_address input)
                 // A name that was never an alias is something the script asked
                 // for and did not get, which POSIX has this say so.
                 if (at >= alias_count)
-                        status = 1;
+                        status = string_report(log_error, 1,
+                                               "unalias: %s: not found\n", word);
 
                 if (at < alias_count)
                 {
@@ -11765,6 +11937,9 @@ static bool hash_drop(string_address name)
 
 fn shell_hash(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         p8 which;
         b32 bad = 0;
@@ -11797,7 +11972,8 @@ fn shell_hash(writer write, string_address input)
                                                  "argument\n"));
                 }
                 else
-                        return shell_answer(string_report(log_error, 2, "hash: -%c: invalid option\n", which));
+                        return shell_answer(string_report(log_error, 2, "hash: -%s: invalid option\n",
+                                                        shell_option_spelled(room, which)));
         }
 
         positive index = walk.index;
@@ -12371,6 +12547,9 @@ COLD fn shell_type(writer write, string_address input)
 */
 fn shell_command_builtin(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         positive index;
         bool only_say = false;
@@ -12390,8 +12569,8 @@ fn shell_command_builtin(writer write, string_address input)
                 else if (option == 'p')
                         standard_path = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "command: -%c: invalid option\n",
-                                      option));
+                        return shell_answer(string_report(log_error, 2, "command: -%s: invalid option\n",
+                                      shell_option_spelled(room, option)));
         }
 
         index = walk.index;
@@ -12659,21 +12838,27 @@ fn shell_limit_said(writer write, shell_limit address_to limit, bool hard)
         write("\n", 1);
 }
 
+/* The name in front of a value, for -a and for every listing that names
+   more than one resource and so has to say which value belongs to which. */
+static COLD fn shell_limit_label(writer write, shell_limit address_to limit,
+                                 bool bash)
+{
+        if (bash)
+                write(limit->bash_line, string_length(limit->bash_line));
+        else
+        {
+                string_to_field(write, limit->name, 20, ' ', true);
+                write(" ", 1);
+        }
+}
+
 fn shell_limit_listed(writer write, bool bash, bool hard)
 {
         shell_limit address_to limit = bash ? shell_bash_limits : shell_limits;
 
         while (limit->name)
         {
-                if (bash)
-                        write(limit->bash_line,
-                              string_length(limit->bash_line));
-                else
-                {
-                        string_to_field(write, limit->name, 20, ' ', true);
-                        write(" ", 1);
-                }
-
+                shell_limit_label(write, limit, bash);
                 shell_limit_said(write, limit, hard);
                 limit++;
         }
@@ -12685,6 +12870,11 @@ fn shell_ulimit(writer write, string_address input)
         bool hard = false;
         bool soft = false;
         bool listed = false;
+        //      Every resource the words name, not merely the last of them:
+        //      `ulimit -d -f` reports both, each behind its own name.
+        shell_limit address_to picked[32];
+        positive picked_count = 0;
+        b32 answer = 0;
         shell_limit address_to chosen = null;
         shell_limit address_to limit;
 
@@ -12753,6 +12943,9 @@ fn shell_ulimit(writer write, string_address input)
                         }
 
                         chosen = limit;
+
+                        if (picked_count < array_count(picked))
+                                picked[picked_count++] = limit;
                 }
 
                 index++;
@@ -12768,26 +12961,61 @@ fn shell_ulimit(writer write, string_address input)
         // No resource named is the file size, which is what every shell means
         // by a bare ulimit.
         if (!chosen)
+        {
                 chosen = shell_bash_compat ? shell_bash_limits + 4
                                            : shell_limits + 1;
+                picked[0] = chosen;
+                picked_count = 1;
+        }
+
+        //      Reporting or setting each resource named is Bash's; the
+        //      reference shell keeps only the last of them, and answers with
+        //      a bare value that has no name in front of it.
+        if (!shell_bash_compat)
+        {
+                picked[0] = chosen;
+                picked_count = 1;
+        }
 
         if (index >= shell_argc)
         {
-                shell_limit_said(write, chosen, hard);
+                for (positive at = 0; at < picked_count; at++)
+                {
+                        // One resource answers with a bare value; several
+                        // have to say which value belongs to which.
+                        if (picked_count > 1)
+                                shell_limit_label(write, picked[at],
+                                                  shell_bash_compat);
+
+                        shell_limit_said(write, picked[at], hard);
+                }
 
                 return shell_answer(0);
         }
 
+        for (positive at = 0; at < picked_count; at++)
         {
                 ul_limit_pair pair;
                 p64 value;
 
+                chosen = picked[at];
+
+                //      A resource that cannot take the value is reported and
+                //      the rest are still set, which is what bash does with a
+                //      list that names the pipe buffer among others.
                 if (chosen->resource == SHELL_LIMIT_PIPE)
-                        return shell_answer(string_report(log_error, shell_bash_compat ? 1 : 2,
-                            "ulimit: pipe size: cannot modify limit\n"));
+                {
+                        answer = string_report(log_error,
+                                               shell_bash_compat ? 1 : 2,
+                            "ulimit: pipe size: cannot modify limit\n");
+                        continue;
+                }
 
                 if (ul_prlimit(0, chosen->resource, null, address_of pair) < 0)
-                        return shell_answer(1);
+                {
+                        answer = 1;
+                        continue;
+                }
 
                 if (word_is(shell_argv[index], "unlimited"))
                         value = UL_LIMIT_INFINITE;
@@ -12829,13 +13057,13 @@ fn shell_ulimit(writer write, string_address input)
 
                 if (ul_prlimit(0, chosen->resource, address_of pair, null) < 0)
                 {
-                        shell_answer(shell_bash_compat ? 1 : 2);
-
-                        return log_error(str("ulimit: error setting limit\n"));
+                        answer = shell_bash_compat ? 1 : 2;
+                        log_error(str("ulimit: error setting limit\n"));
+                        continue;
                 }
         }
 
-        shell_answer(0);
+        shell_answer(answer);
 }
 
 /*
@@ -12885,6 +13113,9 @@ fn shell_builtin_run(writer write, string_address input)
 */
 fn shell_enable(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
         shell_option_walk walk = {1};
         p8 which;
         bool off = false;
@@ -12905,7 +13136,8 @@ fn shell_enable(writer write, string_address input)
                         return shell_answer(string_report(log_error, 2, "enable: not supported\n"));
                 }
                 else
-                        return shell_answer(string_report(log_error, 2, "enable: -%c: invalid option\n", which));
+                        return shell_answer(string_report(log_error, 2, "enable: -%s: invalid option\n",
+                                                        shell_option_spelled(room, which)));
         }
 
         positive index = walk.index;
@@ -12964,6 +13196,12 @@ fn shell_enable(writer write, string_address input)
 static string_address compgen_prefix;
 static positive compgen_prefix_length;
 static positive compgen_shown;
+//      -X is the filter, -P and -S the two ends written around whatever
+//      survives it. A leading ! in the filter keeps the matches instead of
+//      dropping them, which is the one place compgen spells a negation.
+static string_address compgen_reject;
+static string_address compgen_before;
+static string_address compgen_after;
 
 static COLD fn compgen_offer(writer write, string_address name)
 {
@@ -12974,7 +13212,20 @@ static COLD fn compgen_offer(writer write, string_address name)
              memory_compare(name, compgen_prefix, compgen_prefix_length)))
                 return;
 
+        if (compgen_reject && string_get(compgen_reject))
+        {
+                bool keep = string_is(compgen_reject, '!');
+                bool hit = shell_match(compgen_reject + keep, name);
+
+                if (hit != keep)
+                        return;
+        }
+
+        if (compgen_before)
+                write(compgen_before, string_length(compgen_before));
         write(name, length);
+        if (compgen_after)
+                write(compgen_after, string_length(compgen_after));
         write("\n", 1);
         compgen_shown++;
 }
@@ -13017,6 +13268,9 @@ fn shell_compgen(writer write, string_address input)
         compgen_prefix = null;
         compgen_prefix_length = 0;
         compgen_shown = 0;
+        compgen_reject = null;
+        compgen_before = null;
+        compgen_after = null;
 
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
                string_get(shell_argv[index] + 1))
@@ -13061,6 +13315,12 @@ fn shell_compgen(writer write, string_address input)
                 }
                 else if (which == 'W')
                         words = value;
+                else if (which == 'P')
+                        compgen_before = value;
+                else if (which == 'S')
+                        compgen_after = value;
+                else if (which == 'X')
+                        compgen_reject = value;
                 else if (which == 'v')
                         variables = true;
                 else if (which == 'b')
@@ -13081,30 +13341,6 @@ fn shell_compgen(writer write, string_address input)
         {
                 compgen_prefix = shell_argv[index];
                 compgen_prefix_length = string_length(compgen_prefix);
-        }
-
-        if (words)
-        {
-                p8 held[1024];
-                positive at = 0;
-
-                while (string_get(words))
-                {
-                        if (string_is(words, ' ') || string_is(words, '\t'))
-                        {
-                                words++;
-                                continue;
-                        }
-
-                        at = 0;
-
-                        while (string_get(words) && string_not(words, ' ') &&
-                               string_not(words, '\t') && at + 1 < sizeof(held))
-                                held[at++] = string_get(words++);
-
-                        held[at] = end;
-                        compgen_offer(write, held);
-                }
         }
 
         if (functions || commands)
@@ -13153,6 +13389,32 @@ fn shell_compgen(writer write, string_address input)
 
                 if (directory >= 0)
                         system_close(directory);
+        }
+
+        //      The word list is generated after every other source, which
+        //      is the order Bash writes them in when both were asked for.
+        if (words)
+        {
+                p8 held[1024];
+                positive at = 0;
+
+                while (string_get(words))
+                {
+                        if (string_is(words, ' ') || string_is(words, '\t'))
+                        {
+                                words++;
+                                continue;
+                        }
+
+                        at = 0;
+
+                        while (string_get(words) && string_not(words, ' ') &&
+                               string_not(words, '\t') && at + 1 < sizeof(held))
+                                held[at++] = string_get(words++);
+
+                        held[at] = end;
+                        compgen_offer(write, held);
+                }
         }
 
         shell_answer(compgen_shown ? 0 : 1);
@@ -13328,6 +13590,51 @@ COLD fn shell_prompt_write(writer write, bool more)
 
 fn shell_help(writer write, string_address input)
 {
+        // Two bytes each: the formatter has no %c, so an option letter is
+        // spelled here and named as a string.
+        p8 room[2];
+        positive index = 1;
+        b32 answer = 0;
+
+        //      -d, -s and -m are the shapes bash's help takes; any other
+        //      letter is an error with the same status the reference gives.
+        if (index < shell_argc && string_is(shell_argv[index], '-') &&
+            string_get(shell_argv[index] + 1) &&
+            !word_is(shell_argv[index], "--"))
+        {
+                for (string_address letter = shell_argv[index] + 1;
+                     string_get(letter); letter++)
+                        if (!string_is(letter, 'd') && !string_is(letter, 's') &&
+                            !string_is(letter, 'm'))
+                        {
+                                string_format(log_error, "help: -%s: invalid option\n",
+                                              shell_option_spelled(room, string_get(letter)));
+                                return shell_answer(2);
+                        }
+
+                index++;
+        }
+
+        if (index < shell_argc && word_is(shell_argv[index], "--"))
+                index++;
+
+        //      A topic that names no builtin is a failure, as it is in bash.
+        if (index < shell_argc)
+        {
+                for (; index < shell_argc; index++)
+                        if (!shell_command_builtin_here(
+                                shell_argv[index],
+                                string_hash_33_length(shell_argv[index])))
+                        {
+                                string_format(log_error,
+                                              "help: no help topics match `%s'\n",
+                                              shell_argv[index]);
+                                answer = 1;
+                        }
+
+                return shell_answer(answer);
+        }
+
         string_format(write, "Moonwater shell, WIP, " TERM_RED TERM_BOLD "expect crashes! \n\n" TERM_RESET "Available built-in commands:\n");
 
         shell_command address_to command = shell_commands;

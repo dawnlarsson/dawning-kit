@@ -1003,11 +1003,13 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
             STORAGE_ARGUMENT("fs-devno", 'd'),
             STORAGE_ARGUMENT("devno", 'x'),
             STORAGE_ARGUMENT("nofollow", 'N'),
+            STORAGE_ARGUMENT("show", 'S'),
         };
         bool quiet = false;
         bool fs_devno = false;
         bool devno = false;
         bool nofollow = false;
+        bool show = false;
         string_address path = null;
         argument_cursor taking = {.argc = argc, .argv = argv, .at = 1};
         string_address value;
@@ -1026,12 +1028,15 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                         devno = true;
                 else if (option == 'N')
                         nofollow = true;
+                else if (option == 'S')
+                        show = true;
                 else if (option == ARGUMENT_OPERAND)
                 {
                         if (path)
                         {
                                 if (diagnostic)
-                                        diagnostic(str("mountpoint: too many paths\n"));
+                                        diagnostic(str("mountpoint: bad usage\n"
+                                                       "Try 'mountpoint --help' for more information.\n"));
                                 return 1;
                         }
                         path = value;
@@ -1047,7 +1052,24 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         if (!path)
         {
                 if (diagnostic)
-                        diagnostic(str("mountpoint: exactly one path is required\n"));
+                        diagnostic(str("mountpoint: bad usage\n"
+                                       "Try 'mountpoint --help' for more information.\n"));
+                return 1;
+        }
+
+        /* --show needs statmount(2); --devno asks about a block device
+           instead and is taken when both were asked for. */
+        if (show && !devno)
+        {
+                if (diagnostic)
+                        diagnostic(str("mountpoint: --show is not supported on this system\n"));
+                return 1;
+        }
+
+        if (devno && nofollow)
+        {
+                if (diagnostic)
+                        diagnostic(str("mountpoint: --devno and --nofollow are mutually exclusive\n"));
                 return 1;
         }
 

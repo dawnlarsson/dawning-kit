@@ -2056,7 +2056,7 @@ lane_known()
 #
 #           sh test/run spool
 #
-#       Everything here is a comparison, for the reason test/stream.sh
+#       Everything here is a comparison, for the reason the stream lane
 #       gives: glibc is on the machine, glibc defines what remove, mkstemp,
 #       tmpfile, popen, pclose, fgetpos and the unlocked spellings answer, and
 #       an implementation that is merely self-consistent is worth nothing.
@@ -2776,7 +2776,7 @@ lane_audit()
         freestanding_checks_lane audit-builtin audit_builtin_regressions
 }
 
-lane_regex() { freestanding_checks_lane regex test/regex_fixed.c; }
+lane_regex() { freestanding_checks_lane regex regex; }
 
 
 lane_slurp()
@@ -3314,9 +3314,9 @@ lane_util_linux() { differential_domain util_linux; }
 lane_shell()
 {
         need_shell || return 1
-        freestanding_checks_lane lexer_spans test/lexer_spans.c || return 1
-        python3 test/shell_functions.py --shell "$shell_binary" || return 1
-        sh test/shell.sh "$shell_binary"
+        freestanding_checks_lane lexer_spans || return 1
+        python3 test/harness.py shell_functions --shell "$shell_binary" || return 1
+        differential_domain shell
 }
 lane_builtins()   { differential_domain builtins; }
 lane_awk()        { differential_domain awk; }
@@ -3325,7 +3325,7 @@ lane_awk()        { differential_domain awk; }
 #       The terminal: the sequences it is sent, the cells they become, and
 #       the line being typed before it is a line.
 #
-#           sh test/term.sh [the farm of names, which this does not use]
+#           sh test/run term          (it does not use the farm)
 #
 #       src/sh/term.c makes no system call, which is what makes it testable
 #       without a kernel, a compositor or a pty. The harness below is the
@@ -4407,7 +4407,7 @@ printf '  %s of %s\n' "$pass" "$total"
 #
 #       The editor: the keys it is sent, and the screen they leave behind.
 #
-#           sh test/edit.sh
+#           sh test/run edit
 #
 #       src/sh/edit.c makes no system call above its driver heading, which is
 #       what makes it testable without a kernel, a pty or a file. The harness
@@ -6258,7 +6258,7 @@ fi
 #
 #       The kits the build scripts are made of.
 #
-#           sh test/kit.sh
+#           sh test/run kit
 #
 #       kit/bit.sh writes bytes and kit/doc.sh writes HTML, and both were
 #       tested only by heredocs pasted into the CI workflow -- which meant
@@ -6273,8 +6273,9 @@ fi
 lane_kit()
 (
 python3 test/harness.py core_state || exit 1
-python3 test/canvas_lifetime.py || exit 1
-python3 test/audit_shell_functions.py || exit 1
+python3 test/harness.py canvas_lifetime || exit 1
+python3 test/harness.py audit_shell_functions || exit 1
+python3 test/harness.py code_map || exit 1
 python3 test/harness.py spark_entry || exit 1
 python3 kit/function_audit.py --check || exit 1
 python3 test/harness.py surface_coreutils_gap || exit 1
@@ -6708,7 +6709,7 @@ printf '  %-12s %s of %s\n' kit "$pass" "$((pass + fail))"
 #
 #       The whole thing, started.
 #
-#           sh test/boot.sh [path to bootx64.efi]
+#           sh test/run boot          (MOONWATER_IMAGE names the image)
 #
 #       Everything else here tests a piece on the machine the tests run on.
 #       This boots the image under qemu, lets the kernel exec /init -- which
@@ -7026,7 +7027,7 @@ printf '  %-12s %s of %s\n' boot "$pass" "$((pass + fail))"
 #
 #       The compositor, looked at.
 #
-#           sh test/canvas.sh [image]
+#           sh test/run canvas        (MOONWATER_IMAGE names the image)
 #
 #       Every other lane reads bytes. This one reads pixels: it boots the
 #       image under qemu with no display, asks the monitor for the framebuffer

@@ -18,7 +18,10 @@ standard output, the effect on the directory and (per the spec's policy) the
 diagnostic. Agreeing is passing; there is no separate idea of a right answer.
 
 A spec may also declare FAMILIES: seeded generators of whole shell programs,
-for the parts of a shell that are a language rather than an option list.
+for the parts of a shell that are a language rather than an option list, and
+CHECKS: functions check(farm) -> (passed, total, notes) for the few properties
+a differential cannot express, such as a denominator of names or a census the
+box cannot present.
 
 Two pinned lists live at the end of this file, written by --record and never
 by hand. The ledger records the cases where ours deliberately answers
@@ -47,15 +50,22 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import concurrent.futures
 
-# Run as a program this module is __main__, so a spec's `from differential
-# import INPUTS` would import a second copy and add its inputs to that one.
-# The workers then fed those cases nothing at all. One name, one module.
-sys.modules.setdefault("differential", sys.modules[__name__])
-
+# Run as a script this module is __main__, so a spec's "from differential
+# import ..." would load a second copy and see a different INPUTS and
+# FIXTURES from the one the workers walk. Register this one under the name.
 HERE = Path(__file__).resolve().parent
 PIN_FILE = Path(__file__).resolve()
+
+# A spec says `from differential import INPUTS, FIXTURES` and adds its own
+# shapes to them. Run as a script this file is the module __main__ (and a pool
+# worker's copy is __mp_main__), so without this alias the spec would import
+# a second copy of this file and its additions would land in the other one:
+# a fixture it declared is not found, and an input it named feeds nothing.
+if __name__ in ("__main__", "__mp_main__"):
+    sys.modules.setdefault("differential", sys.modules[__name__])
 PIN_BEGIN = "# ---- pinned rows begin (written by --record; never by hand) ----"
 PIN_END = "# ---- pinned rows end ----"
 OUTPUT_LIMIT = 1 << 20
@@ -257,6 +267,14 @@ def covering_array(parameters, strength, rng):
     if not sizes or strength < 1:
         return []
     strength = min(strength, len(sizes))
+    # A program whose widest three parameters multiply into the thousands
+    # has a three-wise cover of tens of thousands of tuples, and the greedy
+    # builder spends hours on it. Those programs are covered pairwise; the
+    # random tier is what reaches deeper into them.
+    if strength > 2:
+        widest = sorted(sizes, reverse=True)[:3]
+        if widest[0] * widest[1] * widest[2] > 4000:
+            strength = 2
     combos = list(itertools.combinations(range(len(sizes)), strength))
     uncovered = {c: set(itertools.product(*(range(sizes[i]) for i in c))) for c in combos}
     by_column = {i: [c for c in combos if i in c] for i in range(len(sizes))}
@@ -349,19 +367,15 @@ def grammar_cases(domain, utility, budget, rng):
         yield from emit(list(argv), utility.stdin[0], "extra")
     if budget == "singles":
         return
-    strength = 3 if budget == "full" else 2
-    # The greedy builder scores every uncovered tuple for every candidate row,
-    # and a program with several many-valued options has millions of them: a
-    # full run stopped making progress rather than covering triples. Where the
-    # three widest parameters alone pass a few thousand combinations, pairs
-    # are what is affordable.
-    if strength == 3:
-        widest = sorted((len(values) for values in parameters), reverse=True)[:3]
-        product = 1
-        for size in widest:
-            product *= size
-        if product > 4000:
-            strength = 2
+    # Triples only where the covering array stays tractable: past two dozen
+    # parameters, or where the three largest of them multiply past a few
+    # thousand, choosing strength-3 rows costs minutes each. The full
+    # budget's deeper random tier already reaches those grammars.
+    widest = sorted((len(values) for values in parameters), reverse=True)[:3]
+    product = 1
+    for size in widest:
+        product *= size
+    strength = 3 if budget == "full" and len(parameters) <= 24 and product <= 4000 else 2
     for row in covering_array(parameters, strength, random.Random(rng.random())):
         argv, stdin = assemble(utility, row, parameters)
         yield from emit(argv, stdin, "pairs" if strength == 2 else "triples")
@@ -435,6 +449,14 @@ def _limits():
 
 
 def write_fixture(directory, fixture):
+    """Entries: bytes, ("link", target[, stamp]), ("dir"[, mode[, stamp]]),
+    ("mode", bytes, mode[, stamp]) or ("hard", source). A stamp is an epoch
+    or an (atime, mtime) pair, so a listing's dates and a walk's ages are the
+    same on both runs; "." names the directory itself. Stamps and directory
+    modes are applied last, deepest first: making an entry moves its
+    directory's time, and a directory without search permission hides what
+    is below it."""
+    later = []
     for name, contents in FIXTURES[fixture].items():
         path = directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -442,18 +464,31 @@ def write_fixture(directory, fixture):
             kind = contents[0]
             if kind == "link":
                 path.symlink_to(contents[1])
+                later.append((path, None, contents[2] if len(contents) > 2 else None))
             elif kind == "dir":
                 path.mkdir(exist_ok=True)
+                later.append((path, contents[1] if len(contents) > 1 else None,
+                              contents[2] if len(contents) > 2 else None))
             elif kind == "mode":
                 path.write_bytes(contents[1])
                 path.chmod(contents[2])
+                later.append((path, None, contents[3] if len(contents) > 3 else None))
+            elif kind == "hard":
+                os.link(directory / contents[1], path)
         else:
             path.write_bytes(contents)
             path.chmod(0o644)
+    for path, mode, stamp in sorted(later, key=lambda item: -len(item[0].parts)):
+        if stamp is not None:
+            times = (stamp, stamp) if isinstance(stamp, int) else tuple(stamp)
+            os.utime(path, times, follow_symlinks=False)
+        if mode is not None:
+            path.chmod(mode)
 
 
 def effects(directory):
     result = {}
+    now = time.time()
     for path in sorted(directory.rglob("*")):
         name = str(path.relative_to(directory))
         try:
@@ -461,18 +496,23 @@ def effects(directory):
         except OSError:
             continue
         mode = stat.S_IMODE(info.st_mode)
+        # A modification time far from now was set on purpose (touch -d,
+        # cp -p, a stamped fixture kept or moved) and is part of the effect;
+        # one near now is only when the run happened.
+        stamp = int(info.st_mtime)
+        deliberate = [stamp] if abs(stamp - now) > 60 else []
         if stat.S_ISLNK(info.st_mode):
-            result[name] = ["link", os.readlink(path)]
+            result[name] = ["link", os.readlink(path)] + deliberate
         elif stat.S_ISDIR(info.st_mode):
-            result[name] = ["directory", mode]
+            result[name] = ["directory", mode] + deliberate
         elif stat.S_ISREG(info.st_mode):
             try:
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
             except OSError:
                 digest = "unreadable"
-            result[name] = ["file", mode, info.st_size, digest]
+            result[name] = ["file", mode, info.st_size, digest] + deliberate
         else:
-            result[name] = ["special", info.st_mode]
+            result[name] = ["special", info.st_mode] + deliberate
     return result
 
 
@@ -782,6 +822,11 @@ def load_spec(domain):
         return namespace
     if str(HERE) not in sys.path:
         sys.path.append(str(HERE))
+    # A spec imports this module by its file name. Run as the program (or
+    # as a pool worker's __mp_main__) that name would be a second copy with
+    # its own INPUTS and FIXTURES, and what a spec adds to them would be
+    # lost. Point the name at the module that is running.
+    sys.modules.setdefault("differential", sys.modules[__name__])
     try:
         return importlib.import_module(f"spec_{domain}")
     except ModuleNotFoundError as error:
@@ -1094,6 +1139,19 @@ def main(argv=None):
         save_rows(args.record, rows)
         print(f"  recorded {added} rows into {args.record}")
 
+    if not args.replay:
+        for domain in domains:
+            for check in getattr(specs.get(domain), "CHECKS", ()):
+                if selected and check.__name__ not in selected:
+                    continue
+                key = f"{domain}/{check.__name__}"
+                won, count, notes = check(str(farm))
+                passed[key] += won
+                total[key] += count
+                for note in notes:
+                    failures[key][("check",)] += 1
+                    print(f"  FAIL {key}: {note}")
+
     for key in sorted(set(total) | set(absent)):
         line = f"  {key:28} {passed[key]} of {total[key]}"
         if absent[key]:
@@ -1147,14 +1205,18 @@ def self_test():
             self.script(self.system / "effect", "#!/bin/sh\nprintf y > a.txt\n")
             self.old_path = os.environ.get("PATH")
             os.environ["PATH"] = f"{self.system}:/usr/bin:/bin"
-            # The inner runs must not write their rows into the suite's tally.
+            # The inner runs must not write their rows into the suite's tally,
+            # nor read the caller's pinned rows in place of their own fixtures.
             self.old_tally = os.environ.pop("TEST_TALLY", None)
+            self.old_pins = os.environ.pop("MW_PINS", None)
             self.runner = Runner(self.farm, self.root / "run")
 
         def tearDown(self):
             os.environ["PATH"] = self.old_path
             if self.old_tally is not None:
                 os.environ["TEST_TALLY"] = self.old_tally
+            if self.old_pins is not None:
+                os.environ["MW_PINS"] = self.old_pins
             self.temporary.cleanup()
 
         def script(self, path, text):
