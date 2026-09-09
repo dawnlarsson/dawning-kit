@@ -4594,26 +4594,22 @@ static bool exec_redirect_apply(b32 index)
                         Saving after the open therefore recorded the file that
                         had just arrived as "what was there before", and put it
                         back instead of closing it.
+
+                        Put aside, not closed. `cat </dev/stdin` names
+                        /proc/self/fd/0, so closing descriptor zero first
+                        deleted the file the redirect was about to open --
+                        every /dev/stdin, /dev/stdout and /dev/fd/N redirect
+                        failed. The open lands wherever it lands and the dup3
+                        below moves it, which is the order bash uses and the
+                        only one under which those names exist.
                 */
                 if (both)
                 {
                         if (!exec_save_fd(1, node) || !exec_save_fd(2, node))
                                 return false;
-
-                        system_close(1);
-                        system_close(2);
                 }
-                else
-                {
-                        if (!exec_save_fd(want->fd, node))
-                                return false;
-
-                        // Descriptor duplication lands with dup3 below, so
-                        // its target stays live until that atomic replacement.
-                        // This also preserves the source == target no-op.
-                        if (want->op != OP_GREATAND && want->op != OP_LESSAND)
-                                system_close(want->fd);
-                }
+                else if (!exec_save_fd(want->fd, node))
+                        return false;
 
                 if (want->op == OP_DLESS)
                 {

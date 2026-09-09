@@ -3263,7 +3263,9 @@ static bool expand_substitution_remember(b32 descriptor, bipolar child)
 // the same reason: a body is a script and not a line.
 static fn expand_substitution_body(string_address command, bool capture)
 {
-        exec_child_began();
+        // parse_reset_all below announces the child. Announcing it here as
+        // well counted this one fork twice, so $BASH_SUBSHELL inside a
+        // command substitution read one deeper than the shell had gone.
         expand_in_substitution = true;
         /* Only Bash command capture clears errexit by default; process
            substitutions and dash inherit it. POSIX mode enables the same
