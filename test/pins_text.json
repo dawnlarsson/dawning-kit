@@ -1,1 +1,282 @@
-[]
+[
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--base58",
+  "reason": "deliberate: base58 is a bignum radix conversion over the whole input, not a bit-sliced quantum codec like the RFC 4648 alphabets this shares one encoder with.",
+  "utility": "basenc"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--color",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--table-colorscheme",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--table-column",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--table-header-repeat",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--tree",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--tree-id",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--tree-parent",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--wrap-separator",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-C",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-e",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-i",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-p",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-r",
+  "reason": "deliberate: column properties, the tree renderer and its colours are util-linux state machines with their own parsing; they are rejected rather than answered with an ordinary table.",
+  "utility": "column"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--perl-regexp",
+  "reason": "deliberate: this is the PCRE engine, including syntax and matching semantics not provided by the bytewise basic/extended/fixed engines. A partial recognizer would silently answer the wrong language.",
+  "utility": "grep"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-P",
+  "reason": "deliberate: this is the PCRE engine, including syntax and matching semantics not provided by the bytewise basic/extended/fixed engines. A partial recognizer would silently answer the wrong language.",
+  "utility": "grep"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--show-control-chars",
+  "reason": "deliberate: hat and octal rendering of control characters is a second output protocol with its own column arithmetic; pr rejects it rather than paginating bytes it would have had to rewrite.",
+  "utility": "pr"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--show-nonprinting",
+  "reason": "deliberate: hat and octal rendering of control characters is a second output protocol with its own column arithmetic; pr rejects it rather than paginating bytes it would have had to rewrite.",
+  "utility": "pr"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-c",
+  "reason": "deliberate: hat and octal rendering of control characters is a second output protocol with its own column arithmetic; pr rejects it rather than paginating bytes it would have had to rewrite.",
+  "utility": "pr"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-v",
+  "reason": "deliberate: hat and octal rendering of control characters is a second output protocol with its own column arithmetic; pr rejects it rather than paginating bytes it would have had to rewrite.",
+  "utility": "pr"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--format=roff",
+  "reason": "deliberate: the roff and TeX outputs are macro languages with their own quoting and truncation markers, and -G changes the option grammar as well as the output. ptx rejects them rather than emitting the plain index under their names.",
+  "utility": "ptx"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--format=tex",
+  "reason": "deliberate: the roff and TeX outputs are macro languages with their own quoting and truncation markers, and -G changes the option grammar as well as the output. ptx rejects them rather than emitting the plain index under their names.",
+  "utility": "ptx"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--traditional",
+  "reason": "deliberate: the roff and TeX outputs are macro languages with their own quoting and truncation markers, and -G changes the option grammar as well as the output. ptx rejects them rather than emitting the plain index under their names.",
+  "utility": "ptx"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-G",
+  "reason": "deliberate: the roff and TeX outputs are macro languages with their own quoting and truncation markers, and -G changes the option grammar as well as the output. ptx rejects them rather than emitting the plain index under their names.",
+  "utility": "ptx"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-O",
+  "reason": "deliberate: the roff and TeX outputs are macro languages with their own quoting and truncation markers, and -G changes the option grammar as well as the output. ptx rejects them rather than emitting the plain index under their names.",
+  "utility": "ptx"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-T",
+  "reason": "deliberate: the roff and TeX outputs are macro languages with their own quoting and truncation markers, and -G changes the option grammar as well as the output. ptx rejects them rather than emitting the plain index under their names.",
+  "utility": "ptx"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--debug",
+  "reason": "deliberate: GNU's execution trace and annotated-program diagnostic format, not command-result semantics. The interpreter rejects it rather than pretending to emit that debugging protocol.",
+  "utility": "sed"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--debug",
+  "reason": "deliberate: GNU's key annotation and diagnostic format, not ordering semantics. It is rejected rather than producing an incomplete diagnostic stream.",
+  "utility": "sort"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--general-numeric-sort",
+  "reason": "deliberate: exact GNU behavior is strtold ordering, including signed NaNs, infinities, hexadecimal floats, exponents, long-double range and architecture-specific rounding. It needs a shared cross-ISA general-number parser/comparator; a decimal-only approximation would silently misorder data.",
+  "utility": "sort"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--random-sort",
+  "reason": "deliberate: random ordering hashes every key with a seed this deterministic sort has no source for; accepting it would falsely claim a reproducible shuffle.",
+  "utility": "sort"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--random-source",
+  "reason": "deliberate: this supplies entropy to GNU random-sort, which is itself outside this deterministic sort's surface. Accepting and ignoring the source would falsely claim reproducible randomized ordering.",
+  "utility": "sort"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--sort=general-numeric",
+  "reason": "deliberate: exact GNU behavior is strtold ordering, including signed NaNs, infinities, hexadecimal floats, exponents, long-double range and architecture-specific rounding. It needs a shared cross-ISA general-number parser/comparator; a decimal-only approximation would silently misorder data.",
+  "utility": "sort"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--sort=random",
+  "reason": "deliberate: random ordering hashes every key with a seed this deterministic sort has no source for; accepting it would falsely claim a reproducible shuffle.",
+  "utility": "sort"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-R",
+  "reason": "deliberate: random ordering hashes every key with a seed this deterministic sort has no source for; accepting it would falsely claim a reproducible shuffle.",
+  "utility": "sort"
+ },
+ {
+  "domain": "text",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-g",
+  "reason": "deliberate: exact GNU behavior is strtold ordering, including signed NaNs, infinities, hexadecimal floats, exponents, long-double range and architecture-specific rounding. It needs a shared cross-ISA general-number parser/comparator; a decimal-only approximation would silently misorder data.",
+  "utility": "sort"
+ }
+]

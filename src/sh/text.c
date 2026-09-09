@@ -4334,8 +4334,17 @@ static bool text_files_from(string_address path)
 
         text_close();
 
-        if (!held || failed)
+        if (!held)
                 return false;
+
+        if (failed)
+        {
+                text_file_list = (string_address address_to)text_arena_take(
+                    sizeof(string_address));
+                text_files_count = 0;
+                text_status = 1;
+                return text_file_list != null;
+        }
 
         p8 address_to names = (p8 address_to)text_arena_take(have + 1);
 
@@ -4929,11 +4938,17 @@ static b32 text_tee()
                         string_diagnostic(&text_diagnostic, 0, name, file_reason(target));
                         text_status = 1;
 
-                        // An exit mode stops tee opening what is left, and
-                        // still copies to standard output and to the
-                        // destinations already open.
+                        // An exit mode ends tee where the open failed:
+                        // nothing is copied, to any destination.
                         if (leave)
-                                break;
+                        {
+                                for (positive c = 0; c < handle_count; c++)
+                                        system_close(handles[c]);
+
+                                system_call_2(syscall(munmap), (positive)handles,
+                                              text_files_count * sizeof(positive));
+                                return text_done(1);
+                        }
 
                         continue;
                 }
@@ -6711,11 +6726,20 @@ static bool pr_parse_positive(string_address value, positive address_to into)
         return text_unsigned_option(value, false, into) && address_to into;
 }
 
+/*
+        +FIRST[:LAST]. A page number of zero is no page at all, and pr reads
+        the whole word as a file name instead -- measured; a word with no
+        digits in it is the invalid argument pr complains about.
+*/
+static bool pr_pages_operand;
+
 static bool pr_pages(string_address value)
 {
         positive first = 0;
         positive last = positive_max;
         positive used = 0;
+
+        pr_pages_operand = false;
 
         if (!value)
                 return false;
@@ -6731,7 +6755,10 @@ static bool pr_pages(string_address value)
         ((p8 address_to)value)[used] = saved;
 
         if (!okay || !first)
+        {
+                pr_pages_operand = okay || !first;
                 return false;
+        }
 
         if (saved)
         {
@@ -6763,15 +6790,20 @@ static fn pr_operand_add(b32 which)
 {
         string_address value = program_argument(which);
 
-        if (value[0] == '+' && byte_is_digit(value[1]))
+        if (value[0] == '+')
         {
-                if (!pr_pages(value + 1))
-                {
-                        string_diagnostic(&text_diagnostic, 0, value, "invalid page range");
-                        pr_page_option_failed = true;
-                }
+                if (pr_pages(value + 1))
+                        return;
 
-                return;
+                // A page number of nought is no page: pr reads the word as
+                // a file name instead. A word with no digits is the invalid
+                // argument pr complains about.
+                if (!pr_pages_operand)
+                {
+                        string_diagnostic(&text_diagnostic, 0, value + 1, "invalid + argument");
+                        pr_page_option_failed = true;
+                        return;
+                }
         }
 
         text_file_add(which);
@@ -7235,8 +7267,12 @@ static fn pr_put_page(positive count, positive rows, positive page,
                               ? pr_page_width - fixed
                               : 0;
         positive column_width = useful / pr_columns;
+        // A column narrower than the number beside it leaves nothing for
+        // the record, which is a truncation and not a width that wrapped.
         positive record_width = pr_number && !pr_merge
-                                    ? column_width - pr_number_width
+                                    ? (column_width > pr_number_width
+                                           ? column_width - pr_number_width
+                                           : 0)
                                     : column_width;
 
         for (positive row = 0; row < rows; row++)
@@ -7324,10 +7360,14 @@ static fn pr_single_file(string_address path)
                 return;
 
         b64 stamp = pr_stamp(text_input.handle);
-        string_address heading = pr_header ? pr_header
-                                           : (path ? path
-                                                   : (string_address)"");
+        // Standard input has no name in the header, however it was asked
+        // for: a bare - is the same input as no operand at all.
+        string_address heading =
+            pr_header ? pr_header
+                      : (path && !string_equals(path, "-") ? path
+                                                           : (string_address)"");
         positive page = 1;
+        positive filled = 0;
 
         pr_pending = false;
         pr_pending_length = 0;
@@ -7348,6 +7388,8 @@ static fn pr_single_file(string_address path)
                                     ? count
                                     : (count + pr_columns - 1) / pr_columns;
 
+                filled = page;
+
                 if (page >= pr_first_page && page <= pr_last_page)
                         pr_put_page(count, rows, page, heading, stamp, forced);
 
@@ -7357,12 +7399,12 @@ static fn pr_single_file(string_address path)
                 page++;
         }
 
-        // A first page beyond the last one there was is a complaint on the
-        // error stream and nothing else: the status stays what it was.
-        if (pr_first_page > page)
+        // A first page beyond the last one that had anything on it is a
+        // complaint on the error stream and nothing else: the status stays.
+        if (pr_first_page > filled)
                 string_report(writer_stderr, 0,
                               "%s: starting page number %p exceeds page count %p\n",
-                              text_name, pr_first_page, page);
+                              text_name, pr_first_page, filled);
 
         text_close();
 }
@@ -7611,14 +7653,15 @@ static b32 text_pr()
         // it, which is what pr's own help says of -o.
         pr_page_width += pr_margin;
 
+        // pr complains only where the columns have no room at all; a page
+        // too narrow for the numbers beside them is one it truncates.
         positive number_fields = pr_number && pr_merge ? 1 : 0;
         positive fixed = pr_margin +
                          (pr_columns - 1) * pr_separator_length +
                          number_fields * pr_number_width;
 
         if (fixed >= pr_page_width ||
-            (pr_page_width - fixed) / pr_columns <=
-                (pr_number && !pr_merge ? pr_number_width : 0))
+            !((pr_page_width - fixed) / pr_columns))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "page width is too narrow"));
 
         if (pr_body_lines > positive_max / pr_columns ||
@@ -12968,10 +13011,21 @@ static bool uniq_number_of(file_taking address_to taking, p8 letter,
         if (!(taking->flags & FILE_FLAG(letter)))
                 return true;
 
-        if (string_digits_exact(file_option_value(taking, letter), into))
-                return true;
+        return text_unsigned_option(file_option_value(taking, letter), true, into);
+}
 
-        return string_diagnostic(&text_diagnostic, 0, null, "invalid number");
+static bool uniq_option_seen(p8 letter, string_address value)
+{
+        positive number;
+
+        if ((letter == 'f' || letter == 's' || letter == 'w') &&
+            !text_unsigned_option(value, true, address_of number))
+                return string_diagnostic(&text_diagnostic, 0, value,
+                                         letter == 'f' ? "invalid number of fields to skip"
+                                         : letter == 's' ? "invalid number of bytes to skip"
+                                                         : "invalid number of bytes to compare");
+
+        return true;
 }
 
 /*
@@ -13012,6 +13066,7 @@ static b32 text_uniq()
             .optional = (string_address) "AG",
             .longs = uniq_longs,
             .operand = text_file_add,
+            .seen = uniq_option_seen,
         };
 
         text_begin("uniq");
@@ -14220,6 +14275,18 @@ static fn grep_operand(b32 index)
 
 static bool grep_option_seen(p8 letter, string_address value)
 {
+        // Every context length and every max count is read where it was
+        // written: GNU refuses the first bad one, not the last option.
+        if (letter == 'A' || letter == 'B' || letter == 'C' || letter == 'm')
+        {
+                positive number;
+
+                if (!string_digits_exact(value, address_of number))
+                        return string_diagnostic(&text_diagnostic, 0, null,
+                                                 letter == 'm' ? "invalid max count"
+                                                               : "invalid context length argument");
+        }
+
         if (letter == 'E' || letter == 'G' || letter == 'F' || letter == 'P')
         {
                 if (grep_matcher && grep_matcher != letter)
@@ -14562,6 +14629,10 @@ static b32 text_grep()
         // Nothing named and no -r is the one way standard input is read;
         // -r with nothing named walks the working directory instead.
         bool from_stdin = !text_files_count && !grep_recursive;
+
+        // -s is about what grep says, including what the reader would have
+        // said about a file that would not open.
+        text_quiet_open = quietly;
         bool discarded = grep_output_discarded();
         bool found_any = false;
         bool shown_any = false;
@@ -14592,6 +14663,14 @@ static b32 text_grep()
         for (b32 i = 0; i < text_files_count; i++)
         {
                 string_address name = program_argument(text_files[i]);
+
+                // A bare - is standard input, which no walk descends into.
+                if (grep_recursive && string_equals(name, "-"))
+                {
+                        grep_path_add(name);
+                        continue;
+                }
+
                 p32 mode = grep_recursive ? text_path_mode(name) : 0;
 
                 if (grep_recursive && !mode)
@@ -16600,13 +16679,14 @@ static b32 text_sed()
 
         sed_quiet = (flags & FILE_FLAG('n')) != 0;
         sed_extended = (flags & (FILE_FLAG('r') | FILE_FLAG('E'))) != 0;
+        // -l takes a width; a word that is not one is no width at all,
+        // which is what GNU makes of it rather than a refusal.
         sed_wrap = 70;
 
         if ((flags & FILE_FLAG('l')) &&
             !text_unsigned_option(file_option_value(address_of taking, 'l'),
                                   false, address_of sed_wrap))
-                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'l'),
-                                                  "invalid line length"));
+                sed_wrap = 0;
         sed_separate = (flags & FILE_FLAG('s')) != 0;
         sed_null_data = (flags & FILE_FLAG('z')) != 0;
         sed_follow_symlinks = (flags & FILE_FLAG('F')) != 0;
@@ -16634,6 +16714,24 @@ static b32 text_sed()
 
         // -i edits files, and there is nothing to edit when the input is a
         // pipe. GNU says so and stops with four.
+        // Every file w writes to is emptied before the first line is read,
+        // as GNU empties them, whether or not anything is ever written.
+        for (b32 c = 0; c < sed_file_count; c++)
+        {
+                string_address name = sed_text + sed_files[c].name;
+
+                if (string_equals(name, "/dev/stdout"))
+                        continue;
+
+                sed_files[c].handle = text_open_handle(name, TEXT_WRITE, 0644);
+
+                if (sed_files[c].handle < 0)
+                {
+                        string_diagnostic(&text_diagnostic, 0, name, "couldn't open file");
+                        return text_done(4);
+                }
+        }
+
         if (sed_in_place && !text_files_count)
                 return text_done(string_diagnostic(&text_diagnostic, 4, null, "no input files"));
 
@@ -16656,6 +16754,19 @@ static b32 text_sed()
 
                 if (sed_in_place && sed_follow_symlinks)
                 {
+                        file_facts facts;
+
+                        // A link is followed to what it names, and a name
+                        // that leads nowhere is the readlink GNU could not
+                        // do rather than a file it could not read.
+                        if (!file_look_at(name, address_of facts))
+                        {
+                                string_diagnostic(&text_diagnostic, 0, name,
+                                                  "couldn't readlink");
+                                text_status = 4;
+                                continue;
+                        }
+
                         if (!file_resolve(name, resolved, true))
                         {
                                 string_diagnostic(&text_diagnostic, 0, name, "cannot follow symbolic link");
