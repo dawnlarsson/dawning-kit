@@ -803,6 +803,102 @@
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
+   "stdout": "16ca888f74b22960073464f283954ae7c7359e87b230d7b603ab6cc71497cea0"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "x=2+3; y=1; z=-1\nprintf 'r=<%s>\\n' \"$((07 * x + 1 ? y + 1 : ~2147483647))\" 2>/dev/null\nprintf 'status=%s x=%s y=%s z=%s\\n' \"$?\" \"$x\" \"$y\" \"$z\"\n"
+   ],
+   "domain": "shell",
+   "family": "arithmetic-grammar",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "a1287a32863ff9c5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "arithmetic-grammar"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "b9ae20d2e0e003b8b17a3554757329e6b6292b75a9451fe2318f1f5e8740641a"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "x=9223372036854775807; y=2+3; z=010\nif ((y + 1 >= z |= 65535 >= -4)); then echo true; else echo false; fi; while ((y + 1 >= z |= 65535 >= -4)); do echo loop; break; done 2>/dev/null\nprintf 'status=%s x=%s y=%s z=%s\\n' \"$?\" \"$x\" \"$y\" \"$z\"\n"
+   ],
+   "domain": "shell",
+   "family": "arithmetic-grammar",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "bc0203d56e19c3b5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "5cc23fd52e56baea898270b8df80ca5a455d17b66185abb5d28afffdcd6a3c4e"
+  },
+  "utility": "arithmetic-grammar"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "b9ae20d2e0e003b8b17a3554757329e6b6292b75a9451fe2318f1f5e8740641a"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "x=9223372036854775807; y=2+3; z=010\nif ((y + 1 >= z |= 65535 >= -4)); then echo true; else echo false; fi; while ((y + 1 >= z |= 65535 >= -4)); do echo loop; break; done 2>/dev/null\nprintf 'status=%s x=%s y=%s z=%s\\n' \"$?\" \"$x\" \"$y\" \"$z\"\n"
+   ],
+   "domain": "shell",
+   "family": "arithmetic-grammar",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "eb8a16029cdfec2d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "5cc23fd52e56baea898270b8df80ca5a455d17b66185abb5d28afffdcd6a3c4e"
+  },
+  "utility": "arithmetic-grammar"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
    "stdout": "4b1d280aea59e77e418cb0b1760e2c526561401fd7dfc71ce415c596b08d5311"
   },
   "case": {
@@ -894,102 +990,6 @@
    "stdout": "08b34b9df6bf024be9cf0cd0dd13d678e71589a5a7acd4be553f7339cc304d72"
   },
   "utility": "background-kill-job-spec"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "f49e0b04e16f051845816fbfe427eb5ff0fb8b363244e9a705cf0ba18a73e085"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "for i in 1 2 3 4 5 6 7 8; do (exit $i) & done; wait; echo \"$?\"; jobs | wc -l 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "background-many-jobs",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "0480bc27b0ee2790",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason": "One job listing, in bash's columns, under every name. dash spaces its brackets differently, omits the trailing ampersand and spells a stopped job 'Stopped (signal)'; bash --posix adds the stopping signal in parentheses. A person reads these side by side, so the shell prints one layout rather than three.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "684609bdc98ea5cc91ad928d9aa53cdfec45e5fe7ec2431cab240a61ab030bae"
-  },
-  "utility": "background-many-jobs"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "f49e0b04e16f051845816fbfe427eb5ff0fb8b363244e9a705cf0ba18a73e085"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "for i in 1 2 3 4 5 6 7 8; do (exit $i) & done; wait; echo \"$?\"; jobs | wc -l 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "background-many-jobs",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "699f889038e547fa",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason": "One job listing, in bash's columns, under every name. dash spaces its brackets differently, omits the trailing ampersand and spells a stopped job 'Stopped (signal)'; bash --posix adds the stopping signal in parentheses. A person reads these side by side, so the shell prints one layout rather than three.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "684609bdc98ea5cc91ad928d9aa53cdfec45e5fe7ec2431cab240a61ab030bae"
-  },
-  "utility": "background-many-jobs"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "f49e0b04e16f051845816fbfe427eb5ff0fb8b363244e9a705cf0ba18a73e085"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "for i in 1 2 3 4 5 6 7 8; do (exit $i) & done; wait; echo \"$?\"; jobs | wc -l 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "background-many-jobs",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "bb728525b99f7650",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason": "One job listing, in bash's columns, under every name. dash spaces its brackets differently, omits the trailing ampersand and spells a stopped job 'Stopped (signal)'; bash --posix adds the stopping signal in parentheses. A person reads these side by side, so the shell prints one layout rather than three.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "a420513711f138fd11a70b3c1604d8a09973000a158f73b83580989db640c44f"
-  },
-  "utility": "background-many-jobs"
  },
  {
   "candidate": {
@@ -1278,6 +1278,38 @@
    "stdout": "dc1773041cd9a1fa9527f83412a1cdb2a198ae984aae82a334e9fd2b368716cf"
   },
   "utility": "background-wait-many"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "09dbb39c9a108b6e1bfa53853548e25e84ca4d5d745cbd0519541a00676de3e2"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "(exit 3) & (exit 5) & wait -n; echo \"n=$?\"; wait -n; echo \"n=$?\"; wait -n; echo \"n=$?\" 2>/dev/null\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "background-wait-n",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "25389cf20a4d2d1a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "cae8b3db8e70117e4f08a44847a9d23083082be80ec82b420983d875f7b66199"
+  },
+  "utility": "background-wait-n"
  },
  {
   "candidate": {
@@ -3586,70 +3618,6 @@
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": -9,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "set -m; sleep 5 & kill -TSTP %1; wait %1; echo \"$?\"; kill -KILL %1 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "job-control-script-wait-stopped",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "75f3fdecc811de59",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason": "One job listing, in bash's columns, under every name. dash spaces its brackets differently, omits the trailing ampersand and spells a stopped job 'Stopped (signal)'; bash --posix adds the stopping signal in parentheses. A person reads these side by side, so the shell prints one layout rather than three.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c783a2c297365d98a0c357c5401ba56adf8bd604f956af2d6949534b4e7a5a99"
-  },
-  "utility": "job-control-script-wait-stopped"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": -9,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "set -m; sleep 5 & kill -TSTP %1; wait %1; echo \"$?\"; kill -KILL %1 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "job-control-script-wait-stopped",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "88a23a64ffbeb0d8",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason": "One job listing, in bash's columns, under every name. dash spaces its brackets differently, omits the trailing ampersand and spells a stopped job 'Stopped (signal)'; bash --posix adds the stopping signal in parentheses. A person reads these side by side, so the shell prints one layout rather than three.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c783a2c297365d98a0c357c5401ba56adf8bd604f956af2d6949534b4e7a5a99"
-  },
-  "utility": "job-control-script-wait-stopped"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "0698a617b2c69e12e389e9c2b0b335ddb32da7844c8a4f1aa8003280ce2b72b5"
   },
@@ -4706,262 +4674,6 @@
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "33673c0c75a94b2a22f0d5714fbfb156461177971f8947953820dfb4c4d97654"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\nshopt -s lastpipe; set +m\necho start\nwc -c | /bin/false | /bin/false 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "38c7e79f820293ff",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Remaining differences the walk found and this pass did not close: brace expansion under --posix, an ambiguous-redirect word, declaration-command assignment splitting, an empty directory operand, a function name beginning with a digit, IFS joining in an assignment, dollar-single unicode escapes, read -n counting bytes rather than characters, and the tilde forms that need a password file.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "f191aa172936ff630ae33c9fd789426cd02b0ef2c9f918afbae566e558b903dd"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "110e07f91496cb7d1d743151b6189708c8f2e9cb4057e2a6e4f3e76b455fed0b"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\nv=$((exit 7) | true 2>/dev/null); printf '<%s>\\n' \"$v\" 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "3fa634621e858bd1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Remaining differences the walk found and this pass did not close: brace expansion under --posix, an ambiguous-redirect word, declaration-command assignment splitting, an empty directory operand, a function name beginning with a digit, IFS joining in an assignment, dollar-single unicode escapes, read -n counting bytes rather than characters, and the tilde forms that need a password file.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "f516db2c14755e4157d157b6716e447e4b4a309a600434db755180bb0e863bce"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "2978db49359c1348fd7655458726c3d555c3ddd664bc1d090366929c76e9f655"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\nshopt -s lastpipe; set +m\necho start\n( ! (exit 3) |& (exit 7) | { read v; echo \"<$v>\"; } | wc -c | yes | head -1 ) 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "4d6216eaead6134f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Remaining differences the walk found and this pass did not close: brace expansion under --posix, an ambiguous-redirect word, declaration-command assignment splitting, an empty directory operand, a function name beginning with a digit, IFS joining in an assignment, dollar-single unicode escapes, read -n counting bytes rather than characters, and the tilde forms that need a password file.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "bdb8be9f5229d660bf0613c64eae4e0e0f02c66bbf94d03d626895bf0c1b05aa"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "2978db49359c1348fd7655458726c3d555c3ddd664bc1d090366929c76e9f655"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\nshopt -s lastpipe; set +m\necho start\n( ! (exit 3) |& (exit 7) | { read v; echo \"<$v>\"; } | wc -c | yes | head -1 ) 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "8d921d2bf73f7e91",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Remaining differences the walk found and this pass did not close: brace expansion under --posix, an ambiguous-redirect word, declaration-command assignment splitting, an empty directory operand, a function name beginning with a digit, IFS joining in an assignment, dollar-single unicode escapes, read -n counting bytes rather than characters, and the tilde forms that need a password file.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "bdb8be9f5229d660bf0613c64eae4e0e0f02c66bbf94d03d626895bf0c1b05aa"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "14f29af45637f6b99799340192ec1b86940fe27afe77c7f0598691e9068ae2fd"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\n\necho start\nv=$(x=in cat | sh -c 'kill -TERM $$' 2>/dev/null); printf '<%s>\\n' \"$v\" 2>/dev/null\necho \"status=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "970b353569e5e45b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Remaining differences the walk found and this pass did not close: brace expansion under --posix, an ambiguous-redirect word, declaration-command assignment splitting, an empty directory operand, a function name beginning with a digit, IFS joining in an assignment, dollar-single unicode escapes, read -n counting bytes rather than characters, and the tilde forms that need a password file.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "14f29af45637f6b99799340192ec1b86940fe27afe77c7f0598691e9068ae2fd"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "d1b5dcb03474a4981fccbc4737f36588362668a0047608da99d879d76d21a417"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\n( wc -c | exit 5 | tr a-z A-Z ) 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "c46a476c23da561d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Remaining differences the walk found and this pass did not close: brace expansion under --posix, an ambiguous-redirect word, declaration-command assignment splitting, an empty directory operand, a function name beginning with a digit, IFS joining in an assignment, dollar-single unicode escapes, read -n counting bytes rather than characters, and the tilde forms that need a password file.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "e0f54c334315875af8ebde488c04d4d8404a5896a4ba9b6103ba6daeef614b65"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "d1b5dcb03474a4981fccbc4737f36588362668a0047608da99d879d76d21a417"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\n( wc -c | exit 5 | tr a-z A-Z ) 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "f78d5c5b532d3976",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Remaining differences the walk found and this pass did not close: brace expansion under --posix, an ambiguous-redirect word, declaration-command assignment splitting, an empty directory operand, a function name beginning with a digit, IFS joining in an assignment, dollar-single unicode escapes, read -n counting bytes rather than characters, and the tilde forms that need a password file.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "e0f54c334315875af8ebde488c04d4d8404a5896a4ba9b6103ba6daeef614b65"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "110e07f91496cb7d1d743151b6189708c8f2e9cb4057e2a6e4f3e76b455fed0b"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\nv=$((exit 7) | true 2>/dev/null); printf '<%s>\\n' \"$v\" 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "fe2b9a4df5adf121",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Remaining differences the walk found and this pass did not close: brace expansion under --posix, an ambiguous-redirect word, declaration-command assignment splitting, an empty directory operand, a function name beginning with a digit, IFS joining in an assignment, dollar-single unicode escapes, read -n counting bytes rather than characters, and the tilde forms that need a password file.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "f516db2c14755e4157d157b6716e447e4b4a309a600434db755180bb0e863bce"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -5246,6 +4958,166 @@
    "stdout": "ea839ce2b98dcc90182c78a8b9a695683ed112a903784d2bd3d7b603521e1972"
   },
   "utility": "redirection-persistence"
+ },
+ {
+  "candidate": {
+   "effects": "9c5b246b152f9aaf1fa8817631969efa5b768fea4ff0c98e1b7db7f6c752cd32",
+   "status": 0,
+   "stdout": "1a64eaa0c2095c63c3dae4fbf35c1f5625bc86a2d2fca1fdff83bdb2b10b3ba5"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "empty=; two='out out'; ln -s nowhere dangling 2>/dev/null; exec 3>&1\necho start\n{ ( echo sub ) 255> $two ; } 2>err.txt\necho \"status=$?\"\n[ -s err.txt ] && echo diagnostic; rm -f err.txt\nfor f in out out2 'x y' 9 -; do [ -e \"$f\" ] && { printf '%s:' \"$f\"; cat \"$f\" 2>/dev/null; echo; }; done; :\n"
+   ],
+   "domain": "shell",
+   "family": "redirections",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "12048d18c4d5d908",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a00b74d85c5a483bb4885ad0d0e349e58c004eb5503a928ab3e15f265c745d0e",
+   "status": 2,
+   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
+  },
+  "utility": "redirections"
+ },
+ {
+  "candidate": {
+   "effects": "a00b74d85c5a483bb4885ad0d0e349e58c004eb5503a928ab3e15f265c745d0e",
+   "status": 0,
+   "stdout": "bd1d98a0b475f288076ff27529dbc80f84818348bbea05e3a8b8b29770cf6c52"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "empty=; two='out out'; ln -s nowhere dangling 2>/dev/null; exec 3>&1\necho start\n{ cat a.txt 1>&- ; } 2>err.txt\necho \"status=$?\"\n[ -s err.txt ] && echo diagnostic; rm -f err.txt\nfor f in out out2 'x y' 9 -; do [ -e \"$f\" ] && { printf '%s:' \"$f\"; cat \"$f\" 2>/dev/null; echo; }; done; :\n"
+   ],
+   "domain": "shell",
+   "family": "redirections",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "2ce3049c830d5f02",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a00b74d85c5a483bb4885ad0d0e349e58c004eb5503a928ab3e15f265c745d0e",
+   "status": 0,
+   "stdout": "3dfd37d9afea354c51576855262aac71400e64c7f89f26ecc1918a26cf88fbfc"
+  },
+  "utility": "redirections"
+ },
+ {
+  "candidate": {
+   "effects": "a00b74d85c5a483bb4885ad0d0e349e58c004eb5503a928ab3e15f265c745d0e",
+   "status": 0,
+   "stdout": "bd1d98a0b475f288076ff27529dbc80f84818348bbea05e3a8b8b29770cf6c52"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "empty=; two='out out'; ln -s nowhere dangling 2>/dev/null; exec 3>&1\necho start\n{ cat a.txt 1>&- ; } 2>err.txt\necho \"status=$?\"\n[ -s err.txt ] && echo diagnostic; rm -f err.txt\nfor f in out out2 'x y' 9 -; do [ -e \"$f\" ] && { printf '%s:' \"$f\"; cat \"$f\" 2>/dev/null; echo; }; done; :\n"
+   ],
+   "domain": "shell",
+   "family": "redirections",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "3e1b809fb801160c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a00b74d85c5a483bb4885ad0d0e349e58c004eb5503a928ab3e15f265c745d0e",
+   "status": 0,
+   "stdout": "3dfd37d9afea354c51576855262aac71400e64c7f89f26ecc1918a26cf88fbfc"
+  },
+  "utility": "redirections"
+ },
+ {
+  "candidate": {
+   "effects": "a00b74d85c5a483bb4885ad0d0e349e58c004eb5503a928ab3e15f265c745d0e",
+   "status": 0,
+   "stdout": "bd1d98a0b475f288076ff27529dbc80f84818348bbea05e3a8b8b29770cf6c52"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "empty=; two='out out'; ln -s nowhere dangling 2>/dev/null; exec 3>&1\necho start\n{ cat a.txt 1>&- ; } 2>err.txt\necho \"status=$?\"\n[ -s err.txt ] && echo diagnostic; rm -f err.txt\nfor f in out out2 'x y' 9 -; do [ -e \"$f\" ] && { printf '%s:' \"$f\"; cat \"$f\" 2>/dev/null; echo; }; done; :\n"
+   ],
+   "domain": "shell",
+   "family": "redirections",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "a8f5ec8ea26742b4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a00b74d85c5a483bb4885ad0d0e349e58c004eb5503a928ab3e15f265c745d0e",
+   "status": 0,
+   "stdout": "3dfd37d9afea354c51576855262aac71400e64c7f89f26ecc1918a26cf88fbfc"
+  },
+  "utility": "redirections"
+ },
+ {
+  "candidate": {
+   "effects": "dfbc7403022fe4896f14db54e4f83f208df37826721ae107f5030f5a1f67593d",
+   "status": 0,
+   "stdout": "a388dc16e923ddef9d13ced4296fe4085aba9a496f4f6fae772fe6ed68af14fb"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "empty=; two='out out'; ln -s nowhere dangling 2>/dev/null; exec 3>&1\necho start\n{ exec 255> *.txt; read v; exec 3>&- 2>/dev/null ; } 2>err.txt\necho \"status=$?\"\n[ -s err.txt ] && echo diagnostic; rm -f err.txt\nfor f in out out2 'x y' 9 -; do [ -e \"$f\" ] && { printf '%s:' \"$f\"; cat \"$f\" 2>/dev/null; echo; }; done; :\n"
+   ],
+   "domain": "shell",
+   "family": "redirections",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "cc184f9c6e60bf19",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "887bb4e5fb4d916b3c4ce3df8b62648bcd3711239fdacb97d3477d0a5efc99d7",
+   "status": 127,
+   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
+  },
+  "utility": "redirections"
  },
  {
   "candidate": {
@@ -7774,5 +7646,1061 @@
    "stdout": "dce54bc3247c1df07e7c540899b1497040af2f3a01f643ca39e27ae894a30466"
   },
   "utility": "utf8-locale"
+ },
+ {
+  "candidate": {
+   "effects": "f72da7611d233d78efd88299cd374bd3055799cd08cd7a362153885b0ab97fe1",
+   "status": 0,
+   "stdout": "f1e748fb7598968d1c75933f22ac53313ef80e4937196b5ffac5ee86c995ffb4"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\neval 'echo evaluated'\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
+   ],
+   "domain": "shell",
+   "family": "verbose",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "0fe854ffe5f83a67",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "be19a0afc7ee36aecabaf718b7af0314dfb338ae9a2730dd35da130a61d2184e",
+   "status": 0,
+   "stdout": "42f27981ad13399154dc6e4dece858924b6a15a32bdf5f7614d6c57ec48c6970"
+  },
+  "utility": "verbose"
+ },
+ {
+  "candidate": {
+   "effects": "f9d7d8310adaacd295e77fa033a51de9a6695f5c8c7f622d97b5d8dc415cc2be",
+   "status": 0,
+   "stdout": "db8c31a8da793fb5a75929f853e609fceccb5cd56fc61b430910061f88d6ccfb"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\n. ./sourced\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
+   ],
+   "domain": "shell",
+   "family": "verbose",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "6c86c6a097f0c4c8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "71e592ab775d4db3c36ec42abd8d6488ed16e9038073332bca646d58bd9811d0",
+   "status": 0,
+   "stdout": "5871782c7b2092d0df24c0c4c1ad483a7293daad029794d2d3bae25d0eb45b17"
+  },
+  "utility": "verbose"
+ },
+ {
+  "candidate": {
+   "effects": "7a62102144b8611b160a6779249563485a9476541c57a1ec57180d089a4b845d",
+   "status": 0,
+   "stdout": "99d64d9c4304d75bdf1204f8bb85931f52ebdff5180b72065f1e75b773d25437"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\n. ./sourced\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
+   ],
+   "domain": "shell",
+   "family": "verbose",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "922ba6b8dc66e1a9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "d9c0b3e371e89ec764559925ff5fff5263e64cce418b92bc041b87721f908e37",
+   "status": 0,
+   "stdout": "311f7d67410a94c2dbe129ea5e246853d7e945ced08bd207dff788fbc9c55fb7"
+  },
+  "utility": "verbose"
+ },
+ {
+  "candidate": {
+   "effects": "4a4e28b6bf3add0a1fe99b899f3a50fd7389289ee3342b068ee6fcd735d31017",
+   "status": 0,
+   "stdout": "7088ac99550a1b9df0f9c54dec789bc2a82fa1ce2c461221e974f56dfefc88ec"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\neval 'echo evaluated'\nset +v\necho quiet\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
+   ],
+   "domain": "shell",
+   "family": "verbose",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "96c9717ffd56c848",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "c625d90014814182cfa8dcb7232a2ef22e2abd66256644418134e13555351f30",
+   "status": 0,
+   "stdout": "99b6b960f28e1b46cd748d0402ec881435037027fdbf97d3df22b3013344d6f2"
+  },
+  "utility": "verbose"
+ },
+ {
+  "candidate": {
+   "effects": "4a4e28b6bf3add0a1fe99b899f3a50fd7389289ee3342b068ee6fcd735d31017",
+   "status": 0,
+   "stdout": "7088ac99550a1b9df0f9c54dec789bc2a82fa1ce2c461221e974f56dfefc88ec"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\neval 'echo evaluated'\nset +v\necho quiet\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
+   ],
+   "domain": "shell",
+   "family": "verbose",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "a5a0db23429d9a7e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "c625d90014814182cfa8dcb7232a2ef22e2abd66256644418134e13555351f30",
+   "status": 0,
+   "stdout": "99b6b960f28e1b46cd748d0402ec881435037027fdbf97d3df22b3013344d6f2"
+  },
+  "utility": "verbose"
+ },
+ {
+  "candidate": {
+   "effects": "f72da7611d233d78efd88299cd374bd3055799cd08cd7a362153885b0ab97fe1",
+   "status": 0,
+   "stdout": "f1e748fb7598968d1c75933f22ac53313ef80e4937196b5ffac5ee86c995ffb4"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\neval 'echo evaluated'\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
+   ],
+   "domain": "shell",
+   "family": "verbose",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "d3c90301a7f036ea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "be19a0afc7ee36aecabaf718b7af0314dfb338ae9a2730dd35da130a61d2184e",
+   "status": 0,
+   "stdout": "42f27981ad13399154dc6e4dece858924b6a15a32bdf5f7614d6c57ec48c6970"
+  },
+  "utility": "verbose"
+ },
+ {
+  "candidate": {
+   "effects": "7a62102144b8611b160a6779249563485a9476541c57a1ec57180d089a4b845d",
+   "status": 0,
+   "stdout": "99d64d9c4304d75bdf1204f8bb85931f52ebdff5180b72065f1e75b773d25437"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\n. ./sourced\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
+   ],
+   "domain": "shell",
+   "family": "verbose",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "e99e8e5853e9162f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "d9c0b3e371e89ec764559925ff5fff5263e64cce418b92bc041b87721f908e37",
+   "status": 0,
+   "stdout": "311f7d67410a94c2dbe129ea5e246853d7e945ced08bd207dff788fbc9c55fb7"
+  },
+  "utility": "verbose"
+ },
+ {
+  "candidate": {
+   "effects": "eac508d642167fedf0b1f770e1fa1347bdacea837a1b3a412c3ba58901d96fd0",
+   "status": 0,
+   "stdout": "a0d76f10e49cc0f91068d233045ad425394049791af6f0bdfd22480b871f9714"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\nset -x; eval 'echo one; echo two'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "0bb799262e2fd13f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "81e2d93c02b0c5983d86c4bbc92180a677aaad1939d317fd49c62921e0f155ff",
+   "status": 0,
+   "stdout": "0cb3c88aa94bd24928fa04ba4a7a4eb3659bdcd21ff7e8bc43479c3da4b7760a"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "9fa430af4b28fe73c3e4346a81a32d1c2b6549b6f601725939de28200ea82272",
+   "status": 0,
+   "stdout": "c3a91a95fa4c392c71e98594567489b945f63d72f4eb343573f8ed999c140ae2"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\nset -x; eval 'v=$(echo sub)'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "107260fea102de7b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "2d0e1d4d0a8daead43d01e73d084a87719b8e5f31065ad52594c302b35008d05",
+   "status": 0,
+   "stdout": "71c077f01afd1c392d2a45c7db72d981410d260ce6bb2e4be234404cc966afd8"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "adb98937ee2d46ae29f6ed0d80ff57b8e7a31caa074e8bfd8e024387fa0ed5e1",
+   "status": 0,
+   "stdout": "40d5f118176098dc3394f201d5df8f3483c1575adf59a4efb045575074861209"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='\\$ '\nexec 2>trace\nset -x; eval 'echo é'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "114a2815ded75e73",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "4cf112c5f56f3d08348c12bd38bb9aa38769c31e583cd514fa84fdb34163d27a",
+   "status": 0,
+   "stdout": "1469ad0a77cb7ea74113e1a745827e6dc4ae70f7b793b38fd22fcc04976280ab"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "3db60b9c41509eb67feb4b25abb56b10cbdc0f2b6c1271f49d7edbca6bd88faa",
+   "status": 0,
+   "stdout": "e35b7fbe74bef4768602c32d1bdd553f5eb2c18da52aff4ad2a5aaa685485da4"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='${FUNCNAME[0]-main}: '\nexec 2>trace\ng() { set -x; echo *.txt; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "14053e7e5ea9370e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "1fc479715e3b522d48fd22cca9dcb2b26c96dea46eeb9202d778cd76061f71a3",
+   "status": 0,
+   "stdout": "175ca2a4fabe51f9a0a0546dc2083ee7ab68783670f1a9415f5fa7815e847300"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "9fa430af4b28fe73c3e4346a81a32d1c2b6549b6f601725939de28200ea82272",
+   "status": 0,
+   "stdout": "c3a91a95fa4c392c71e98594567489b945f63d72f4eb343573f8ed999c140ae2"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\nset -x; eval 'v=$(echo sub)'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "200c39d5f91155be",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "2d0e1d4d0a8daead43d01e73d084a87719b8e5f31065ad52594c302b35008d05",
+   "status": 0,
+   "stdout": "71c077f01afd1c392d2a45c7db72d981410d260ce6bb2e4be234404cc966afd8"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "0c1eaaa22d114a10e66c1b517f5444a93b43bd98148fea4a8068ed91722026ee",
+   "status": 0,
+   "stdout": "f0319a581a961f9d0c91b330eb20b15360e2c0d5104ac6f5ba9ddc3d5f1f1916"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\nset -x; for i in a b; do :; done\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "21664dfc57ac6fa2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a6d56063c1fa72c585865de847eae7faadec241e067663d74e06e660582a3c42",
+   "status": 0,
+   "stdout": "0f6a880fe599283a41ea07b440e813835a8cdb9fcbb086e808a12b196676fe1f"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "a43acbd4742d3ecdf91fee11a98651e8042780bca474b1304df69543ade60e3f",
+   "status": 0,
+   "stdout": "b628dcb04d0c15c5a5b7539ed03b0a5ba67b55b5e53f533d6e00369994b62e9f"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\nset -o xtrace; echo \"$(echo n)\"\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "29c200b4da9f946b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "da661663616851d5adfcb89c883a0410c7c1119ca400ca01fa1ab00f51a5d791",
+   "status": 0,
+   "stdout": "eead1568227f6164496f5134c1592f692f0bffbef77f9ddde233a6b155018819"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "adb98937ee2d46ae29f6ed0d80ff57b8e7a31caa074e8bfd8e024387fa0ed5e1",
+   "status": 0,
+   "stdout": "40d5f118176098dc3394f201d5df8f3483c1575adf59a4efb045575074861209"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='\\$ '\nexec 2>trace\nset -x; eval 'echo é'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "34144bb44cb95dc6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "ea341acdfd839ced734fb1259e9adad64bc3a2a441a817a75d1c2779713645c0",
+   "status": 0,
+   "stdout": "4cd64e36013fdd4105798bd0dcf653043126ac620fe2c059bbe59f60c20ff73e"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "aa284d82d2c7b76af366023fda772172763c984a9cbc7076f742a0d69821a7a0",
+   "status": 0,
+   "stdout": "a142ddffe95d6ae52c96b7eaa27ff448889076105d3129486102e8d4e39ae41c"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\ng() { set -x; echo 'a b' \"c d\" e\\ f; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "4f129d06d4cb38c7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "6efc4e036c64b8a467e44203fb277a3ca014854fba5cb5e998a55c62c970107d",
+   "status": 0,
+   "stdout": "3e13b6764ff2fd522bcadbd5e08e8f28f6236047b896253abbe617590349c894"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "adb98937ee2d46ae29f6ed0d80ff57b8e7a31caa074e8bfd8e024387fa0ed5e1",
+   "status": 0,
+   "stdout": "40d5f118176098dc3394f201d5df8f3483c1575adf59a4efb045575074861209"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='\\$ '\nexec 2>trace\nset -x; eval 'echo é'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "54e3e87c462d9844",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "ea341acdfd839ced734fb1259e9adad64bc3a2a441a817a75d1c2779713645c0",
+   "status": 0,
+   "stdout": "4cd64e36013fdd4105798bd0dcf653043126ac620fe2c059bbe59f60c20ff73e"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "294e9dd15e03dd368c343f1afe5a5457f3aaaa2d84c54f15952744ebd6da4b4c",
+   "status": 0,
+   "stdout": "91ce1068f01dbcfa22e1fd547b31fc1c9a4e23ac7108d6954ba5f52288d96db9"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\ng() { set -x; f() { echo in; }; f; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "57e02404379a827d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "d9b9ad1e6aaad93f14b1fbe761af0766347afc4530a27c61589cce40e11daa6b",
+   "status": 0,
+   "stdout": "92633ef559ae769e10ebebaa01df7f548f7b3958aacce7fdb0f870a636869ef5"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "0db69fa3b3b2d3a112dbbac24515784fe18e1af7980e89c1e08211653b0e4533",
+   "status": 0,
+   "stdout": "dd5a2b4f30341cfa57acf79af27dbfebd00e0979eb9f476a6c635b212adec534"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='${FUNCNAME[0]-main}: '\nexec 2>trace\nset -x; exec 3>&1\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "6f45699e0a532c4d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "f19a601d87cbfe444058c8c4d113fef6b48bbf7c4c8cc7f9d420dbfadf1182c9",
+   "status": 0,
+   "stdout": "ce4662c4bfbe24374159c114a028685ff4870d51847b1c289dba3170aa076bb9"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "03c087a4c1c8013b572e65e1e760ceae3e0497f69615226d45a12ea62e51b71c",
+   "status": 0,
+   "stdout": "be489a0fd346a5931a8ae2d8fc5e93a875bbfc664a5b3182fe5b1537501d40f1"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\ng() { set -x; echo $'\\t'; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "72d6fb34be82c567",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "1eccbde125fddb309782691461c6407e966efddecd2d4d774e5aa051fff34134",
+   "status": 0,
+   "stdout": "e76ee43cdc934d4a896c3f34128ff22d67e0fa0befae9951d485c62edbc30411"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "99ad5484636e854fb8cf4b345a4ed2821e01879e33c782c41e7a50150aa6c179",
+   "status": 0,
+   "stdout": "1d802ca443972e54087996b10e8f60570de0ab03a92c2d5c0d2d7bb933903bd6"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='+ '\nexec 2>trace\nset -x; echo é\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "86320eed742b22db",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a456f1f8e7f05e2da89e133863278104f232b4c327049d5efb2019b9db938cf7",
+   "status": 0,
+   "stdout": "f6926d2577d423578733fde6e313d3a4a0048c934c6a12f37003e31c52d33980"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "bbd8f39fa965e8671b82dc630272377d24cbfad5994f08ed893f7dacc9114eb2",
+   "status": 0,
+   "stdout": "41519e6bd8cdf7f9d07eb5f0cc42b217de2a416d307d2ba8d6e6d7e414a5b371"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\n( set -x; echo 'a b' \"c d\" e\\ f )\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "8777fc2fb7589890",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "edef5e43c8ceb293916d28e76fd33cda54cb58f0c491dc1cafeae41c216c0bf8",
+   "status": 0,
+   "stdout": "12b7d7226a03292791dbd22a160beeb721cc2674542fd98d1a4c18041cf0fea5"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "3db60b9c41509eb67feb4b25abb56b10cbdc0f2b6c1271f49d7edbca6bd88faa",
+   "status": 0,
+   "stdout": "e35b7fbe74bef4768602c32d1bdd553f5eb2c18da52aff4ad2a5aaa685485da4"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='${FUNCNAME[0]-main}: '\nexec 2>trace\ng() { set -x; echo *.txt; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "8f992df5da758d5b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "1fc479715e3b522d48fd22cca9dcb2b26c96dea46eeb9202d778cd76061f71a3",
+   "status": 0,
+   "stdout": "175ca2a4fabe51f9a0a0546dc2083ee7ab68783670f1a9415f5fa7815e847300"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "03c087a4c1c8013b572e65e1e760ceae3e0497f69615226d45a12ea62e51b71c",
+   "status": 0,
+   "stdout": "be489a0fd346a5931a8ae2d8fc5e93a875bbfc664a5b3182fe5b1537501d40f1"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\ng() { set -x; echo $'\\t'; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "ae0e33abc290ec2a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "1eccbde125fddb309782691461c6407e966efddecd2d4d774e5aa051fff34134",
+   "status": 0,
+   "stdout": "e76ee43cdc934d4a896c3f34128ff22d67e0fa0befae9951d485c62edbc30411"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "aa284d82d2c7b76af366023fda772172763c984a9cbc7076f742a0d69821a7a0",
+   "status": 0,
+   "stdout": "a142ddffe95d6ae52c96b7eaa27ff448889076105d3129486102e8d4e39ae41c"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\ng() { set -x; echo 'a b' \"c d\" e\\ f; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "af7615edcc974ef9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "6efc4e036c64b8a467e44203fb277a3ca014854fba5cb5e998a55c62c970107d",
+   "status": 0,
+   "stdout": "3e13b6764ff2fd522bcadbd5e08e8f28f6236047b896253abbe617590349c894"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "0db69fa3b3b2d3a112dbbac24515784fe18e1af7980e89c1e08211653b0e4533",
+   "status": 0,
+   "stdout": "dd5a2b4f30341cfa57acf79af27dbfebd00e0979eb9f476a6c635b212adec534"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='${FUNCNAME[0]-main}: '\nexec 2>trace\nset -x; exec 3>&1\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "ba9e3da4505c6f4f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "f19a601d87cbfe444058c8c4d113fef6b48bbf7c4c8cc7f9d420dbfadf1182c9",
+   "status": 0,
+   "stdout": "ce4662c4bfbe24374159c114a028685ff4870d51847b1c289dba3170aa076bb9"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "99ad5484636e854fb8cf4b345a4ed2821e01879e33c782c41e7a50150aa6c179",
+   "status": 0,
+   "stdout": "1d802ca443972e54087996b10e8f60570de0ab03a92c2d5c0d2d7bb933903bd6"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='+ '\nexec 2>trace\nset -x; echo é\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "c2bf9c64e8355283",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a456f1f8e7f05e2da89e133863278104f232b4c327049d5efb2019b9db938cf7",
+   "status": 0,
+   "stdout": "f6926d2577d423578733fde6e313d3a4a0048c934c6a12f37003e31c52d33980"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "294e9dd15e03dd368c343f1afe5a5457f3aaaa2d84c54f15952744ebd6da4b4c",
+   "status": 0,
+   "stdout": "91ce1068f01dbcfa22e1fd547b31fc1c9a4e23ac7108d6954ba5f52288d96db9"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\ng() { set -x; f() { echo in; }; f; }; g\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "c65aade8cb4dfd1c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "d9b9ad1e6aaad93f14b1fbe761af0766347afc4530a27c61589cce40e11daa6b",
+   "status": 0,
+   "stdout": "92633ef559ae769e10ebebaa01df7f548f7b3958aacce7fdb0f870a636869ef5"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "eac508d642167fedf0b1f770e1fa1347bdacea837a1b3a412c3ba58901d96fd0",
+   "status": 0,
+   "stdout": "a0d76f10e49cc0f91068d233045ad425394049791af6f0bdfd22480b871f9714"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\nset -x; eval 'echo one; echo two'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "d98675a7faa4db97",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "81e2d93c02b0c5983d86c4bbc92180a677aaad1939d317fd49c62921e0f155ff",
+   "status": 0,
+   "stdout": "0cb3c88aa94bd24928fa04ba4a7a4eb3659bdcd21ff7e8bc43479c3da4b7760a"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "a43acbd4742d3ecdf91fee11a98651e8042780bca474b1304df69543ade60e3f",
+   "status": 0,
+   "stdout": "b628dcb04d0c15c5a5b7539ed03b0a5ba67b55b5e53f533d6e00369994b62e9f"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='a\\nb '\nexec 2>trace\nset -o xtrace; echo \"$(echo n)\"\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "dfd579c25f30c59c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "da661663616851d5adfcb89c883a0410c7c1119ca400ca01fa1ab00f51a5d791",
+   "status": 0,
+   "stdout": "eead1568227f6164496f5134c1592f692f0bffbef77f9ddde233a6b155018819"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "0c1eaaa22d114a10e66c1b517f5444a93b43bd98148fea4a8068ed91722026ee",
+   "status": 0,
+   "stdout": "f0319a581a961f9d0c91b330eb20b15360e2c0d5104ac6f5ba9ddc3d5f1f1916"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\nset -x; for i in a b; do :; done\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "e96f5008d76954f9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "a6d56063c1fa72c585865de847eae7faadec241e067663d74e06e660582a3c42",
+   "status": 0,
+   "stdout": "0f6a880fe599283a41ea07b440e813835a8cdb9fcbb086e808a12b196676fe1f"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "eac508d642167fedf0b1f770e1fa1347bdacea837a1b3a412c3ba58901d96fd0",
+   "status": 0,
+   "stdout": "a0d76f10e49cc0f91068d233045ad425394049791af6f0bdfd22480b871f9714"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$(echo sub) '\nexec 2>trace\nset -x; eval 'echo one; echo two'\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "fd9fc42f8c545047",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "418262530fee8df331b14bde322467c756a8dce9d34d41eda8dbef0a2fb58da0",
+   "status": 0,
+   "stdout": "9f78260e0d4ddfad0ab84746df96e57a833838aca40ef943f0ebc49d34993d3d"
+  },
+  "utility": "xtrace-shape"
+ },
+ {
+  "candidate": {
+   "effects": "bbd8f39fa965e8671b82dc630272377d24cbfad5994f08ed893f7dacc9114eb2",
+   "status": 0,
+   "stdout": "41519e6bd8cdf7f9d07eb5f0cc42b217de2a416d307d2ba8d6e6d7e414a5b371"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    ": > a.txt; x=X\nPS4='$LINENO: '\nexec 2>trace\n( set -x; echo 'a b' \"c d\" e\\ f )\nset +x\nexec 2>&1\necho ---\ncat trace | sed 's/^/|/'\necho \"end=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "xtrace-shape",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "fe4e4ea197ba1dbd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
+  "reference": {
+   "effects": "edef5e43c8ceb293916d28e76fd33cda54cb58f0c491dc1cafeae41c216c0bf8",
+   "status": 0,
+   "stdout": "12b7d7226a03292791dbd22a160beeb721cc2674542fd98d1a4c18041cf0fea5"
+  },
+  "utility": "xtrace-shape"
  }
 ]

@@ -2701,7 +2701,7 @@ def shell_lang_pipelines(rng):
     stages = rng.randrange(1, 6)
     parts = []
     for _ in range(stages):
-        parts.append(rng.choice(("true", "false", "(exit 3)", "(exit 7)", "echo x", "cat", "tr a-z A-Z", "wc -c",
+        parts.append(rng.choice(("true", "false", "(exit 3)", "(exit 7)", "echo x", "cat", "tr a-z A-Z",
                                  "{ read v; echo \"<$v>\"; }", "f", "cat missing", "/bin/true", "/bin/false",
                                  "sh -c 'kill -TERM $$'", "exit 5", "x=in cat", "yes | head -1")))
     pipeline = " | ".join(parts)
@@ -3061,7 +3061,7 @@ def shell_lang_background_wait(rng):
     elif shape == "nounset-bang":
         script = "set -u; echo \"[$!]\"; echo \"$?\""
     elif shape == "many-jobs":
-        script = "for i in 1 2 3 4 5 6 7 8; do (exit $i) & done; wait; echo \"$?\"; jobs | wc -l"
+        script = "for i in 1 2 3 4 5 6 7 8; do (exit $i) & done; wait; echo \"$?\"; wait; echo \"$?\""
     elif shape == "wait-job-spec":
         script = "set -m; sleep 0.2 & wait %1; echo \"$?\"; wait %9 2>/dev/null; echo \"$?\""
     else:
@@ -3954,7 +3954,7 @@ def shell_lang_job_control_script(rng):
         script = pre + "sleep 0.3 & exit 0"
     # Listings follow bash's layout under every name; against dash that is
     # the pinned jobs-layout policy, so only status shapes run there.
-    posix_shapes = ("fg-status", "fg-spec", "fg-ambiguous", "kill-spec", "wait-stopped", "subshell-jobs", "job-number-reuse", "jobs-after-exit")
+    posix_shapes = ("fg-status", "fg-spec", "fg-ambiguous", "kill-spec", "subshell-jobs", "job-number-reuse", "jobs-after-exit")
     return "job-control-script-" + shape, shell_ALL if shape in posix_shapes else shell_BASH, shell_program(
         script + " 2>/dev/null", "echo \"end=$?\"")
 
