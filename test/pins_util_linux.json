@@ -51,6 +51,14 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "findmnt",
+  "option": "+FSTYPE",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
   "option": "--id",
   "kind": "deliberate",
   "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
@@ -70,6 +78,46 @@
   "option": "--output-all",
   "kind": "deliberate",
   "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--output=+FSTYPE",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--output=LABEL",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--output=PROPAGATION",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--output=SIZE",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "--output=UUID",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
  },
  {
   "list": "ledger",
@@ -259,6 +307,46 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "findmnt",
+  "option": "-o+FSTYPE",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-oLABEL",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-oPROPAGATION",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-oSIZE",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "-oUUID",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
   "option": "-s",
   "kind": "deliberate",
   "reason": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused"
@@ -298,6 +386,38 @@
  {
   "list": "ledger",
   "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "LABEL",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "PROPAGATION",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "SIZE",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "findmnt",
+  "option": "UUID",
+  "kind": "deliberate",
+  "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
   "utility": "lsblk",
   "option": "--discard",
   "kind": "deliberate",
@@ -326,6 +446,62 @@
   "option": "--output-all",
   "kind": "deliberate",
   "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--output=NAME,FSAVAIL,FSUSE%,FSSIZE,FSUSED",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--output=NAME,MAJ,MIN,DISK-SEQ,MQ,WWN,ID,ID-LINK",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--output=NAME,PARTUUID,PARTTYPE,PTTYPE,PTUUID",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--output=NAME,PKNAME,START,PARTN,PARTFLAGS",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--output=NAME,STATE,ALIGNMENT,DISC-ALN,DISC-GRAN,DISC-MAX,DISC-ZERO",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--output=NAME,SUBSYSTEMS,HOTPLUG,RAND,DAX",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "--output=NAME,ZONED,ZONE-SZ",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
  },
  {
   "list": "ledger",
@@ -459,6 +635,62 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "lsblk",
+  "option": "-oNAME,FSAVAIL,FSUSE%,FSSIZE,FSUSED",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-oNAME,MAJ,MIN,DISK-SEQ,MQ,WWN,ID,ID-LINK",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-oNAME,PARTUUID,PARTTYPE,PTTYPE,PTUUID",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-oNAME,PKNAME,START,PARTN,PARTFLAGS",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-oNAME,STATE,ALIGNMENT,DISC-ALN,DISC-GRAN,DISC-MAX,DISC-ZERO",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-oNAME,SUBSYSTEMS,HOTPLUG,RAND,DAX",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "-oNAME,ZONED,ZONE-SZ",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
   "option": "-v",
   "kind": "deliberate",
   "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
@@ -494,6 +726,62 @@
   "option": "-z",
   "kind": "deliberate",
   "reason": "the block census comes from sysfs as a flat list: tree and pairs output, the discard and zoned column families, major-number filters, de-duplication, sorting, an alternate sysroot and udev properties are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "NAME,FSAVAIL,FSUSE%,FSSIZE,FSUSED",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "NAME,MAJ,MIN,DISK-SEQ,MQ,WWN,ID,ID-LINK",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "NAME,PARTUUID,PARTTYPE,PTTYPE,PTUUID",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "NAME,PKNAME,START,PARTN,PARTFLAGS",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "NAME,STATE,ALIGNMENT,DISC-ALN,DISC-GRAN,DISC-MAX,DISC-ZERO",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "NAME,SUBSYSTEMS,HOTPLUG,RAND,DAX",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsblk",
+  "option": "NAME,ZONED,ZONE-SZ",
+  "kind": "deliberate",
+  "reason": "the census fills the name, size, type, permission, topology and filesystem columns; the partition-table, discard, zoned, free-space, subsystem and device-identifier families are refused"
  },
  {
   "list": "ledger",
@@ -603,6 +891,38 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "lsfd",
+  "option": "--output=ASSOC,STTYPE,SOURCE,FLAGS",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--output=COMMAND,PID,ASSOC",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--output=EVENTPOLL.TFDS",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "--output=FD,DEV,RDEV,SIZE,NLINK,FUID,OWNER",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
   "option": "--summary",
   "kind": "deliberate",
   "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
@@ -658,6 +978,70 @@
  {
   "list": "ledger",
   "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "-oASSOC,STTYPE,SOURCE,FLAGS",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "-oCOMMAND,PID,ASSOC",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "-oEVENTPOLL.TFDS",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "-oFD,DEV,RDEV,SIZE,NLINK,FUID,OWNER",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "ASSOC,STTYPE,SOURCE,FLAGS",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "COMMAND,PID,ASSOC",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "EVENTPOLL.TFDS",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsfd",
+  "option": "FD,DEV,RDEV,SIZE,NLINK,FUID,OWNER",
+  "kind": "deliberate",
+  "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
   "utility": "lslocks",
   "option": "--list-columns",
   "kind": "deliberate",
@@ -670,6 +1054,14 @@
   "option": "--output-all",
   "kind": "deliberate",
   "reason": "display filters, column metadata and --output-all are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lslocks",
+  "option": "--output=HOLDERS",
+  "kind": "deliberate",
+  "reason": "HOLDERS needs a second per-descriptor census of every process, which this build does not take"
  },
  {
   "list": "ledger",
@@ -690,10 +1082,42 @@
  {
   "list": "ledger",
   "domain": "util_linux",
+  "utility": "lslocks",
+  "option": "-oHOLDERS",
+  "kind": "deliberate",
+  "reason": "HOLDERS needs a second per-descriptor census of every process, which this build does not take"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lslocks",
+  "option": "HOLDERS",
+  "kind": "deliberate",
+  "reason": "HOLDERS needs a second per-descriptor census of every process, which this build does not take"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
   "utility": "lsmem",
   "option": "--output-all",
   "kind": "deliberate",
   "reason": "pairs output, --output-all and an alternate sysroot are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
+  "option": "--output=CONFIGURED",
+  "kind": "deliberate",
+  "reason": "the configured and memmap-on-memory columns are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
+  "option": "--output=MEMMAP-ON-MEMORY",
+  "kind": "deliberate",
+  "reason": "the configured and memmap-on-memory columns are refused"
  },
  {
   "list": "ledger",
@@ -715,9 +1139,41 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "lsmem",
+  "option": "-oCONFIGURED",
+  "kind": "deliberate",
+  "reason": "the configured and memmap-on-memory columns are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
+  "option": "-oMEMMAP-ON-MEMORY",
+  "kind": "deliberate",
+  "reason": "the configured and memmap-on-memory columns are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
   "option": "-s",
   "kind": "deliberate",
   "reason": "pairs output, --output-all and an alternate sysroot are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
+  "option": "CONFIGURED",
+  "kind": "deliberate",
+  "reason": "the configured and memmap-on-memory columns are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsmem",
+  "option": "MEMMAP-ON-MEMORY",
+  "kind": "deliberate",
+  "reason": "the configured and memmap-on-memory columns are refused"
  },
  {
   "list": "ledger",
@@ -734,6 +1190,22 @@
   "option": "--output-all",
   "kind": "deliberate",
   "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "--output=NETNSID,NSFS",
+  "kind": "deliberate",
+  "reason": "the network namespace id, its nsfs mountpoint and the parent and owner relations are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "--output=PNS,ONS",
+  "kind": "deliberate",
+  "reason": "the network namespace id, its nsfs mountpoint and the parent and owner relations are refused"
  },
  {
   "list": "ledger",
@@ -774,6 +1246,38 @@
   "option": "-T",
   "kind": "deliberate",
   "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "-oNETNSID,NSFS",
+  "kind": "deliberate",
+  "reason": "the network namespace id, its nsfs mountpoint and the parent and owner relations are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "-oPNS,ONS",
+  "kind": "deliberate",
+  "reason": "the network namespace id, its nsfs mountpoint and the parent and owner relations are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "NETNSID,NSFS",
+  "kind": "deliberate",
+  "reason": "the network namespace id, its nsfs mountpoint and the parent and owner relations are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "lsns",
+  "option": "PNS,ONS",
+  "kind": "deliberate",
+  "reason": "the network namespace id, its nsfs mountpoint and the parent and owner relations are refused"
  },
  {
   "list": "ledger",
@@ -819,6 +1323,14 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "mkswap",
+  "option": "-ebig",
+  "kind": "deliberate",
+  "reason": "a swap area is written at the page size the area already has, in version 1 and little-endian byte order only"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
   "option": "-o",
   "kind": "deliberate",
   "reason": "a swap area is written over a whole existing file: bad-block scanning, creating or resizing the file, an offset and device locking are refused"
@@ -827,9 +1339,33 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "mkswap",
+  "option": "-p8192",
+  "kind": "deliberate",
+  "reason": "a swap area is written at the page size the area already has, in version 1 and little-endian byte order only"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
   "option": "-s",
   "kind": "deliberate",
   "reason": "a swap area is written over a whole existing file: bad-block scanning, creating or resizing the file, an offset and device locking are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
+  "option": "8192",
+  "kind": "deliberate",
+  "reason": "a swap area is written at the page size the area already has, in version 1 and little-endian byte order only"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "mkswap",
+  "option": "big",
+  "kind": "deliberate",
+  "reason": "a swap area is written at the page size the area already has, in version 1 and little-endian byte order only"
  },
  {
   "list": "ledger",
@@ -1074,6 +1610,38 @@
  {
   "list": "ledger",
   "domain": "util_linux",
+  "utility": "swaplabel",
+  "option": "-Uclear",
+  "kind": "deliberate",
+  "reason": "an unparsable or cleared UUID is refused before anything is written, where upstream warns and writes the rest anyway"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "swaplabel",
+  "option": "-Uinvalid",
+  "kind": "deliberate",
+  "reason": "an unparsable or cleared UUID is refused before anything is written, where upstream warns and writes the rest anyway"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "swaplabel",
+  "option": "clear",
+  "kind": "deliberate",
+  "reason": "an unparsable or cleared UUID is refused before anything is written, where upstream warns and writes the rest anyway"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "swaplabel",
+  "option": "invalid",
+  "kind": "deliberate",
+  "reason": "an unparsable or cleared UUID is refused before anything is written, where upstream warns and writes the rest anyway"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
   "utility": "umount",
   "option": "--namespace",
   "kind": "deliberate",
@@ -1131,6 +1699,14 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "unshare",
+  "option": "--map-usersauto",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping is refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
   "option": "--mount-binfmt",
   "kind": "deliberate",
   "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
@@ -1150,6 +1726,14 @@
   "option": "-l",
   "kind": "deliberate",
   "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
+ },
+ {
+  "list": "ledger",
+  "domain": "util_linux",
+  "utility": "unshare",
+  "option": "auto",
+  "kind": "deliberate",
+  "reason": "automatic subid mapping is refused"
  },
  {
   "list": "ledger",
