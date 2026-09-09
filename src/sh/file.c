@@ -9890,6 +9890,7 @@ static bool chmod_loud;
 static bool chmod_changes;
 static bool chmod_quiet;
 static bool chmod_referenced;
+static p8 chmod_dereference_option;
 static positive chmod_reference_mode;
 static positive chmod_umask;
 static bool chmod_surprising;
@@ -9933,16 +9934,25 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         file_facts facts;
         // A name on the command line is followed, because Linux has no mode
         // on a symlink of its own to change and chmod has always meant the
-        // thing pointed at. A link met under -R is not: the walk refuses to
-        // descend into one, and it must refuse to change through one too,
-        // or chmod -R 000 over a tree with a link to /etc in it changes /etc.
+        // thing pointed at -- unless -h was asked for, which aims at the
+        // link itself. A link met under -R is not followed either: the walk
+        // refuses to descend into one, and it must refuse to change through
+        // one too, or chmod -R 000 over a tree with a link to /etc in it
+        // changes /etc.
         bool operand = directory == AT_FDCWD;
+        bool through = operand && chmod_dereference_option != 'h';
         bipolar looked = file_look_code(directory, name,
-                                        operand ? 0 : AT_SYMLINK_NOFOLLOW,
+                                        through ? 0 : AT_SYMLINK_NOFOLLOW,
                                         address_of facts);
 
         if (looked < 0)
         {
+                // -v says what it could not do on the output stream as well,
+                // because it reports on every file it was handed and not
+                // only on the ones it changed.
+                if (chmod_loud)
+                        string_format(log, "'%s' could not be accessed\n", shown);
+
                 if (!chmod_quiet)
                         string_format(log_error, "chmod: cannot access '%s': %s\n",
                                       shown, file_reason(looked));
@@ -9951,8 +9961,16 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
                 return;
         }
 
-        if (!operand && (facts.mode & MODE_FORMAT) == MODE_LINK)
+        // Linux keeps no mode on a symlink, so a link that is not followed
+        // is left exactly as it was -- and -v says so in as many words.
+        if (!through && (facts.mode & MODE_FORMAT) == MODE_LINK)
+        {
+                if (chmod_loud)
+                        string_format(log, "neither symbolic link '%s' nor referent "
+                                           "has been changed\n", shown);
+
                 return;
+        }
 
         bool directory_mode = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
         positive wanted = chmod_reference_mode & 07777;
@@ -10005,8 +10023,15 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         }
 }
 
+static const file_supersede chmod_supersedes[] = {
+    {(string_address) "dh", address_of chmod_dereference_option},
+    {null, null},
+};
+
 static const file_long chmod_longs[] = {
     {(string_address) "changes", 'c'},
+    {(string_address) "dereference", 'd'},
+    {(string_address) "no-dereference", 'h'},
     {(string_address) "no-preserve-root", 'N'},
     {(string_address) "preserve-root", 'N'},
     {(string_address) "quiet", 'f'},
@@ -10022,13 +10047,19 @@ static b32 file_chmod()
         positive count = (positive)program_argument_count();
         chmod_status = 0;
         chmod_referenced = false;
+        chmod_dereference_option = 'd';
 
+        //      -H, -L and -P say which symbolic links a -R walk goes
+        //      through. This walk goes through none of them, which is what
+        //      -H (the default) and -P both ask for; -L is taken and does
+        //      not change the walk, and the ledger records that.
         file_taking taking = {
             .program = (string_address) "chmod",
-            .allowed = (string_address) "RcfvrwxXstugoaN",
+            .allowed = (string_address) "HLPRcfhvrwxXstugoaN",
             .valued = (string_address) "e",
             .optional = (string_address) "rwxXstugoa",
             .longs = chmod_longs,
+            .supersedes = chmod_supersedes,
         };
 
         if (!file_take(address_of taking))

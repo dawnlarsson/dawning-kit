@@ -9359,7 +9359,7 @@ COLD fn shell_mapfile(writer write, string_address input)
                         continue;
                 }
                 p8 said[2] = {which, end};
-                if (!string_first_of("nsOdu", which))
+                if (!string_first_of("nsOduc", which))
                         return shell_answer(string_report(log_error, 2, "%s: bad option: -%s\n",
                                       shell_argv[0], said));
                 string_address value = shell_option_argument(address_of options);
@@ -9370,6 +9370,21 @@ COLD fn shell_mapfile(writer write, string_address input)
                 if (which == 'd')
                 {
                         delimiter = string_get(value);
+                        continue;
+                }
+
+                //      -c is how many records go by between calls to the -C
+                //      callback. There is no callback here, and Bash reads
+                //      the number and does nothing with it when none was
+                //      given, so a quantum on its own changes nothing but
+                //      must still be taken.
+                if (which == 'c')
+                {
+                        if (!read_nonnegative(value, (positive)bipolar_max,
+                                              address_of asked))
+                                return shell_answer(string_report(
+                                    log_error, 2, "%s: %s: bad number\n",
+                                    shell_argv[0], value));
                         continue;
                 }
 

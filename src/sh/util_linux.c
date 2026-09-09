@@ -12113,9 +12113,18 @@ static bool ul_lsblk_under_selection(ul_lsblk_device address_to device)
         return false;
 }
 
+/*      Named devices, and how many of them came to nothing.  A name the
+        system does not have at all is reported by the reason the kernel gave
+        rather than as a device that is not a block device, which is what the
+        reference says for a name that exists and is something else. */
+static positive ul_lsblk_asked;
+static positive ul_lsblk_lost;
+
 static bool ul_lsblk_select_operands(positive first)
 {
         positive count = (positive)program_argument_count();
+        ul_lsblk_asked = 0;
+        ul_lsblk_lost = 0;
         if (first == count)
         {
                 for (positive i = 0; i < ul_lsblk.count; i++)
@@ -12123,13 +12132,15 @@ static bool ul_lsblk_select_operands(positive first)
                 return true;
         }
 
-        bool failed = false;
         for (positive at = first; at < count; at++)
         {
                 string_address operand = program_argument((b32)at);
                 file_facts facts;
                 ul_lsblk_device address_to found = null;
-                if (file_look_at(operand, address_of facts))
+                bool present = file_look_at(operand, address_of facts);
+
+                ul_lsblk_asked++;
+                if (present)
                         for (positive i = 0; i < ul_lsblk.count; i++)
                                 if (facts.rdev_major == ul_lsblk.devices[i].major &&
                                     facts.rdev_minor == ul_lsblk.devices[i].minor)
@@ -12144,14 +12155,44 @@ static bool ul_lsblk_select_operands(positive first)
                 }
                 if (!found)
                 {
-                        string_format(log_error, "lsblk: %s: not a block device\n",
-                                      operand);
-                        failed = true;
+                        string_format(log_error, "lsblk: %s: %s\n", operand,
+                                      present ? (string_address)"not a block device"
+                                              : (string_address)"No such file or directory");
+                        ul_lsblk_lost++;
                 }
                 else
                         found->selected = true;
         }
-        return !failed;
+        return true;
+}
+
+/*      A device that was named and then printed nothing -- filtered out by
+        --scsi, say -- counts with the names that were never found: all of
+        them gone is 32, some of them 64, none of them 0. */
+static b32 ul_lsblk_operand_status()
+{
+        if (!ul_lsblk_asked)
+                return 0;
+
+        positive silent = 0;
+        for (positive i = 0; i < ul_lsblk.count; i++)
+        {
+                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                if (!device->selected)
+                        continue;
+
+                bool shown = false;
+                for (positive row = 0; row < ul_lsblk.row_count && !shown; row++)
+                        shown = ul_lsblk.rows[row].major == device->major &&
+                                ul_lsblk.rows[row].minor == device->minor;
+                if (!shown)
+                        silent++;
+        }
+
+        positive gone = ul_lsblk_lost + silent;
+        if (!gone)
+                return 0;
+        return gone >= ul_lsblk_asked ? 32 : 64;
 }
 
 static fn ul_lsblk_rows(bool list, bool dependencies, bool all, bool noempty,
@@ -12165,8 +12206,10 @@ static fn ul_lsblk_rows(bool list, bool dependencies, bool all, bool noempty,
                         ul_lsblk_device address_to device = ul_lsblk.devices + i;
                         if (!ul_lsblk_under_selection(device) ||
                             (scsi && !device->scsi) ||
-                            ((!all || noempty) && !device->size &&
-                             !string_compare_max(device->kname, "loop", 4)))
+                            (!device->size &&
+                             (noempty ||
+                              (!all && !string_compare_max(device->kname,
+                                                           "loop", 4)))))
                                 continue;
                         ul_lsblk.rows[ul_lsblk.row_count] = *device;
                         ul_lsblk.rows[ul_lsblk.row_count].depth = 0;
@@ -12180,8 +12223,9 @@ static fn ul_lsblk_rows(bool list, bool dependencies, bool all, bool noempty,
                 ul_lsblk_device address_to device = ul_lsblk.devices + i;
                 if (device->parent || !device->selected ||
                     (scsi && !device->scsi) ||
-                    ((!all || noempty) && !device->size &&
-                     !string_compare_max(device->kname, "loop", 4)))
+                    (!device->size &&
+                     (noempty ||
+                      (!all && !string_compare_max(device->kname, "loop", 4)))))
                         continue;
                 ul_lsblk_append(device, 0, false, dependencies);
         }
@@ -12265,6 +12309,8 @@ static fn ul_lsblk_json_out(p8 address_to columns, positive column_count)
                 row = ul_lsblk_json_row(row, columns, column_count, 6);
                 comma = true;
         }
+        if (!ul_lsblk.row_count)
+                log("\n", 1);
         log("\n   ]\n}\n", sizeof("\n   ]\n}\n") - 1);
 }
 
@@ -12389,8 +12435,7 @@ static b32 util_linux_lsblk()
         text_arena_used = 0;
         if (!ul_lsblk_take(identity, permissions, metadata))
                 return string_report(log_error, 1, "%s: %s\n", "lsblk", "block-device sysfs is unavailable");
-        if (!ul_lsblk_select_operands(taking.first))
-                return 1;
+        ul_lsblk_select_operands(taking.first);
 
         bool list = (taking.flags & FILE_FLAG('l')) != 0;
         bool raw = (taking.flags & FILE_FLAG('r')) != 0;
@@ -12412,7 +12457,7 @@ static b32 util_linux_lsblk()
                              raw,
                              ul_lsblk_field);
         log_flush();
-        return 0;
+        return ul_lsblk_operand_status();
 }
 
 // System V IPC ----------------------------------------------------
@@ -13067,10 +13112,22 @@ static b32 util_linux_lsipc()
         b32 answer;
         if (ul_options_done(address_of taking, "-m|-q|-s [options]", address_of answer))
                 return answer;
+        static const ul_exclusive lsipc_pairs[] = {
+            {'c', (string_address)"creator"}, {'t', (string_address)"time"},
+            {'o', (string_address)"output"}};
+        static const ul_exclusive lsipc_formats[] = {
+            {'J', (string_address)"json"}, {'r', (string_address)"raw"}};
+        b32 clash = ul_refuse_exclusive(address_of taking, lsipc_pairs,
+                                        array_count(lsipc_pairs));
+        if (!clash)
+                clash = ul_refuse_exclusive(address_of taking, lsipc_formats,
+                                            array_count(lsipc_formats));
+        if (clash)
+                return clash;
         if (taking.first != (positive)program_argument_count())
                 return string_report(log_error, 1, "%s: %s\n", "lsipc", "unexpected operand");
-        /* An empty column list is read before any other complaint and is
-           refused without a word, as the reference does. */
+        /* An empty column list is refused without a word, as the reference
+           does, and after the options that cannot be combined. */
         if (file_option_value(address_of taking, 'o') &&
             !string_get(file_option_value(address_of taking, 'o')))
                 return 1;
@@ -13105,11 +13162,6 @@ static b32 util_linux_lsipc()
         p8 columns[UL_IPC_COLUMNS];
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
-        if (output && taking.flags & (FILE_FLAG('c') | FILE_FLAG('t')))
-                return string_report(log_error, 1, "%s: %s\n", "lsipc", "--output is incompatible with creator/time");
-        if ((taking.flags & FILE_FLAG('c')) &&
-            (taking.flags & FILE_FLAG('t')))
-                return string_report(log_error, 1, "%s: %s\n", "lsipc", "--creator and --time are mutually exclusive");
         p8 unknown[UL_COLUMN_NAME];
         b32 fault = ul_table_column_list(output, ul_ipc_columns,
                                          UL_IPC_COLUMNS, defaults,
