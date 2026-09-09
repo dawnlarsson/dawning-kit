@@ -998,7 +998,13 @@ static b32 tools_logger()
                 else if (!string_compare(socket_errors, "off"))
                         control.socket_errors = false;
                 else if (string_compare(socket_errors, "auto"))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, socket_errors, "invalid socket error mode"));
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "logger: invalid argument: %s: using automatic errors\n",
+                            socket_errors);
+                        socket_errors = (string_address)"auto";
+                }
         }
         if (!socket_errors || !string_compare(socket_errors, "auto"))
         {
@@ -1019,12 +1025,20 @@ static b32 tools_logger()
                 {
                         if (!string_digits_exact(identity, address_of control.process) ||
                             !control.process || control.process > p32_max)
-                                return text_done(string_report(writer_stderr, 1,
-                                    "logger: failed to parse id: '%s': %s\n",
-                                    identity,
-                                    control.process
-                                        ? (string_address)"Numerical result out of range"
-                                        : (string_address)"Numerical result out of range"));
+                        {
+                                positive parsed;
+                                bool numeric = string_digits_exact(identity,
+                                                                   address_of parsed);
+
+                                text_flush();
+                                return text_done(numeric
+                                    ? string_report(writer_stderr, 1,
+                                          "logger: failed to parse id: '%s': Numerical result out of range\n",
+                                          identity)
+                                    : string_report(writer_stderr, 1,
+                                          "logger: failed to parse id: '%s'\n",
+                                          identity));
+                        }
                 }
                 else
                         control.process = (positive)system_call(syscall(getpid));
@@ -5270,7 +5284,6 @@ static b32 tools_numfmt()
                 if (!numfmt_format_read(value, address_of numfmt.format))
                         return text_done(string_diagnostic(&text_diagnostic, 1, value, "format needs exactly one %f conversion"));
                 numfmt.have_format = true;
-                numfmt.grouping |= numfmt.format.grouping;
         }
 
         if (numfmt.grouping && numfmt.have_format)
@@ -6650,6 +6663,7 @@ static b32 tools_mcookie()
 // Accepted for GNU's sake: a regular file comes out the same either way.
 #define DD_SPARSE 0x400
 // open(2) flags shared by iflag and oflag, above each group's own bits.
+#define DD_DIRECT 0x004
 #define DD_DIRECTORY 0x008
 #define DD_DSYNC 0x010
 #define DD_SYNC_IO 0x020
@@ -6866,13 +6880,30 @@ static bool dd_size(string_address text, positive address_to out)
 // A final B on count, skip or seek changes the unit from blocks to bytes.
 // It is still part of the ordinary size grammar (3KB is 3000), so parsing is
 // shared and only this last-byte fact is carried separately.
+static bool dd_refused;
+
 static bool dd_quantity(string_address text, positive address_to out,
                         bool address_to bytes)
 {
+        dd_refused = false;
         positive length = string_length(text);
 
         address_to bytes = length && text[length - 1] == 'B';
-        return dd_size(text, out);
+        if (!dd_size(text, out))
+                return false;
+
+        // An offset the kernel's own signed type cannot hold is refused
+        // where it is written, whatever a later operand would say.
+        if (address_to out > (positive)bipolar_max)
+        {
+                text_flush();
+                string_format(writer_stderr,
+                    "dd: invalid number: '%s': Value too large for defined data type\n",
+                    text);
+                dd_refused = true;
+                return false;
+        }
+        return true;
 }
 
 // name=value, which is the grammar an environment entry has.
@@ -6923,6 +6954,7 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
             {"skip_bytes", DD_SKIP_BYTES, 1},
             {"append", DD_APPEND, 2}, {"seek_bytes", DD_SEEK_BYTES, 2},
             // The open(2) flags, meaningful for either side.
+            {"direct", DD_DIRECT, 1}, {"direct", DD_DIRECT, 2},
             {"directory", DD_DIRECTORY, 1}, {"directory", DD_DIRECTORY, 2},
             {"dsync", DD_DSYNC, 1}, {"dsync", DD_DSYNC, 2},
             {"sync", DD_SYNC_IO, 1}, {"sync", DD_SYNC_IO, 2},
