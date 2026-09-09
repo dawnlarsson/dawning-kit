@@ -919,9 +919,11 @@ def main(argv=None):
     parser.add_argument("--shrink", action="store_true")
     parser.add_argument("--max-failures", type=int, default=12,
                         help="distinct failure classes shown per program")
-    parser.add_argument("--record", choices=("ledger", "regression"),
+    parser.add_argument("--record", choices=("ledger", "regression", "refresh"),
                         help="write every divergence (ledger) or every agreement of the "
-                             "cases run (regression) into the pinned list")
+                             "cases run (regression) into the pinned list; refresh brings "
+                             "existing rows back in line with the tree after a fix landed "
+                             "somewhere else")
     parser.add_argument("--reason", help="the reason written with --record ledger")
     parser.add_argument("--kind", default="deliberate", choices=("deliberate", "bug"))
     parser.add_argument("--no-pinned", action="store_true", help="skip ledger and regressions")
@@ -1018,6 +1020,8 @@ def main(argv=None):
     failures = collections.defaultdict(collections.Counter)
     shown = collections.Counter()
     to_record = []
+    refreshed_gone = []
+    refreshed_moved = []
     ledger_rows_by_id = {row["id"]: row for row in ledger if "id" in row}
     regression_ids = {row["id"] for row in regressions if "id" in row}
 
@@ -1060,10 +1064,23 @@ def main(argv=None):
                 # A pinned deliberate difference: the answer must hold, and
                 # must still differ from the reference.
                 if not diff:
+                    #       The difference this row recorded is gone. For a bug
+                    #       that is the bug being fixed, usually by another
+                    #       domain touching shared code, and the row should go.
+                    #       For a deliberate policy it means the policy was
+                    #       lost, which is a failure whatever the mode.
+                    if args.record == "refresh" and row.get("kind") == "bug":
+                        refreshed_gone.append(row)
+                        passed[tally_key] += 1
+                        continue
                     failures[tally_key][("ledger-agrees",)] += 1
                     print(f"  FAIL {key} {label_of(case)} agrees with the reference now -- "
                           f"remove its ledger row: {case.words()}")
                 elif digest(got) != row["candidate"]:
+                    if args.record == "refresh":
+                        refreshed_moved.append((row, digest(got)))
+                        passed[tally_key] += 1
+                        continue
                     failures[tally_key][("ledger-drift",)] += 1
                     print(f"  FAIL {key} {label_of(case)} ledger row drifted: {case.words()}")
                     print(f"       pinned {row['candidate']} now {digest(got)}")
@@ -1118,7 +1135,25 @@ def main(argv=None):
         if executor:
             executor.shutdown()
 
-    if args.record and to_record:
+    if args.record == "refresh":
+        gone = {id(row) for row in refreshed_gone}
+        moved = {id(row): answer for row, answer in refreshed_moved}
+        kept = []
+        for row in ledger:
+            if id(row) in gone:
+                continue
+            if id(row) in moved:
+                row["candidate"] = moved[id(row)]
+            kept.append(row)
+        if refreshed_gone or refreshed_moved:
+            save_rows("ledger", kept)
+        print(f"  refreshed the ledger: {len(refreshed_gone)} rows dropped because the "
+              f"difference is gone, {len(refreshed_moved)} re-pinned because the answer moved")
+        for row in refreshed_moved:
+            print(f"    moved  {row[0].get('id')} {row[0].get('domain')}/{row[0].get('utility')}"
+                  f"  {row[0].get('reason', '')[:60]}")
+
+    if args.record in ("ledger", "regression") and to_record:
         rows = ledger if args.record == "ledger" else regressions
         known = {row.get("id") for row in rows}
         added = 0
