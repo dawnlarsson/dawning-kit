@@ -3,14 +3,6 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "bits",
-  "option": ",,1",
-  "kind": "deliberate",
-  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "bits",
   "option": ",1,",
   "kind": "deliberate",
   "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
@@ -19,55 +11,7 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "bits",
-  "option": ",1,,2",
-  "kind": "deliberate",
-  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "bits",
-  "option": "0x,1",
-  "kind": "deliberate",
-  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "bits",
   "option": "0x1,",
-  "kind": "deliberate",
-  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "bits",
-  "option": "0x1,,2",
-  "kind": "deliberate",
-  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "bits",
-  "option": "0x1000000000000000g",
-  "kind": "deliberate",
-  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "bits",
-  "option": "0x_1",
-  "kind": "deliberate",
-  "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "bits",
-  "option": "0xg0000000000000001",
   "kind": "deliberate",
   "reason": "a bit list or mask is accepted only when every digit and separator of it is well formed and in range; util-linux 2.42.2 turns each of these into an empty or partial mask instead"
  },
@@ -238,30 +182,6 @@
   "option": "-r",
   "kind": "deliberate",
   "reason": "a range file is not read: ranges are given as operands"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "fallocate",
-  "option": "--dig-holes",
-  "kind": "deliberate",
-  "reason": "this build allocates and punches; it does not scan a file for zero runs (--dig-holes) or walk its extent map (--report-holes)"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "fallocate",
-  "option": "--report-holes",
-  "kind": "deliberate",
-  "reason": "this build allocates and punches; it does not scan a file for zero runs (--dig-holes) or walk its extent map (--report-holes)"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "fallocate",
-  "option": "-d",
-  "kind": "deliberate",
-  "reason": "this build allocates and punches; it does not scan a file for zero runs (--dig-holes) or walk its extent map (--report-holes)"
  },
  {
   "list": "ledger",
@@ -1179,30 +1099,6 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "lsfd",
-  "option": "-Q",
-  "kind": "deliberate",
-  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "lsfd",
-  "option": "-i",
-  "kind": "deliberate",
-  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "lsfd",
-  "option": "-l",
-  "kind": "deliberate",
-  "reason": "descriptors are listed per process from procfs: threads, socket endpoint filtering, display filters, counters, column metadata and hyperlinks are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "lsfd",
   "option": "-oASSOC,STTYPE,SOURCE,FLAGS",
   "kind": "deliberate",
   "reason": "columns beyond the descriptor's own identity -- its association, extended type, source, flags, device numbers and eventpoll targets -- are refused"
@@ -1314,14 +1210,6 @@
  {
   "list": "ledger",
   "domain": "util_linux",
-  "utility": "lslocks",
-  "option": "HOLDERS",
-  "kind": "deliberate",
-  "reason": "HOLDERS needs a second per-descriptor census of every process, which this build does not take"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
   "utility": "lsmem",
   "option": "--output-all",
   "kind": "deliberate",
@@ -1342,22 +1230,6 @@
   "option": "--output=MEMMAP-ON-MEMORY",
   "kind": "deliberate",
   "reason": "the configured and memmap-on-memory columns are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "lsmem",
-  "option": "--pairs",
-  "kind": "deliberate",
-  "reason": "pairs output, --output-all and an alternate sysroot are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "lsmem",
-  "option": "-P",
-  "kind": "deliberate",
-  "reason": "pairs output, --output-all and an alternate sysroot are refused"
  },
  {
   "list": "ledger",
@@ -1444,14 +1316,6 @@
   "domain": "util_linux",
   "utility": "lsns",
   "option": "-H",
-  "kind": "deliberate",
-  "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "lsns",
-  "option": "-P",
   "kind": "deliberate",
   "reason": "namespaces are listed from the processes that hold them: persistent namespaces without a process, tree relations, filters and column metadata are refused"
  },
@@ -1635,14 +1499,6 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "mount",
-  "option": "--namespace",
-  "kind": "deliberate",
-  "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "mount",
   "option": "--onlyonce",
   "kind": "deliberate",
   "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused"
@@ -1690,74 +1546,10 @@
  {
   "list": "ledger",
   "domain": "util_linux",
-  "utility": "nsenter",
-  "option": "--env",
-  "kind": "deliberate",
-  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "nsenter",
-  "option": "--join-cgroup",
-  "kind": "deliberate",
-  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "nsenter",
-  "option": "--keep-caps",
-  "kind": "deliberate",
-  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "nsenter",
-  "option": "--user-parent",
-  "kind": "deliberate",
-  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "nsenter",
-  "option": "-N",
-  "kind": "deliberate",
-  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "nsenter",
-  "option": "-c",
-  "kind": "deliberate",
-  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "nsenter",
-  "option": "-e",
-  "kind": "deliberate",
-  "reason": "namespaces are entered by file or by target pid: inheriting the target's environment, joining its cgroup, its parent user namespace, keeping capabilities and a socket's network namespace are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
   "utility": "setarch",
   "option": "--sho",
   "kind": "deliberate",
   "reason": "a long option is spelled in full; upstream's unambiguous abbreviations are not accepted"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "setpriv",
-  "option": "--ambient-caps",
-  "kind": "deliberate",
-  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
  },
  {
   "list": "ledger",
@@ -1803,31 +1595,7 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "setpriv",
-  "option": "--landlock-rule",
-  "kind": "deliberate",
-  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "setpriv",
   "option": "--seccomp-filter",
-  "kind": "deliberate",
-  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "setpriv",
-  "option": "--securebits",
-  "kind": "deliberate",
-  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "setpriv",
-  "option": "--selinux-label",
   "kind": "deliberate",
   "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one"
  },
@@ -1862,14 +1630,6 @@
   "option": "invalid",
   "kind": "deliberate",
   "reason": "an unparsable or cleared UUID is refused before anything is written, where upstream warns and writes the rest anyway"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "umount",
-  "option": "--namespace",
-  "kind": "deliberate",
-  "reason": "unmounting happens in this namespace; another task's is refused"
  },
  {
   "list": "ledger",
@@ -1923,41 +1683,9 @@
   "list": "ledger",
   "domain": "util_linux",
   "utility": "unshare",
-  "option": "--map-usersauto",
+  "option": "--map-users=auto",
   "kind": "deliberate",
-  "reason": "automatic subid mapping is refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "unshare",
-  "option": "--mount-binfmt",
-  "kind": "deliberate",
-  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "unshare",
-  "option": "--owner",
-  "kind": "deliberate",
-  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "unshare",
-  "option": "-l",
-  "kind": "deliberate",
-  "reason": "automatic subid mapping, binfmt mounting, the namespace owner, capability retention and the child signal relays are refused"
- },
- {
-  "list": "ledger",
-  "domain": "util_linux",
-  "utility": "unshare",
-  "option": "auto",
-  "kind": "deliberate",
-  "reason": "automatic subid mapping is refused"
+  "reason": "automatic subid mapping is refused: this build maps only the ranges named outright"
  },
  {
   "list": "ledger",
