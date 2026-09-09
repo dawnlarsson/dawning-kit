@@ -17676,7 +17676,7 @@ static b32 file_cp()
         if (!file_targets_told((string_address) "cp"))
                 return 1;
 
-        bool wants_context = (taking.flags & FILE_FLAG('Z')) != 0;
+        bool wants_context = false;
 
         if (!cp_words_read((string_address) "--preserve",
                            file_option_value(address_of taking, 'p'),
@@ -21889,7 +21889,9 @@ static b32 kill_list(positive count, positive index)
                 return 0;
         }
 
-        if (kill_signal_of(word) < 0)
+        bipolar found = kill_signal_of(word);
+
+        if (found < 0 || found >= KILL_LEAST_REAL)
         {
                 string_format(file_fail, "kill: unknown signal: %s\n", word);
                 return 1;

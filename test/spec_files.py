@@ -242,6 +242,24 @@ def files_hide_duration(data):
     return re.sub(rb"Duration: [0-9.]+ seconds", b"Duration: # seconds", data)
 
 
+def files_sorted_lines(channel, data):
+    """cp -v names each entry as the walk reaches it, which is the order the
+    directory hands them over -- and the two trees are created a moment
+    apart, so that order is the filesystem's rather than the program's. The
+    lines are compared as a set; what was copied is in the effects."""
+    if channel != "stdout":
+        return files_hide_help_hint(data)
+
+    lines = data.split(b"\n")
+    tail = lines.pop() if lines and lines[-1] == b"" else None
+    lines.sort()
+
+    if tail is not None:
+        lines.append(tail)
+
+    return b"\n".join(lines)
+
+
 files_when = files_normal(files_hide_now)
 files_listing = files_normal(files_hide_now, files_hide_inodes)
 files_stdout_sorted = files_normal(files_sorted_records)
@@ -1096,7 +1114,8 @@ UTILITIES = (
                    ("-r", "dir/.", "hollow"), ("-r", "loop", "copied"), ("-rL", "loop", "copied"), ("-r", "/dev/null", "made"),
                    ("--attributes-only", "a.txt", "copy"), ("--attributes-only", "a.txt", "b.txt"), ("-b", "a.txt", "b.txt"),
                    ("-b", "-S", ".bak", "a.txt", "b.txt"), ("--backup=numbered", "a.txt", "b.txt"), ("--backup=numbered", "a.txt", "b.txt~"),
-                   ("--remove-destination", "a.txt", "link"), ("-f", "a.txt", "link"), ("-d", "link", "kept"), ("-r", "dir", "copied", "extra"))),
+                   ("--remove-destination", "a.txt", "link"), ("-f", "a.txt", "link"), ("-d", "link", "kept"), ("-r", "dir", "copied", "extra")),
+            normalize=files_sorted_lines),
     Utility("install", options=(Option("-b"), Option("-c"), Option("-C"), Option("-d"), Option("-D"), Option("-p"), Option("-s"),
                                 Option("-T"), Option("-v"), Option("-Z"), Option("--backup"),
                                 Option("--backup", ("numbered", "simple", "none", "bogus"), True), Option("--compare"),
