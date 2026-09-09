@@ -6745,6 +6745,15 @@ static b32 tools_mcookie()
 #define DD_APPEND 0x001
 #define DD_SEEK_BYTES 0x002
 #define DD_O_APPEND 02000
+// The open(2) bits the iflag/oflag names stand for, on Linux.
+#define DD_O_NOCTTY 0400
+#define DD_O_NONBLOCK 04000
+#define DD_O_DSYNC 010000
+#define DD_O_DIRECT 040000
+#define DD_O_DIRECTORY 0200000
+#define DD_O_NOFOLLOW 0400000
+#define DD_O_SYNC 04010000
+#define DD_O_NOATIME 01000000
 
 #define DD_STATUS_ALL 0
 #define DD_STATUS_NOXFER 1
@@ -6946,6 +6955,19 @@ static bool dd_size(string_address text, positive address_to out)
 // A final B on count, skip or seek changes the unit from blocks to bytes.
 // It is still part of the ordinary size grammar (3KB is 3000), so parsing is
 // shared and only this last-byte fact is carried separately.
+/* The open(2) bits an iflag or oflag word asks for. */
+static positive dd_open_flags(positive flags)
+{
+        return ((flags & DD_DIRECT) ? DD_O_DIRECT : 0) |
+               ((flags & DD_DIRECTORY) ? DD_O_DIRECTORY : 0) |
+               ((flags & DD_DSYNC) ? DD_O_DSYNC : 0) |
+               ((flags & DD_SYNC_IO) ? DD_O_SYNC : 0) |
+               ((flags & DD_NONBLOCK) ? DD_O_NONBLOCK : 0) |
+               ((flags & DD_NOATIME) ? DD_O_NOATIME : 0) |
+               ((flags & DD_NOCTTY) ? DD_O_NOCTTY : 0) |
+               ((flags & DD_NOFOLLOW) ? DD_O_NOFOLLOW : 0);
+}
+
 static bool dd_refused;
 
 static bool dd_quantity(string_address text, positive address_to out,
@@ -7338,7 +7360,8 @@ static b32 tools_dd(void)
 
         if (input)
         {
-                bipolar opened = text_open_handle(input, FILE_READ, 0);
+                bipolar opened = text_open_handle(input,
+                    FILE_READ | dd_open_flags(iflags), 0);
 
                 if (opened < 0)
                 {
@@ -7362,6 +7385,8 @@ static b32 tools_dd(void)
 
                 if (oflags & DD_APPEND)
                         flags |= DD_O_APPEND;
+
+                flags |= dd_open_flags(oflags);
 
                 // coreutils cuts the file at the seek rather than at its
                 // start when the seek is whole blocks, and only then: a byte
@@ -7444,7 +7469,7 @@ static b32 tools_dd(void)
                 if (short_of_it && dd_status_level != DD_STATUS_NONE)
                 {
                         text_flush();
-                        string_format(writer_stderr, "dd: '%s': cannot skip to specified offset\n",
+                        string_format(writer_stderr, "dd: %s: cannot skip to specified offset\n",
                                       input ? input : (string_address)"standard input");
                 }
         }

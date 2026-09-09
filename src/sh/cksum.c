@@ -407,7 +407,7 @@ static fn cksum_crc_put(p32 crc, p64 bytes, string_address name, bool named)
                 text_put_string(name);
         }
 
-        text_put_character('\n');
+        text_put_character(checksum_zero ? '\0' : '\n');
 }
 
 #if defined(LINUX)
@@ -430,17 +430,45 @@ static const file_long cksum_longs[] = {
     {(string_address) "tag", 'T'},
     {(string_address) "raw", 'R'},
     {(string_address) "base64", 'B'},
+    {(string_address) "zero", 'z'},
     {null, 0},
 };
+
+/* Each algorithm is checked as it is read, so an unknown one is refused
+   even when a later --algorithm would supersede it. */
+static bool cksum_option_seen(p8 letter, string_address value)
+{
+        static const string_address known[] = {
+            "bsd", "sysv", "crc", "crc32b", "md5", "sha1", "sha224", "sha256",
+            "sha384", "sha512", "sha2", "sha3", "blake2b", "sm3",
+        };
+
+        if (letter != 'a' || !value)
+                return true;
+
+        for (positive at = 0; at < array_count(known); at++)
+                if (string_equals(value, known[at]))
+                        return true;
+
+        text_flush();
+        string_format(writer_stderr,
+            "cksum: invalid argument '%s' for '--algorithm'\nValid arguments are:\n",
+            value);
+        for (positive at = 0; at < array_count(known); at++)
+                string_format(writer_stderr, "  - '%s'\n", known[at]);
+        string_format(writer_stderr, "Try 'cksum --help' for more information.\n");
+        return false;
+}
 
 static b32 cksum_main()
 {
         file_taking taking = {
             .program = (string_address) "cksum",
-            .allowed = (string_address) "aUTRB",
+            .allowed = (string_address) "aUTRBz",
             .valued = (string_address) "a",
             .longs = cksum_longs,
             .operand = text_file_add,
+            .seen = cksum_option_seen,
         };
 
         text_begin("cksum");
@@ -455,6 +483,8 @@ static b32 cksum_main()
 
         string_address algorithm = file_option_value(address_of taking, 'a');
         bool raw = (taking.flags & FILE_FLAG('R')) != 0;
+
+        checksum_zero = (taking.flags & FILE_FLAG('z')) != 0;
 
         if (raw && text_files_count > 1)
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "the --raw option is not supported with multiple files"));
@@ -481,20 +511,7 @@ static b32 cksum_main()
                 }
 #endif
 
-                text_flush();
-                string_format(writer_stderr,
-                    "cksum: invalid argument '%s' for '--algorithm'\nValid arguments are:\n",
-                    algorithm);
-                static const string_address known[] = {
-                    "bsd", "sysv", "crc", "crc32b", "md5", "sha1", "sha224",
-                    "sha256", "sha384", "sha512", "sha2", "sha3", "blake2b",
-                    "sm3",
-                };
-                for (positive at = 0; at < array_count(known); at++)
-                        string_format(writer_stderr, "  - '%s'\n", known[at]);
-                string_format(writer_stderr,
-                              "Try 'cksum --help' for more information.\n");
-                return text_done(1);
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm, "algorithm is not supported by the available checksum engine"));
         }
 
         cksum_crc_prepare();
