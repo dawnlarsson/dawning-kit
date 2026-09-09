@@ -7279,10 +7279,19 @@ static fn dd_summary()
         writer_stderr("/s\n", 0);
 }
 
+/*
+        Whether the last size refused was refused for being too big. GNU
+        names that one differently: a word that is no number at all is an
+        invalid number, and a number past the type is a value too large.
+*/
+static bool dd_overflow;
+
 static bool dd_size(string_address text, positive address_to out)
 {
         positive total = 1;
         string_address at = text;
+
+        dd_overflow = false;
 
         if (!string_get(at))
                 return false;
@@ -7292,7 +7301,12 @@ static bool dd_size(string_address text, positive address_to out)
                 positive value;
 
                 if (!string_digits_checked(address_of at, 10, address_of value))
+                {
+                        // Digits that would not fit are the type's limit;
+                        // anything else is a misspelling.
+                        dd_overflow = byte_is_digit(string_get(at));
                         return false;
+                }
 
                 positive power = file_size_power(string_get(at), false);
                 positive multiple = 1;
@@ -7326,19 +7340,28 @@ static bool dd_size(string_address text, positive address_to out)
                         for (positive i = 0; i < power; i++)
                         {
                                 if (multiple > positive_max / base)
+                                {
+                                        dd_overflow = true;
                                         return false;
+                                }
 
                                 multiple *= base;
                         }
                 }
 
                 if (value && multiple > positive_max / value)
+                {
+                        dd_overflow = true;
                         return false;
+                }
 
                 positive piece = value * multiple;
 
                 if (piece && total > positive_max / piece)
+                {
+                        dd_overflow = true;
                         return false;
+                }
 
                 total *= piece;
 
@@ -7373,6 +7396,18 @@ static positive dd_open_flags(positive flags)
 }
 
 static bool dd_refused;
+
+/*
+        dd names the word after the complaint and quotes it -- dd: invalid
+        conversion: 'bad' -- rather than the program: subject: message shape
+        the rest of this file writes.
+*/
+static b32 dd_complain(string_address message, string_address value)
+{
+        text_flush();
+        string_format(writer_stderr, "dd: %s: '%s'\n", message, value);
+        return 1;
+}
 
 static bool dd_quantity(string_address text, positive address_to out,
                         bool address_to bytes)
@@ -7474,9 +7509,11 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
                         !dd_word(address_of value, words[word].name)))
                         word++;
                 if (word == array_count(words))
-                        return string_diagnostic(&text_diagnostic, 0, value, group == 0 ? "invalid conversion" :
-                                          group == 1 ? "invalid input flag" :
-                                                       "invalid output flag");
+                        dd_complain(group == 0 ? (string_address)"invalid conversion" :
+                                    group == 1 ? (string_address)"invalid input flag" :
+                                                 (string_address)"invalid output flag",
+                                    value);
+                        return false;
                 *flags |= words[word].flag;
         } while (*value);
         return true;
@@ -7669,20 +7706,28 @@ static b32 tools_dd(void)
                         n++;
                 if (n < array_count(numbers))
                 {
-                        if (numbers[n].bytes
-                                ? !dd_quantity(value, numbers[n].value, numbers[n].bytes)
-                                : !dd_size(value, numbers[n].value))
+                        /*
+                                A block size of zero is no size: GNU refuses
+                                it where it is written, which is why bs=0
+                                beside a later misspelling is what gets
+                                named. The counts and the offsets may be
+                                zero and mean it.
+                        */
+                        bool sized = string_equals(numbers[n].name, "bs") ||
+                                     string_equals(numbers[n].name, "ibs") ||
+                                     string_equals(numbers[n].name, "obs") ||
+                                     string_equals(numbers[n].name, "cbs");
+                        bool took = numbers[n].bytes
+                                        ? dd_quantity(value, numbers[n].value, numbers[n].bytes)
+                                        : dd_size(value, numbers[n].value);
+
+                        if (took && sized && !address_to numbers[n].value)
+                                took = false;
+
+                        if (!took)
                         {
                                 if (dd_refused)
                                         return 1;
-
-                                // Digits alone that overflow the word are
-                                // the kernel type's limit, not a misspelling.
-                                string_address at = value;
-                                positive digits = 0;
-
-                                while (byte_is_digit(string_get(at + digits)))
-                                        digits++;
 
                                 text_flush();
                                 if (string_get(value) == '0' &&
@@ -7691,7 +7736,7 @@ static b32 tools_dd(void)
                                         string_format(writer_stderr,
                                             "dd: warning: '0x' is a zero multiplier; use '00x' if that is intended\n");
                                 return string_report(writer_stderr, 1,
-                                    digits && digits > 19
+                                    dd_overflow
                                         ? (string_address)"dd: invalid number: '%s': Value too large for defined data type\n"
                                         : (string_address)"dd: invalid number: '%s'\n",
                                     value);
@@ -7716,7 +7761,7 @@ static b32 tools_dd(void)
                         else if (string_equals(value, "progress"))
                                 dd_status_level = DD_STATUS_ALL;
                         else
-                                return string_diagnostic(&text_diagnostic, 1, value, "invalid status level");
+                                return dd_complain((string_address)"invalid status level", value);
                 }
                 else if (dd_operand(argument, "conv", address_of value))
                 {
@@ -7748,7 +7793,34 @@ static b32 tools_dd(void)
                                 return 1;
                         }
 
-                        return string_diagnostic(&text_diagnostic, 1, argument, "unrecognized operand");
+                        //      Two dashes alone end the options, and dd
+                        //      takes none, so the word is simply spent. One
+                        //      dash and a letter is the option it has not
+                        //      got, named the way getopt names it.
+                        if (string_is(argument, '-') && string_is(argument + 1, '-') &&
+                            !string_get(argument + 2))
+                                continue;
+
+                        if (string_is(argument, '-') && string_get(argument + 1))
+                        {
+                                p8 spelled[2];
+
+                                spelled[0] = string_get(argument + 1);
+                                spelled[1] = end;
+                                text_flush();
+                                string_format(writer_stderr,
+                                    "dd: invalid option -- '%s'\n"
+                                    "Try 'dd --help' for more information.\n",
+                                    (string_address)spelled);
+                                return 1;
+                        }
+
+                        text_flush();
+                        string_format(writer_stderr,
+                            "dd: unrecognized operand '%s'\n"
+                            "Try 'dd --help' for more information.\n",
+                            argument);
+                        return 1;
                 }
         }
 

@@ -141,6 +141,43 @@ static const diagnostic text_diagnostic = {
     writer_stderr, text_flush, &text_name,
 };
 
+/*
+        Two diagnostics GNU spells its own way and neither of them fits the
+        program: message: subject shape above.
+
+        getopt names the letter it could not use after a pair of dashes, and
+        argmatch names the word, then lists what it would have taken and
+        points at --help. The list is handed in whole because the groups of
+        synonyms are what GNU prints, one line to a group.
+*/
+static b32 text_invalid_context(string_address message, p8 letter, bool help)
+{
+        p8 spelled[2];
+
+        spelled[0] = letter;
+        spelled[1] = 0;
+        text_flush();
+        string_format(writer_stderr, "%s: %s -- %s\n", text_name, message,
+                      (string_address)spelled);
+
+        if (help)
+                string_format(writer_stderr, "Try '%s --help' for more information.\n",
+                              text_name);
+
+        return 1;
+}
+
+static b32 text_argmatch(string_address option, string_address value,
+                         string_address list, string_address usage)
+{
+        text_flush();
+        string_format(writer_stderr, "%s: invalid argument '%s' for '%s'\n%s%s",
+                      text_name, value, option, list, usage ? usage : (string_address) "");
+        string_format(writer_stderr, "Try '%s --help' for more information.\n",
+                      text_name);
+        return 1;
+}
+
 static b32 text_done(b32 code)
 {
         text_flush();
@@ -1560,6 +1597,14 @@ static bool encoding_option_seen(p8 letter, string_address value)
 {
         if (letter == 'w' && !text_unsigned_option(value, true, address_of encoding_wrap))
                 return string_diagnostic(&text_diagnostic, 0, value, "invalid wrap size");
+
+        /*
+                A wrap wider than the signed count GNU keeps it in is no wrap
+                at all: it stops folding the output and stops ending it with
+                a newline, exactly as a wrap of zero does.
+        */
+        if (letter == 'w' && encoding_wrap > (positive_max >> 1))
+                encoding_wrap = 0;
 
         return true;
 }
@@ -4812,18 +4857,26 @@ static inline INLINE b32 text_head_tail(bool tail)
 
         string_address misplaced = text_digits_misplaced(address_of taking);
 
-        // tail's obsolete -N is the whole of what it was given: another
-        // option beside it is the invalid context GNU names.
-        if (!misplaced && tail && (taking.flags & FILE_FLAG('n')) &&
-            file_option_value(address_of taking, 'n') &&
-            !text_count_last &&
-            (taking.flags & ~(positive)FILE_FLAG('n')))
-                misplaced = file_option_value(address_of taking, 'n') - 1;
+        /*
+                tail reads the obsolete -N before getopt is given a look, and
+                only when that word comes first and at most one file follows
+                it: GNU counts the words and gives the form up above three.
+                Anything more and getopt sees -N as a letter tail has not
+                got, which is the invalid context it names. head counts
+                nothing -- its obsolete word only has to come first.
+        */
+        if (!misplaced && tail && program_argument_count() > 3)
+        {
+                string_address first = program_argument(1);
+
+                if (first[0] == '-' && byte_is_digit(first[1]))
+                        misplaced = first;
+        }
 
         if (misplaced)
-                return text_done(string_diagnostic(&text_diagnostic, 1, misplaced + 1,
-                                                  tail ? "option used in invalid context"
-                                                       : "invalid trailing option"));
+                return text_done(text_invalid_context(
+                    tail ? "option used in invalid context" : "invalid trailing option",
+                    misplaced[1], !tail));
 
         if (tail && (taking.flags & FILE_FLAG('R')))
                 string_diagnostic(&text_diagnostic, 0, null, "warning: --retry ignored; --retry is useful only when following");
@@ -12464,7 +12517,12 @@ static b32 text_cut()
         lookup at the same index in the second, and a set that has been
         expanded makes both of those a subscript.
 */
-#define TEXT_SET_MAX 1024
+/*
+        How long a set tr will build. GNU has no limit but memory; this one
+        is a fixed array, and eight thousand is far past any set a person
+        writes and past [a*1024] besides.
+*/
+#define TEXT_SET_MAX 8192
 
 static p8 text_set_one[TEXT_SET_MAX];
 static positive text_set_one_length;
@@ -13666,8 +13724,14 @@ static fn grep_color_line(string_address line, positive length, bool context,
 
 static bool grep_hold_make(positive lines)
 {
+        /*
+                GNU's context is bounded by memory alone. The ring here is a
+                megabyte of lines and a fixed count of slots, and a context
+                asking for more of them than that gets what there is: no
+                input this reads can fill more than the pool holds anyway.
+        */
         if (lines > GREP_HOLD_LINES)
-                return string_diagnostic(&text_diagnostic, 0, null, "context length too large");
+                lines = GREP_HOLD_LINES;
 
         grep_hold_slots = lines;
         grep_hold_pool = (p8 address_to)text_arena_take(GREP_HOLD_BYTES);
@@ -14399,6 +14463,7 @@ static const file_long grep_longs[] = {
 static bool grep_fixed;
 static bool grep_extended;
 static bool grep_icase;
+static b32 grep_option_status;
 // Which language the pattern is in was named more than once, with two
 // different answers: GNU refuses that rather than taking the last.
 static p8 grep_matcher;
@@ -14427,24 +14492,76 @@ static bool grep_word_is(string_address value, string_address first,
                (third && string_equals(value, third));
 }
 
+/*
+        What --directories would have taken, in argmatch's shape. --devices
+        and --binary-files are checked by hand inside grep and say so in
+        their own words, which is why only this one gets a list.
+*/
+static string_address grep_directories_list =
+    (string_address) "Valid arguments are:\n  - 'read'\n  - 'recurse'\n  - 'skip'\n";
+static string_address grep_usage_line =
+    (string_address) "Usage: grep [OPTION]... PATTERNS [FILE]...\n";
+
 static bool grep_option_seen(p8 letter, string_address value)
 {
         // Every context length and every max count is read where it was
         // written: GNU refuses the first bad one, not the last option.
-        if (letter == 'A' || letter == 'B' || letter == 'C' || letter == 'm')
+        if (letter == 'A' || letter == 'B' || letter == 'C')
         {
                 positive number;
 
                 if (!string_digits_exact(value, address_of number))
-                        return string_diagnostic(&text_diagnostic, 0, null,
-                                                 letter == 'm' ? "invalid max count"
-                                                               : "invalid context length argument");
+                        return string_diagnostic(&text_diagnostic, 0, value,
+                                                 "invalid context length argument");
         }
 
+        // A max count below zero is no limit at all, which is what GNU makes
+        // of it rather than a refusal.
+        if (letter == 'm')
+        {
+                positive number;
+
+                if (!string_digits_exact(value[0] == '-' ? value + 1 : value,
+                                         address_of number))
+                        return string_diagnostic(&text_diagnostic, 0, null,
+                                                 "invalid max count");
+        }
+
+        /*
+                The three words that name a kind of file are read where they
+                are written, so the first wrong one is what grep names --
+                not whichever of the three a later pass would have looked at
+                first.
+        */
+        if (letter == 'd' && !grep_word_is(value, "read", "recurse", "skip"))
+        {
+                grep_option_status = 1;
+                text_argmatch((string_address) "--directories", value,
+                              grep_directories_list, grep_usage_line);
+                return false;
+        }
+
+        if (letter == 'D' && !grep_word_is(value, "read", "skip", null))
+                return string_diagnostic(&text_diagnostic, 0, null,
+                                         "unknown devices method");
+
+        if (letter == 'N' && !grep_word_is(value, "binary", "text", "without-match"))
+                return string_diagnostic(&text_diagnostic, 0, null,
+                                         "unknown binary-files type");
+
+        /*
+                Two languages for the pattern is refused at the second of
+                them, in argv order, and not after the walk: -E -F -d bogus
+                is a conflict and never gets as far as the word bogus.
+        */
         if (letter == 'E' || letter == 'G' || letter == 'F')
         {
                 if (grep_matcher && grep_matcher != letter)
+                {
                         grep_matchers_conflict = true;
+                        return string_diagnostic(&text_diagnostic, 0, null,
+                                                 "conflicting matchers specified");
+                }
 
                 grep_matcher = letter;
         }
@@ -14597,9 +14714,10 @@ static b32 text_grep()
         grep_colors = null;
         grep_hold_color = null;
         text_arena_used = 0;
+        grep_option_status = 2;
 
         if (!file_take(address_of taking))
-                return text_done(2);
+                return text_done(grep_option_status);
 
         if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(2);
@@ -14665,19 +14783,7 @@ static b32 text_grep()
                         grep_recursive = true;
                 else if (string_equals(said, "skip"))
                         grep_skip_directories = true;
-                else if (!string_equals(said, "read"))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --directories"));
         }
-
-        said = file_option_value(address_of taking, 'D');
-
-        if (said && !grep_word_is(said, "read", "skip", null))
-                return text_done(string_diagnostic(&text_diagnostic, 2, null, "unknown devices method"));
-
-        said = file_option_value(address_of taking, 'N');
-
-        if (said && !grep_word_is(said, "binary", "text", "without-match"))
-                return text_done(string_diagnostic(&text_diagnostic, 2, null, "unknown binary-files type"));
 
         said = file_option_value(address_of taking, 'W');
 
@@ -14708,8 +14814,17 @@ static b32 text_grep()
                 if (!said)
                         continue;
 
+                if (letter == 'm' && said[0] == '-')
+                {
+                        limit = positive_max;
+                        continue;
+                }
+
                 if (!string_digits_exact(said, address_of number))
-                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "invalid context length argument"));
+                        return text_done(string_diagnostic(&text_diagnostic, 2,
+                                                           letter == 'm' ? null : said,
+                                                           letter == 'm' ? "invalid max count"
+                                                                         : "invalid context length argument"));
 
                 if (letter == 'm')
                         limit = number;
@@ -18518,10 +18633,125 @@ static bool sort_size_valid(string_address said)
 // hold them: they are parsed as the options arrive. -o may come once.
 static positive sort_outputs;
 
+static b32 sort_option_status;
+static bool sort_tab_seen;
+static p8 sort_tab;
+
+/*
+        What --check would have taken, in the shape GNU's argmatch prints it:
+        the synonyms share a line.
+*/
+static string_address sort_check_list =
+    (string_address) "Valid arguments are:\n  - 'quiet', 'silent'\n  - 'diagnose-first'\n";
+static string_address sort_sort_list =
+    (string_address) "Valid arguments are:\n  - 'general-numeric'\n  - 'human-numeric'\n"
+                     "  - 'month'\n  - 'numeric'\n  - 'random'\n  - 'version'\n";
+
 static bool sort_key_seen(p8 letter, string_address value)
 {
         if (letter == 'o')
                 sort_outputs++;
+
+        /*
+                --check reads its word where it is written and refuses a
+                wrong one there, before any pair of options can be found
+                incompatible. So does -t, which is why two of them that
+                disagree is a complaint about tabs and not about the second
+                one alone.
+        */
+        if (letter == 'K' && value && !string_equals(value, "quiet") &&
+            !string_equals(value, "silent") && !string_equals(value, "diagnose-first"))
+        {
+                sort_option_status = 1;
+                text_argmatch((string_address) "--check", value, sort_check_list, null);
+                return false;
+        }
+
+        if (letter == 't')
+        {
+                p8 tab;
+                bool escaped = value[0] == '\\' && value[1] == '0' && !value[2];
+
+                if (!value[0])
+                        return string_diagnostic(&text_diagnostic, 0, null, "empty tab");
+
+                if (value[1] && !escaped)
+                {
+                        text_flush();
+                        string_format(writer_stderr, "%s: multi-character tab '%s'\n",
+                                      text_name, value);
+                        return false;
+                }
+
+                tab = escaped ? 0 : value[0];
+
+                if (sort_tab_seen && sort_tab != tab)
+                        return string_diagnostic(&text_diagnostic, 0, null, "incompatible tabs");
+
+                sort_tab_seen = true;
+                sort_tab = tab;
+        }
+
+        if (letter == 'S' && !sort_size_valid(value))
+        {
+                text_flush();
+                string_format(writer_stderr, "%s: invalid -S argument '%s'\n",
+                              text_name, value);
+                return false;
+        }
+
+        if (letter == 'B')
+        {
+                positive number;
+
+                if (!text_unsigned_option(value, false, address_of number) || !number ||
+                    number > 1021)
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                                      "%s: invalid --batch-size argument '%s'\n",
+                                      text_name, value);
+                        return false;
+                }
+
+                if (number < 2)
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                                      "%s: invalid --batch-size argument '%s'\n"
+                                      "%s: minimum --batch-size argument is '2'\n",
+                                      text_name, value, text_name);
+                        return false;
+                }
+        }
+
+        if (letter == 'p')
+        {
+                positive number;
+
+                if (!text_unsigned_option(value, false, address_of number))
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                                      "%s: invalid --parallel argument '%s'\n",
+                                      text_name, value);
+                        return false;
+                }
+
+                if (!number)
+                        return string_diagnostic(&text_diagnostic, 0, null,
+                                                 "number in parallel must be nonzero");
+        }
+
+        if (letter == 'W' && !string_equals(value, "numeric") &&
+            !string_equals(value, "human-numeric") && !string_equals(value, "month") &&
+            !string_equals(value, "version") && !string_equals(value, "general-numeric") &&
+            !string_equals(value, "random"))
+        {
+                sort_option_status = 1;
+                text_argmatch((string_address) "--sort", value, sort_sort_list, null);
+                return false;
+        }
 
         if (letter != 'k')
                 return true;
@@ -18549,9 +18779,11 @@ static b32 text_sort()
 
         text_begin("sort");
         sort_outputs = 0;
+        sort_option_status = 2;
+        sort_tab_seen = false;
 
         if (!file_take(address_of taking))
-                return text_done(2);
+                return text_done(sort_option_status);
 
         if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(2);
@@ -18559,9 +18791,28 @@ static b32 text_sort()
         positive flags = taking.flags;
         bool merging = (flags & FILE_FLAG('m')) != 0;
         bool null_data = (flags & FILE_FLAG('z')) != 0;
-        bool checking = (flags & (FILE_FLAG('c') | FILE_FLAG('C') |
-                                  FILE_FLAG('K'))) != 0;
-        bool checking_quiet = (flags & FILE_FLAG('C')) != 0;
+        /*
+                --check with no word, or with diagnose-first, is -c; with
+                quiet or silent it is -C. Which one it stands for is what
+                decides whether the two of them are the pair GNU refuses.
+        */
+        bool check_loud = (flags & FILE_FLAG('c')) != 0;
+        bool check_quiet = (flags & FILE_FLAG('C')) != 0;
+        bool checking;
+        bool checking_quiet;
+
+        if (flags & FILE_FLAG('K'))
+        {
+                string_address word = file_option_value(address_of taking, 'K');
+
+                if (word && (string_equals(word, "quiet") || string_equals(word, "silent")))
+                        check_quiet = true;
+                else
+                        check_loud = true;
+        }
+
+        checking = check_loud || check_quiet;
+        checking_quiet = check_quiet;
         string_address output = file_option_value(address_of taking, 'o');
         string_address said = file_option_value(address_of taking, 'K');
         positive number;
@@ -18569,54 +18820,14 @@ static b32 text_sort()
         if (sort_outputs > 1)
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "multiple output files specified"));
 
-        if ((flags & FILE_FLAG('c')) && (flags & FILE_FLAG('C')))
+        if (check_loud && check_quiet)
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "options '-cC' are incompatible"));
 
         if (checking && output)
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "options '-co' are incompatible"));
 
-        if ((flags & FILE_FLAG('S')) && !sort_size_valid(file_option_value(address_of taking, 'S')))
-                return text_done(string_diagnostic(&text_diagnostic, 2, file_option_value(address_of taking, 'S'), "invalid -S argument"));
 
-        if ((flags & FILE_FLAG('B')) &&
-            (!text_unsigned_option(file_option_value(address_of taking, 'B'), false, address_of number) ||
-             number < 2 || number > 1021))
-                return text_done(string_diagnostic(&text_diagnostic, 2, file_option_value(address_of taking, 'B'), "invalid --batch-size argument"));
 
-        if ((flags & FILE_FLAG('p')) &&
-            (!text_unsigned_option(file_option_value(address_of taking, 'p'), false, address_of number) ||
-             !number))
-                return text_done(string_diagnostic(&text_diagnostic, 2, file_option_value(address_of taking, 'p'), "invalid --parallel argument"));
-
-        said = file_option_value(address_of taking, 't');
-
-        if (said)
-        {
-                // One byte, or the two that spell a NUL. Anything longer is a
-                // separator no line can be split on -- \t among them, which
-                // GNU refuses and which a literal tab is the way to ask for.
-                bool escaped = said[0] == '\\' && said[1] == '0' && !said[2];
-
-                if (!said[0])
-                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "empty tab"));
-
-                if (said[1] && !escaped)
-                        return text_done(string_diagnostic(&text_diagnostic, 2, said, "multi-character tab"));
-        }
-
-        said = file_option_value(address_of taking, 'K');
-
-        if (said && !string_equals(said, "quiet") && !string_equals(said, "silent") &&
-            !string_equals(said, "diagnose-first"))
-                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --check"));
-
-        said = file_option_value(address_of taking, 'W');
-
-        if (said && !string_equals(said, "numeric") &&
-            !string_equals(said, "human-numeric") && !string_equals(said, "month") &&
-            !string_equals(said, "version") && !string_equals(said, "general-numeric") &&
-            !string_equals(said, "random"))
-                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --sort"));
 
         said = file_option_value(address_of taking, 'K');
 
