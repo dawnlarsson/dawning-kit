@@ -8957,7 +8957,7 @@
   "id": "018dc654d6d3e122",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "b5be582053b9cdb8bc8850776ad468fafecc497d4ae2a90d107606787d5d7bad",
    "status": 1,
@@ -8994,7 +8994,7 @@
   "id": "01a4296fc9908ec4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -9041,7 +9041,7 @@
   "id": "02a3d30e3e58d93b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9080,7 +9080,7 @@
   "id": "039c5a25314e2a52",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9121,7 +9121,7 @@
   "id": "042a6b0a1b5c5ee1",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9159,7 +9159,7 @@
   "id": "0452db0bca3b64c1",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9193,7 +9193,7 @@
   "id": "05a475f02dcb7159",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9235,7 +9235,7 @@
   "id": "08b625655176c40b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9282,7 +9282,7 @@
   "id": "0ab175332c7a7f28",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9325,7 +9325,7 @@
   "id": "0bb64260c4aab5e4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9369,7 +9369,7 @@
   "id": "0cc95161a11ea2bd",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9413,7 +9413,7 @@
   "id": "0d029ee52b9b150c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9445,7 +9445,7 @@
   "id": "0d4fff00eea150cd",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9479,7 +9479,7 @@
   "id": "0d9d15c518dda36b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9524,7 +9524,7 @@
   "id": "0e0fa3a150753f30",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -9559,7 +9559,7 @@
   "id": "0e420c10e39d7741",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9593,7 +9593,7 @@
   "id": "0f283bc56ee3984b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9625,7 +9625,7 @@
   "id": "104a18d0274319f8",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9658,7 +9658,7 @@
   "id": "1359547d6ca26381",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9693,7 +9693,7 @@
   "id": "178d2f96b8379724",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -9724,7 +9724,7 @@
   "id": "17c2eff0bc8c8430",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9764,7 +9764,7 @@
   "id": "1997d4f1fcf014dd",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -9802,7 +9802,7 @@
   "id": "19efec08d2a0befc",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9841,7 +9841,7 @@
   "id": "1d3859dade1a0e59",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9881,7 +9881,7 @@
   "id": "1ddccb956520ee42",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9920,7 +9920,7 @@
   "id": "1e49a27a365b9ab6",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9961,7 +9961,7 @@
   "id": "20eba3f030bed78f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -9994,7 +9994,7 @@
   "id": "215d0562b59b578c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10032,7 +10032,7 @@
   "id": "2390ccf960567d00",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10065,7 +10065,7 @@
   "id": "261f0c9f5b9d2e04",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10106,7 +10106,7 @@
   "id": "28426d975fbbb34c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10140,7 +10140,7 @@
   "id": "2b26437d09caaaa4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10179,7 +10179,7 @@
   "id": "2c1fae374dfddfba",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10217,7 +10217,7 @@
   "id": "2faca0a861f7cfb6",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -10264,7 +10264,7 @@
   "id": "30910e13f0e581aa",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10303,7 +10303,7 @@
   "id": "316dce0eda9a711a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10339,7 +10339,7 @@
   "id": "32bb4fe8973966c7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10382,7 +10382,7 @@
   "id": "3342ae3a6fb0da21",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10417,7 +10417,7 @@
   "id": "358aa7aa37336ffa",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10450,7 +10450,7 @@
   "id": "3591874530eb6f4b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10483,7 +10483,7 @@
   "id": "372d5234ad3ecb80",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10515,7 +10515,7 @@
   "id": "3904c3aa775edd02",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -10558,7 +10558,7 @@
   "id": "3a575b7c2bffbfad",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10599,7 +10599,7 @@
   "id": "3b4d5a927b255f03",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10646,7 +10646,7 @@
   "id": "3be5c5a9f7bd481f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10678,7 +10678,7 @@
   "id": "3c8d095025f310cd",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10718,7 +10718,7 @@
   "id": "3e2fbeed8b9af544",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10760,7 +10760,7 @@
   "id": "3e30495453e05fd7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10799,7 +10799,7 @@
   "id": "3f6e37d60ba8ce6e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10833,7 +10833,7 @@
   "id": "4022d451fd0f236c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10868,7 +10868,7 @@
   "id": "42c9dd77a500a4e3",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10912,7 +10912,7 @@
   "id": "4474aaf32975b365",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -10953,7 +10953,7 @@
   "id": "464f0a5810fefb07",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -10988,7 +10988,7 @@
   "id": "4a08a4eaa4491172",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11024,7 +11024,7 @@
   "id": "4a3f5d45789791e8",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11060,7 +11060,7 @@
   "id": "4ba4d96c9687ab34",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11092,7 +11092,7 @@
   "id": "4bc7dde14cde44dd",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11128,7 +11128,7 @@
   "id": "519ad2dddabb1390",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11167,7 +11167,7 @@
   "id": "52c634a2d0a01183",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -11199,7 +11199,7 @@
   "id": "5481f46169c4612f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11239,7 +11239,7 @@
   "id": "580a203fb026789f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11278,7 +11278,7 @@
   "id": "594eaef50f33852e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11315,7 +11315,7 @@
   "id": "5b61d6424f891690",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -11358,7 +11358,7 @@
   "id": "5eb3c52bc4e34cc9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11402,7 +11402,7 @@
   "id": "60524e6960cf7d5a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -11438,7 +11438,7 @@
   "id": "61d653bbcba1eed4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11481,7 +11481,7 @@
   "id": "62cb75f65b4b765d",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11516,7 +11516,7 @@
   "id": "63010b1fab0776fa",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11548,7 +11548,7 @@
   "id": "63ba75ab6d2522e0",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11580,7 +11580,7 @@
   "id": "6523907d590000a9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11617,7 +11617,7 @@
   "id": "658ecb22bc931d4a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11649,7 +11649,7 @@
   "id": "6657c8bae47aba6a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11692,7 +11692,7 @@
   "id": "677759bb11399f6e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11732,7 +11732,7 @@
   "id": "68da8afc472607cc",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11770,7 +11770,7 @@
   "id": "6b82fa54de44edf7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -11809,7 +11809,7 @@
   "id": "6bdcafda26b9ac1c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -11845,7 +11845,7 @@
   "id": "6d351a9b8a41574d",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11880,7 +11880,7 @@
   "id": "6df90bca1d36e7f8",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11919,7 +11919,7 @@
   "id": "6f9e7982b10125bb",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11954,7 +11954,7 @@
   "id": "6fa2615075ec1bd0",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -11987,7 +11987,7 @@
   "id": "74f711ec6747d878",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12028,7 +12028,7 @@
   "id": "75335e447b414aea",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12062,7 +12062,7 @@
   "id": "7c3fc3906b33f8af",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12096,7 +12096,7 @@
   "id": "7e13cf21ef10aadf",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -12134,7 +12134,7 @@
   "id": "808d249b65fbcc42",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12179,7 +12179,7 @@
   "id": "86a4beda67121620",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12214,7 +12214,7 @@
   "id": "8b8c7001353f1299",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12253,7 +12253,7 @@
   "id": "8d854e662d8f8f60",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12286,7 +12286,7 @@
   "id": "8df2ef1e5ac3f13b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12318,7 +12318,7 @@
   "id": "9724739fbb3aab26",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12361,7 +12361,7 @@
   "id": "97b80c6253fa485f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -12395,7 +12395,7 @@
   "id": "991d04e479e96d0e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12428,7 +12428,7 @@
   "id": "9b49d7d1f066448d",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12472,7 +12472,7 @@
   "id": "9c6f94fe91c5bb4c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12510,7 +12510,7 @@
   "id": "9eb500d7d7366855",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -12542,7 +12542,7 @@
   "id": "a0aea8edd2040ad1",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12576,7 +12576,7 @@
   "id": "a12b9b86ad7ea5f8",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -12609,7 +12609,7 @@
   "id": "a24de1fb57f51ea9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -12647,7 +12647,7 @@
   "id": "a2bf7e311cd7aa0d",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12679,7 +12679,7 @@
   "id": "a89c952dcdbb4fb4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12713,7 +12713,7 @@
   "id": "a908fefa1e40e42d",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12745,7 +12745,7 @@
   "id": "a9beac15a4fdcf00",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12792,7 +12792,7 @@
   "id": "aa25bfd3d3fa0536",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12834,7 +12834,7 @@
   "id": "aac84bfaa308da52",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12869,7 +12869,7 @@
   "id": "ac767c35a2a3f098",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12901,7 +12901,7 @@
   "id": "ad0df691f141eb4a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12945,7 +12945,7 @@
   "id": "b02ab5929aa2bb0a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -12990,7 +12990,7 @@
   "id": "b047f50176f72a56",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13030,7 +13030,7 @@
   "id": "b3228031863eb809",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13070,7 +13070,7 @@
   "id": "b3475411005a47ab",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -13105,7 +13105,7 @@
   "id": "b4321d23fdec9603",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -13144,7 +13144,7 @@
   "id": "b514a38c4c4b6451",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13181,7 +13181,7 @@
   "id": "b71c50e644958941",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13219,7 +13219,7 @@
   "id": "b9a534a685d9043f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13260,7 +13260,7 @@
   "id": "b9eb742c8c0a4c11",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13305,7 +13305,7 @@
   "id": "bbd3ec60260eb6d2",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13337,7 +13337,7 @@
   "id": "bd318009445a7d68",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13375,7 +13375,7 @@
   "id": "bd783752cc9bf059",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13417,7 +13417,7 @@
   "id": "bda11ebb64eb46b4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13450,7 +13450,7 @@
   "id": "c0d91166310b513e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13490,7 +13490,7 @@
   "id": "c2c2c836ee9efd25",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13528,7 +13528,7 @@
   "id": "c39bc86c9adf847c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13564,7 +13564,7 @@
   "id": "c6d683512faca174",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13608,7 +13608,7 @@
   "id": "c8f0994e3efe8073",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13648,7 +13648,7 @@
   "id": "c9780a5a061a0ef8",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13691,7 +13691,7 @@
   "id": "ca24ee4150b04b36",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13723,7 +13723,7 @@
   "id": "ca4844a16f666d24",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13758,7 +13758,7 @@
   "id": "cb37b2da9dc3b89a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13797,7 +13797,7 @@
   "id": "cb6ed8902489a3b0",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13842,7 +13842,7 @@
   "id": "cbcddf132d7ccd94",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13876,7 +13876,7 @@
   "id": "ce028ddd4a18aad6",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13908,7 +13908,7 @@
   "id": "ce5b49b17e43ad23",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -13943,7 +13943,7 @@
   "id": "ce639b38b7c1d30d",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -13976,7 +13976,7 @@
   "id": "cf7ceabcbdcefff3",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14015,7 +14015,7 @@
   "id": "d2a3bcffe3c589be",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14052,7 +14052,7 @@
   "id": "d73409959442a1e9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14090,7 +14090,7 @@
   "id": "d905f901f05bbdf4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14132,7 +14132,7 @@
   "id": "daaca85543712ca8",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14166,7 +14166,7 @@
   "id": "dc1c26ffbb040acb",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14203,7 +14203,7 @@
   "id": "dc39cdf7a069b7c3",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14241,7 +14241,7 @@
   "id": "dcc45d6f037c6f35",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14281,7 +14281,7 @@
   "id": "dd4d201f6e8c9703",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14316,7 +14316,7 @@
   "id": "dd5899fd4df23562",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14352,7 +14352,7 @@
   "id": "ddbcf309d00ab680",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14387,7 +14387,7 @@
   "id": "de7449f8bb9094b9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -14420,7 +14420,7 @@
   "id": "e1151694f8b3ec2f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14460,7 +14460,7 @@
   "id": "e394b347a80c2b85",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14496,7 +14496,7 @@
   "id": "e9d73356e369513c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14530,7 +14530,7 @@
   "id": "eaeafd26c0dfe4dc",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14572,7 +14572,7 @@
   "id": "eb3343393d47c2ec",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14616,7 +14616,7 @@
   "id": "ebf61959affa6022",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14648,7 +14648,7 @@
   "id": "f091d2e89d5f0a41",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14692,7 +14692,7 @@
   "id": "f1593a7d2a37e120",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14729,7 +14729,7 @@
   "id": "f3d7e284dd945a65",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14770,7 +14770,7 @@
   "id": "f406b0c891c934ca",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14814,7 +14814,7 @@
   "id": "f4dd99c813b90dff",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14858,7 +14858,7 @@
   "id": "f65c84d1f8dc2f9f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14892,7 +14892,7 @@
   "id": "f76bc2b5a1a98a04",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14927,7 +14927,7 @@
   "id": "f7e05f639f7c087e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14961,7 +14961,7 @@
   "id": "f84902db51564bfe",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -14997,7 +14997,7 @@
   "id": "fcc41db7b85447ab",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -15031,7 +15031,7 @@
   "id": "ff893035f89b50b7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice.",
+  "reason": "-ls and -fls are a listing format of their own; -fstype needs the mount table; %{...} and the warning about a /000 mode are diagnostics rather than answers; -regex matches the walk path where findutils anchors it differently; and an unreadable directory is complained about once where the reference complains twice; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -15044,7 +15044,7 @@
   "kind": "bug",
   "list": "ledger",
   "option": "-context",
-  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "utility": "find"
  },
  {
@@ -15052,7 +15052,7 @@
   "kind": "bug",
   "list": "ledger",
   "option": "-files0-from",
-  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "utility": "find"
  },
  {
@@ -15060,7 +15060,7 @@
   "kind": "bug",
   "list": "ledger",
   "option": "-fls",
-  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "utility": "find"
  },
  {
@@ -15068,7 +15068,7 @@
   "kind": "bug",
   "list": "ledger",
   "option": "-fstype",
-  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "utility": "find"
  },
  {
@@ -15076,7 +15076,7 @@
   "kind": "bug",
   "list": "ledger",
   "option": "-ls",
-  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points.",
+  "reason": "-fstype needs the mount table, -context a security label this kernel does not carry, -ls and -fls a listing format of their own, and -files0-from a second source of starting points; and under -L a link that points at nothing or at itself is listed as the entry it is, where the reference reports the failed follow.",
   "utility": "find"
  },
  {
@@ -28799,6 +28799,518 @@
   "list": "ledger",
   "option": "-p",
   "reason": "--show-limits reports the environment's own bookkeeping rather than an answer, and -p and --open-tty ask a question of a terminal this suite has none of.",
+  "utility": "xargs"
+ },
+ {
+  "case": {
+   "argv": [
+    "-b",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_yes",
+   "tier": "pinned",
+   "utility": "cp"
+  },
+  "domain": "files",
+  "id": "43fce94ef230eab4",
+  "list": "regression",
+  "utility": "cp"
+ },
+ {
+  "case": {
+   "argv": [
+    ".",
+    "-name",
+    "a.txt",
+    ",",
+    "-name",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_yes",
+   "tier": "pinned",
+   "utility": "find"
+  },
+  "domain": "files",
+  "id": "22b325599f70ddea",
+  "list": "regression",
+  "utility": "find"
+ },
+ {
+  "case": {
+   "argv": [
+    ".",
+    "-printf",
+    "%p %s %m %y|%f|%d\\n"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_yes",
+   "tier": "pinned",
+   "utility": "find"
+  },
+  "domain": "files",
+  "id": "d0ab0b16af19cf1c",
+  "list": "regression",
+  "utility": "find"
+ },
+ {
+  "case": {
+   "argv": [
+    "-L",
+    "dir/sub/back"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_yes",
+   "tier": "pinned",
+   "utility": "find"
+  },
+  "domain": "files",
+  "id": "e5dc7150fb66fc05",
+  "list": "regression",
+  "utility": "find"
+ },
+ {
+  "case": {
+   "argv": [
+    "-d",
+    "-v",
+    "new/x"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "install"
+  },
+  "domain": "files",
+  "id": "67b5b4804ab2310b",
+  "list": "regression",
+  "utility": "install"
+ },
+ {
+  "case": {
+   "argv": [
+    "-L"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "kill"
+  },
+  "domain": "files",
+  "id": "7193c2b1dd376bf4",
+  "list": "regression",
+  "utility": "kill"
+ },
+ {
+  "case": {
+   "argv": [
+    "-l",
+    "15"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "kill"
+  },
+  "domain": "files",
+  "id": "c6c2a7743e62098e",
+  "list": "regression",
+  "utility": "kill"
+ },
+ {
+  "case": {
+   "argv": [
+    "-p",
+    "999999"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "kill"
+  },
+  "domain": "files",
+  "id": "dd7d7818dd17d6a1",
+  "list": "regression",
+  "utility": "kill"
+ },
+ {
+  "case": {
+   "argv": [
+    "-x",
+    "-w",
+    "40"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ls"
+  },
+  "domain": "files",
+  "id": "25d9535aac9d48b9",
+  "list": "regression",
+  "utility": "ls"
+ },
+ {
+  "case": {
+   "argv": [
+    "-C",
+    "-w",
+    "40"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ls"
+  },
+  "domain": "files",
+  "id": "3a5a79709fc21ad4",
+  "list": "regression",
+  "utility": "ls"
+ },
+ {
+  "case": {
+   "argv": [
+    "-R",
+    "dir/sub/back"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ls"
+  },
+  "domain": "files",
+  "id": "5da998854a2cb8fe",
+  "list": "regression",
+  "utility": "ls"
+ },
+ {
+  "case": {
+   "argv": [
+    "-v",
+    "-1"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ls"
+  },
+  "domain": "files",
+  "id": "95ecb591cda2ef82",
+  "list": "regression",
+  "utility": "ls"
+ },
+ {
+  "case": {
+   "argv": [
+    "--group-directories-first",
+    "-1"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ls"
+  },
+  "domain": "files",
+  "id": "9e5db497f4fa6b6a",
+  "list": "regression",
+  "utility": "ls"
+ },
+ {
+  "case": {
+   "argv": [
+    "-l",
+    "--time-style=long-iso"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ls"
+  },
+  "domain": "files",
+  "id": "cf031d86d790f649",
+  "list": "regression",
+  "utility": "ls"
+ },
+ {
+  "case": {
+   "argv": [
+    "-m",
+    "-w",
+    "30"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ls"
+  },
+  "domain": "files",
+  "id": "df71434fb0c99582",
+  "list": "regression",
+  "utility": "ls"
+ },
+ {
+  "case": {
+   "argv": [
+    "--quoting-style=shell-escape",
+    "-1"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "ls"
+  },
+  "domain": "files",
+  "id": "f623721a4d3d33c0",
+  "list": "regression",
+  "utility": "ls"
+ },
+ {
+  "case": {
+   "argv": [
+    "-v",
+    "made"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "b57896e955cf521d",
+  "list": "regression",
+  "utility": "mkdir"
+ },
+ {
+  "case": {
+   "argv": [
+    "-u",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_yes",
+   "tier": "pinned",
+   "utility": "mv"
+  },
+  "domain": "files",
+  "id": "7a9efdc56e2c3abb",
+  "list": "regression",
+  "utility": "mv"
+ },
+ {
+  "case": {
+   "argv": [
+    "-v",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "rmdir"
+  },
+  "domain": "files",
+  "id": "e82b61602932dbf2",
+  "list": "regression",
+  "utility": "rmdir"
+ },
+ {
+  "case": {
+   "argv": [
+    "-f",
+    "%d",
+    "5"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "seq"
+  },
+  "domain": "files",
+  "id": "2777a05bcc27fa4d",
+  "list": "regression",
+  "utility": "seq"
+ },
+ {
+  "case": {
+   "argv": [
+    "size"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pinned",
+   "utility": "stty"
+  },
+  "domain": "files",
+  "id": "2c8b95c5acce5d59",
+  "list": "regression",
+  "utility": "stty"
+ },
+ {
+  "case": {
+   "argv": [
+    "size"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "stty"
+  },
+  "domain": "files",
+  "id": "7596e298ffc96aff",
+  "list": "regression",
+  "utility": "stty"
+ },
+ {
+  "case": {
+   "argv": [
+    "-a",
+    "words",
+    "echo"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pinned",
+   "utility": "xargs"
+  },
+  "domain": "files",
+  "id": "16640a13fd4205a6",
+  "list": "regression",
+  "utility": "xargs"
+ },
+ {
+  "case": {
+   "argv": [
+    "-d",
+    ",",
+    "echo"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_words",
+   "tier": "pinned",
+   "utility": "xargs"
+  },
+  "domain": "files",
+  "id": "a38ab32679d8d8a2",
+  "list": "regression",
+  "utility": "xargs"
+ },
+ {
+  "case": {
+   "argv": [
+    "-s",
+    "60",
+    "echo"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_words",
+   "tier": "pinned",
+   "utility": "xargs"
+  },
+  "domain": "files",
+  "id": "d26597ab4e9baf22",
+  "list": "regression",
   "utility": "xargs"
  }
 ]

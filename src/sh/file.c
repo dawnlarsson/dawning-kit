@@ -11452,9 +11452,10 @@ static b32 file_whereis()
                                 }
                                 else
                                 {
-                                        string_format(file_fail,
-                                                      "whereis: invalid option -- '%c'\n",
-                                                      option);
+                                        // util-linux answers every option
+                                        // it does not know with the same two
+                                        // words, whichever letter it was.
+                                        file_fail("whereis: bad usage\n", 0);
                                         return 1;
                                 }
                         }
