@@ -6050,70 +6050,6 @@
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "9aedddeb52647b51f0f56674a4621d6fd4cc6ff6f2c2e9d43f1278955154e0dc"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\n! cat |& f | /bin/true 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "823eda6999cdd687",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "a794b43fc097f7e93db34714d8582c7f94b08da964e898a5b54c41cb2e419c8b"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "9aedddeb52647b51f0f56674a4621d6fd4cc6ff6f2c2e9d43f1278955154e0dc"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\n! cat |& f | /bin/true 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
-   ],
-   "domain": "shell",
-   "family": "pipelines",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "979486972f8109c0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "a794b43fc097f7e93db34714d8582c7f94b08da964e898a5b54c41cb2e419c8b"
-  },
-  "utility": "pipelines"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 143,
    "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
   },
@@ -7681,38 +7617,6 @@
  },
  {
   "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "3a7df9944bcdc865147b72ce9b31fe48c44d0d0f6a2373ad24b3af2f37af2720"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset - 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "text",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "366ef427cf19c0a0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "The process surface this pass did not close: a startup flag combination whose option letters are reported in a different order or whose diagnostic differs, set -o listing and option-letter state under combinations the reference refuses, the restricted rbash personality, and argv[0] policy for the login spellings. Each case records the answer this shell gives today.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "0c5fdcac6d59f33b00a1383e07cb0f6c60eedf5d1b1780e55ef432cab959bc84"
-  },
-  "utility": "set_options"
- },
- {
-  "candidate": {
    "effects": "d598c0db635bbe42c5b1ee520687327e3b4e41aed29a8fbdd534371a25d635e5",
    "status": 2,
    "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
@@ -8801,38 +8705,6 @@
  },
  {
   "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "3a7df9944bcdc865147b72ce9b31fe48c44d0d0f6a2373ad24b3af2f37af2720"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset - 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "text",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "b2f3271735275a55",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "The process surface this pass did not close: a startup flag combination whose option letters are reported in a different order or whose diagnostic differs, set -o listing and option-letter state under combinations the reference refuses, the restricted rbash personality, and argv[0] policy for the login spellings. Each case records the answer this shell gives today.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "0c5fdcac6d59f33b00a1383e07cb0f6c60eedf5d1b1780e55ef432cab959bc84"
-  },
-  "utility": "set_options"
- },
- {
-  "candidate": {
    "effects": "d243800b08119a08e2688b2215c40c948a935c5251ffb37dfe220eb604732b7c",
    "status": 2,
    "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
@@ -8924,38 +8796,6 @@
    "effects": "57d01d21d524fed76af8e0c1520c5ddeaed1932464ac3eb4a1725b40c20e516c",
    "status": 2,
    "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "1c3d9c8a047c555e5a7162f73f9f1c38d34243cb6c65e3e3cce9ced7c7086ba8"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset - 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "b7d7b392284eec0e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "The process surface this pass did not close: a startup flag combination whose option letters are reported in a different order or whose diagnostic differs, set -o listing and option-letter state under combinations the reference refuses, the restricted rbash personality, and argv[0] policy for the login spellings. Each case records the answer this shell gives today.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "9376e70967c924443c9a350e6aa06e29a8dc013bf013f79c538e393ff0be470a"
   },
   "utility": "set_options"
  },
@@ -9635,38 +9475,6 @@
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "307db9205f2cba92c49b4ddcd6c35a7ae864bc4834f464a29fdfb52573201765"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "\necho start\nf() { trap; echo INNER; }; f; echo \"after:$?\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "special-builtin-fatality",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "80026a25195d58ce",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "e2a8f1a42af568172a84204d2c85de8f437ec979a2f6d0211df2b480910020a1"
-  },
-  "utility": "special-builtin-fatality"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
    "stdout": "4667b54a2197140cea6fe5823c8546ef595273eff062054f2e9e05ad678673dd"
   },
   "case": {
@@ -9787,7 +9595,7 @@
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "e66af4e2f073c20d04b53e89eacd277463222d1e24348405c938da2286980116"
+   "stdout": "724f42dc84eb2a6684cc102e115218857ba3710d935e3531eea88995ff1f31e5"
   },
   "utility": "special-builtin-fatality"
  },
@@ -9883,7 +9691,7 @@
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "c02b6e5333956f121c3e0121cb900b8ed7b8230a173c2fccf1bfa97ebca29fcc"
+   "stdout": "6ac591500c23eb86532021cd6eb0b1af097106093d37f2cbda1f972107b00d31"
   },
   "utility": "special-builtin-fatality"
  },
@@ -17576,70 +17384,6 @@
   "case": {
    "argv": [
     "-c",
-    "trap 'echo n' 1; trap 1; trap; sh -c 'kill -1 $$; echo survived'; echo \"$?\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-numeric-unset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "944484728b27323e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "2572965170c39cafb8d4492b002b989730a79fdff33a4b17bdf1c3d13ff67a0e"
-  },
-  "utility": "traps-numeric-unset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "e8860f4bce640ed1de9f7d55fbf9d8ef29c14f251d1a86ca2a223ad150e6fd15"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo a' 2; trap - 2; trap; sh -c 'kill -2 $$; echo survived'; echo \"$?\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-reset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "2e67d14098854ef3",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "2572965170c39cafb8d4492b002b989730a79fdff33a4b17bdf1c3d13ff67a0e"
-  },
-  "utility": "traps-reset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "e8860f4bce640ed1de9f7d55fbf9d8ef29c14f251d1a86ca2a223ad150e6fd15"
-  },
-  "case": {
-   "argv": [
-    "-c",
     "trap 'echo a' 2; trap - 2; trap; sh -c 'kill -2 $$; echo survived'; echo \"$?\" 2>/dev/null\necho \"end=$?\"\n"
    ],
    "domain": "shell",
@@ -17795,7 +17539,7 @@
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "b723ca4f1ae2109c1697795d25b8211772c6d102ea7db46fb01722047df01f95"
+   "stdout": "19fe05b26066f8b5d32f800925c2d1c179ec0e618dc14282beb26107370acc9f"
   },
   "case": {
    "argv": [
@@ -17923,39 +17667,7 @@
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "40ab08d136ac4b5d0bf95d5300d475f29c16b80217eaa591ac6e1c6d799d7b9b"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "trap 'echo trapped' USR1; v=$(kill -USR1 $$; echo sub); echo \"$v\"; echo \"$(trap -p USR1)\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "traps-trap-in-subst",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "d9a0d5a83af5ceaa",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "Traps and traced output, as this shell answers them today: trap and trap -p list every condition where bash outside POSIX mode lists only the ones that were set, a signal is named without its SIG prefix, an inherited ignore is not carried into a relaunched child, and an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word. Under the dash name the special builtins are fatal, as POSIX asks.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "6be41e7814290cdb8255dca561fae62b911e2d7d888e94c576849d86db70f05e"
-  },
-  "utility": "traps-trap-in-subst"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "709850f37654936384eec799754afab0b5d140305c13489c5ffed860c02f5f7c"
+   "stdout": "a3d147db64cce08f7eaa4041abea1cfac49867ac27d6c0d3e8c3492ad02950f3"
   },
   "case": {
    "argv": [
