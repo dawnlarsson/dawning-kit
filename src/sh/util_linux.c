@@ -556,7 +556,27 @@ static b32 util_linux_bits()
         string_address width_text = file_option_value(address_of taking, 'w');
         if (width_text &&
             (!ul_unsigned(width_text, UL_BITS_MAX, address_of width) || !width))
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, width_text, "invalid --width"));
+        {
+                /*  A number too big for the mask is out of range; anything
+                    that is not a number at all is simply not one, and the
+                    reference says so in those two different ways. */
+                positive asked = 0;
+                bool numeric = ul_unsigned(width_text, positive_max,
+                                           address_of asked);
+                text_flush();
+                if (numeric && !asked)
+                        /*  Zero is refused without a word about why: it is
+                            not out of range, it is no width at all. */
+                        string_format(log_error, "bits: invalid --width\n");
+                else if (numeric)
+                        string_format(log_error,
+                                      "bits: invalid --width: '%s': Numerical result out of range\n",
+                                      width_text);
+                else
+                        string_format(log_error, "bits: invalid --width: '%s'\n",
+                                      width_text);
+                return text_done(1);
+        }
 
         positive words = width / positive_bits +
                          (width % positive_bits != 0);
@@ -940,13 +960,20 @@ static b32 util_linux_taskset()
                 if (!ul_pid(program_argument((b32)(count - 1)), "taskset",
                             "PID", address_of pid))
                         return 1;
+                /*  0 is this process to the kernel, and the reference says
+                    which process that turned out to be. */
+                if (!pid)
+                        pid = (b32)system_call_1(syscall(getpid), 0);
 
                 answer = ul_tasks(pid, all, ul_taskset_one, address_of work);
                 log_flush();
                 return answer;
         }
 
-        if (all || taking.first + 1 >= count)
+        /*  --all-tasks says nothing about a command being run; it is only
+            about the threads of a pid, and the reference takes it either
+            way. */
+        if (taking.first + 1 >= count)
                 return string_report(log_error, 1, "%s: %s\n", "taskset", "bad usage");
 
         if (!ul_cpu_set(program_argument((b32)taking.first), work.list,
@@ -7124,19 +7151,49 @@ static b32 util_linux_fadvise()
                       address_of offset)))
                 return string_report(log_error, 1, "%s: %s\n", "fadvise", "invalid range");
 
+        bool given_descriptor = false;
         if (file_option_value(address_of taking, 'd'))
         {
                 positive descriptor;
 
-                if (!ul_unsigned(file_option_value(address_of taking, 'd'),
-                                 b32_max,
+                string_address given = file_option_value(address_of taking, 'd');
+                bool negative = string_is(given, '-');
+
+                if (!ul_unsigned(negative ? given + 1 : given,
+                                 negative ? (positive)b32_max + 1
+                                          : (positive)b32_max,
                                  address_of descriptor))
-                        return string_report(log_error, 1, "%s: %s\n", "fadvise", "invalid fd argument");
-                if (taking.first < (positive)program_argument_count())
-                        return string_report(log_error, 1, "%s: %s\n", "fadvise", "specify either descriptor or file");
-                handle = (bipolar)descriptor;
+                {
+                        positive ignored;
+
+                        if (ul_unsigned(negative ? given + 1 : given,
+                                        positive_max, address_of ignored))
+                                return string_report(
+                                    log_error, 1,
+                                    "%s: invalid fd argument: '%s': %s\n",
+                                    "fadvise", given,
+                                    "Numerical result out of range");
+                        return string_report(log_error, 1,
+                                             "%s: invalid fd argument: '%s'\n",
+                                             "fadvise", given);
+                }
+                if (negative)
+                        descriptor = (positive)(b32)-(bipolar)descriptor;
+                /*  -1 is no descriptor at all: the reference then reads the
+                    file operand as though --fd had never been written. */
+                given_descriptor = (b32)descriptor != -1;
+                if (given_descriptor)
+                {
+                        if (taking.first < (positive)program_argument_count())
+                                return string_report(
+                                    log_error, 1, "%s: %s\nTry '%s --help' for more information.\n",
+                                    "fadvise",
+                                    "specify either file descriptor or file name",
+                                    "fadvise");
+                        handle = (bipolar)descriptor;
+                }
         }
-        else
+        if (!given_descriptor)
         {
                 if (taking.first >= (positive)program_argument_count())
                         return string_report(log_error, 1, "%s: %s\n", "fadvise", "no file specified");
@@ -13811,7 +13868,7 @@ static b32 ul_rfkill_change(ul_rfkill_row address_to rows, positive count,
                             positive arguments)
 {
         if (first == arguments)
-                return string_report(log_error, 1, "%s: %s\n", "rfkill", "no identifier specified");
+                return 0; /* The reference does nothing, quietly, and is content. */
         if (arguments - first > UL_RFKILL_FILTER_MAX)
                 return string_report(log_error, 1, "%s: %s\n", "rfkill", "too many identifiers");
 

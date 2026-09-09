@@ -1142,15 +1142,6 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                 return 1;
         }
 
-        /* --show needs statmount(2); --devno asks about a block device
-           instead and is taken when both were asked for. */
-        if (show && !devno)
-        {
-                if (diagnostic)
-                        diagnostic(str("mountpoint: --show is not supported on this system\n"));
-                return 1;
-        }
-
         if (devno && nofollow)
         {
                 if (diagnostic)
@@ -1205,11 +1196,40 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         {
                 if (!quiet && diagnostic)
                 {
+                        b32 number = (b32)-handle;
+
                         diagnostic(str("mountpoint: "));
                         if (path)
                                 diagnostic((address_any)path, string_length(path));
-                        diagnostic(str(": cannot inspect\n"));
+                        diagnostic(str(": "));
+                        string_address reason = strerror(number);
+                        if (reason)
+                                diagnostic((address_any)reason,
+                                           string_length(reason));
+                        diagnostic(str("\n"));
                 }
+                return 1;
+        }
+
+        /*      --show needs statmount(2), which is not called here.  It is
+                refused after the path has been reached and only where it
+                would have been the answer: --devno asks about a block device
+                instead, and --nofollow takes the older path that never
+                consults the mount table by name. */
+        bool symlink_kept = false;
+        if (nofollow)
+        {
+                file_facts itself;
+
+                symlink_kept = file_look(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW,
+                                         address_of itself) &&
+                               (itself.mode & MODE_FORMAT) == MODE_LINK;
+        }
+        if (show && !devno && !symlink_kept)
+        {
+                system_close(handle);
+                if (diagnostic)
+                        diagnostic(str("mountpoint: --show is not supported on this system\n"));
                 return 1;
         }
 
