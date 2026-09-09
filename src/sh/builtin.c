@@ -10026,6 +10026,12 @@ static fn trap_write_condition(writer write, positive number,
 
         write(" ", 1);
 
+        //      Bash writes a signal as SIGINT and a condition as EXIT; dash
+        //      writes the bare name for both, and this listing is compared
+        //      against whichever shell the name was invoked as.
+        if (shell_bash_compat && number && number <= TRAP_NUMBER_MAX)
+                write("SIG", 3);
+
         if (number < TRAP_NAMES - 1)
                 string_format(write, "%s", trap_names[number]);
         else if (number >= TRAP_ERR && number <= TRAP_DEBUG)
@@ -12747,6 +12753,7 @@ fn shell_ulimit(writer write, string_address input)
         //      `ulimit -d -f` reports both, each behind its own name.
         shell_limit address_to picked[32];
         positive picked_count = 0;
+        b32 answer = 0;
         shell_limit address_to chosen = null;
         shell_limit address_to limit;
 
@@ -12863,12 +12870,22 @@ fn shell_ulimit(writer write, string_address input)
 
                 chosen = picked[at];
 
+                //      A resource that cannot take the value is reported and
+                //      the rest are still set, which is what bash does with a
+                //      list that names the pipe buffer among others.
                 if (chosen->resource == SHELL_LIMIT_PIPE)
-                        return shell_answer(string_report(log_error, shell_bash_compat ? 1 : 2,
-                            "ulimit: pipe size: cannot modify limit\n"));
+                {
+                        answer = string_report(log_error,
+                                               shell_bash_compat ? 1 : 2,
+                            "ulimit: pipe size: cannot modify limit\n");
+                        continue;
+                }
 
                 if (ul_prlimit(0, chosen->resource, null, address_of pair) < 0)
-                        return shell_answer(1);
+                {
+                        answer = 1;
+                        continue;
+                }
 
                 if (word_is(shell_argv[index], "unlimited"))
                         value = UL_LIMIT_INFINITE;
@@ -12910,13 +12927,13 @@ fn shell_ulimit(writer write, string_address input)
 
                 if (ul_prlimit(0, chosen->resource, address_of pair, null) < 0)
                 {
-                        shell_answer(shell_bash_compat ? 1 : 2);
-
-                        return log_error(str("ulimit: error setting limit\n"));
+                        answer = shell_bash_compat ? 1 : 2;
+                        log_error(str("ulimit: error setting limit\n"));
+                        continue;
                 }
         }
 
-        shell_answer(0);
+        shell_answer(answer);
 }
 
 /*

@@ -253,6 +253,11 @@ builtins_add(Utility(
              Option("-e")),
     operands=((), ("100",), ("unlimited",), ("hard",), ("soft",)),
     stdin=("empty",), stderr="loose", modes=BASH,
+    # A value is only ever given to one resource: applying it to a list would
+    # set RLIMIT_AS or RLIMIT_NOFILE on the shell under test and the two sides
+    # would then fail in different places for reasons that are not ulimit's.
+    valid=lambda argv: sum(1 for w in argv if not w.startswith("-")) == 0
+    or sum(1 for w in argv if w.startswith("-") and w not in ("-H", "-S", "-a")) <= 1,
     script=builtins_wrap("ulimit"), max_flags=2))
 builtins_add(Utility(
     "ulimit_posix",
@@ -261,6 +266,11 @@ builtins_add(Utility(
              Option("-p"), Option("-s"), Option("-t"), Option("-v")),
     operands=((), ("100",), ("unlimited",)),
     stdin=("empty",), stderr="loose", modes=ALL,
+    # A value is only ever given to one resource: applying it to a list would
+    # set RLIMIT_AS or RLIMIT_NOFILE on the shell under test and the two sides
+    # would then fail in different places for reasons that are not ulimit's.
+    valid=lambda argv: sum(1 for w in argv if not w.startswith("-")) == 0
+    or sum(1 for w in argv if w.startswith("-") and w not in ("-H", "-S", "-a")) <= 1,
     script=builtins_wrap("ulimit"), max_flags=2))
 
 # --- alias unalias ----------------------------------------------------------
