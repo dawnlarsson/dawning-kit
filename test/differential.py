@@ -82,7 +82,7 @@ OUTPUT_LIMIT = 1 << 20
 #       somebody makes here, in this table, on purpose.
 DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "full",
                  "files": "full", "shell": "default", "util_linux": "full",
-                 "misc": "default"}
+                 "misc": "full"}
 
 DOMAIN_FLOOR = {
     #       domain: (cases that agreed, cases run, the noise to ignore, what
@@ -114,29 +114,44 @@ DOMAIN_FLOOR = {
               "echoing the line that was typed, the job listing this shell prints in bash's "
               "columns under every name, and a terminal that goes away, which kills bash "
               "with the hangup where this one exits zero."),
-    "util_linux": (76800, 81037, 60,
+    "util_linux": (76810, 81037, 70,
                    "the mount namespace and what a process can watch inside it. "
+                   "The slack is wider than other domains keep because the live "
+                   "families are counted again: 185 rows that said a case "
+                   "contradicts itself were lslocks padding a column by "
+                   "whatever the box happened to hold, and they are gone. "
                    "The column families this floor used to name are not the gap "
                    "and mostly never were: lsblk's default listing is the "
                    "reference's byte for byte, tree and all, and findmnt's "
                    "default columns are TARGET SOURCE FSTYPE OPTIONS as 2.42's "
                    "are -- what findmnt lacks is the tree, so its plain listing "
                    "is exactly the reference's --list. Only lsfd differs by "
-                   "columns, and matching them alone would gate nothing: 2.42 "
-                   "lists exe, cwd, rtd, the pidfd, every namespace and every "
-                   "file-backed mapping beside the numbered descriptors, where "
-                   "this one lists the numbered descriptors, so the rows differ "
-                   "before the columns do. What is left, in order: umount_live "
-                   "and mount_live (1695 of the 4189), where --all-targets "
-                   "reaches mounts the reference leaves alone and a bind or a "
-                   "remount that half succeeds is 1 to the reference and 32 "
-                   "here; flock_live and flock, the lock a second process holds "
-                   "and -E read at each occurrence rather than the last; "
-                   "findmnt_live, still the tree; ipcrm_live and ipcs_live, the "
-                   "verbose removals and the Times, Creators and PIDs listings; "
-                   "lsfd_live, the row set above; and the long usage banners of "
-                   "rfkill and uclampset, which are a page of text each"),
-    "misc": (19806, 20052, 10,
+                   "columns, and matching them alone would gate nothing: asked "
+                   "about one process 2.42 writes 44 rows to this one's 4, "
+                   "listing exe, cwd, rtd, the pidfd, every namespace and every "
+                   "file-backed mapping beside the numbered descriptors, so the "
+                   "rows differ before the columns do. What is left, largest "
+                   "first: umount_live and mount_live (1695 of the 4181), where "
+                   "--all-targets reaches mounts the reference leaves alone and "
+                   "a bind or a remount that half succeeds is 1 to the "
+                   "reference and 32 here; flock_live and flock, the lock a "
+                   "second process holds and -E read at each occurrence rather "
+                   "than the last; findmnt_live, still the tree; ipcrm_live, "
+                   "ipcs_live and lsipc_live, the verbose removals, the Times, "
+                   "Creators and PIDs listings, and a column of the "
+                   "shared-memory listing a space wider than the reference's; "
+                   "lsfd_live, the row set above; bits, whose width is checked "
+                   "at every occurrence and against a maximum and whose list "
+                   "can be read from the standard input; prlimit, which sets "
+                   "nothing until every limit it was given parses and writes "
+                   "the table even when the command cannot be run; rfkill and "
+                   "uclampset, whose long usage banners are a page of text "
+                   "each; lsblk_live, where -t and -S ask for the topology and "
+                   "SCSI metadata this one does not carry; and umount, where "
+                   "-A, -O and -R choose which lookup answers first, so one "
+                   "unmounted name is not mounted to one of them and must be "
+                   "superuser to another"),
+    "misc": (49780, 50406, 20,
              "unfinished work, not undecidable answers. The note this floor "
              "used to carry named script's transcript timing first, and that "
              "was the wrong diagnosis: script's recorder held back an "
@@ -158,7 +173,11 @@ DOMAIN_FLOOR = {
              "-t f before it has validated --endian; dmesg does not read "
              "--kmsg-file; and what is left of diff is the unified body "
              "itself, not its diagnostics. None of it depends on the "
-             "reference's own machine."),
+             "reference's own machine. The walk moved from default to full "
+             "in this pass -- 20052 cases to 50406, two minutes and a "
+             "quarter on twenty-four jobs -- and the wider walk is what "
+             "reaches factor's remaining rows and who's, which the narrow "
+             "one never asked about."),
     "files": (58260, 73330, 100,
               "the domain moved from singles to full in one pass, so most of "
               "what pairwise, three-wise and the powerset first reached is "
