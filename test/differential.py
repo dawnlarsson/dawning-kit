@@ -73404,14 +73404,6 @@ PINNED = r"""
   "utility": "mapfile"
  },
  {
-  "domain": "builtins",
-  "kind": "bug",
-  "list": "ledger",
-  "option": "-c",
-  "reason_id": "r75",
-  "utility": "mapfile"
- },
- {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74297,14 +74289,6 @@ PINNED = r"""
   "list": "ledger",
   "option": "-C",
   "reason_id": "r74",
-  "utility": "readarray"
- },
- {
-  "domain": "builtins",
-  "kind": "bug",
-  "list": "ledger",
-  "option": "-c",
-  "reason_id": "r75",
   "utility": "readarray"
  },
  {
@@ -76066,7 +76050,7 @@ PINNED = r"""
   "id": "2b88a1954e3932f8",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r79",
+  "reason": "a function body is written on one line where bash re-indents it over four lines: type and type -a both print the body, and printing it the way bash prints it needs a deparser this shell does not have",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "type"
  },
@@ -76125,7 +76109,7 @@ PINNED = r"""
   "id": "b6fab0f01f4511a0",
   "kind": "deliberate",
   "list": "ledger",
-  "reason_id": "r79",
+  "reason": "a function body is written on one line where bash re-indents it over four lines: type and type -a both print the body, and printing it the way bash prints it needs a deparser this shell does not have",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "type"
  },
@@ -87539,14 +87523,6 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r81",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "utility": "umask"
- },
- {
-  "domain": "builtins",
-  "kind": "deliberate",
-  "list": "ledger",
-  "option": "-p",
-  "reason_id": "r82",
   "utility": "umask"
  },
  {
