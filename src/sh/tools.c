@@ -8052,6 +8052,20 @@ static bool dump_od_seen(p8 letter, string_address value)
         if (letter == 'E')
                 return true;
 
+        if (letter == 'w' && value)
+        {
+                positive width;
+
+                if (!dump_number(value, address_of width) || !width ||
+                    width > DUMP_BLOCK)
+                {
+                        text_flush();
+                        string_format(writer_stderr, "od: invalid -w argument '%s'\n",
+                                      value);
+                        return false;
+                }
+        }
+
         if (letter == 'e' || letter == 'F' || letter == 'f')
                 return string_diagnostic(&text_diagnostic, 0, null, "floating point output is unsupported");
 

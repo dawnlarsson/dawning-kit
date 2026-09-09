@@ -639,6 +639,27 @@ static b32 checksum_generate(const checksum_algorithm address_to algorithm,
         return answer;
 }
 
+/* The manifest's name as GNU writes it in a diagnostic: quoted when a
+   shell would not take it whole, into a bounded buffer the callers hand to
+   the shared formatter. */
+static string_address checksum_quoted_name(string_address name, p8 address_to into,
+                                           positive room)
+{
+        if (!checksum_filename_special(name))
+                return name;
+
+        positive length = string_length(name);
+
+        if (length + 3 > room)
+                return name;
+
+        into[0] = '\'';
+        memory_copy_apart(into + 1, name, length);
+        into[length + 1] = '\'';
+        into[length + 2] = end;
+        return (string_address)into;
+}
+
 static fn checksum_check_result_put(string_address name,
                                     string_address result)
 {
@@ -773,6 +794,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         manifest = (string_address) "'standard input'";
 
                 positive line = 0;
+                bool read_failed = false;
                 positive malformed = 0;
                 positive formatted = 0;
                 positive mismatched = 0;
@@ -796,7 +818,14 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                                 if (checksum_warn)
                                 {
                                         text_flush();
-                                        string_format(log_error, "%s: %s: %p: improperly formatted %s checksum line\n", algorithm->command, manifest, line, algorithm->label);
+                                     {
+                                        p8 quoted[FILE_PATH_MAX + 4];
+
+                                        string_format(log_error, "%s: %s: %p: improperly formatted %s checksum line\n",
+                                                      algorithm->command,
+                                                      checksum_quoted_name(manifest, quoted, sizeof(quoted)),
+                                                      line, algorithm->label);
+                                }
                                 }
                                 continue;
                         }
@@ -837,7 +866,12 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                 }
 
                 if (text_input.failed)
+                {
+                        // The shared reader has already named it; GNU says
+                        // nothing further about a manifest it cannot read.
                         failed = true;
+                        read_failed = true;
+                }
 
                 text_close();
 
@@ -862,13 +896,17 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         }
                 }
 
-                if (!verified && !unreadable)
+                if (!verified && !unreadable && !read_failed)
                 {
+                        p8 quoted[FILE_PATH_MAX + 4];
+
                         failed = true;
                         if (!status || !formatted)
-                                string_diagnostic(address_of text_diagnostic, 0, manifest, ignore_missing && formatted
-                                                         ? (string_address) "no file was verified"
-                                                         : (string_address) "no properly formatted checksum lines found");
+                                string_diagnostic(address_of text_diagnostic, 0,
+                                    checksum_quoted_name(manifest, quoted, sizeof(quoted)),
+                                    ignore_missing && formatted
+                                        ? (string_address) "no file was verified"
+                                        : (string_address) "no properly formatted checksum lines found");
                 }
 
                 if (strict && malformed)
