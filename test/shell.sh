@@ -2821,6 +2821,21 @@ answer 'glob in value'   'cd /; x="/et*"; echo $x'
 answer 'glob quoted'     'cd /; echo "/et*"'
 answer 'globbing off'    'cd /; set -f; echo /et* ; set +f'
 answer 'globbing back on' 'cd /; set -f; set +f; echo /et*'
+bash_answer 'terminal glob entry types and suffixes' '
+d=$(mktemp -d); cd "$d" || exit
+mkdir directory; : > directory/leaf; : > plain
+ln -s absent broken; ln -s directory directory-link; ln -s plain file-link; ln -s loop-link loop-link
+printf "entry[%s]\n" *
+printf "directory[%s]\n" */
+printf "suffix[%s]\n" */leaf
+printf "absent[%s]\n" */absent
+cd /; rm -rf "$d"'
+bash_answer 'terminal glob readable unsearchable directory' '
+d=$(mktemp -d); cd "$d" || exit
+mkdir locked; : > locked/visible; chmod 444 locked
+printf "entry[%s]\n" locked/*
+printf "suffix[%s]\n" locked/*/leaf
+chmod 700 locked; cd /; rm -rf "$d"'
 
 group substitution
 answer 'trailing gone'   'x=$(printf "a\n\n\n"); echo "[$x]"'
@@ -2853,11 +2868,20 @@ answer 'no nul in a sub' 'x=$(echo hi); printf "%s" "$x" | tr -d "\0" | wc -c'
 answer 'no nul in a loop' 'for i in 1 2 3; do echo $i; done | tr -d "\0" | wc -c'
 answer 'no nul in type'  'type echo | tr -d "\0" | wc -c'
 
-#       kill, whose reference here is dash's own builtin. Ours is a utility
-#       rather than a builtin, so what is being compared is a fork of this
-#       shell against a builtin of that one, and they have to agree anyway.
+#       kill shares the utility parser and executes numeric targets in the
+#       current shell. Job specifications use the shell job table.
 
 group signals
+bash_answer 'numeric kill creates no helper child' \
+        'n=0; trap '\''n=$((n+1))'\'' CHLD; kill -0 "$$"; printf "%s:%s\n" "$?" "$n"'
+bash_answer 'numeric kill restores arguments before trap' \
+        'set -- outer one; trap '\''printf "trap:%s:%s:%s\n" "$#" "$1" "$2"'\'' USR1; kill -USR1 "$$"; printf "after:%s:%s:%s\n" "$#" "$1" "$2"'
+bash_answer 'numeric kill preserves function positional scope' \
+        'set -- outer; f(){ kill -0 "$$"; printf "%s:%s\n" "$#" "$1"; }; f inner second; printf "%s:%s\n" "$#" "$1"'
+bash_answer 'numeric kill flushes output before fatal self signal' \
+        'printf before; kill -TERM "$$"'
+expected 'numeric kill reports closed list output' 'status=1|' 0 \
+        'kill -l 10 >&-; printf "status=%s\n" "$?"'
 answer 'signal by number' 'kill -l 9'
 answer 'signal fifteen'  'kill -l 15'
 answer 'signal from status' 'kill -l 143'
