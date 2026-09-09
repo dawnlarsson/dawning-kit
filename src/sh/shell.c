@@ -1184,6 +1184,9 @@ bool shell_builtin(string_address arguments, positive2 named)
                 shell_status_entering = shell_status;
                 shell_status = 0;
 
+                shell_exit_was_previous = shell_exit_is_current;
+                shell_exit_is_current = command->function == shell_exit;
+
                 command->function(log, arguments);
                 return true;
         }

@@ -61,6 +61,13 @@ static fn exec_special_error_note()
         exec_special_error = true;
 }
 
+/* Whether this process is a child some subshell or pipeline forked. Asked by
+   a builtin compiled before this file, which cannot see the flag itself. */
+static bool exec_child_process()
+{
+        return exec_forked;
+}
+
 /*
         Which line the command now running was written on.
 
@@ -1048,6 +1055,17 @@ fn job_notice()
                 return;
 
         job_reap();
+}
+
+/* Whether any job is stopped, which is what an interactive shell asks before
+   it agrees to leave. Asked by the exit builtin, compiled before this. */
+static bool job_any_stopped()
+{
+        for (positive at = 0; at < job_count; at++)
+                if (job_table[at].state == JOB_STOPPED)
+                        return true;
+
+        return false;
 }
 
 /*

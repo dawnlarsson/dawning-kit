@@ -776,7 +776,9 @@ input_finished:
                 exec_script_fd = -1;
         }
 
-        // Input ran out, which is a way of leaving like any other.
+        // Input ran out, which is a way of leaving like any other, and
+        // bash says the same "exit" for it that the builtin says.
+        shell_interactive_exit_said();
         shell_trap_exit();
 
         log_flush();

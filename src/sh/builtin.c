@@ -3736,7 +3736,9 @@ COLD fn shell_cd(writer write, string_address input)
                         physical = false;
                 else if (letter == 'P')
                         physical = true;
-                else if (letter == 'e')
+                //      -e and -@ are Bash's; dash has -L and -P and calls
+                //      every other letter an illegal option.
+                else if (letter == 'e' && shell_bash_compat)
                         error_if_unnamed = true;
                 else
                         return shell_answer(string_report(log_error, 2, "cd: bad option: -%s\n",
@@ -3747,7 +3749,9 @@ COLD fn shell_cd(writer write, string_address input)
         if (index < shell_argc)
                 name = shell_argv[index++];
 
-        if (index < shell_argc)
+        //      Bash counts the operands and refuses a second; dash reads
+        //      the first and pays no attention to what follows it.
+        if (index < shell_argc && shell_bash_compat)
                 return shell_answer(string_report(log_error, 2, "cd: too many arguments\n"));
 
         if (!name)
@@ -3764,8 +3768,14 @@ COLD fn shell_cd(writer write, string_address input)
         }
         else if (!string_get(name))
         {
+                //      An empty name is a null directory to Bash and nothing
+                //      at all to dash, which stays where it is and says so
+                //      with a zero.
+                if (!shell_bash_compat)
+                        return shell_answer(0);
+
                 log_error("cd: empty directory\n", 0);
-                return shell_answer(shell_bash_compat ? 1 : 2);
+                return shell_answer(1);
         }
         else if (word_is(name, "-"))
         {
@@ -5600,10 +5610,20 @@ COLD fn shell_shopt(writer write, string_address input)
                                           : SHELL_SHOPT_NAMES) &&
                     extra >= SHELL_EXTRA_OPTIONS)
                 {
+                        //      -o is a view over the set names, and Bash
+                        //      names what it will not find there and then
+                        //      answers zero for it when it was told to set
+                        //      or clear one. Only the query form carries
+                        //      the failure out.
                         string_format(log_error,
-                                      "shopt: %s: invalid shell option name\n",
+                                      set_options
+                                          ? "shopt: %s: invalid option name\n"
+                                          : "shopt: %s: invalid shell option name\n",
                                       name);
-                        bad = true;
+
+                        if (!(set_options && (set || unset)))
+                                bad = true;
+
                         continue;
                 }
 
@@ -13032,6 +13052,15 @@ static bipolar shell_find_in_path_alloc_mode(string_address name,
         list is written down once here rather than rebuilt from the parser's
         own tests.
 */
+//      The same names in the order Bash writes them, which is the order
+//      compgen -A keyword offers them in. The table above is sorted for the
+//      lookup; a listing is not a lookup.
+static string_address shell_keywords_listed[] = {
+    "if",   "then", "else", "elif",  "fi",   "case",   "esac", "for",
+    "select", "while", "until", "do", "done", "in",    "function", "time",
+    "{",    "}",    "!",    "[[",    "]]",   "coproc", null,
+};
+
 static string_address shell_keywords[] = {
     "!",    "[[",   "]]",    "case",  "coproc",   "do",   "done", "elif",
     "else", "esac", "fi",    "for",   "function", "if",   "in",   "select",
@@ -13299,11 +13328,21 @@ static inline INLINE b32 shell_query(writer write, positive index, b32 flags,
                 if (matched)
                         goto found_name;
 
-                if (command ? style == SHELL_KIND_LONG
-                            : !terse && !path_only && !no_functions && !every)
-                        string_format(write, "%s: not found\n", name);
+                //      Bash says a name it could not find on the
+                //      diagnostic channel and answers one; dash writes it
+                //      where the answers go and answers 127. Following dash
+                //      in all three personalities put the line in the wrong
+                //      stream for two of them.
+                //      -t and -p/-P ask for one word and nothing else, so
+                //      neither says anything when there is no answer; -a and
+                //      -f do say it, which is where this used to stay quiet.
+                if (command ? style == SHELL_KIND_LONG : !terse && !path_only)
+                        string_format(shell_bash_compat ? log_error : write,
+                                      "%s: not found\n", name);
                 if (!command)
-                        bad = terse || path_only || no_functions || every ? 1 : 127;
+                        bad = shell_bash_compat ||
+                              terse || path_only || no_functions || every
+                                  ? 1 : 127;
                 continue;
 
         found_name:
@@ -13350,6 +13389,12 @@ COLD fn shell_type(writer write, string_address input)
         }
 
         index = walk.index;
+
+        //      -t asks for one word and outranks the two that ask for a
+        //      path: "type -p -t cd" names the kind, where -p alone would
+        //      have nothing to say about a builtin.
+        if (terse)
+                path_only = force_path = false;
 
         if (index >= shell_argc)
                 return shell_answer(0);
@@ -13494,39 +13539,105 @@ fn shell_which(writer write, string_address input)
 {
         p8 address_to found = null;
         positive found_room = 0;
-        bipolar located;
+        positive index = 1;
+        bool every = false;
+        b32 answer = 0;
 
-        if (input == null)
-                return log_error(str("which: missing operand\n"));
+        (void)input;
 
-        // Before the path, because that is the order the shell runs them in:
-        // a grep on the path is not the grep that would run.
-        if (shell_command_builtin_here(input,
-                                       string_hash_33_length(input)))
-                return string_format(write, "%s: shell builtin\n", input);
-
-        located = shell_find_in_path_alloc(input, address_of found,
-                                           address_of found_room);
-
-        if (located < 0)
+        /*
+                The GNU program's option surface, so that a script handing
+                these over is answered rather than told its options are
+                names. Only --all changes what is written; the rest are
+                about a terminal, a dot or a tilde in PATH, or a list of
+                aliases and functions read from the input -- none of which
+                a builtin asked from a script has to look at. An option the
+                program does not have is named and the walk carries on,
+                which is what the GNU program does with it.
+        */
+        for (; index < shell_argc; index++)
         {
-                return shell_answer(string_report(log_error, 2, "%s: no room\n", "which"));
+                string_address word = shell_argv[index];
+
+                if (word_is(word, "--"))
+                {
+                        index++;
+                        break;
+                }
+
+                if (string_not(word, '-') || !string_get(word + 1))
+                        break;
+
+                if (word_is(word, "-a") || word_is(word, "--all"))
+                        every = true;
+                else if (!word_is(word, "-i") &&
+                         !word_is(word, "--read-alias") &&
+                         !word_is(word, "--skip-alias") &&
+                         !word_is(word, "--read-functions") &&
+                         !word_is(word, "--skip-functions") &&
+                         !word_is(word, "--skip-dot") &&
+                         !word_is(word, "--skip-tilde") &&
+                         !word_is(word, "--show-dot") &&
+                         !word_is(word, "--show-tilde") &&
+                         !word_is(word, "--tty-only"))
+                        string_format(log_error,
+                                      "which: invalid option -- '%s'\n",
+                                      word + 1);
         }
 
-        if (located == 1)
+        if (index >= shell_argc)
         {
-                string_format(write, "%s\n", found);
-                memory_free(found, found_room);
-                return;
+                log_error("Usage: which [options] [--] COMMAND [...]\n", 0);
+                return shell_answer(255);
+        }
+
+        for (; index < shell_argc; index++)
+        {
+                string_address name = shell_argv[index];
+                bipolar located;
+
+                // Before the path, because that is the order the shell runs
+                // them in: a grep on the path is not the grep that would run.
+                if (shell_command_builtin_here(name,
+                                               string_hash_33_length(name)))
+                {
+                        string_format(write, "%s: shell builtin\n", name);
+                        continue;
+                }
+
+                located = every
+                    ? shell_type_paths(write, name, address_of found,
+                                       address_of found_room, false, true)
+                    : shell_find_in_path_alloc(name, address_of found,
+                                               address_of found_room);
+
+                if (located < 0)
+                {
+                        if (found)
+                                memory_free(found, found_room);
+
+                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "which"));
+                }
+
+                if (located)
+                {
+                        if (!every)
+                                string_format(write, "%s\n", found);
+
+                        continue;
+                }
+
+                //      The GNU program says which PATH it looked along, on
+                //      the diagnostic channel, and answers one.
+                string_format(log_error, "which: no %s in (%s)\n", name,
+                              env_get("PATH") ? env_get("PATH") : (string_address)"");
+                answer = 1;
         }
 
         if (found)
                 memory_free(found, found_room);
 
-        // On standard output, the same as type: both answer the same
-        // question and used to answer it down different descriptors.
-        string_format(write, "%s: not found\n", input);
-        shell_answer(127);
+        shell_answer(answer);
 }
 
 /*
@@ -14117,6 +14228,11 @@ fn shell_compgen(writer write, string_address input)
         bool commands = false;
         bool files = false;
         bool directories = false;
+        bool keywords = false;
+        //      Bash answers zero for a compgen given no option at all and
+        //      one for an option that generated nothing, so the two have to
+        //      be told apart.
+        bool optioned = false;
         string_address words = null;
 
         compgen_prefix = null;
@@ -14138,6 +14254,8 @@ fn shell_compgen(writer write, string_address input)
                         break;
                 }
 
+                optioned = true;
+
                 if (which == 'A' || which == 'W' || which == 'P' ||
                     which == 'S' || which == 'X' || which == 'F' ||
                     which == 'C' || which == 'G')
@@ -14152,7 +14270,31 @@ fn shell_compgen(writer write, string_address input)
 
                 if (which == 'A')
                 {
-                        if (word_is(value, "function"))
+                        //      Bash's closed list of actions. One that is
+                        //      not on it is a usage error before anything
+                        //      is generated.
+                        static const string_address actions[] = {
+                            "alias", "arrayvar", "binding", "builtin",
+                            "command", "directory", "disabled", "enabled",
+                            "export", "file", "function", "group",
+                            "helptopic", "hostname", "job", "keyword",
+                            "running", "service", "setopt", "shopt",
+                            "signal", "stopped", "user", "variable"};
+                        bool known = false;
+
+                        for (positive at = 0; at < array_count(actions); at++)
+                                if (word_is(value, actions[at]))
+                                        known = true;
+
+                        if (!known)
+                                return shell_answer(string_report(
+                                    log_error, 2,
+                                    "compgen: %s: invalid action name\n",
+                                    value));
+
+                        if (word_is(value, "keyword"))
+                                keywords = true;
+                        else if (word_is(value, "function"))
                                 functions = true;
                         else if (word_is(value, "variable"))
                                 variables = true;
@@ -14224,16 +14366,39 @@ fn shell_compgen(writer write, string_address input)
                         return shell_answer(string_report(log_error, 2, "%s: no room\n", "compgen"));
         }
 
+        if (keywords)
+                for (positive at = 0; shell_keywords_listed[at]; at++)
+                        compgen_offer(write, shell_keywords_listed[at]);
+
         if (aliases || commands)
                 for (positive at = 0; at < alias_count; at++)
                         compgen_offer(write, alias_table[at].name);
 
         if (builtins || commands)
         {
-                shell_command address_to command = shell_commands;
+                //      Bash offers them in order. The registry is in the
+                //      order the builtins were written down, which is not
+                //      an order anybody reading a completion list expects.
+                string_address sorted[SHELL_COMMAND_COUNT];
+                positive count = 0;
 
-                while (command->name)
-                        compgen_offer(write, (command++)->name);
+                for (shell_command address_to command = shell_commands;
+                     command->name; command++)
+                {
+                        positive at = count++;
+
+                        while (at && string_compare(sorted[at - 1],
+                                                    command->name) > 0)
+                        {
+                                sorted[at] = sorted[at - 1];
+                                at--;
+                        }
+
+                        sorted[at] = command->name;
+                }
+
+                for (positive at = 0; at < count; at++)
+                        compgen_offer(write, sorted[at]);
         }
 
         if (variables)
@@ -14291,7 +14456,10 @@ fn shell_compgen(writer write, string_address input)
                 }
         }
 
-        shell_answer(compgen_shown ? 0 : 1);
+        //      Nothing was asked for, so nothing missing: Bash answers
+        //      one for an action that matched nothing and zero for a compgen
+        //      that named no action at all.
+        shell_answer(compgen_shown || !optioned ? 0 : 1);
 }
 
 /*
