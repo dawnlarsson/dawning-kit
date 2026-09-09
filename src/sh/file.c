@@ -2177,6 +2177,76 @@ COLD fn file_complain(string_address program, string_address message, string_add
         string_format(file_fail, "%s: %s: %s\n", program, subject, message);
 }
 
+/*
+        A word chosen from a list, and the complaint that names every word
+        the option would have taken. Rows that answer alike are written on
+        one line, the way the reference writes its synonyms.
+*/
+typedef struct
+{
+        string_address word;
+        p8 answer;
+        bool alone;
+} file_word;
+
+static b32 file_word_among(string_address program, string_address option,
+                           string_address value, const file_word address_to words,
+                           positive count)
+{
+        for (positive i = 0; i < count; i++)
+                if (!string_compare(value, words[i].word))
+                        return words[i].answer;
+
+        string_format(file_fail, "%s: invalid argument '%s' for '%s'\nValid arguments are:\n",
+                      program, value, option);
+
+        for (positive i = 0; i < count; i++)
+        {
+                if (i && !words[i].alone && words[i].answer == words[i - 1].answer)
+                {
+                        string_format(file_fail, ", '%s'", words[i].word);
+                        continue;
+                }
+
+                if (i)
+                        file_fail("\n", 1);
+                string_format(file_fail, "  - '%s'", words[i].word);
+        }
+
+        file_fail("\n", 1);
+        return -1;
+}
+
+// -t names one directory; a second one is a question with two answers.
+static bool file_one_target;
+static bool file_two_targets;
+
+static fn file_targets_begin()
+{
+        file_one_target = false;
+        file_two_targets = false;
+}
+
+static bool file_target_seen(p8 letter, string_address value)
+{
+        if (letter != 't' || !value)
+                return true;
+
+        file_two_targets |= file_one_target;
+        file_one_target = true;
+
+        return true;
+}
+
+static bool file_targets_told(string_address program)
+{
+        if (!file_two_targets)
+                return true;
+
+        string_format(file_fail, "%s: multiple target directories specified\n", program);
+        return false;
+}
+
 // What every tool says when it was given nothing to work on, and the status
 // each of them answers with.
 static COLD b32 file_missing(string_address program)
@@ -10239,6 +10309,7 @@ static b32 file_chgrp()
 // mv, ln and install and defined where the copying is.
 static bool file_backup_made(string_address program, string_address destination);
 static bool file_backup_taken(file_taking address_to taking, string_address program);
+static bool file_targets_told(string_address program);
 
 // ln ------------------------------------------------------------
 // ln [-s] [-f] TARGET [NAME], and ln [-s] [-f] TARGET... DIRECTORY.
@@ -10303,14 +10374,23 @@ static bool ln_make(string_address target, string_address name)
         }
 
         // A directory has one name and a hard link would give it two; the
-        // reference refuses before the kernel does, and says why.
+        // reference looks at what it was asked for before it tries, so a
+        // name that is not there is named rather than the link that failed.
         if (!ln_symbolic)
         {
                 file_facts source;
+                bipolar looked = file_look_code(AT_FDCWD, target,
+                                                ln_through ? 0 : AT_SYMLINK_NOFOLLOW,
+                                                address_of source);
 
-                if (file_look(AT_FDCWD, target, ln_through ? 0 : AT_SYMLINK_NOFOLLOW,
-                              address_of source) &&
-                    (source.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                if (looked < 0)
+                {
+                        string_format(file_fail, "ln: failed to access '%s': %s\n", target,
+                                      file_reason(looked));
+                        return false;
+                }
+
+                if ((source.mode & MODE_FORMAT) == MODE_DIRECTORY)
                 {
                         string_format(file_fail, "ln: %s: hard link not allowed for directory\n",
                                       target);
@@ -10410,12 +10490,15 @@ static b32 file_ln()
         ln_collision_option = 0;
         ln_dereference_option = 0;
 
+        file_targets_begin();
+
         file_taking taking = {
             .program = (string_address) "ln",
             .allowed = (string_address) "bfiLnPrsStTv",
             .valued = (string_address) "tS",
             .long_optional = (string_address) "B",
             .longs = ln_longs,
+            .seen = file_target_seen,
             .supersedes = ln_supersedes,
         };
 
@@ -10423,6 +10506,9 @@ static b32 file_ln()
                 return 1;
 
         if (!file_backup_taken(address_of taking, (string_address) "ln"))
+                return 1;
+
+        if (!file_targets_told((string_address) "ln"))
                 return 1;
 
         positive flags = taking.flags;
@@ -14343,7 +14429,8 @@ static b32 file_truncate()
 
         if (reference_path && size_text && relation == TRUNCATE_ABSOLUTE)
         {
-                file_fail("truncate: --size must be relative with --reference\n", 0);
+                file_fail("truncate: you must specify a relative '--size'"
+                          " with '--reference'\n", 0);
                 return 1;
         }
 
@@ -17052,6 +17139,7 @@ static bool file_backup_made(string_address program, string_address destination)
 static bool file_backup_taken(file_taking address_to taking, string_address program)
 {
         file_backup_kind = 0;
+        (void)program;
         file_backup_suffix = file_option_value(taking, 'S');
 
         if (!file_backup_suffix)
@@ -17487,6 +17575,49 @@ static fn cp_pair(string_address source, string_address destination)
                 cp_status = 1;
 }
 
+static const file_word cp_preserve_words[] = {
+    {"mode", 'm'}, {"timestamps", 't'}, {"ownership", 'o'}, {"links", 'l'},
+    {"context", 'c'}, {"xattr", 'x'}, {"all", 'a'}};
+static const file_word cp_sparse_words[] = {
+    {"never", 'n'}, {"auto", 'a'}, {"always", 'A'}};
+static const file_word cp_reflink_words[] = {
+    {"auto", 'a'}, {"always", 'A'}, {"never", 'n'}};
+
+// Each of the four takes a comma-separated list, and every word in it has
+// to be one the option knows.
+static bool cp_words_read(string_address option, string_address value,
+                          const file_word address_to words, positive count,
+                          bool address_to context)
+{
+        p8 one[64];
+
+        if (!value)
+                return true;
+
+        for (positive at = 0; value[at];)
+        {
+                positive length = 0;
+
+                while (value[at] && value[at] != ',' && length + 1 < sizeof(one))
+                        one[length++] = value[at++];
+
+                one[length] = end;
+
+                if (value[at] == ',')
+                        at++;
+
+                b32 answer = file_word_among((string_address) "cp", option, one, words, count);
+
+                if (answer < 0)
+                        return false;
+
+                if (context)
+                        address_to context |= answer == 'c';
+        }
+
+        return true;
+}
+
 static const file_long cp_longs[] = {
     {(string_address) "archive", 'a'},
     {(string_address) "attributes-only", 'A'},
@@ -17524,12 +17655,15 @@ static b32 file_cp()
         cp_collision_option = 0;
         cp_dereference_option = 0;
 
+        file_targets_begin();
+
         file_taking taking = {
             .program = (string_address) "cp",
             .allowed = (string_address) "aAbCdDefHiklLnNpPrRsStTuvwxzZ",
             .valued = (string_address) "tSNz",
             .long_optional = (string_address) "BkupZ",
             .longs = cp_longs,
+            .seen = file_target_seen,
             .supersedes = cp_supersedes,
         };
 
@@ -17538,6 +17672,34 @@ static b32 file_cp()
 
         if (!file_backup_taken(address_of taking, (string_address) "cp"))
                 return 1;
+
+        if (!file_targets_told((string_address) "cp"))
+                return 1;
+
+        bool wants_context = (taking.flags & FILE_FLAG('Z')) != 0;
+
+        if (!cp_words_read((string_address) "--preserve",
+                           file_option_value(address_of taking, 'p'),
+                           cp_preserve_words, array_count(cp_preserve_words),
+                           address_of wants_context) ||
+            !cp_words_read((string_address) "--no-preserve",
+                           file_option_value(address_of taking, 'N'),
+                           cp_preserve_words, array_count(cp_preserve_words), null) ||
+            !cp_words_read((string_address) "--sparse",
+                           file_option_value(address_of taking, 'z'),
+                           cp_sparse_words, array_count(cp_sparse_words), null) ||
+            !cp_words_read((string_address) "--reflink",
+                           file_option_value(address_of taking, 'k'),
+                           cp_reflink_words, array_count(cp_reflink_words), null))
+                return 1;
+
+        // A label asked for by name is one this kernel cannot give.
+        if (wants_context)
+        {
+                file_fail("cp: cannot preserve security context without an "
+                          "SELinux-enabled kernel\n", 0);
+                return 1;
+        }
 
         cp_attributes_only = (taking.flags & FILE_FLAG('A')) != 0;
         cp_replace = (taking.flags & FILE_FLAG('D')) != 0;
@@ -17789,13 +17951,19 @@ static fn install_pair(string_address source, string_address destination)
 static b32 file_install()
 {
         positive count = (positive)program_argument_count();
+        file_targets_begin();
+
         file_taking taking = {
             .program = (string_address) "install",
             .allowed = (string_address) "bCDcdgmopSTtv",
             .valued = (string_address) "gmotS",
             .long_optional = (string_address) "B",
             .longs = install_longs,
+            .seen = file_target_seen,
         };
+
+        if (!file_targets_told((string_address) "install"))
+                return 1;
 
         install_mode = 0755;
         install_owner = -1;
@@ -18039,12 +18207,15 @@ static b32 file_mv()
         mv_status = 0;
         mv_collision_option = 0;
 
+        file_targets_begin();
+
         file_taking taking = {
             .program = (string_address) "mv",
             .allowed = (string_address) "bcfinSTtuvwZ",
             .valued = (string_address) "tS",
             .long_optional = (string_address) "BuZ",
             .longs = mv_longs,
+            .seen = file_target_seen,
             .supersedes = mv_supersedes,
         };
 
@@ -18052,6 +18223,9 @@ static b32 file_mv()
                 return 1;
 
         if (!file_backup_taken(address_of taking, (string_address) "mv"))
+                return 1;
+
+        if (!file_targets_told((string_address) "mv"))
                 return 1;
 
         mv_newer_only = (taking.flags & FILE_FLAG('u')) != 0;
