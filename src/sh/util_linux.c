@@ -3940,6 +3940,10 @@ static positive ul_table_pad_extra;
 /*      ipcs writes the old fixed-width listing: every column is as wide as
         it is declared whether or not a heading would have been narrower. */
 static bool ul_table_declared_widths;
+/*      lsipc without headings is the other way about: a column is exactly as
+        wide as the widest thing in it, and its declared least width goes
+        with the heading it belonged to. */
+static bool ul_table_free_widths;
 
 static fn ul_table_out(address_any rows, positive row_size, positive count,
                        const ul_table_column address_to definitions,
@@ -3997,8 +4001,9 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                 Where there is none the column's own declared least width
                 stands in -- except for a column that holds nothing at all in
                 any row, which takes no room, as SIZE does in a listing of
-                whole-file locks. */
-        if (!headings && !raw)
+                whole-file locks. lsipc is the one listing whose columns lose
+                that least width along with their headings, and says so. */
+        if (!headings && !raw && !ul_table_free_widths)
                 for (positive i = 0; i < column_count; i++)
                 {
                         p8 column = columns[i];
@@ -13529,12 +13534,16 @@ static b32 util_linux_lsipc()
         if (newline)
                 ul_lsipc_newline(columns, column_count);
         else
+        {
+                ul_table_free_widths = true;
                 ul_table(!json ? null : type == UL_IPC_MESSAGE ? "messages"
                                        : type == UL_IPC_SHARED ? "sharedmemory"
                                                                : "semaphores",
                          ul_ipc.rows, ul_ipc.count, ul_ipc_columns,
                          columns, column_count,
                          !(taking.flags & FILE_FLAG('H')), raw, ul_ipc_field);
+                ul_table_free_widths = false;
+        }
         log_flush();
         return have_id && !ul_ipc.count ? 1 : 0;
 }
