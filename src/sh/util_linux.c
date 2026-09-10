@@ -2091,23 +2091,33 @@ static fn ul_flock_alarm(b32 number)
 }
 
 static b32 ul_flock_poll(b32 handle, p8 kind, positive timeout, bool fcntl,
-                         positive start, positive length, b32 conflict)
+                         positive start, positive length, b32 conflict,
+                         bool verbose, bool address_to blocked)
 {
         positive began = clock_monotonic_nanoseconds();
 
+        address_to blocked = true;
         for (;;)
         {
                 bipolar answer = ul_flock_try(handle, kind, true, fcntl,
                                               start, length);
                 if (answer >= 0)
+                {
+                        address_to blocked = false;
                         return 0;
+                }
                 if (answer != -UL_ERROR_AGAIN && answer != -ERROR_ACCESS)
                         return string_report(log_error, 1, "flock: cannot lock: %s\n",
                                       file_reason(answer));
                 positive now = clock_monotonic_nanoseconds();
                 positive elapsed = now >= began ? now - began : timeout;
                 if (elapsed >= timeout)
+                {
+                        if (verbose)
+                                string_format(log_error,
+                                              "flock: timeout while waiting to get lock\n");
                         return conflict;
+                }
 
                 positive left = timeout - elapsed;
                 positive nap = left < 10000000 ? left : 10000000;
@@ -2116,13 +2126,19 @@ static b32 ul_flock_poll(b32 handle, p8 kind, positive timeout, bool fcntl,
         }
 }
 
+/*      blocked says the lock was not taken, which the returned status
+        cannot: --conflict-exit-code 0 asks for a refusal to be reported as
+        success, and the command must still not be run. */
 static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                             bool timed, positive timeout, bool fcntl,
                             positive start, positive length,
-                            b32 conflict)
+                            b32 conflict, bool verbose,
+                            bool address_to blocked)
 {
         bipolar answer;
         bool immediate = nonblocking || (timed && !timeout);
+
+        address_to blocked = true;
         if (immediate || !timed)
                 answer = ul_flock_try(handle, kind, immediate, fcntl,
                                       start, length);
@@ -2133,7 +2149,7 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                                   (positive)address_of prior) < 0 ||
                     prior.first_seconds || prior.first_microseconds)
                         return ul_flock_poll(handle, kind, timeout, fcntl, start,
-                                             length, conflict);
+                                             length, conflict, verbose, blocked);
 
                 signal_action wanted;
                 signal_action had;
@@ -2141,7 +2157,7 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                 wanted.handler = ul_flock_alarm;
                 if (signal_action_change(SIGALRM, address_of wanted, address_of had) < 0)
                         return ul_flock_poll(handle, kind, timeout, fcntl, start,
-                                             length, conflict);
+                                             length, conflict, verbose, blocked);
 
                 signal_interval timer = {0, 0, (bipolar)(timeout / 1000000000),
                                          (bipolar)((timeout % 1000000000 + 999) / 1000)};
@@ -2163,10 +2179,21 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
         }
 
         if (answer >= 0)
+        {
+                address_to blocked = false;
                 return 0;
+        }
         if ((immediate && (answer == -UL_ERROR_AGAIN || answer == -ERROR_ACCESS)) ||
             (!immediate && timed && answer == UL_ERROR_INTERRUPTED))
+        {
+                /*  The reference says which of the two ways it did not get
+                    the lock, and says it only when asked to. */
+                if (verbose)
+                        string_format(log_error, immediate
+                            ? "flock: failed to get lock\n"
+                            : "flock: timeout while waiting to get lock\n");
                 return conflict;
+        }
         string_format(log_error, "flock: cannot lock: %s\n",
                       file_reason(answer));
         return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
@@ -2190,7 +2217,7 @@ static const file_long ul_flock_longs[] = {
     {(string_address)"nonblocking", 'n'}, {(string_address)"timeout", 'w'},
     {(string_address)"wait", 'w'},
     {(string_address)"conflict-exit-code", 'E'},
-    {(string_address)"close", 'o'}, {(string_address)"command", 'c'},
+    {(string_address)"close", 'o'},
     {(string_address)"no-fork", 'F'}, {(string_address)"fcntl", 'L'},
     {(string_address)"start", 'S'}, {(string_address)"length", 'N'},
     {(string_address)"verbose", 'v'}, {(string_address)"help", 'h'},
@@ -2204,14 +2231,62 @@ static COLD b32 ul_flock_usage()
                              "Try 'flock --help' for more information.\n");
 }
 
+/*      Every occurrence of a valued option is checked as it is read, not
+        only the one that survives: `-w bad --wait=.01` is a usage error even
+        though the timeout that would have been used is a good one. A
+        negative timeout is not a usage error at all -- it parses, and it is
+        the timer that refuses it, so only the surviving value can raise it. */
+static bool ul_flock_seen(p8 letter, string_address value)
+{
+        positive parsed;
+
+        if (!value)
+                return true;
+        if (letter == 'E')
+        {
+                if (!ul_unsigned(value, 255, address_of parsed))
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock",
+                                      "exit code out of range (expected 0 to 255)");
+                        return false;
+                }
+        }
+        else if (letter == 'w')
+        {
+                string_address text = value;
+
+                while (byte_is_space(string_get(text)))
+                        text++;
+                if (string_is(text, '-') && text[1] >= '0' && text[1] <= '9')
+                        return true;
+                if (!file_duration_read(text, false, address_of parsed))
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock",
+                                      "invalid timeout");
+                        return false;
+                }
+        }
+        else if (letter == 'S' || letter == 'N')
+        {
+                if (!ul_size(value, address_of parsed))
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock",
+                                      "invalid lock range");
+                        return false;
+                }
+        }
+        return true;
+}
+
 static b32 util_linux_flock()
 {
         file_taking taking = {
             .program = (string_address)"flock",
-            .allowed = (string_address)"sxunwEocFVh",
-            .valued = (string_address)"wEcSN",
+            .allowed = (string_address)"sxunwEoFVh",
+            .valued = (string_address)"wESN",
             .longs = ul_flock_longs,
             .supersedes = ul_flock_supersedes,
+            .seen = ul_flock_seen,
         };
         b32 answer;
 
@@ -2283,23 +2358,22 @@ static b32 util_linux_flock()
         }
 
         string_address target = program_argument((b32)taking.first);
-        string_address command_text = file_option_value(address_of taking, 'c');
-        bool command_option = command_text != null;
+        string_address command_text = null;
+        bool command_option = false;
 
-        /* GNU getopt accepts the documented `flock file -c command` order.
-           The shared scanner deliberately stops at the first operand, so
-           consume this one post-operand spelling here instead of teaching
-           every file applet to permute options. */
-        if (!command_option && taking.first + 1 < count &&
-            string_equals(program_argument((b32)taking.first + 1), "-c"))
+        /*  There is no -c option and no --command option: the reference
+            stops reading options at the file, and `file -c command` is the
+            one place either spelling means anything. Written in front of the
+            file, both are the invalid option 'c'. */
+        if (taking.first + 1 < count &&
+            (string_equals(program_argument((b32)taking.first + 1), "-c") ||
+             string_equals(program_argument((b32)taking.first + 1), "--command")))
         {
                 if (taking.first + 3 != count)
                         return ul_flock_usage();
                 command_text = program_argument((b32)taking.first + 2);
                 command_option = true;
         }
-        else if (command_option && taking.first + 1 != count)
-                return ul_flock_usage();
         bool descriptor = false;
         bipolar descriptor_number = 0;
         if (!command_option && taking.first + 1 == count)
@@ -2339,15 +2413,13 @@ static b32 util_linux_flock()
         }
 
         bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        bool blocked = false;
         positive began = verbose ? clock_monotonic_nanoseconds() : 0;
         answer = ul_flock_acquire(handle, ul_flock_kind ? ul_flock_kind : 'x',
                                   (taking.flags & FILE_FLAG('n')) != 0,
                                   timed, timeout, fcntl, start, length,
-                                  conflict);
-        if (answer && verbose && timed && answer == conflict)
-                string_format(log_error,
-                              "flock: timeout while waiting to get lock\n");
-        if (!answer && verbose)
+                                  conflict, verbose, address_of blocked);
+        if (!blocked && verbose)
         {
                 positive elapsed = clock_monotonic_nanoseconds() - began;
                 p8 fraction_text[32];
@@ -2358,7 +2430,7 @@ static b32 util_linux_flock()
                 string_to_field(log, fraction_text, 6, '0', false);
                 string_format(log, " seconds\n");
         }
-        if (answer || descriptor)
+        if (blocked || descriptor)
         {
                 if (!descriptor)
                         system_close(handle);
@@ -2382,6 +2454,11 @@ static b32 util_linux_flock()
 
         if (no_fork)
         {
+                /*      --no-fork replaces this process without flushing, and
+                        the reference's progress lines are sitting in a fully
+                        buffered stream when it does: they are lost, whether
+                        the command runs or the exec fails. */
+                log_writer_buffer_length = 0;
                 answer = ul_flock_exec(words);
                 system_close(handle);
                 return answer;
@@ -3863,6 +3940,10 @@ static positive ul_table_pad_extra;
 /*      ipcs writes the old fixed-width listing: every column is as wide as
         it is declared whether or not a heading would have been narrower. */
 static bool ul_table_declared_widths;
+/*      lsipc without headings is the other way about: a column is exactly as
+        wide as the widest thing in it, and its declared least width goes
+        with the heading it belonged to. */
+static bool ul_table_free_widths;
 
 static fn ul_table_out(address_any rows, positive row_size, positive count,
                        const ul_table_column address_to definitions,
@@ -3920,8 +4001,9 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                 Where there is none the column's own declared least width
                 stands in -- except for a column that holds nothing at all in
                 any row, which takes no room, as SIZE does in a listing of
-                whole-file locks. */
-        if (!headings && !raw)
+                whole-file locks. lsipc is the one listing whose columns lose
+                that least width along with their headings, and says so. */
+        if (!headings && !raw && !ul_table_free_widths)
                 for (positive i = 0; i < column_count; i++)
                 {
                         p8 column = columns[i];
@@ -13173,17 +13255,23 @@ static b32 ul_ipcrm_remove(p8 type, string_address text, bool key,
                               key ? (string_address)"key"
                                   : (string_address)"id", text);
         bipolar id = key ? ul_ipc_id_by_key(type, value) : (bipolar)value;
-        bipolar removed = id < 0 ? id
-                                  : ul_ipc_remove_one(type, (positive)id);
+        bipolar removed;
+
+        if (id < 0)
+                return string_report(log_error, 1, "ipcrm: invalid %s (%s)\n",
+                              key ? (string_address)"key"
+                                  : (string_address)"id", text);
+        /*  The reference says what it is about to do, then does it: an id
+            that parses but names nothing is still announced before the
+            refusal. */
+        if (verbose)
+                string_format(log, "removing %s id `%b'\n",
+                              ul_ipc_kind(type), id);
+        removed = ul_ipc_remove_one(type, (positive)id);
         if (removed < 0)
                 return string_report(log_error, 1, "ipcrm: invalid %s (%s)\n",
                               key ? (string_address)"key"
                                   : (string_address)"id", text);
-        if (verbose)
-        {
-                string_format(log, "removing %s id `%b'\n",
-                              ul_ipc_kind(type), id);
-        }
         return 0;
 }
 
@@ -13204,8 +13292,19 @@ static b32 util_linux_ipcrm()
                 return string_report(log_error, 1, "%s: %s\n", "ipcrm", "bulk removal is not supported");
 
         bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        positive count = (positive)program_argument_count();
         b32 failed = 0;
         static const p8 letters[] = {'q', 'm', 's'};
+
+        /*  Named alone, ipcrm has nothing to remove and says so: it is the
+            one word it refuses before it reads anything at all. */
+        if (count < 2)
+        {
+                string_format(log_error, "ipcrm: bad usage\n"
+                              "Try 'ipcrm --help' for more information.\n");
+                log_flush();
+                return 1;
+        }
         static const p8 keys[] = {'Q', 'M', 'S'};
         for (positive type = 0; type < UL_IPC_TYPES; type++)
         {
@@ -13217,23 +13316,40 @@ static b32 util_linux_ipcrm()
                 if (key) failed |= ul_ipcrm_remove((p8)type, key, true, verbose);
         }
 
-        positive count = (positive)program_argument_count();
+        /*  The old spelling -- `ipcrm shm 12` -- is recognised by the first
+            word alone and before any option is read, which is why an option
+            in front of it turns the type name into an argument nobody asked
+            for. It is also the only spelling that says how it went. */
         if (taking.first < count)
         {
-                string_address kind = program_argument((b32)taking.first++);
+                string_address kind = program_argument((b32)taking.first);
                 p8 type = string_equals(kind, "msg") ? UL_IPC_MESSAGE
                           : string_equals(kind, "shm") ? UL_IPC_SHARED
                           : string_equals(kind, "sem") ? UL_IPC_SEMAPHORE
                                                        : UL_IPC_TYPES;
-                if (type == UL_IPC_TYPES || taking.first == count)
-                        return string_report(log_error, 1, "%s: %s\n", "ipcrm", "invalid resource type");
+
+                if (taking.first != 1 || type == UL_IPC_TYPES)
+                {
+                        string_format(log_error,
+                                      "ipcrm: unknown argument: %s\n"
+                                      "Try 'ipcrm --help' for more information.\n",
+                                      kind);
+                        log_flush();
+                        return 1;
+                }
+                if (count < 3)
+                        return string_report(log_error, 1, "%s: %s\n", "ipcrm",
+                                             "not enough arguments");
+                taking.first++;
                 while (taking.first < count)
                         failed |= ul_ipcrm_remove(
                             type, program_argument((b32)taking.first++), false,
-                            verbose);
+                            false);
+                if (!failed)
+                        log("resource(s) deleted\n", 20);
+                log_flush();
+                return failed;
         }
-        if (verbose && !failed)
-                log("resource(s) deleted\n", 20);
         log_flush();
         return failed;
 }
@@ -13418,14 +13534,48 @@ static b32 util_linux_lsipc()
         if (newline)
                 ul_lsipc_newline(columns, column_count);
         else
+        {
+                ul_table_free_widths = true;
                 ul_table(!json ? null : type == UL_IPC_MESSAGE ? "messages"
                                        : type == UL_IPC_SHARED ? "sharedmemory"
                                                                : "semaphores",
                          ul_ipc.rows, ul_ipc.count, ul_ipc_columns,
                          columns, column_count,
                          !(taking.flags & FILE_FLAG('H')), raw, ul_ipc_field);
+                ul_table_free_widths = false;
+        }
         log_flush();
         return have_id && !ul_ipc.count ? 1 : 0;
+}
+
+/*      The old listing writes a human size right-aligned in six columns and
+        then pads the field out, where a byte count is written left-aligned
+        across the whole field. Padding the value here keeps one table
+        renderer rather than a second alignment rule inside it. */
+static positive ul_ipcs_size_align;
+
+static string_address ul_ipcs_field(address_any opaque, p8 column,
+                                    p8 address_to scratch)
+{
+        string_address value = ul_ipc_field(opaque, column, scratch);
+        p8 hold[48];
+        positive length;
+        positive pad;
+
+        if (!ul_ipcs_size_align ||
+            (column != UL_IPC_SIZE && column != UL_IPC_USEDBYTES))
+                return value;
+        length = string_length(value);
+        if (length >= ul_ipcs_size_align || length >= array_count(hold))
+                return value;
+        for (positive i = 0; i <= length; i++)
+                hold[i] = value[i];
+        pad = ul_ipcs_size_align - length;
+        for (positive i = 0; i < pad; i++)
+                scratch[i] = ' ';
+        for (positive i = 0; i <= length; i++)
+                scratch[pad + i] = hold[i];
+        return scratch;
 }
 
 /* The legacy projection has different headings/alignment, not different
@@ -13448,18 +13598,21 @@ static fn ul_ipcs_table(p8 type)
 {
         static const struct
         {
-                string_address title, id, empty_heading;
+                string_address title, id, empty_heading, human_heading;
                 p8 count, columns[7];
         } views[] = {
             {"Message Queues", "msqid",
              "key        msqid      owner      perms      used-bytes   messages    \n",
+             "key        msqid      owner      perms      size         messages    \n",
              6, {UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS,
                  UL_IPC_USEDBYTES, UL_IPC_MSGS}},
             {"Shared Memory Segments", "shmid",
              "key        shmid      owner      perms      bytes      nattch     status      \n",
+             "key        shmid      owner      perms      size       nattch     status      \n",
              7, {UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS,
                  UL_IPC_SIZE, UL_IPC_NATTCH, UL_IPC_STATUS}},
             {"Semaphore Arrays", "semid",
+             "key        semid      owner      perms      nsems     \n",
              "key        semid      owner      perms      nsems     \n",
              5, {UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS, UL_IPC_NSEMS}},
         };
@@ -13471,7 +13624,8 @@ static fn ul_ipcs_table(p8 type)
                ul_ipc.rows[first + rows].type == type) rows++;
         if (!rows)
         {
-                log(views[type].empty_heading, 0);
+                log(ul_ipcs_size_align ? views[type].human_heading
+                                       : views[type].empty_heading, 0);
                 return;
         }
         ul_ipcs_columns[UL_IPC_ID].heading = views[type].id;
@@ -13481,7 +13635,7 @@ static fn ul_ipcs_table(p8 type)
         ul_table_out(ul_ipc.rows + first, sizeof(ul_ipc.rows[0]), rows,
                      ul_ipcs_columns, UL_IPC_COLUMNS,
                      (p8 address_to)views[type].columns, views[type].count,
-                     true, false, ul_ipc_field);
+                     true, false, ul_ipcs_field);
         ul_table_pad_last = false;
         ul_table_declared_widths = false;
         ul_table_pad_extra = 0;
@@ -13519,6 +13673,10 @@ static b32 util_linux_ipcs()
         if (!ul_ipc_snapshot_load(types))
                 return string_report(log_error, 1, "%s: %s\n", "ipcs", "cannot read System V IPC snapshot");
         ul_ipc_bytes = !(taking.flags & FILE_FLAG('H'));
+        ul_ipcs_size_align = ul_ipc_bytes ? 0 : 6;
+        ul_ipcs_columns[UL_IPC_SIZE].heading = ul_ipc_bytes ? "bytes" : "size";
+        ul_ipcs_columns[UL_IPC_USEDBYTES].heading = ul_ipc_bytes ? "used-bytes"
+                                                                 : "size";
         ul_ipc_numeric_permissions = true;
         ul_ipc_octal_prefix = false;
         if (types & UL_IPC_MESSAGE_BIT) ul_ipcs_table(UL_IPC_MESSAGE);
