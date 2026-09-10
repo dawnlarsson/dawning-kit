@@ -68,31 +68,6 @@ static bool shell_start_parameters(string_address address_to arguments,
         return shell_parameters_set(shell_argv, count);
 }
 
-/*
-        set -v: what was read, written back before anything is done with it.
-
-        Reading, not running, is what the option is about, so the echo sits
-        where the reader hands a physical line over and the option is asked
-        about again for each one: `set -v` halfway through reaches the line
-        after it, in a file and in bash's command string alike. dash echoes
-        no command string at all, because a string was not read from
-        anywhere, and that is the whole of the difference between the two.
-*/
-static bool shell_verbose_from_string;
-
-static fn shell_verbose_line(string_address line)
-{
-        if (shell_verbose_from_string && !shell_bash_compat)
-                return;
-
-        if (!(shell_options & SHELL_FLAG('v')))
-                return;
-
-        log_error(line, string_length(line));
-        log_error("\n", 1);
-        log_flush();
-}
-
 static positive shell_run_complete_lines(p8 address_to text, positive length,
                                          bool command_string)
 {
