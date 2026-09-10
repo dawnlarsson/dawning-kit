@@ -97110,38 +97110,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "e11f3097a8c6f91b89cde940dc86cccbe6f4de1e23d61473624e3b429e83278e"
-  },
-  "case": {
-   "argv": [
-    "badwalk"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "dir"
-  },
-  "domain": "files",
-  "id": "8b10f7c159b37c6d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "616a6a6598c632f5f8b28d06e820abc7ae27d6859296544cc30d4787f103f703"
+   "stdout": "7318cfbc4e9b4e57108561871cd1b541666a3a3f9c65a81234152ea0b0f39def"
   },
   "case": {
    "argv": [
@@ -97161,6 +97130,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -107674,7 +107644,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "d6b35553348e71456e7ef6f2d6e88cc41b51cc619dee6ad6920d1502ba411e30"
+   "stdout": "d596207afe5235772a6c9c4cf1a3ed5f763f8727f6eaafc99632bbcffdb563dd"
   },
   "case": {
    "argv": [
@@ -107694,13 +107664,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r111",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "ls"
  },
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "d6b35553348e71456e7ef6f2d6e88cc41b51cc619dee6ad6920d1502ba411e30"
+   "stdout": "d596207afe5235772a6c9c4cf1a3ed5f763f8727f6eaafc99632bbcffdb563dd"
   },
   "case": {
    "argv": [
@@ -107719,6 +107690,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r111",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "ls"
  },
  {
@@ -107902,7 +107874,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 2,
-   "stdout": "a34ec37bd892c54e258b466fa370dc2357989211caffeddf0eb1da9a98e77689"
+   "stdout": "7578214a1e3805a12a8c7b45850fc65ffc7788c28667395326df548508db546b"
   },
   "case": {
    "argv": [
@@ -107923,31 +107895,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "e11f3097a8c6f91b89cde940dc86cccbe6f4de1e23d61473624e3b429e83278e"
-  },
-  "case": {
-   "argv": [
-    "badwalk"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "fdc8ef94ff954791",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "ls"
  },
  {
@@ -112418,7 +112366,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "4cfb2bf3fdeea2aec8babcc5d58451ab54657b090af4e3ed2c72768fff0eae3e"
+   "stdout": "f664367686139670ad7003e6800e79fba53d1821809c3aaf26a4b528b8e70a29"
   },
   "case": {
    "argv": [
@@ -112539,38 +112487,6 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "3e5c8d3057e66d20e650b96df3bd9d300ea3f24603471982d8c1cf6ec2b87e1d"
-  },
-  "case": {
-   "argv": [
-    ".hidden",
-    "hollow"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "vdir"
-  },
-  "domain": "files",
-  "id": "8ff3fd3231ade8ea",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "64ca8bc7ec45ddb5d033aff5213c5ea08d304256e521d467c7867b2f7b519e55"
-  },
-  "utility": "vdir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
    "stdout": "2050c0a621c9c41fa2ffbaae85122c02688fb6a73e9fb0dc7ed5404c9185b009"
   },
   "case": {
@@ -112628,38 +112544,6 @@ PINNED = r"""
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
    "stdout": "8b3d0de96e08f2d346d6d867e32229549b24f9de7fee1d30afd434d1cf4f2a61"
-  },
-  "utility": "vdir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "b92814771505b4c8f0093557012bb17e53b4a45f8b0b1365ae36e768648eeae0"
-  },
-  "case": {
-   "argv": [
-    "--block-size=1K"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "vdir"
-  },
-  "domain": "files",
-  "id": "d52f4645a9051b91",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "6befa99c8812f6ec1ad94ecb1a1b9f65e3e398070a13378a9df02b921e268c94"
   },
   "utility": "vdir"
  },
