@@ -1,0 +1,753 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Floodlight -- every runtime allowance on this machine, in one array.
+ *
+ * What a program is allowed to do is answered here and nowhere else. The
+ * answers this kernel was built with are the array below; anything changed
+ * since boot carries the time it changed and the user who changed it. Reading
+ * the device prints all of it:
+ *
+ *     cat /dev/floodlight
+ *
+ * and writing one line to it changes one answer, until it is sealed:
+ *
+ *     echo 'awk spawn allow'  > /dev/floodlight
+ *     echo 'curl network deny' > /dev/floodlight
+ *     echo seal               > /dev/floodlight
+ *
+ * Text, not an ioctl, on purpose. A policy you can read with cat and change
+ * with echo is one that can be checked by somebody holding no special tool and
+ * trusting no special program -- and there is no second description of a
+ * struct to drift out of step with this one.
+ *
+ * ONE FILE, ON PURPOSE
+ *
+ * This is the whole of it. Not a directory, not a library, not a header shared
+ * with anything: the file you are reading is the entire trusted base of the
+ * decision. Moonwater's own module is the opposite by necessity -- src/core.c
+ * includes the compositor, which includes the terminal emulator -- and a
+ * policy living in there would have two hundred thousand lines inside its
+ * trusted base. So this is ordinary kernel C, built on its own, exporting no
+ * symbols, and nothing links it.
+ *
+ * The rule that keeps it that way is checked rather than intended: the
+ * floodlight harness in test/differential.py fails the build if this file
+ * includes anything but <linux/...>, or names anything Moonwater defines.
+ * Left to good intentions somebody reaches for the library because it exists.
+ *
+ * WHAT IT CLOSES, AND WHAT IT DOES NOT
+ *
+ * The array is consulted where a program is started. `run` and `flag` are
+ * decided there, because that is the only place a program's name and its
+ * arguments are both known. `spawn` and `network` become a seccomp filter
+ * installed before the program starts, and that is what makes them stick: a
+ * program cannot take a filter off itself, and it is already on before the
+ * program has read a byte of the data that might tell it to try.
+ *
+ * That ordering is the whole point. The dangerous programs are the ones whose
+ * behaviour is driven by what they read -- awk running a string its script
+ * computed, find running a command built from a filename it walked to, xargs
+ * running whatever arrived on its input. The filter is on before the data is.
+ *
+ * Someone who replaces the launcher itself is outside what this can promise.
+ * What holds even then: they cannot forge a row, cannot unseal, and cannot
+ * make the report say a change was somebody else's.
+ */
+
+#include <linux/cred.h>
+#include <linux/fs.h>
+#include <linux/init.h>
+#include <linux/miscdevice.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/random.h>
+#include <linux/slab.h>
+#include <linux/string.h>
+#include <linux/seq_file.h>
+#include <linux/timekeeping.h>
+#include <linux/uaccess.h>
+
+#define SUBJECT 64 /* an applet name, or an absolute path */
+#define DETAIL 32  /* a flag, written as it is written: "--to-command" */
+
+/* Deliberately in this order: the first two are decided by whoever starts the
+ * program, the last two by the filter installed before it does. */
+enum { RUN, FLAG, SPAWN, NETWORK, SETTINGS };
+
+static const char *const setting_name[SETTINGS] = {
+	"run", "flag", "spawn", "network"
+};
+
+/*
+ * The answers this kernel was built with.
+ *
+ * const, so they live in .rodata and the machine write-protects them once it
+ * is up (CONFIG_STRICT_KERNEL_RWX). That is not tidiness. These rows are what
+ * the report calls "built in", and while they sat in writable memory a stray
+ * write could flip one and leave its timestamp at zero -- so the report would
+ * go on calling the flipped value the one this kernel was compiled with. The
+ * whole worth of this file is that "built in" means something, and it only
+ * means something if the built-in answers cannot be written.
+ *
+ * Every applet that can start another program is here, because a program that
+ * can start programs is the only kind that can be turned into something else.
+ * Which applets those are is not a matter of opinion: the floodlight harness
+ * derives it from the source and fails the build when this list and the source
+ * disagree, in either direction.
+ *
+ * NAMED programs run what was written on their own command line -- a hand
+ * typed it -- so they are allowed. DERIVED programs build a command out of
+ * data they read, and SHELL programs start a shell, so whatever reaches them
+ * is a language rather than a command. Those two are the living-off-the-land
+ * surface and they are refused.
+ */
+struct rule {
+	const char *subject;
+	unsigned char setting;
+	unsigned char allowed;
+};
+
+static const struct rule baseline[] = {
+	{ "awk", SPAWN, 0 },       /* DERIVED: system(), "cmd" | getline */
+	{ "find", SPAWN, 0 },      /* DERIVED: -exec, -execdir, -ok, -okdir */
+	{ "xargs", SPAWN, 0 },     /* DERIVED: commands built from its input */
+	{ "bowl", SPAWN, 0 },      /* SHELL: another distribution's userspace */
+	{ "script", SPAWN, 0 },    /* SHELL: the session it records is a shell */
+	{ "setarch", SPAWN, 0 },   /* SHELL: falls back to /bin/sh given no command */
+	{ "init", SPAWN, 1 },      /* SHELL: PID 1 starts everything; refusing it
+				      would refuse the machine */
+	{ "term", SPAWN, 1 },      /* SHELL: the window's own shell, likewise */
+	{ "chroot", SPAWN, 1 },    /* NAMED */
+	{ "choom", SPAWN, 1 },     /* NAMED */
+	{ "chrt", SPAWN, 1 },      /* NAMED */
+	{ "coresched", SPAWN, 1 }, /* NAMED */
+	{ "env", SPAWN, 1 },       /* NAMED */
+	{ "flock", SPAWN, 1 },     /* NAMED */
+	{ "ionice", SPAWN, 1 },    /* NAMED */
+	{ "nice", SPAWN, 1 },      /* NAMED */
+	{ "nohup", SPAWN, 1 },     /* NAMED */
+	{ "nsenter", SPAWN, 1 },   /* NAMED */
+	{ "pipesz", SPAWN, 1 },    /* NAMED */
+	{ "prlimit", SPAWN, 1 },   /* NAMED */
+	{ "setpgid", SPAWN, 1 },   /* NAMED */
+	{ "setpriv", SPAWN, 1 },   /* NAMED */
+	{ "setsid", SPAWN, 1 },    /* NAMED */
+	{ "stdbuf", SPAWN, 1 },    /* NAMED */
+	{ "taskset", SPAWN, 1 },   /* NAMED */
+	{ "timeout", SPAWN, 1 },   /* NAMED */
+	{ "uclampset", SPAWN, 1 }, /* NAMED */
+	{ "unshare", SPAWN, 1 },   /* NAMED */
+};
+
+/*
+ * Every deviation from those answers, and the only policy on this machine that
+ * is writable at all.
+ *
+ * Zero at boot, so it is .bss and costs the kernel image nothing. The single
+ * array this replaced carried seven kilobytes of initialised data -- four
+ * times the size of all the code here -- to hold twenty-eight short names.
+ *
+ * Small on purpose. A policy that needs dozens of exceptions is one nobody is
+ * reading, and being unable to add the dozenth is the correct outcome.
+ */
+#define CHANGES 16
+
+struct light {
+	char subject[SUBJECT];
+	char detail[DETAIL];
+	unsigned char setting;
+	unsigned char allowed;
+	unsigned int who;
+	unsigned long long when; /* realtime seconds when it was changed */
+
+	/* Everything above, folded with the boot secret. A write that reached
+	 * this row without coming through the device does not know to update
+	 * it, and every reader checks. */
+	u32 seal;
+};
+
+static struct light changed[CHANGES];
+
+static DEFINE_MUTEX(lock);
+
+/* One way. Nothing here clears it and no parameter relaxes it: a seal that
+ * something can undo is a seal in name only. */
+static bool sealed;
+
+/*
+ * ---------------------------------------------------------------------------
+ * Floodlight's own protections
+ * ---------------------------------------------------------------------------
+ *
+ * Everything below exists because the kernel's own hardening is a set of
+ * config options, and a security feature that is only secure on a kernel
+ * somebody remembered to configure is not one. This machine's own kernel has
+ * CONFIG_HARDENED_USERCOPY, CONFIG_SLAB_FREELIST_HARDENED and the stack
+ * protector all switched off. So floodlight does not ask for any of them: it
+ * carries its own, and behaves the same on a kernel built without a single
+ * hardening option set.
+ *
+ * What it cannot do is stop a write it does not mediate. What it can do is
+ * notice one and refuse to keep answering as though nothing happened, which is
+ * the property this file is for: not that the policy cannot be attacked, but
+ * that the report cannot be made to lie about it.
+ */
+
+/*
+ * Drawn once, at boot, and never shown.
+ *
+ * Every checksum here is folded with it, so somebody who has read this source
+ * still cannot compute a seal that will pass -- they have to find and read
+ * this word first. Without it the seals would be arithmetic anybody could
+ * redo, which is a speed bump wearing a lock's clothes.
+ */
+static u32 secret __ro_after_init;
+
+/*
+ * Set when something that should not have changed has. One way, like the seal:
+ * a machine that has been tampered with does not get to go back to being
+ * trusted because the next write looked fine.
+ */
+static bool compromised;
+
+/* FNV-1a: one multiply and one xor a byte, which is fast enough that every
+ * reader can afford to check and small enough to read in one sitting. */
+static u32 fold(u32 hash, const void *from, unsigned int bytes)
+{
+	const unsigned char *at = from;
+
+	while (bytes--)
+		hash = (hash ^ *at++) * 16777619u;
+
+	return hash;
+}
+
+/* A row's seal covers everything about it except the seal itself. */
+static u32 seal_of(const struct light *row)
+{
+	return fold(secret ^ 2166136261u, row,
+		    offsetof(struct light, seal));
+}
+
+/*
+ * The built-in answers are const and the kernel write-protects .rodata -- when
+ * it was built to. This is the same question asked without depending on that:
+ * the answers are summed at boot and the sum is checked before they are used.
+ */
+static u32 baseline_sum __ro_after_init;
+
+static u32 baseline_seal(void)
+{
+	return fold(secret ^ 2166136261u, baseline, sizeof(baseline));
+}
+
+/*
+ * The one buffer a line is parsed in, with floodlight's own redzone either
+ * side of it.
+ *
+ * Not the stack, because this kernel has no stack protector and the generated
+ * code put the old array two bytes below the saved registers. Not the heap,
+ * because this kernel has no freelist hardening either -- and an allocation
+ * per policy change is a dependency on the allocator being sound that buys
+ * nothing a static buffer does not already give. The guards are checked after
+ * every parse, so an overrun is caught here whatever the kernel was built to
+ * catch, and caught before the parsed line is acted on.
+ */
+#define LINE (SUBJECT + DETAIL + 32)
+#define GUARD 16
+
+static struct {
+	unsigned char before[GUARD];
+	char line[LINE];
+	unsigned char after[GUARD];
+} parse;
+
+static void guard_arm(void)
+{
+	memset(parse.before, (unsigned char)secret, GUARD);
+	memset(parse.after, (unsigned char)(secret >> 8), GUARD);
+}
+
+static bool guard_intact(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < GUARD; i++)
+		if (parse.before[i] != (unsigned char)secret ||
+		    parse.after[i] != (unsigned char)(secret >> 8))
+			return false;
+
+	return true;
+}
+
+/*
+ * Everything that should not have changed, checked together.
+ *
+ * Called before the register is read and before it is written, so a tampered
+ * machine is caught on the next thing anybody does rather than at some later
+ * moment nobody chose.
+ */
+static bool intact(void)
+{
+	unsigned int i;
+
+	if (compromised)
+		return false;
+
+	if (baseline_seal() != baseline_sum) {
+		compromised = true;
+		pr_alert("floodlight: the built-in answers have been altered in memory; refusing to answer further\n");
+		return false;
+	}
+
+	for (i = 0; i < CHANGES; i++) {
+		if (!changed[i].subject[0])
+			continue;
+		if (seal_of(&changed[i]) == changed[i].seal)
+			continue;
+
+		compromised = true;
+		pr_alert("floodlight: a deviation was altered without going through this device; refusing to answer further\n");
+		return false;
+	}
+
+	if (!guard_intact()) {
+		compromised = true;
+		pr_alert("floodlight: the parse buffer was overrun; refusing to answer further\n");
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * A name is letters, digits, and the few marks a path or a flag needs.
+ *
+ * This is the most important check in the file, and it is not about parsing.
+ * A subject written here is printed twice: into the kernel log, which this
+ * machine draws on its own screen through a terminal emulator, and into the
+ * device, which is read with cat into somebody's terminal. Both of those
+ * interpret escape sequences, and one of them interprets newlines as the end
+ * of a row.
+ *
+ * So without this, a name of "x\e[2K\e[A" erases the line above it as it is
+ * printed -- the previous change, scrolled off the evidence -- and a name
+ * containing a newline prints a second row that was never in the array and
+ * can say anything, including "built in". An attacker who has to be root to
+ * write here at all is exactly the attacker this file exists to keep honest,
+ * and both tricks would let them change the machine and leave the report
+ * saying they had not.
+ *
+ * Written out rather than reached for through strchr and isalnum, because
+ * this is the one function in here that has to be right on sight.
+ */
+static bool plain(const char *word)
+{
+	const char *at = word;
+
+	for (; *at; at++) {
+		if (*at >= 'a' && *at <= 'z')
+			continue;
+		if (*at >= 'A' && *at <= 'Z')
+			continue;
+		if (*at >= '0' && *at <= '9')
+			continue;
+		if (*at == '.' || *at == '_' || *at == '-')
+			continue;
+		if (*at == '/' || *at == '+' || *at == ':')
+			continue;
+
+		return false;
+	}
+
+	return at != word;
+}
+
+/*
+ * The deviation for one subject, if there is one.
+ *
+ * Every row, not up to the first used one: a row is given back when a setting
+ * returns to what it was built as, so the array has holes in it, and a scan
+ * that stopped at the first hole would miss everything past it. Sixteen
+ * comparisons is nothing beside the syscall that got here.
+ */
+static struct light *find(const char *subject, unsigned int setting,
+			  const char *detail)
+{
+	int i;
+
+	for (i = 0; i < CHANGES; i++) {
+		struct light *row = &changed[i];
+
+		/* The name marks the row in use, never the timestamp: a machine
+		 * with no clock set boots at the epoch, and a change made in
+		 * that first second would write a zero and hand its own row
+		 * straight back -- losing the change and leaving the report
+		 * saying it never happened. */
+		if (!row->subject[0])
+			continue;
+		if (row->setting != setting || strcmp(row->subject, subject))
+			continue;
+		if (setting == FLAG && strcmp(row->detail, detail))
+			continue;
+
+		return row;
+	}
+
+	return NULL;
+}
+
+/* What this kernel was built believing about one subject, or nothing. */
+static const struct rule *builtin(const char *subject, unsigned int setting)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(baseline); i++)
+		if (baseline[i].setting == setting &&
+		    !strcmp(baseline[i].subject, subject))
+			return &baseline[i];
+
+	return NULL;
+}
+
+/* One row of the report, however the answer was arrived at. */
+static void say(struct seq_file *seq, const char *subject, unsigned int setting,
+		const char *detail, bool allowed, struct light *row)
+{
+	unsigned long long now = ktime_get_real_seconds();
+
+	seq_printf(seq, "%-16s %-8s%s%-*s %-5s ", subject,
+		   /* Always in range by construction. Checked anyway: this
+		    * index reads a pointer out of a table and prints what it
+		    * points at, which is the last thing that should trust
+		    * memory to be as it was left. */
+		   setting < SETTINGS ? setting_name[setting] : "?",
+		   setting == FLAG ? " " : "",
+		   setting == FLAG ? DETAIL - 1 : 0, setting == FLAG ? detail : "",
+		   allowed ? "allow" : "deny");
+
+	if (!row) {
+		seq_puts(seq, "built in\n");
+		return;
+	}
+
+	/* The wall clock can be set backwards, and an elapsed time that
+	 * underflows prints as six hundred billion years -- which reads as a
+	 * broken machine rather than as a moved clock. */
+	seq_printf(seq, "changed %llus ago by uid %u\n",
+		   now > row->when ? now - row->when : 0, row->who);
+}
+
+/*
+ * Everything, every time.
+ *
+ * The built-in answers first, each showing the deviation if it has one, then
+ * anything added since boot that this kernel was not built knowing about. A
+ * row nobody has touched says "built in"; one somebody has says who and when,
+ * so a machine that has been changed cannot look like one that has not.
+ */
+static int floodlight_show(struct seq_file *seq, void *unused)
+{
+	unsigned int i;
+
+	mutex_lock(&lock);
+
+	if (!intact()) {
+		seq_puts(seq, "# floodlight: TAMPERED -- this register has been written to behind its own back and no longer answers\n");
+		mutex_unlock(&lock);
+		return 0;
+	}
+
+	seq_printf(seq, "# floodlight%s\n", sealed ? " (sealed)" : "");
+
+	for (i = 0; i < ARRAY_SIZE(baseline); i++) {
+		const struct rule *rule = &baseline[i];
+		struct light *row = find(rule->subject, rule->setting, "");
+
+		say(seq, rule->subject, rule->setting, "",
+		    row ? row->allowed : rule->allowed, row);
+	}
+
+	for (i = 0; i < CHANGES; i++) {
+		struct light *row = &changed[i];
+
+		if (!row->subject[0])
+			continue;
+		/* Already shown beside the built-in answer it deviates from. */
+		if (builtin(row->subject, row->setting))
+			continue;
+
+		say(seq, row->subject, row->setting, row->detail,
+		    row->allowed, row);
+	}
+
+	mutex_unlock(&lock);
+	return 0;
+}
+
+/* One word at a time out of the line, so the parse has no allocation, no
+ * length to get wrong, and nothing to leave behind on a bad line. */
+static char *word(char **at)
+{
+	char *start = *at;
+
+	while (*start == ' ' || *start == '\t')
+		start++;
+	if (!*start)
+		return NULL;
+
+	*at = start;
+	while (**at && **at != ' ' && **at != '\t')
+		(*at)++;
+	if (**at)
+		*(*at)++ = 0;
+
+	return start;
+}
+
+static ssize_t floodlight_write(struct file *file, const char __user *from,
+				size_t count, loff_t *offset)
+{
+	char *line, *at, *subject, *setting, *state, *detail = "";
+	const struct rule *rule;
+	struct light *row;
+	unsigned int i;
+	bool allow, was;
+	long answer;
+
+	/* Before anything else, so an unprivileged caller cannot even make the
+	 * copy below, let alone reach the parse behind it. */
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (count >= LINE)
+		return -EINVAL;
+
+	/* Held across the parse as well as the change, because the buffer the
+	 * line is parsed in is floodlight's own and there is one of it. */
+	mutex_lock(&lock);
+
+	if (!intact()) {
+		answer = -EPERM;
+		goto out;
+	}
+
+	line = parse.line;
+	if (copy_from_user(line, from, count)) {
+		answer = -EFAULT;
+		goto out;
+	}
+
+	line[count] = 0;
+
+	/* The guards are checked before a single byte of this is believed. */
+	if (!guard_intact()) {
+		compromised = true;
+		pr_alert("floodlight: the parse buffer was overrun; refusing to answer further\n");
+		answer = -EPERM;
+		goto out;
+	}
+
+	at = line;
+	if (count && line[count - 1] == '\n')
+		line[count - 1] = 0;
+
+	subject = word(&at);
+	if (!subject) {
+		answer = -EINVAL;
+		goto out;
+	}
+
+	if (!strcmp(subject, "seal")) {
+		bool already = sealed;
+
+		sealed = true;
+
+		/* Only the once. A line that can be repeated is a line that can
+		 * be repeated until the record above it has scrolled out of
+		 * the log. */
+		if (!already)
+			pr_warn("floodlight: sealed by uid %u; no change until reboot\n",
+				from_kuid(&init_user_ns, current_uid()));
+
+		answer = count;
+		goto out;
+	}
+
+	setting = word(&at);
+	state = word(&at);
+	if (!setting || !state) {
+		answer = -EINVAL;
+		goto out;
+	}
+
+	for (i = 0; i < SETTINGS && strcmp(setting, setting_name[i]); i++)
+		;
+	if (i == SETTINGS) {
+		answer = -EINVAL;
+		goto out;
+	}
+
+	if (i == FLAG) {
+		detail = state;
+		state = word(&at);
+		if (!state) {
+			answer = -EINVAL;
+			goto out;
+		}
+	}
+
+	answer = -EINVAL;
+	if (strcmp(state, "allow") && strcmp(state, "deny"))
+		goto out;
+	allow = !strcmp(state, "allow");
+	if (strlen(subject) >= SUBJECT || strlen(detail) >= DETAIL)
+		goto out;
+
+	/* Nothing that could rewrite the report it is about to appear in. */
+	if (!plain(subject))
+		goto out;
+	if (i == FLAG && !plain(detail))
+		goto out;
+
+	answer = count;
+	if (sealed) {
+		answer = -EPERM;
+		goto out;
+	}
+
+	rule = builtin(subject, i);
+	row = find(subject, i, detail);
+
+	/*
+	 * What the machine answers now: the deviation if there is one, else
+	 * what it was built with, else nothing at all -- a subject this kernel
+	 * has never heard of, which the first write is entitled to introduce.
+	 */
+	if (row)
+		was = row->allowed;
+	else if (rule)
+		was = rule->allowed;
+	else
+		was = !allow;
+
+	/* Saying again what is already true is not a change, and a line that
+	 * can be repeated is a line that can be repeated until the record
+	 * above it has scrolled out of the log. */
+	if (was == allow && (row || rule))
+		goto out;
+
+	/*
+	 * Back to what it was built as, so the deviation is given back rather
+	 * than kept saying the same thing the baseline already says. The report
+	 * then calls the row "built in" again, which is the truth.
+	 */
+	if (rule && allow == rule->allowed) {
+		if (row)
+			memset(row, 0, sizeof(*row));
+
+		pr_warn("floodlight: %s restored to built in by uid %u\n",
+			subject, from_kuid(&init_user_ns, current_uid()));
+		goto out;
+	}
+
+	if (!row) {
+		unsigned int free;
+
+		for (free = 0; free < CHANGES && changed[free].subject[0]; free++)
+			;
+		if (free == CHANGES) {
+			answer = -ENOSPC;
+			goto out;
+		}
+
+		row = &changed[free];
+
+		/* Already refused above if either would not fit; bounded again
+		 * here because this is the copy, and a bound that lives at the
+		 * copy cannot be separated from it by a later edit. */
+		if (strscpy(row->subject, subject, SUBJECT) < 0 ||
+		    strscpy(row->detail, detail, DETAIL) < 0) {
+			memset(row, 0, sizeof(*row));
+			answer = -EINVAL;
+			goto out;
+		}
+
+		row->setting = i;
+	}
+
+	row->allowed = allow;
+
+	/* Taken here, never from the line: a writer that could supply these
+	 * could say the change was somebody else's, at some other time. */
+	row->who = from_kuid(&init_user_ns, current_uid());
+	row->when = ktime_get_real_seconds();
+	row->seal = seal_of(row);
+
+	/*
+	 * Said out loud. This machine draws its kernel log on its own screen,
+	 * so a change is visible on the glass without anybody going to look.
+	 */
+	pr_warn("floodlight: %s %s%s%s for %s by uid %u\n",
+		allow ? "allowed" : "denied", setting_name[i],
+		i == FLAG ? " " : "", i == FLAG ? detail : "",
+		subject, row->who);
+
+out:
+	/* Nothing is left in it between commands: the line held a policy
+	 * somebody typed, and there is no reason for it to still be here. */
+	memset(parse.line, 0, LINE);
+
+	mutex_unlock(&lock);
+	return answer;
+}
+
+static int floodlight_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, floodlight_show, NULL);
+}
+
+static const struct file_operations floodlight_ops = {
+	.owner = THIS_MODULE,
+	.open = floodlight_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+	.write = floodlight_write,
+};
+
+/*
+ * Read only once the machine is up. misc_open reaches into this structure for
+ * its file operations on every open, so a stray write into it would redirect
+ * every future reader of the device; after init the pages it sits in are not
+ * writable and that redirection is not available.
+ */
+static struct miscdevice floodlight_device __ro_after_init = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "floodlight",
+	.fops = &floodlight_ops,
+	.mode = 0644, /* anyone may read what is allowed; only root may change it */
+};
+
+static int __init floodlight_start(void)
+{
+	int answer;
+
+	/* Before the device exists, so nothing can be answered or written
+	 * until the seals it will be checked against are in place. */
+	secret = get_random_u32();
+	baseline_sum = baseline_seal();
+	guard_arm();
+
+	answer = misc_register(&floodlight_device);
+	if (answer)
+		pr_err("floodlight: no device, so no policy (%d)\n", answer);
+
+	return answer;
+}
+
+device_initcall(floodlight_start);
+
+MODULE_DESCRIPTION("Runtime allowances, in one array and in plain sight");
+MODULE_AUTHOR("Dawn Larsson");
+MODULE_LICENSE("GPL");
