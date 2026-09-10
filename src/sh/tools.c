@@ -3276,7 +3276,14 @@ static b32 tools_last()
         login_last.limit = positive_max;
         string_address limit = file_option_value(address_of taking, 'n');
         if (limit && (!string_digits_exact(limit, address_of login_last.limit)))
-                return text_done(string_diagnostic(&text_diagnostic, 1, limit, "invalid line limit"));
+        {
+                //      The reference names what it could not read, in the
+                //      words its own number parser uses.
+                text_flush();
+                string_format(writer_stderr,
+                              "last: failed to parse number: '%s'\n", limit);
+                return text_done(1);
+        }
         if (!login_last.limit)
                 login_last.limit = positive_max;
 
@@ -3474,6 +3481,11 @@ static b32 tools_last()
         system_close((positive)reader.handle);
         if (login_last.failed)
                 return text_done(string_diagnostic(&text_diagnostic, 1, path, "login database changed while reading"));
+        /*      With no time asked for there is no line to say when the
+                database begins, and the blank line that would have stood
+                above it goes with it. */
+        if (login_last.time_format == LOGIN_LAST_TIME_NONE)
+                return text_done(0);
         text_put_character('\n');
         p8 beginning_text[64];
         positive beginning_length;

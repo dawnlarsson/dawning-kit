@@ -115231,6 +115231,72 @@ PINNED = r"""
   "utility": "xargs"
  },
  {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "48737f4578702ac181ed3e0f35b945ef5897af89cdd86135b1b0505709c4a431"
+  },
+  "case": {
+   "argv": [
+    "--warn",
+    "-c",
+    "sums.b2sum.bad"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "b2sum"
+  },
+  "domain": "misc",
+  "id": "4992f504dac2fcfb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a manifest line whose digest and name are separated by one space rather than two: the reference reads it and calls the row FAILED, and this one does not read it as a checksum line at all.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "f54c687b65c091e6e758d51439a805f4365c0896b8363be8a0bf17d387d9ba94"
+  },
+  "utility": "b2sum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "cc24f8bf00ccd3b542490774969fbb4b765502d724903e973e61bd93769c3569"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--ignore-missing",
+    "sums.b2sum.bad"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "b2sum"
+  },
+  "domain": "misc",
+  "id": "8783c2dde1624112",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a manifest line whose digest and name are separated by one space rather than two: the reference reads it and calls the row FAILED, and this one does not read it as a checksum line at all.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "ebba3bcc98c2b3be400b93744104554b169c45dd671bbd8d292376882772627a"
+  },
+  "utility": "b2sum"
+ },
+ {
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
@@ -115266,6 +115332,269 @@ PINNED = r"""
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
+   "stdout": "2e17a587f3bb308da00be6a821e980b749d71829d29be5d67e890b75dc61ae64"
+  },
+  "case": {
+   "argv": [
+    "-asha1",
+    "--algorithm=blake2b",
+    "--base64",
+    "--untagged",
+    "-z",
+    "-l256",
+    "--debug",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "0b780c739a16923a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "702001aa58263b2375ee2434bf1a5bfd4828dd43743db901a95c87d0960ffbb5"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "90a0d860a1caa3d9d3b54c6b4d9b08768762b17b6109a6cd737637719928e643"
+  },
+  "case": {
+   "argv": [
+    "-asha256",
+    "--algorithm=blake2b",
+    "--base64",
+    "-l256",
+    "a.txt",
+    "missing",
+    "b.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "212fcf0b855fe05a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "c80535916cb2e65f2ea6fe0dc8001d628c61674f3f84f83eddd35d8e850f25bd"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "bsd",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "234677d7dc9445d9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "35c7d31db49a6c687a160a26b2e388e607d727701f132626219308c31e2b4ddc"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "blake2b",
+    "--tag",
+    "--untagged",
+    "--check",
+    "-l",
+    "256",
+    "--ignore-missing",
+    "--quiet",
+    "--status"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "3137101635aac28f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "blake2b",
+    "--tag",
+    "--untagged",
+    "--check",
+    "--quiet",
+    "-w",
+    "--debug",
+    "sums.sha256sum"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "3f23d4df7da714e4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-asha256",
+    "--algorithm=blake2b",
+    "--untagged",
+    "-c",
+    "--debug",
+    "sums.sha256sum"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "537e65a2f1891954",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "blake2b",
+    "--algorithm=blake2b",
+    "--check",
+    "-l",
+    "8",
+    "--ignore-missing",
+    "-"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "53f7830795b3e16e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
@@ -115287,6 +115616,932 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r142",
   "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-asha256",
+    "--algorithm=blake2b",
+    "--base64",
+    "--untagged",
+    "-c",
+    "--check",
+    "-l8",
+    "--status",
+    "--strict",
+    "-w",
+    "-"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "5a16fac215d29d7e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "9a3355651f9ad5ef13a9d0d19702bd7ad397f4266bfb2ff135d582dc2545fd65"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--untagged",
+    "--raw",
+    "--quiet",
+    "--algorithm=blake2b",
+    "--check",
+    "--debug"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_sums_sha256sum",
+   "tier": "random",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "5e29d42623149609",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "sha1",
+    "--algorithm=blake2b",
+    "--raw",
+    "--untagged",
+    "-c",
+    "-l",
+    "256",
+    "-w"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_sums_sha256sum",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "664ac64aeacc00ef",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-ablake2b",
+    "--algorithm=blake2b",
+    "--base64",
+    "-c",
+    "-l256",
+    "--ignore-missing",
+    "--quiet",
+    "-w",
+    "sums.sha256sum"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "7ee4253630d79740",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "blake2b",
+    "--untagged",
+    "-c",
+    "--check",
+    "-l",
+    "256",
+    "-w",
+    "sums.sha256sum"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "99c1cf2f3f7b3689",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "blake2b",
+    "--raw",
+    "--tag",
+    "--untagged",
+    "-c",
+    "-l0",
+    "--status",
+    "-w",
+    "sums.sha256sum"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_sums_sha256sum",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "9a434199b9f5b748",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "sha1",
+    "--algorithm=blake2b",
+    "--raw",
+    "--tag",
+    "--untagged",
+    "-c",
+    "-l256",
+    "--status",
+    "-w",
+    "-"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "abaaa47d01ace910",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "9a3355651f9ad5ef13a9d0d19702bd7ad397f4266bfb2ff135d582dc2545fd65"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "crc32b",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "ac93828325038473",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "82aa5f5560aae867b7d23de1471da767942bd5885d23cda92f169658d849aa20"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-amd5",
+    "--algorithm=blake2b",
+    "--base64",
+    "-c",
+    "--check",
+    "-l",
+    "8",
+    "--strict",
+    "--debug",
+    "sums.sha256sum"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "ae29251a32c7a2fe",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-asha1",
+    "--algorithm=blake2b",
+    "--raw",
+    "-c",
+    "--check",
+    "-l256",
+    "--strict",
+    "--debug",
+    "sums.sha256sum"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "b7d24dac4d207421",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-acrc32b",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "b7fce7b118725f09",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "82aa5f5560aae867b7d23de1471da767942bd5885d23cda92f169658d849aa20"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "28be09c2172bf993b9cc8ad3388546ce4f94642b538ea84471f4a81e1f727bed"
+  },
+  "case": {
+   "argv": [
+    "-asha1",
+    "--algorithm=blake2b",
+    "--raw",
+    "--tag",
+    "-l256",
+    "edge_65537"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "c548cd5367805a6f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "79443a85f712aea400e52e3a276aa719000b87eca41909063ffe18fbda8a881a"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "blake2b",
+    "--tag",
+    "--untagged",
+    "--check",
+    "-l8",
+    "--ignore-missing",
+    "-w"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_sums_sha256sum",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "c7b1d03e69341f6b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "eb39c3e0a6a6ea732ef1fd4977d647c51f855bd3a0b247e11a1af4b28d55efc3"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "sysv",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "d8c4ee99f467f2ee",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d7bf9a93978383ffeaf2580d7f0d5e9d9cab1cb09d940f77c69b8e173ca9cf27"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-amd5",
+    "--algorithm=blake2b",
+    "--base64",
+    "--tag",
+    "--untagged",
+    "-c",
+    "-l",
+    "256",
+    "--ignore-missing",
+    "--quiet",
+    "--status",
+    "--debug",
+    "sums.sha256sum"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65537",
+   "tier": "triples",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "e987759ae371f12b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "sm3",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "cksum"
+  },
+  "domain": "misc",
+  "id": "f1ad5d9c4312268f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5f6af0a369fe4245958c1fa46d35d533d655f94205bfa7262c910010ddbada23"
+  },
+  "utility": "cksum"
+ },
+ {
+  "candidate": {
+   "effects": "7274ff12ecc99b456aee072b80466b48991849b913b089f9d5f7f9dec3f7dc8a",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "if=two words",
+    "ibs=3",
+    "iflag=skip_bytes",
+    "seek=0",
+    "of=dangling"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "dd"
+  },
+  "domain": "misc",
+  "id": "01ff0f09060225d0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
+  "reference": {
+   "effects": "b4b65540c8b9f4dc4985a20830f3e39c2ac6af29720be3df2fd9e118d3afa0a8",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dd"
+ },
+ {
+  "candidate": {
+   "effects": "d7db3f46261fb0adcffe47c085fea690f50c432a42d94de0c0df945b604e6a4c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "if=link",
+    "oflag=direct",
+    "iflag=sync",
+    "of=out",
+    "ibs=7",
+    "seek=2B",
+    "cbs=3"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_dd_case",
+   "tier": "random",
+   "utility": "dd"
+  },
+  "domain": "misc",
+  "id": "13438e2a2b8ead38",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
+  "reference": {
+   "effects": "5d6b2db68ef3b437e5130ba0eb6ee850b182a529cd57673cc8db5d7a5e9400d5",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dd"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "bs=1K",
+    "if=two words",
+    "conv=swab",
+    "obs=311",
+    "status=progress",
+    "skip=99"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_dd_1000",
+   "tier": "random",
+   "utility": "dd"
+  },
+  "domain": "misc",
+  "id": "28c07d6be91cdf28",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dd"
+ },
+ {
+  "candidate": {
+   "effects": "0383f314d38e9535d6a959b016ca0411872b385386f3fc1d6159d8c461b72c91",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "if=ten",
+    "of=two words",
+    "bs=2x3",
+    "ibs=1000",
+    "obs=311",
+    "skip=3B",
+    "seek=5B",
+    "iseek=1B",
+    "conv=ucase",
+    "iflag=fullblock",
+    "oflag=direct",
+    "status=progress"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "pairs",
+   "utility": "dd"
+  },
+  "domain": "misc",
+  "id": "799045a3bb7357aa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
+  "reference": {
+   "effects": "0383f314d38e9535d6a959b016ca0411872b385386f3fc1d6159d8c461b72c91",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dd"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "if=nonl",
+    "of=/dev/null",
+    "bs=1w",
+    "ibs=3",
+    "obs=1000",
+    "count=3",
+    "skip=99",
+    "seek=0",
+    "iseek=1B",
+    "oseek=2B",
+    "cbs=3",
+    "conv=noerror",
+    "iflag=direct",
+    "oflag=sync",
+    "status=none"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pairs",
+   "utility": "dd"
+  },
+  "domain": "misc",
+  "id": "8a4ce1429bd53698",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dd"
+ },
+ {
+  "candidate": {
+   "effects": "d7db3f46261fb0adcffe47c085fea690f50c432a42d94de0c0df945b604e6a4c",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "if=nonl",
+    "of=out",
+    "bs=2x3",
+    "obs=7",
+    "count=1KiB",
+    "skip=1",
+    "seek=2B",
+    "iseek=2",
+    "oseek=2B",
+    "conv=lcase",
+    "iflag=skip_bytes",
+    "status=noxfer"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pairs",
+   "utility": "dd"
+  },
+  "domain": "misc",
+  "id": "c21053e8f94a5e5e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
+  "reference": {
+   "effects": "6f5994c03ab20c947d361e8e8804a77afd81d3b8ecaf3ff41f500097fac7c0ab",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dd"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "if=two words",
+    "of=/dev/full",
+    "bs=1",
+    "ibs=3",
+    "obs=7",
+    "count=3",
+    "skip=3B",
+    "seek=2",
+    "iseek=2",
+    "conv=swab",
+    "iflag=nocache",
+    "oflag=append,seek_bytes",
+    "status=none"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "pairs",
+   "utility": "dd"
+  },
+  "domain": "misc",
+  "id": "f12ae8166cf96754",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dd"
+ },
+ {
+  "candidate": {
+   "effects": "d7db3f46261fb0adcffe47c085fea690f50c432a42d94de0c0df945b604e6a4c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "if=two words",
+    "of=out",
+    "bs=7",
+    "ibs=997",
+    "obs=7",
+    "count=3B",
+    "skip=9",
+    "seek=2B",
+    "iseek=2",
+    "oseek=1",
+    "conv=fdatasync",
+    "iflag=nonblock",
+    "oflag=seek_bytes",
+    "status=noxfer"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "mixed_case",
+   "tier": "pairs",
+   "utility": "dd"
+  },
+  "domain": "misc",
+  "id": "f411f636911de816",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
+  "reference": {
+   "effects": "d7db3f46261fb0adcffe47c085fea690f50c432a42d94de0c0df945b604e6a4c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dd"
  },
  {
   "domain": "misc",
@@ -115327,6 +116582,1803 @@ PINNED = r"""
   "option": "conv=unblock",
   "reason_id": "r144",
   "utility": "dd"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--label",
+    "L1",
+    "--report-identical-files",
+    "-Z",
+    "--strip-trailing-cr",
+    "--unified",
+    "-y",
+    "-b",
+    "q2a",
+    "q2b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "00e94a20f19aebc4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "4b6f160480b4d48fcb8a48b8fee863d22cb01672c92a2c6b423862da78742627"
+  },
+  "case": {
+   "argv": [
+    "--ignore-case",
+    "--strip-trailing-cr",
+    "-s",
+    "-w",
+    "--report-identical-files",
+    "-E",
+    "--unified=2",
+    "t2a",
+    "t2b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "061ff02d1a80f0a5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "2975b28d1eab0538c94b8be07dbc6e23b212e0309c7da8ed6cba00ba1387204c"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-E",
+    "--unified",
+    "-y",
+    "-b",
+    "-q",
+    "-N",
+    "--text",
+    "empty",
+    "empty"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "0ed389b6d3abb917",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--bogus-option",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "11a32f7ff0df7ba5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "82d84881c1a15e922392be7d554dd39c75cb7b22593632ee5eac06ccc3761050"
+  },
+  "case": {
+   "argv": [
+    "--speed-large-files",
+    "--recursive",
+    "-q",
+    "--ignore-case",
+    "-u",
+    "-N",
+    "-s",
+    "dir",
+    "d1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "208ef2048b1aead2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "702e726854a1139c677b658a4566e6e807c27a3c47951caff6ec06f87777c49c"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "ab437a97a920ad6fbf790d06fb82b42412883ab94d0bd1a810d987ca8eccdec1"
+  },
+  "case": {
+   "argv": [
+    "-ru",
+    "d1",
+    "d2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "270b09ca6ed00205",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "3aa639dd7b6434948902022be163bdd9b512b9b0d50626561a908e7e0de7cbb6"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "43fdb146d0ddcc806c942ec44bf9535e5ccd811cf29749baffdc65188dcba7dd"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-U0",
+    "-s",
+    "-w",
+    "-B",
+    "-E",
+    "--recursive",
+    "--new-file",
+    "-a",
+    "--strip-trailing-cr",
+    "-Ltwo words",
+    "--label",
+    "L1",
+    "b",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pairs",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "2fdfb4e2b09965e0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "646ab93a1fdfa05dfe78c972e66753d5039a3e24a0593a6f5965c583908bc991"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "a271cc27c55ddc575f6ec2ed4247de53728808dc64b925b9eed6ea72c3af843a"
+  },
+  "case": {
+   "argv": [
+    "--new-file",
+    "--unified=0",
+    "--strip-trailing-cr",
+    "-s",
+    "--report-identical-files",
+    "--no-ignore-file-name-case",
+    "--recursive",
+    "d2",
+    "d1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "3c11bc22e284eda2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "b215d407434b49a00a78d24f802adc74255b8e3da461f0355d5fdf411d1e082a"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "aecb884b7dcf265d4182e13b274193475312df9713ae69c998da8ae1e5a3f94e"
+  },
+  "case": {
+   "argv": [
+    "--label",
+    "L1",
+    "--speed-large-files",
+    "-u",
+    "--brief",
+    "--new-file",
+    "--report-identical-files",
+    "-i",
+    "dir",
+    "d1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "3fed20f37b422472",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "1a3a4db48b44dea42797a86660c4e21e10d40fc7bdd794e1217761d682fd11ca"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "06e13dd187e0315c56ac5f7a0ed5a254ff2583e69a8a5b2f7e020dd47ce35619"
+  },
+  "case": {
+   "argv": [
+    "-U1",
+    "--unified=0",
+    "--unified",
+    "--report-identical-files",
+    "-w",
+    "-b",
+    "-B",
+    "-Z",
+    "-r",
+    "-N",
+    "-Lright",
+    "--label",
+    "L1",
+    "--speed-large-files",
+    "--no-ignore-file-name-case",
+    "d1",
+    "d3"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pairs",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "439e8e2e024e0563",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "2232e559938e887f3ebd0b0a6ef23e1f206acd68ac72d2a7aa48de9c3a54be4f"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--normal",
+    "--no-ignore-file-name-case",
+    "-U-1",
+    "--unidirectional-new-file",
+    "-i",
+    "--label",
+    "L1",
+    "--brief",
+    "unreadable",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "4983f6e960c3045b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "2a8952371f2adfb561ec8a41a185549567682954440615710c061f389bc5c6bc"
+  },
+  "case": {
+   "argv": [
+    "-Z",
+    "-a",
+    "--brief",
+    "-N",
+    "-s",
+    "--label",
+    "L1",
+    "--normal",
+    "longwithnl",
+    "longnonl"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "4ac7acfd312178be",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 0,
+   "stdout": "ee667d4080f1c5903706524a5b13f0e286ef121848d27e71bdb6f8faa329f1e1"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-ø",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "4be39e5b98a3942a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-B",
+    "-w",
+    "--normal",
+    "--report-identical-files",
+    "-U",
+    "-1",
+    "--recursive",
+    "-b",
+    "a.txt",
+    "a2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "4cfb65068696fccb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "f3ef50a7795ade19100866d6cde62dfb599929d005b46a51f9736e356af5bfd4"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-U",
+    "1",
+    "--unified",
+    "-q",
+    "-s",
+    "--report-identical-files",
+    "-w",
+    "-b",
+    "-E",
+    "-Z",
+    "-r",
+    "--recursive",
+    "--new-file",
+    "--text",
+    "--strip-trailing-cr",
+    "-L",
+    "two words",
+    "--speed-large-files",
+    "dir",
+    "d1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "4e226099f345357e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "f66eba5d40ecc7165c43398536c9378c7093e0219f315eb013fbf50fcb79fde2"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--unified",
+    "-T",
+    "--new-file",
+    "-u",
+    "--no-ignore-file-name-case",
+    "-Z",
+    "--ignore-case",
+    "a.txt",
+    "empty"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "5f73900514f5b70b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "7fc78cdc27aec443800b4cbaf8466ca059e1edc8f29907f34c8c9c0553e1d568"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-U",
+    "99",
+    "--unified=0",
+    "--brief",
+    "--report-identical-files",
+    "-B",
+    "-E",
+    "--recursive",
+    "--new-file",
+    "--unidirectional-new-file",
+    "--strip-trailing-cr",
+    "-L",
+    "",
+    "--label=L1",
+    "missing",
+    "missing"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pairs",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "6a11c39592dce267",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "5fe5994586f170964e339b1941d2dd30d3203d6bb7b806b59ddb78207c038ef2"
+  },
+  "case": {
+   "argv": [
+    "--recursive",
+    "--brief",
+    "-b",
+    "-s",
+    "-q",
+    "--unified",
+    "-N",
+    "d2",
+    "d1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "6ca94508a1cdf9d1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "77f5cd68df2d6b05a151cf06c287d6260ee386dd0a448b466525a3969c9488ba"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "647fa2dd1e7173540e93d94d5f318bf23aebe7c3d08b495f407cf7838a10b90c"
+  },
+  "case": {
+   "argv": [
+    "--text",
+    "--recursive",
+    "--no-ignore-file-name-case",
+    "--label",
+    "L1",
+    "--strip-trailing-cr",
+    "--unified",
+    "--unified=0",
+    "tight",
+    "blanks"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "842d467080a1af6b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "a30d4f1616392b8edd32a883c607373360beac2cce500e3a95821c34636da43d"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "156d28c8413207fb65a2d94309071805d2d6ebe8ab4b3fdc3e1704e8dd829216"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-s",
+    "-L",
+    "",
+    "--speed-large-files",
+    "-r",
+    "--brief",
+    "-B",
+    "d2",
+    "d1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "8a1210055d745677",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "a26a4dc3bb2e7c09881149234046fc3423b409e52716def7f4e261f0a205d6c4"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-E",
+    "-N",
+    "--new-file",
+    "-L",
+    "left",
+    "--unified=0",
+    "-s",
+    "-U",
+    "2",
+    "missing",
+    "missing"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "8c1fde14a048140d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "e740aa2a4bd81dbe5fc9451a79135be3bc2e7277075dc4e6ad81e7a1126f774c"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-b",
+    "-w",
+    "-q",
+    "--speed-large-files",
+    "--label=L1",
+    "-Z",
+    "d2",
+    "d1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "902c19a7b0b36dbb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "e7ee583a0b098d7ede721aa80c633bad560ba0ff5be3c7c7b48e1e6bf533c4d6"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--unified",
+    "-T",
+    "--unidirectional-new-file",
+    "--new-file",
+    "-a",
+    "--report-identical-files",
+    "a.txt",
+    "missing"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "91058b9cc58acd51",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "d881b1d85053259179797fd10c6440e330bb0d3c61bcc8260e8b8f6d584923ba"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--strip-trailing-cr",
+    "-Z",
+    "--unidirectional-new-file",
+    "-Lleft",
+    "--unified",
+    "-y",
+    "-u",
+    "t3a",
+    "t3b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "9351fc6275c0a644",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "00bd282f1818576c5855173adc2cb1f22ad5e9487f6fdb9e9d2af0a653af060b"
+  },
+  "case": {
+   "argv": [
+    "--unidirectional-new-file",
+    "--text",
+    "--report-identical-files",
+    "-B",
+    "--strip-trailing-cr",
+    "-a",
+    "-Z",
+    "d1",
+    "d2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "a4891c87f9a9c29c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "f3498bed072a55e5f8cd0ceda628e8b23632b06a46509f6d8fc7ed68d4b98b46"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--strip-trailing-cr",
+    "--recursive",
+    "--report-identical-files",
+    "--unified",
+    "-y",
+    "-s",
+    "--unified=2",
+    "a.txt",
+    "empty"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "a81019c1a31e1403",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "c10c1a8925c1839c4ce73e3885c04ecf85aca62c351a18a88f985b25707163c5"
+  },
+  "case": {
+   "argv": [
+    "-N",
+    "-E",
+    "--report-identical-files",
+    "--text",
+    "--no-ignore-file-name-case",
+    "-U0",
+    "--unidirectional-new-file",
+    "d2",
+    "d1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "a9701a0c3f9b30ae",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "a40d4ddb80d2b344ddef5f66877a587c2f195f4af037f9abde7c32155a9273c1"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--unified=2",
+    "-s",
+    "--unified",
+    "-c",
+    "-Z",
+    "--normal",
+    "-b",
+    "a.txt",
+    "a2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "ad348c752d16a14e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "6f0337cfcf5c94609731de820f80bab2008f7408743129f38ba836426d524756"
+  },
+  "case": {
+   "argv": [
+    "--unified=0",
+    "--speed-large-files",
+    "-L",
+    "right",
+    "-Z",
+    "-E",
+    "-u",
+    "-i",
+    "q0a",
+    "q0b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "b32988cd3b67903d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "e308739fa226ff4b0c29ee3e2f107aabfc0d7a7f0ebf3eea34b8f5e94ea5993e"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "bfa2b89aa7afcf2d2a4db47874f50c79b6eeb7a266181ef9c41e7a2fcaec1421"
+  },
+  "case": {
+   "argv": [
+    "-rU",
+    "1",
+    "d1",
+    "d2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "b8e99917d6c455ab",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "b74f42e4065355604dd3970b0dd8d1666eddf6ba82eb68e7444399476b59dff6"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "b16ee1bfa07306521046b5ce9a67c964ce3511e84ca3d25248948d23b94f91b0"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-U2",
+    "--unified=0",
+    "-i",
+    "--ignore-case",
+    "-b",
+    "-B",
+    "--recursive",
+    "-N",
+    "--new-file",
+    "--unidirectional-new-file",
+    "--label",
+    "L1",
+    "--speed-large-files",
+    "nonl1",
+    "nonl2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "pairs",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "bc866f065169153f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "e768924aa545153e5d39c95d551daa9b2d0f2a3e7683cc1c666b14649173fc27"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "3966aee5b0dbcefb4fa71c1cae386ecc88fbdaf2ca39d19a9c3a34e8ab90614d"
+  },
+  "case": {
+   "argv": [
+    "-Z",
+    "-N",
+    "--unidirectional-new-file",
+    "--no-ignore-file-name-case",
+    "--ignore-case",
+    "--recursive",
+    "-E",
+    "withnl",
+    "nonl1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "bc9129332b57f641",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-q",
+    "-i",
+    "--unified",
+    "-y",
+    "-r",
+    "--unified=0",
+    "-a",
+    "p05a",
+    "p05b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "bd5c17107f3ad0fc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-Z",
+    "--recursive",
+    "-Lleft",
+    "--unified",
+    "-y",
+    "--label=L1",
+    "--normal",
+    "t1a",
+    "t1b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "c069fc488a975a25",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "ac93f698fdebd8e4f6056a3ca31dcfddef6f76ab85ae3f60090c4240f65e233d"
+  },
+  "case": {
+   "argv": [
+    "--speed-large-files",
+    "-Lleft",
+    "-w",
+    "--new-file",
+    "--unified=2",
+    "--unified",
+    "-N",
+    "d1",
+    "d2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "c0a6d8bebf4f141a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "9c25719abfe24b701a518458bc09b6864302018a7d8197d35d7baca0f119b2ed"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "aa61c8fbcf5100f2745d9903154e1ad045d63b710dff089074b871eaede831b7"
+  },
+  "case": {
+   "argv": [
+    "--recursive",
+    "-B",
+    "--unified",
+    "--label=L1",
+    "--new-file",
+    "--unified=2",
+    "--ignore-case",
+    "e2a",
+    "e2b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "d469b9d11888094e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "89af58e3c021486da6fb75abd37e635289b58746b7b7173a54b73e3bbcb487dd"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "abf845e4e08f4a73bcee71db3b6c11954e0181797847d49d2b7393f4a4d8cfcc"
+  },
+  "case": {
+   "argv": [
+    "--unified",
+    "-b",
+    "--speed-large-files",
+    "-u",
+    "-N",
+    "--unidirectional-new-file",
+    "--new-file",
+    "t2a",
+    "t2b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "dcb37cefd9c23bd5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "0d9151991628112e0a503734edd5433910a5b014205a53e41edab8ef621969d3"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "baabb4507a1d8f7fd9f0e7264acd6300650a2796186b0c9a7d9c7da900177947"
+  },
+  "case": {
+   "argv": [
+    "--ignore-case",
+    "-b",
+    "-u",
+    "--report-identical-files",
+    "-Ltwo words",
+    "--unified=0",
+    "--label=L1",
+    "n1a",
+    "n1b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "e20adf3a4812c586",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "eab2d4c8b63b081272e275222bc6cd618d304960f3109ed987347c5557ca333f"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--strip-trailing-cr",
+    "-s",
+    "-q",
+    "--normal",
+    "-U",
+    "-1",
+    "--unified=2",
+    "--unidirectional-new-file",
+    "nulx",
+    "nultx"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "e2f1f7fb542c643e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "d055a4cb422f12f34817deec64e613273cc7559f91bcec266cde1bbd11c9f18a"
+  },
+  "case": {
+   "argv": [
+    "-U3",
+    "--unified=0",
+    "--unified",
+    "--report-identical-files",
+    "-b",
+    "-Z",
+    "-r",
+    "-N",
+    "--new-file",
+    "-a",
+    "--text",
+    "--strip-trailing-cr",
+    "-L",
+    "",
+    "--label=L1",
+    "--speed-large-files",
+    "t2a",
+    "t2b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "ea1b35a731c8125e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "de5588bac2392788c4ad22bfd3a43ab01d286111e46f40f125f5f54ec4418cc2"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--unidirectional-new-file",
+    "-N",
+    "--unified",
+    "-T",
+    "-s",
+    "-b",
+    "--report-identical-files",
+    "longwithnl",
+    "longnonl"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "ed707d0e32df4e0c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 0,
+   "stdout": "70c409567b6cfcfa07d05f1016c19e107dcc2a98314cef4cfa277da414e5d3e0"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--unidirectional-new-file",
+    "--ignore-case",
+    "-Z",
+    "-q",
+    "--unified",
+    "-c",
+    "-b",
+    "a.txt",
+    "missing"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "crlf",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "eea4e892a66b7a7a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "4a9c2e8e006655b1b12eaf9e9625ab263b8a261b802498664511e931b872fa9a"
+  },
+  "case": {
+   "argv": [
+    "--report-identical-files",
+    "-s",
+    "--label=L1",
+    "-N",
+    "-q",
+    "--no-ignore-file-name-case",
+    "-w",
+    "t2a",
+    "t2b"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "random",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "f55e5245af8cf5b1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "1b3f52554db121182bb170c8eebfa823077d2ec78ff2d1a5d6d9bfc98a6d00fc"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "41282919ea29a71c0f7c2e2795c9a77852ed8892e1d47de53f966667b05a1ece"
+  },
+  "case": {
+   "argv": [
+    "-rq",
+    "d1",
+    "d2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "f603d5a4aaf1d818",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "64071865ece82557b992ae6a086bd70efe4dcb313a56a6e0eab7be41b450dc99"
+  },
+  "utility": "diff"
+ },
+ {
+  "candidate": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "a7dca7d5a0433dd7f0e92d3ddc4ed812bf9c7b2e427f40b9b45f2c1a11cc5059"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-U",
+    "1",
+    "--unified=0",
+    "--unified",
+    "--brief",
+    "--report-identical-files",
+    "-i",
+    "-b",
+    "-B",
+    "-Z",
+    "-r",
+    "--recursive",
+    "-L",
+    "two words",
+    "--speed-large-files",
+    "--no-ignore-file-name-case",
+    "d2",
+    "d1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc_pair",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "pairs",
+   "utility": "diff"
+  },
+  "domain": "misc",
+  "id": "f7b1c126a7ec9b61",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the output styles this diff has not got, and the order it reads them in. -c, -y and -T are refused as letters it does not know, where the reference sees a second output style beside --unified and calls the pair conflicting; and an invalid context length is read here after that clash and there before it, so the two runs name different faults. What is left of the body is --unified=0, where the reference joins neighbouring runs into one hunk that this one splits; and the quoting, since a name with a space in it is shell-quoted in a verdict and C-quoted in a unified header and this one writes it plain.",
+  "reference": {
+   "effects": "f564511d7ba7e4479b672bf835fdff5281e1e7a47e8b1cf00438791c6f2fd195",
+   "status": 1,
+   "stdout": "3c7d76a2c5c71a613a6cbdda93ff7de07ce6aa848a3b472b85a31d62f4f0ba04"
+  },
+  "utility": "diff"
  },
  {
   "domain": "misc",
@@ -115697,6 +118749,544 @@ PINNED = r"""
   "utility": "diff"
  },
  {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-Kkern.log"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "124ddb9864cc0270",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "157f45bc9ddc99ed2f3b67f226839f0405058f78dad80c4ccf5f08fdb06cfaeb"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "cd0983aa0bf6c4cf1963dd21b0ea7b97f66986aa8b3f128e14c90135c4a0ace4"
+  },
+  "case": {
+   "argv": [
+    "-k",
+    "-T",
+    "-fkern",
+    "-l",
+    "warn,info",
+    "-J",
+    "-s0",
+    "-Fa.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "1e8a493bfc30a987",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "f7558f59c60bf28cfa1a8a4e6a53fc886fcc5676994e73119dc30c9741dbeb3a"
+  },
+  "case": {
+   "argv": [
+    "-K",
+    "kmsg.log",
+    "-x",
+    "--time-format=iso"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "248d26f50318080d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "156679e8c103b1ecb43ef61ac0a1890c13fef4a3664f559eb48522aa6835ac3e"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b9c728eabecaf0e7575f7087be06382fbe12109f83462bcb1a3bbe715ccf655a"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "kern.log",
+    "-L=always"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "2e8c9eb1231152c9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "bbb1d548acbd758ff83b67cf78ae4d31788a52692c0e8e768f429358519fe3ef"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "bf7465b17d3474dfdf8b1e37c9d6b3820ad2e1f981f4d51ed4175f52d0c7446b"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "kern.log",
+    "-x",
+    "-T"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "346419e12890144d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3980ef42a98b0a9fb8ea103ca40855313c6396df49eb74a2907949ffbf43da7f"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d80d2ea3e4e4a4b2d531e0d8b879c4a3874a169d19abbb015d56527d32cc6298"
+  },
+  "case": {
+   "argv": [
+    "--file=kern.log",
+    "--human",
+    "--nopager"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "3df45559c3bf3fc2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "4dfdd8ef1172280c607bf80c808d90d79fb65a0115008fba7d2c8440358158ff"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "71edb0a068496634d45e31b0876351701b53818284474d28ad44187ae588b728"
+  },
+  "case": {
+   "argv": [
+    "-Fbinary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "410f88c235b1f4c2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "8369ec878ed31a78e641453c7aa2fd0f09a2805b326a3eecd763b8423081d60a"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d80d2ea3e4e4a4b2d531e0d8b879c4a3874a169d19abbb015d56527d32cc6298"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "kern.log",
+    "-H"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "4660a5bfba274fd9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "4dfdd8ef1172280c607bf80c808d90d79fb65a0115008fba7d2c8440358158ff"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b9c728eabecaf0e7575f7087be06382fbe12109f83462bcb1a3bbe715ccf655a"
+  },
+  "case": {
+   "argv": [
+    "--file=kern.log",
+    "--color=always"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "5d204163604e8880",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "bbb1d548acbd758ff83b67cf78ae4d31788a52692c0e8e768f429358519fe3ef"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "71edb0a068496634d45e31b0876351701b53818284474d28ad44187ae588b728"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "6c177ed715a17cc9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "8369ec878ed31a78e641453c7aa2fd0f09a2805b326a3eecd763b8423081d60a"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-Lnever",
+    "-d",
+    "-x",
+    "-F",
+    "kern.log",
+    "--time-format=iso",
+    "-J"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "797986a4c57e8ac9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7f8be4923019ff83de530796733535ce97973ad24ff3b59ea118e7fa01c6f033"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-K",
+    "kern.log"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "88e93a3561e26146",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "157f45bc9ddc99ed2f3b67f226839f0405058f78dad80c4ccf5f08fdb06cfaeb"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e1f70b745915fa6a4def09fd895e0c61e14bb4dbf9de9d9e0e1f4f80fbc339a2"
+  },
+  "case": {
+   "argv": [
+    "--file=kern.log",
+    "--json"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "bc31b8f2144578c6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b2b2608b4f5638b3cd93c135780886e550082ac15280f5c745953a71508d60a1"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "cd0983aa0bf6c4cf1963dd21b0ea7b97f66986aa8b3f128e14c90135c4a0ace4"
+  },
+  "case": {
+   "argv": [
+    "--noescape",
+    "-J",
+    "-S",
+    "-u",
+    "-K",
+    "kmsg.log",
+    "-Lalways",
+    "-x"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "c3b0f64cfed3b5c6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "148311ded93a1ef6a4dffb4602132a5fff083adbe234a3e528b58864eb263078"
+  },
+  "case": {
+   "argv": [
+    "--file=kern.log",
+    "--ctime",
+    "--show-delta"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "e3a926049f81ae4a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "86a20ced3b47e2a1109bab43dec94ead5f6b66efb716d7970b56f1c2e516a359"
+  },
+  "utility": "dmesg"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e1f70b745915fa6a4def09fd895e0c61e14bb4dbf9de9d9e0e1f4f80fbc339a2"
+  },
+  "case": {
+   "argv": [
+    "-F",
+    "kern.log",
+    "-J",
+    "-x"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "dmesg"
+  },
+  "domain": "misc",
+  "id": "e7392054cf609db3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the parts of the reference rendering this one does not carry: the second colour a message prefix is given under --color, the delta --human counts from the message before rather than from the boot, the facility field of --json, an iso time read from --kmsg-file, --ctime beside --show-delta, and a zero byte in a --file input, which the reference drops and this one escapes.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7f8be4923019ff83de530796733535ce97973ad24ff3b59ea118e7fa01c6f033"
+  },
+  "utility": "dmesg"
+ },
+ {
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
@@ -115735,6 +119325,135 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r192",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "07a25583abfde547",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "powerset",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "0b2445a280c1ee64",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "0c4cb13725ce0e74",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "0dc4fd9e2f2d04de",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
   "utility": "factor"
  },
  {
@@ -115795,6 +119514,38 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-h",
+    "--exponents"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "1914fe95efd092b4",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--exponents",
     "18446744073709551617"
    ],
@@ -115811,6 +119562,39 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "powerset",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "2afb2683a5d2e36a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
   "utility": "factor"
  },
  {
@@ -115898,6 +119682,38 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-h",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "34177e5be4e1649a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--exponents"
    ],
    "domain": "misc",
@@ -115964,6 +119780,70 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "4154cc4ef5288e31",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "44394e1ac241243d",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
   "utility": "factor"
  },
  {
@@ -116103,6 +119983,38 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "548658759b801c14",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "18446744073709551617"
    ],
    "domain": "misc",
@@ -116118,6 +120030,70 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "5880321d1fd05721",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "5d492ae1b3858ea2",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
   "utility": "factor"
  },
  {
@@ -116156,6 +120132,39 @@ PINNED = r"""
   "case": {
    "argv": [
     "-h",
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nonl",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "6fc3aa9a819f68c1",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
     "18446744073709551617"
    ],
    "domain": "misc",
@@ -116181,6 +120190,38 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "721ccbd1854ce5f8",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "18446744073709551616"
    ],
    "domain": "misc",
@@ -116196,6 +120237,72 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "numbers",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "76058e896ae12373",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "wide_words",
+   "tier": "random",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "76a0995b38194bcc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
   "utility": "factor"
  },
  {
@@ -116282,6 +120389,39 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor_random",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "7c041eaa09ec4683",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--exponents",
     "18446744073709551617"
    ],
@@ -116325,6 +120465,71 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "8b6f58b5a6ace8a9",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "many_lines",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "8c92ca65b6a8c80a",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
   "utility": "factor"
  },
  {
@@ -116399,6 +120604,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "9ab3b89a14cfa4ba",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
   "utility": "factor"
  },
  {
@@ -116565,6 +120802,70 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "ad548bffb2987cba",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "b5e4fb0205c10ce8",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--exponents",
     "-h",
     "18446744073709551616"
@@ -116582,6 +120883,70 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "b6cedee0cccd7dd5",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "b744ea8279f3c039",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
   "utility": "factor"
  },
  {
@@ -116634,6 +120999,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "c1f9c97ae3b26a16",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
   "utility": "factor"
  },
  {
@@ -116747,6 +121144,70 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "d39a5e66423b4e62",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exponents",
+    "18446744073709551617"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_factor",
+   "tier": "powerset",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "d6fd42b18616fe55",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aad82abb07e5b87800f3ac1017ba647d6bcbe5711b6a81de183849f911a457be"
+  },
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "18446744073709551616"
    ],
    "domain": "misc",
@@ -116762,6 +121223,38 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "dbfe953543003a98",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
   "utility": "factor"
  },
  {
@@ -116789,6 +121282,39 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
+  "utility": "factor"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-h",
+    "--exponents",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "triples",
+   "utility": "factor"
+  },
+  "domain": "misc",
+  "id": "e084621bcd5e9fc7",
+  "kind": "deliberate",
+  "list": "ledger",
+  "reason": "deliberate: this factorizer is a native-word one and its ceiling is a whole unsigned word, where GNU falls back to a bignum: 2^64 and the primes above it are refused rather than factored, and a token longer than the word is reported by that ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6d016b326256f6e7a53c9b0321820c6121d9a5f6ad390cd1273b8c6e875f007a"
+  },
   "utility": "factor"
  },
  {
@@ -116946,6 +121472,185 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "ac759b73af7f24718cfdf9398b7d5b1c82fdcca619fe4fe2e2d90c3090a4126f"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-n",
+    "-o",
+    "FILE,SIZE,PAGES,RES",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "244f4f341e6bb213",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "4b71c63ef6337533b22bc585488f2304f0df10c212d5dd06dae8bba7773f9f46"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "004b290f2e46e1047404a60764f4861522e2561b15d044820e20598ac13693f8"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "long"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "2992c4dbf9320558",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "c779fda3c038e602e7525f68217ae1fd7d67550136524f236063ec297199fa49"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "-n",
+    "-o",
+    "DIRTY_PAGES",
+    "-r",
+    "--json",
+    "--raw",
+    "binary",
+    "missing",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "2e928eb81ca78b44",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "df475a2ba4fc1329ca01787b52298d7162964ca265746593f5c9a47f66852b08"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a31b28a24e23b3c19f36b59cd0b3e26844f5af14b8c6de3d0ebfbf008612113b"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-o",
+    "res,file",
+    "empty"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "54da365411e64a88",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "1b04382a0a1579499700d9b42addf03e3159fd4d8a4114e13f46e13abc50220d"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "-n",
+    "-o",
+    "DIRTY_PAGES",
+    "-r",
+    "--json",
+    "--raw",
+    "unreadable"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "592d025268b2e84d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "0129b173236c81089e7b2b0a0c544d1eeeee38f8d824f7f1f6200664a752b689"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -116968,6 +121673,140 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r194",
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "1e6be92ffa74c61044ff888e759ef6e80c6a6547311f0531b551cbd6a4f1b4d4"
+  },
+  "case": {
+   "argv": [
+    "--bytes",
+    "--noheadings",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "94a7a955629bb1aa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "5f05e7947ea0fb2f5c0c7ace91a171c62ff495c31aaaea1b8ec3a392625f7394"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-oDIRTY_PAGES",
+    "-r",
+    "edge_65537"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "9a12f95a78ff979c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b7f58b022e0da14ec31ea3e2f0d23311c72a1076c98a20e17b421d1c2dafa942"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-J",
+    "-b",
+    "-oDIRTY_PAGES",
+    "-r",
+    "--raw",
+    "empty"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "b19732f787b5680d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "68baf4c71ab4cb38e24b5707bacd5288b2e09b6b756946c9fb2344b7fb5f58eb"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "96c66ae7fd3db97b25358aa7d6f4ce32b9cc5cb624c0abb77738474dee0c265a"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "c3672fa28ef1a632",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "f7101258d73293591e83076d45de0670e88c4c1e0b63c505959aa4abf1144662"
+  },
   "utility": "fincore"
  },
  {
@@ -117005,6 +121844,38 @@ PINNED = r"""
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
+   "stdout": "e8deb60dd44f65bdfc0fd6d8b9dfce25ed731b3d403e3efc995c92940e71e524"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "f331213676dde5b4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "1d524bd469bc1a5e27d87347ad453d8d8494ab01115eaa52693285c133dc10ab"
+  },
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
    "stdout": "130ce963311ddacf4742389b6054c7fa6b70af32f06d98dfd0e7eafeb33fc195"
   },
   "case": {
@@ -117024,6 +121895,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r195",
+  "utility": "fincore"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-oDIRTY_PAGES",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "fincore"
+  },
+  "domain": "misc",
+  "id": "fd7485da18ed8871",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the DIRTY_PAGES column, which the reference reads from the kernel cachestat call this one does not make, and the width its table hands each column: it spends the spare room of the line on a column that has something in it, so a number two digits wide stands in a column five wide, and its human-readable sizes keep a tenth this one rounds away.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "c48cfac4ebc42c9362247f35b1e7e70b33b008373e1d78414b3efd24b850333c"
+  },
   "utility": "fincore"
  },
  {
@@ -117083,6 +121986,1035 @@ PINNED = r"""
   "utility": "fincore"
  },
  {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "0de703567c49cfbedf0509741cbb42abea6447255e995069a584a905763e131d"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "16",
+    "-o",
+    "-x",
+    "-b",
+    "-s100000",
+    "-C",
+    "-Lnever",
+    "empty",
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "174018dbfa5b1f32",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "4cffed55d690d0e7238aea1b88e9d3aa7e04ad75d06c0983e68835b3eb15683b"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a70ae5ec0fa291c939bcc413bbb8af2ebd30481b75e833731aed8bcd81b6c08d"
+  },
+  "case": {
+   "argv": [
+    "-d",
+    "-c",
+    "-v",
+    "-b",
+    "-C",
+    "-s16",
+    "-n",
+    "1",
+    "blob"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "2432e8119029be10",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "90c08c62266adfd2bf41e0d41ff8dcfd16bca217457bcd8653bc394b9a7599d2"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "c4228de6b102fbcfd78b8929967feaf51e30dd6c7ae9cd3375650a7146dc2756"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-Lalways",
+    "-C",
+    "-c",
+    "-b",
+    "-d",
+    "-n",
+    "1KiB",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "286398a4bdee11eb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "44d71909688ebd05cd16bacf919f19c0ebc3e3ecff0bd4296eb853552ad00bb1"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b381c989d6deccb45ccdbfc360ef8432786b64f599bf506d655321fff8e9c4f0"
+  },
+  "case": {
+   "argv": [
+    "-C",
+    "-s1KiB",
+    "-n1",
+    "-Lnever",
+    "-d",
+    "-v",
+    "a.txt",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "3cf960cf49cb6856",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7e57f02d38fbf03ef314510f1971c9fe149f31cf9f9ae6c9d3dd182f47307b35"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "54e21fbc8ade59c6d1846adba21c3cb4f7eb6268715ba36cf94db9893544ee45"
+  },
+  "case": {
+   "argv": [
+    "-C",
+    "-n1KiB",
+    "-d",
+    "-c",
+    "-o",
+    "long"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "48919e75331c4a3e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "aac6e00f8f9efa6dd3eaa8c84c706f3dc0a570a38f6ba0d3409d965a34927010"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "0de703567c49cfbedf0509741cbb42abea6447255e995069a584a905763e131d"
+  },
+  "case": {
+   "argv": [
+    "-Lnever",
+    "-s100000",
+    "-b",
+    "-X",
+    "--color",
+    "-n",
+    "16",
+    "-x",
+    "nonl"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "4b2570c2730210ed",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "8d58ffeab4e49040421434ee9069567bc941cd6c8976bdca07acd6091d3c0858"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2b767b1d802a767d2a1d9c384e1606ed2b5d1da69a64762d61975dbc44a49d86"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "1",
+    "-C",
+    "-v",
+    "-s",
+    "5",
+    "-x",
+    "nonl"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "5372454c393074e0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a8a129804fce2f435590c974e02aec7c0fdf6718a0a6220a07d023b2d4675401"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "39b3bb9737d6800f70f62e1cededa877c41ee66c7b45bea1cafbe52fae949f34"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-o",
+    "-s16",
+    "-Lauto",
+    "-C",
+    "--color",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "55052fbf8e5fd768",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a14e29d26d3e927d922df10a5755836943a2633dd7327a8452faea97fa7ff8cf"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "0de703567c49cfbedf0509741cbb42abea6447255e995069a584a905763e131d"
+  },
+  "case": {
+   "argv": [
+    "-Lauto",
+    "-c",
+    "-n",
+    "17",
+    "-v",
+    "-X",
+    "-s100000",
+    "-d",
+    "long"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "5730424988857224",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "114fcf08650eba5a6a8386828b3792424abe2832a274fb09cddcafa0141ed475"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "0de703567c49cfbedf0509741cbb42abea6447255e995069a584a905763e131d"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "-s",
+    "100000",
+    "--color",
+    "-X",
+    "-v",
+    "-Lauto",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "60c37638fbbb7f4f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b7648426071cc27e2453d9bd702d175b7de121175555e3beeaf8f7a0b7a9479c"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "8fa7f6eaa07d63707e135e797acb0a81e47384b361efad49601d6f20d63821e0"
+  },
+  "case": {
+   "argv": [
+    "-n1",
+    "-C",
+    "-d",
+    "--color",
+    "-c",
+    "-X",
+    "-v",
+    "two words"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "61b6fd1306f0919e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "1d084e2168cd81079b7b970bef5282f234d06be3c5ac7e88f7f55cdf5cdb0e8b"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "0de703567c49cfbedf0509741cbb42abea6447255e995069a584a905763e131d"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-v",
+    "-C",
+    "-X",
+    "--color",
+    "-s",
+    "100000",
+    "-d",
+    "long"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "6e9b216e0bb6115f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "114fcf08650eba5a6a8386828b3792424abe2832a274fb09cddcafa0141ed475"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "db3fb442e574115e678724f4501395d863932518b4322b97ba9ecb57baa3ca6a"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-n",
+    "1KiB",
+    "-d",
+    "-X",
+    "-C",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "731e4d12fdb0982a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2fdbf38cc512e3225392bccb7203e6282c1ed27ac7eed205e2cd33fd9bbe4341"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "24b45855d7f330dfdf30be8920babaff85f6d59256f6fb9d1604a60204af0ec4"
+  },
+  "case": {
+   "argv": [
+    "-C",
+    "--color",
+    "-n16",
+    "-c",
+    "-X",
+    "-b",
+    "-d",
+    "long"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "edge_65536",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "7d44f4a889fd54d9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "cc37c10c3cacb7d35f670d038a8e04e6cd071de06284aeb38f3616a08ef0c604"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b6b0e76fe893e0483de2e2f8fc9be4383150e378bb83fcfad5cf0a5bdc37311f"
+  },
+  "case": {
+   "argv": [
+    "-s3",
+    "-o",
+    "-Lbad",
+    "-c",
+    "--color",
+    "-n1",
+    "-v",
+    "blob"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "blanks",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "81ab7bb310ee5b9f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2f2489316f4b1c7555979d315e5a6f13d4ee47ac5884bfa2683bae97b2ff4e21"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "65536",
+    "-b",
+    "-o",
+    "--color",
+    "-C",
+    "blob"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "ab02fb93700e3777",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "0c8078c1506f7edf9ef0edb07bf7a08797c9212cec1e021f3df0a3205fb28896"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "53a4985f188af3388a99fb78d7d1b423a8c740c9fa2abd1161937b55210fed78"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-X",
+    "-n",
+    "17",
+    "-o",
+    "-v",
+    "-b",
+    "-C",
+    "edge_65537"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "b0c778285dfac18e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7cc484f6e391ab1a16151bf50fd51f2cf13e847d56996a56386dd6604109403e"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "94e25c19ae01ec7b33bf12adb5a36483aa4c2dd1339325eaf25b527b406aea27"
+  },
+  "case": {
+   "argv": [
+    "-C",
+    "--color",
+    "-o",
+    "-b",
+    "-x",
+    "-n",
+    "1KiB",
+    "-Lauto",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "b238453be5122ff8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "bac281a94738f801e0909f044631abf288e10a1f93d43cb8b9fbe6a428bf10ad"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "4cffed55d690d0e7238aea1b88e9d3aa7e04ad75d06c0983e68835b3eb15683b"
+  },
+  "case": {
+   "argv": [
+    "-C",
+    "--color",
+    "-Lalways",
+    "-s100000",
+    "-b",
+    "-X",
+    "-x",
+    "two words"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "ba0481a8bcfd3724",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b1a43bbab6795be5f04c77b49ac0b3d34803b2faba0451cbb0f16781750a3da3"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3554b7cb747182e23f7e25d00958dcb066020766383efd22f79e9d08552959d7"
+  },
+  "case": {
+   "argv": [
+    "-X",
+    "-c",
+    "-n",
+    "0",
+    "-s",
+    "1KiB",
+    "-v",
+    "edge_65537"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "c276a4379a033779",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "0078c034a7b02577bb7c24ba67e781847e731070633c6de91b96839517ccb98c"
+  },
+  "case": {
+   "argv": [
+    "-s0",
+    "-C",
+    "-c",
+    "-Lauto",
+    "-b",
+    "-X",
+    "long"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "d9efab4649871271",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2ed3baf5572b033163c05ecd0491ec2a1e8fe28c86389910eb0335efd2121262"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "17654587efdec3d6c85dcd7a590549b65ba110e39f60cf9a5454c7977f3daa27"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "1KiB",
+    "-X",
+    "-c",
+    "-s1KiB",
+    "-b",
+    "-d",
+    "-o",
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "e02f1ed249e41309",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3554b7cb747182e23f7e25d00958dcb066020766383efd22f79e9d08552959d7"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7a0b7abebf62688e7a61de2d86c526f6b2a5206d116d3364bad996fafc8cf194"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-X",
+    "-v",
+    "-c",
+    "-s1KiB",
+    "--color",
+    "-x",
+    "a.txt",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "e5e928dde64ff76c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7e57f02d38fbf03ef314510f1971c9fe149f31cf9f9ae6c9d3dd182f47307b35"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "14003b8d0d0cd50d7f704b5181fce481cab74a46f40635331f6d0d04528ae42c"
+  },
+  "case": {
+   "argv": [
+    "--one-byte-hex",
+    "--canonical",
+    "a.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "ec4d9ef9aa1996a3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a80d08d7d1873c554357d3436a6a5eb53031a608f2ac9431524daa18014a532a"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a47a50b984a622aefcedec76096770b8adc4cefc7b35073ee23198e548af4f3e"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--color",
+    "-v",
+    "-x",
+    "-n",
+    "1KiB",
+    "-C",
+    "-Lauto",
+    "a.txt",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "ecc11d065de89ed9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "92cb4bd1c962673f4cf52a341584c972a78bc7cc73d34cbf4b8b39197ec06ef1"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "1569fb748246d76c872ee823450f94c03d6689e8856815d5dbdd59d1bfa800ff"
+  },
+  "case": {
+   "argv": [
+    "-C",
+    "-s5",
+    "-v",
+    "-c",
+    "-o",
+    "-n",
+    "1KiB",
+    "two words"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "eed66762a650bb10",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "7647b6e266f48211a08b42c573f18905776f07073df4d44238051e793c12b44d"
+  },
+  "utility": "hexdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "18c1771eee299f39d82be3b731468fffcff429dc950147309164b5d428b675b3"
+  },
+  "case": {
+   "argv": [
+    "-C",
+    "-d",
+    "-s",
+    "16",
+    "-b",
+    "-n0",
+    "--color",
+    "-o",
+    "blob"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "random",
+   "utility": "hexdump"
+  },
+  "domain": "misc",
+  "id": "f782eb095304ac7b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the address column belongs to each format in the reference and to the run in this one. The last of -b, -c, -C, -d, -o, -x and -X sets the width of the closing offset line, and every format line carries the width of its own conversion, so a run that mixes -C with a narrower format writes eight digits where the reference writes seven and the other way about. Beside that: a skip past the end of the input leaves a different offset behind, and -L takes a colour mode this one does not check.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "hexdump"
+ },
+ {
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
@@ -117110,6 +123042,352 @@ PINNED = r"""
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
+   "stdout": "0e585cc0b725251e026a6494dcca9b4b54441a34417006ea00c6e54d24e276bc"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-F",
+    "-nbad",
+    "-w",
+    "-1",
+    "-0",
+    "-f",
+    "empty"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "08a6d6f6029aa339",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a06565f915acd600740c37dec0126c7afce3617035cdcf31dd1304d367c60c99"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "-x",
+    "-R",
+    "-w",
+    "--time-format=notime",
+    "-a",
+    "-f",
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "1d35a2d94945a8c1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "04e02349fee31970fc48c79dcd07bf35183403c56f51eb39e0b568557d18df78"
+  },
+  "case": {
+   "argv": [
+    "-w",
+    "-1",
+    "-T",
+    "-n",
+    "1",
+    "-a",
+    "-x",
+    "-f",
+    "wtmp",
+    "reboot"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "2c73ba2a6e12f97a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9c421a211a014d61de4d4c4ed4c81a85587b14c64d4071702d243aba5bf05f6e"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9638aaa2b97eed094aa6dbb7f08a0fbdefd3b5850f85953325d2bb3b2fe8f6dd"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-T",
+    "-1",
+    "-a",
+    "-0",
+    "-w",
+    "-f",
+    "wtmp",
+    "alice"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "326534ed1658e6a7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "afbcb766354cb4b830e465e2035cadc4b17b1c15db641887ce883650156d522d"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "0e585cc0b725251e026a6494dcca9b4b54441a34417006ea00c6e54d24e276bc"
+  },
+  "case": {
+   "argv": [
+    "-R",
+    "--time-format=notime",
+    "-T",
+    "-x",
+    "-i",
+    "-0",
+    "-f",
+    "empty"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "359c75691f29f4c5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "f484b6e7a4c59a83665a81cf6f4e075d64926abf33552a9d4a9884df728aaf36"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "bad",
+    "-R",
+    "-x",
+    "-3",
+    "-0",
+    "-f",
+    "wtmp",
+    "pts/0"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "40e27374e8ca2535",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "1a965a2b9aa72c13794295cf6faa3c0dc06edf9283816030b4d081a9928a9695"
+  },
+  "case": {
+   "argv": [
+    "-R",
+    "-x",
+    "-F",
+    "-T",
+    "-i",
+    "-n",
+    "0",
+    "-f",
+    "utmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "48d7f69bb3d33b39",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2601ffbf8d1a27360dfdeff4a670819a79753a9390c9f8fbf5ee04d48bf759a4"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a06565f915acd600740c37dec0126c7afce3617035cdcf31dd1304d367c60c99"
+  },
+  "case": {
+   "argv": [
+    "-T",
+    "-i",
+    "--time-format=notime",
+    "-R",
+    "-a",
+    "-f",
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "4a023b055bf00293",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "67ee9ad0a0ae07fbf4dfae765566e5822d0cda016864085b55cff224572ebdc3"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-0",
+    "-x",
+    "-F",
+    "-1",
+    "-w",
+    "-f",
+    "wtmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "56609e2b74b5d097",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3a1852840f16bb82a7f969ebcc78ad1f3b41d3c22c2a846e2ac827d17d373385"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
    "stdout": "cda2b120e902b1988d5185fc8b4e6b42d7e391bc747af17e591d33ac359ae636"
   },
   "case": {
@@ -117130,6 +123408,378 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r206",
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "ad4f1ede621a0c05005eeebc023f187f01646da68dbd682732515f9c35ad0390"
+  },
+  "case": {
+   "argv": [
+    "--time-format=full",
+    "-1",
+    "-i",
+    "-T",
+    "--file=wtmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "75e6df28b7ce1b7f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "bb0777cd39a5d3db93ec1ce08d78104406132f66ec4fc7247d760928c164487f"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a85dc8cc34450f1a6bfc095da16d62c5214fadf88c03b15a3f5a2a4842467f83"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-a",
+    "-3",
+    "-0",
+    "-1",
+    "-T",
+    "-f",
+    "wtmp",
+    "dave",
+    "tty1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "78c05a9fadfad9fd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "647decc01662de1ed24cc3c478f7b59fddb74e7d5924b56e2de04c8b81f16088"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "106537dd97edefbd589b9402a6a1c7d35e1e040a630730603e673edca9281740"
+  },
+  "case": {
+   "argv": [
+    "-1",
+    "-n",
+    "100",
+    "-3",
+    "-T",
+    "-0",
+    "-f",
+    "utmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "8afcc22e9d511c62",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2601ffbf8d1a27360dfdeff4a670819a79753a9390c9f8fbf5ee04d48bf759a4"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "6f20943c5d7032ced39a3a675bd894859fb99e58dd182aae7f826716a3cf7ba2"
+  },
+  "case": {
+   "argv": [
+    "--time-format=notime",
+    "-i",
+    "-x",
+    "-a",
+    "-1",
+    "-3",
+    "-f",
+    "wtmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "93301bbaec3e550a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a5ca475375907aaa8bf5c7605aa57295b7841a47ce0d86a16d59cf13fd1903b5"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "cf8abf8ac833fe21d05ce5419ee827f95e608a1316faa354310aa805b870c42b"
+  },
+  "case": {
+   "argv": [
+    "-T",
+    "-i",
+    "-3",
+    "-w",
+    "-0",
+    "-f",
+    "utmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "ad49c6a7b01c13ab",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2601ffbf8d1a27360dfdeff4a670819a79753a9390c9f8fbf5ee04d48bf759a4"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9b2a75a8fb25e27073c0eb93bfdaad8b9e1aa069fdba388092e6a800bd436f46"
+  },
+  "case": {
+   "argv": [
+    "-3",
+    "-x",
+    "-a",
+    "-1",
+    "-R",
+    "-F",
+    "-f",
+    "wtmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "aee263951ec9522a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3cee1effd8d330efd7062efcd48a7d70df12a95ee67f88acbaa9bfb5e0054684"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d93b767cfa4f6fc27aaf7e8f77c01b873f6a2bd1178d8ca7a8fa74c9bc00ff64"
+  },
+  "case": {
+   "argv": [
+    "-3",
+    "-R",
+    "-F",
+    "-x",
+    "-w",
+    "-1",
+    "-f",
+    "wtmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "be1b7554b36b71fb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "dca19485b9a0f83ac4b3293dce9909ed616d02b22b13ae9789304238e76db09f"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "050e11bb9f60054f82bf27c3e5e9e19c93bce7066e3ff6108e11a590027c9515"
+  },
+  "case": {
+   "argv": [
+    "-3",
+    "-n1",
+    "-w",
+    "-a",
+    "-x",
+    "-T",
+    "--file=wtmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "c3aaf76e9c174da1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "f2022ca0076796a2c02908b7e687a3044e370c62f6837ca6f375dbd4a9aadc94"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2eb6f2fa175be6bf1f82f1b50ae1329293a755063d28e56f93d9c26f6fb0d4cf"
+  },
+  "case": {
+   "argv": [
+    "-3",
+    "-F",
+    "-R",
+    "-i",
+    "-T",
+    "-a",
+    "-f",
+    "wtmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "db893dd5d80b2409",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "852c31cbce3afa38054909406d6695056e08be923e79e005ab9653c8c310c198"
+  },
+  "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "ccae67c179ecd678db3a7fa2a618ba14a024863e4f9b16d3b8baefd6b3b288e7"
+  },
+  "case": {
+   "argv": [
+    "--time-format=notime",
+    "-f",
+    "wtmp"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "last"
+  },
+  "domain": "misc",
+  "id": "fc84f1b361bd01e1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "a5e73ba4388c22eee51a167c272590605bf0af34aa7c2d39f913868e8d571762"
+  },
   "utility": "last"
  },
  {
@@ -117195,6 +123845,578 @@ PINNED = r"""
   "option": "-t",
   "reason_id": "r210",
   "utility": "last"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "long",
+   "tier": "singles",
+   "utility": "numfmt"
+  },
+  "domain": "misc",
+  "id": "39423f2adc7dd4f7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the leftovers of the field walk: a zero-terminated record whose delimiter is a tab keeps the whole line here where the reference keeps one field of it, a unit separator that is also the scale letter is read differently, and a line longer than the token buffer is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "numfmt"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--zero-terminated",
+    "--round=nearest",
+    "--header",
+    "-d",
+    "",
+    "--grouping",
+    "--debug",
+    "--suffix=_KB",
+    "18446744073709551616"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "fields",
+   "tier": "random",
+   "utility": "numfmt"
+  },
+  "domain": "misc",
+  "id": "588cb4c3a2848500",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the leftovers of the field walk: a zero-terminated record whose delimiter is a tab keeps the whole line here where the reference keeps one field of it, a unit separator that is also the scale letter is read differently, and a line longer than the token buffer is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 2,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "numfmt"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "97ffbfc587e75c04b499478f9427bee6f9ad84b3944f56954a53fa21ce633fec"
+  },
+  "case": {
+   "argv": [
+    "--to=iec",
+    "--suffix=_KB",
+    "--padding=9",
+    "--round=towards-zero",
+    "--format=X%.2fY",
+    "--field=-",
+    "-d",
+    "\t",
+    "--header",
+    "--invalid=ignore",
+    "--to-unit=1024",
+    "--from-unit=3",
+    "--unit-separator="
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pairs",
+   "utility": "numfmt"
+  },
+  "domain": "misc",
+  "id": "6f952163cfc9398c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the leftovers of the field walk: a zero-terminated record whose delimiter is a tab keeps the whole line here where the reference keeps one field of it, a unit separator that is also the scale letter is read differently, and a line longer than the token buffer is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "8f26d6fe2a3dafd828081cc3ea3a5d610083c4563fb4f4fe51b2533b1ce44eb0"
+  },
+  "utility": "numfmt"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "f7663bd99e804b764bcf35a0e69db23fef11e898d66da9fc107c99315643a4a6"
+  },
+  "case": {
+   "argv": [
+    "--invalid=ignore",
+    "--from-unit=3",
+    "--round=up",
+    "-d",
+    "\t",
+    "--suffix=",
+    "--to=iec",
+    "--unit-separator=K",
+    "--",
+    "-0",
+    "-1",
+    "1.2300",
+    "9223372036854775807"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "spaces",
+   "tier": "random",
+   "utility": "numfmt"
+  },
+  "domain": "misc",
+  "id": "dca806181d88c0ef",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the leftovers of the field walk: a zero-terminated record whose delimiter is a tab keeps the whole line here where the reference keeps one field of it, a unit separator that is also the scale letter is read differently, and a line longer than the token buffer is reported by its ceiling rather than quoted whole.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "e38612a7a01757244485971ebbca905eb622b413e123a2564e84c2149ddd696d"
+  },
+  "utility": "numfmt"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-x",
+    "-c",
+    "-w",
+    "-f",
+    "-o",
+    "-a",
+    "a.txt",
+    "+3"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "high",
+   "tier": "random",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "0ad015ff90d4a62a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "8cd30ed878e97fe14d106e88fb49ecee86e84588b2b1a21812340fcd7f776b7d"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "646adab07dcc03c81ae1284c676542f674550deb5027b60d8072a5e3fb2695f1"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-Add",
+    "-o",
+    "-j0",
+    "-h",
+    "-t",
+    "x1z",
+    "-t",
+    "o2",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "random",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "2d35af7627960d04",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "21397633f665ed0be25033e7a49cb29b9f2aecdf3d96485fe292d40a0681d6c7"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "-w",
+    "-f",
+    "-i",
+    "-a",
+    "--endian=bad",
+    "-Ax",
+    "edge_65537"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "52f75351a6ce09e0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "-tu4",
+    "-l",
+    "-o",
+    "-w",
+    "-f",
+    "-td8z",
+    "a.txt",
+    "+3"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "random",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "63564ee6aae242d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "2a9df3c816487c6f855765a4edf93bf00a4f7c5177bc98d1e308d2e7258026c5"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "f",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "6573447ac379a74f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "cbc478e8ead42c5481360d716bbbc4414686667fab89b3cc5eb55faa339c479f"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "0f77c5e7dd92e5e29ecda8f7562032c587329ff97cfc3aeffd66276b212cdbe0"
+  },
+  "case": {
+   "argv": [
+    "-A",
+    "o",
+    "-t",
+    "o1",
+    "-j5",
+    "-N",
+    "1",
+    "-w",
+    "-w257",
+    "--endian=big",
+    "-v",
+    "-c",
+    "-o",
+    "-x",
+    "-s",
+    "-i",
+    "-l",
+    "empty",
+    "dir"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "nul",
+   "tier": "pairs",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "7ffbe2d78c013f65",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "0f77c5e7dd92e5e29ecda8f7562032c587329ff97cfc3aeffd66276b212cdbe0"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "fD",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "931459fae303e0b8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "cbc478e8ead42c5481360d716bbbc4414686667fab89b3cc5eb55faa339c479f"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-td4",
+    "-c",
+    "-b",
+    "-w",
+    "-f",
+    "--endian=big",
+    "nonl"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "controls",
+   "tier": "random",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "b3eefaf2d2558879",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "eff655c98dd84a5e3b02231ae154ac5046bb2c05594196df802e6b091b5f635c"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-t",
+    "fL",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "d9fc9c8c0d50e19e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "d7a68410380b092b274193cd063ebbe7fd552945a22f507c659f59e5def72e39"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-l",
+    "-j0",
+    "-w",
+    "-f",
+    "-s",
+    "-o",
+    "-d",
+    "blob"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "random",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "e9020c93dd707160",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "2a91e848416c4abd9db5832da93712ebcdb295e27541e35fbfc94e8548f61ed1"
+  },
+  "utility": "od"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "-w",
+    "-f",
+    "-w4",
+    "-jbad",
+    "--traditional",
+    "-i",
+    "binary"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "od"
+  },
+  "domain": "misc",
+  "id": "f428e9d3f1a2ad9f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "floating point output. -t f, -f, -e and -F have no formatter in this file, there being no floating point in it, and the refusal comes before --endian has been validated, so a run that is wrong twice is answered for the wrong one. What is left beside it is the z suffix on a second -t, whose padding differs.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "od"
  },
  {
   "domain": "misc",
@@ -118014,6 +125236,310 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "03098d046394c76af75813c8768f5b18f88f686f0c8e0bf30b61e35175fc10cf"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-j",
+    "-w",
+    "-opid=ONE",
+    "--format=pid,comm",
+    "-p",
+    "999999999",
+    "--pid=1",
+    "-Csystemd-journal",
+    "--sort=comm",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "004d6f821da8e6ae",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "case": {
+   "argv": [
+    "-j",
+    "-e",
+    "-h",
+    "-w",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "05979b0df0079129",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b05bb8b07c08df07ad6b343385c443257ace1d28fcf01114e5576c7b10d5a7be"
+  },
+  "case": {
+   "argv": [
+    "-A",
+    "-f",
+    "-w",
+    "-ocommand",
+    "-p",
+    "1,1",
+    "--pid=1,2",
+    "--ppid=0",
+    "-Ckthreadd",
+    "-H",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "1da0f90612c3222e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "fc02f0f4634bfa964185ed1c6259842359a9aa6dfe6ad53ed7ee8ed10d2ed2e8"
+  },
+  "case": {
+   "argv": [
+    "--ppid=1",
+    "-f",
+    "-H",
+    "--format=pid,comm",
+    "-oargs"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "1f86103a63b6e4bb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "pid=",
+    "-w",
+    "-p",
+    "2,1",
+    "-e",
+    "-H",
+    "-w",
+    "1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "2dd9960aeb6d6d6a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-l"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "3ae940523829a9e6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b6af42bcaef8de697fe6bf689a1f1d94a0599e003213600465d4f6f829874597"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-w",
+    "-H",
+    "-w",
+    "-l",
+    "-p1",
+    "-j",
+    "-Csystemd",
+    "1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "4fe850ece9debdf9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "0cd16f95ba7e9d9fb77e743d29b42ec42d0a23bad99d50bdcc0ad4ac2ca78572"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "156c0acc54818a1673e9e1b693d493f26d0d64fa945e479f45397f8f8a3a831a"
+  },
+  "case": {
+   "argv": [
+    "-C",
+    "systemd",
+    "-o",
+    "comm",
+    "-H",
+    "-w",
+    "--no-headers",
+    "-j",
+    "-w",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "5f2a25bff3e1e616",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -118034,6 +125560,697 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r217",
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "case": {
+   "argv": [
+    "-A",
+    "--no-headers",
+    "--pid=1",
+    "-e",
+    "-Cnosuchcomm",
+    "-f",
+    "-ostime"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "68a9bc74dd41d6c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "1",
+    "-l"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "extra",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "69594097edf2f224",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "45587693f29c621bbafd526895a6fae9f68e9b5737a8f435394893d53646364d"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-j",
+    "-e",
+    "--no-headers",
+    "-p999999999",
+    "--sort=comm",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "6f10db66a9fe88ff",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "1390d6dfaf44d247e88756e6e44b961937dd51941ca7f583a629869a85a98d9d"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "-f",
+    "-oucmd",
+    "--format=pid,comm",
+    "-p",
+    "2,1",
+    "--pid=1",
+    "-Csystemd",
+    "--sort=-pid",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "7d0d0718eb9b95ca",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3c1745630b938c583ccd6585f1da5228cd4961103e75354f26d687bba888b736"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-w",
+    "-j",
+    "--sort=pid",
+    "-H",
+    "-Csystemd",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "886693ef78a06c2f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sort=pid,-pid",
+    "-e",
+    "--no-headers",
+    "-Csystemd,kthreadd",
+    "--pid=1,2",
+    "-f",
+    "-A",
+    "1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "8b94e8e560f4b642",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-H",
+    "-f",
+    "--pid=1",
+    "-l",
+    "-j",
+    "-e",
+    "--ppid=0"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "9c40fbf7783ca94e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "b4beac9ddd8d87d31a32fb621f66ff0b50ec544ce22010be97a5fe830b1fbed5"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "case": {
+   "argv": [
+    "--ppid=1",
+    "-j",
+    "--no-headers",
+    "--format=pid=",
+    "-f",
+    "-e",
+    "--pid=1",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "b0cae7f4506b72a4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-j",
+    "-f",
+    "-w",
+    "-e",
+    "-p999999999",
+    "-A",
+    "--pid=1",
+    "1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "b9703f037c20b2b6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "f06489463f703d3ab0ba0cb4287c071426d95b53bf8bb5bbade45530d838050c"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "29030e3ab492bd0ad313a235dbbcdbd355a0e52071f82f94a2a1682b38c699f4"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "-A",
+    "-f",
+    "-oargs",
+    "--format=pid=",
+    "-p999999999",
+    "--pid=2",
+    "--ppid=0",
+    "-Cnosuchcomm",
+    "--sort=pid"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "c9e74fe976c4ef4a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "case": {
+   "argv": [
+    "--no-headers",
+    "--format=pid,comm",
+    "-opid=ONE",
+    "-w",
+    "--sort=comm",
+    "-H",
+    "-j",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "ca8aeadefe9963ca",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "bbbaaec302d76f57ccf60d9548740f55aedd80ac801664845ff447b1af6c9d68"
+  },
+  "case": {
+   "argv": [
+    "-p1",
+    "-opid=",
+    "-e",
+    "--sort=+pid",
+    "-f",
+    "-Csystemd-journal",
+    "--headers"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "d3c246c4802d03e8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--ppid=1",
+    "-o",
+    "pid,ppid",
+    "-p",
+    "1,2",
+    "--pid=2",
+    "-h",
+    "1"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "da6459afe820f8f5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3a3a38a690edae848161314da87af74783c326dbf063aeaf061f50b365820c09"
+  },
+  "case": {
+   "argv": [
+    "--headers",
+    "-C",
+    "systemd",
+    "-w",
+    "--format=pid,comm",
+    "-o",
+    "cmd",
+    "-f",
+    "-A"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "e56ed6e9b07b457d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--no-headers",
+    "--pid=2",
+    "-w",
+    "-A",
+    "-l",
+    "--ppid=2",
+    "-p",
+    "1 2"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "e9ce242b870804cb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "00e780ac6804d306d5bf8bca85b5cb964fe336b52504a97c80ffd874b64d4f31"
+  },
+  "case": {
+   "argv": [
+    "-e",
+    "-j",
+    "-o",
+    "ucmd",
+    "--format=pid=",
+    "-p",
+    "1,1",
+    "--ppid=2",
+    "-C",
+    "systemd",
+    "--sort=-pid",
+    "-H",
+    "-h"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "pairs",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "ef79fac8c304de78",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9fa67d2559355467728ef7ba8949bdad092461427b427d032501222e73bc14d9"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-o",
+    "start",
+    "-p2,1",
+    "-A",
+    "-j",
+    "-H",
+    "-h"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "f278706166cdf001",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "ps"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "70eef9adc5b4fd4d2e126de0fc29852bfb0e1e97821dfd3bf52aa5d870fba612"
+  },
+  "case": {
+   "argv": [
+    "--no-headers",
+    "-oucmd",
+    "-f",
+    "-C",
+    "systemd",
+    "-p",
+    "1",
+    "--format=pid,comm",
+    "--pid=2",
+    "wwo",
+    "pid,comm"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "ps"
+  },
+  "domain": "misc",
+  "id": "fa96551c2c61d839",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "-l is an option this listing has not got, so the long format and the F, S, ADDR, SZ and WCHAN columns that only it shows are missing with it. The rest is the format bookkeeping the reference refuses on and this one does not keep: a BSD o beside -o is a conflicting format option to it, a BSD w beside a user-defined format is an output modifier it will not take, and a SysV letter it does not know is refused where this one reads the word as a process identifier.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "ps"
  },
  {
@@ -119191,6 +127408,322 @@ PINNED = r"""
   "utility": "tsort"
  },
  {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9eabc4610a6e638d5bac97d4112c8e7c8098af4f67d29a43d1b8d85184a381b8"
+  },
+  "case": {
+   "argv": [
+    "utmp.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_wtmp",
+   "tier": "singles",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "2d0ab8c004420b54",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3080155e6be7c0ed73d7c9ac26beb6b7c7f52278fe05d312287cb6e563acec1c"
+  },
+  "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9eabc4610a6e638d5bac97d4112c8e7c8098af4f67d29a43d1b8d85184a381b8"
+  },
+  "case": {
+   "argv": [
+    "utmp.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "2edd1e661e0a5ca0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3080155e6be7c0ed73d7c9ac26beb6b7c7f52278fe05d312287cb6e563acec1c"
+  },
+  "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9eabc4610a6e638d5bac97d4112c8e7c8098af4f67d29a43d1b8d85184a381b8"
+  },
+  "case": {
+   "argv": [],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_utmp_text",
+   "tier": "singles",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "316adf942ad71e17",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3080155e6be7c0ed73d7c9ac26beb6b7c7f52278fe05d312287cb6e563acec1c"
+  },
+  "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9eabc4610a6e638d5bac97d4112c8e7c8098af4f67d29a43d1b8d85184a381b8"
+  },
+  "case": {
+   "argv": [
+    "utmp.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "3aaebaa66fb8e647",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3080155e6be7c0ed73d7c9ac26beb6b7c7f52278fe05d312287cb6e563acec1c"
+  },
+  "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "5c70edffa52949461e3f94ed2850619316a3f8b26da74aaec4affb6d8afe2dcb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-odump.out",
+    "--output=dump.out",
+    "utmp.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_utmp",
+   "tier": "triples",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "41b657ce1b89a1da",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "5c70edffa52949461e3f94ed2850619316a3f8b26da74aaec4affb6d8afe2dcb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-odump.out",
+    "--output=dump.out",
+    "utmp.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "43ec644b0b88ddb7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9eabc4610a6e638d5bac97d4112c8e7c8098af4f67d29a43d1b8d85184a381b8"
+  },
+  "case": {
+   "argv": [
+    "utmp.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_utmp_text",
+   "tier": "singles",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "7176e1b3a11cadee",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3080155e6be7c0ed73d7c9ac26beb6b7c7f52278fe05d312287cb6e563acec1c"
+  },
+  "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "5c70edffa52949461e3f94ed2850619316a3f8b26da74aaec4affb6d8afe2dcb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "dump.out",
+    "utmp.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_utmp",
+   "tier": "triples",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "7d182f64366257ea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "5c70edffa52949461e3f94ed2850619316a3f8b26da74aaec4affb6d8afe2dcb",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-odump.out",
+    "--output=dump.out",
+    "utmp.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_wtmp",
+   "tier": "triples",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "9fd1dba14ac31587",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "9eabc4610a6e638d5bac97d4112c8e7c8098af4f67d29a43d1b8d85184a381b8"
+  },
+  "case": {
+   "argv": [
+    "utmp.txt"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "misc_utmp",
+   "tier": "singles",
+   "utility": "utmpdump"
+  },
+  "domain": "misc",
+  "id": "d7d63c827ba00b54",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "3080155e6be7c0ed73d7c9ac26beb6b7c7f52278fe05d312287cb6e563acec1c"
+  },
+  "utility": "utmpdump"
+ },
+ {
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
@@ -119221,6 +127754,37 @@ PINNED = r"""
   "option": "-r",
   "reason_id": "r229",
   "utility": "utmpdump"
+ },
+ {
+  "candidate": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "222d1259a09e167ef782867912f86e86180f7e21625a3130ca88c08ceea60598"
+  },
+  "case": {
+   "argv": [
+    "-"
+   ],
+   "domain": "misc",
+   "family": null,
+   "fixture": "misc",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "uuidparse"
+  },
+  "domain": "misc",
+  "id": "c7a073e10b1b7bf1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the width the reference table gives the UUID column. A cell of one byte leaves the column the width of its heading, where a longer one that is still no uuid takes the whole thirty-seven; this one asks for the thirty-seven whenever the column has anything in it.",
+  "reference": {
+   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
+   "status": 0,
+   "stdout": "bfe6c13a194d789828d21ac0ae4402bf6c2612f91bbc0aea5ce4f6c04364fbbd"
+  },
+  "utility": "uuidparse"
  },
  {
   "candidate": {
