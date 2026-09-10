@@ -7787,14 +7787,6 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
 }
 
 /*
-        O_DIRECT hands the buffer to the device, so the kernel wants it on a
-        page boundary; the arena hands out sixteen-byte alignment. coreutils
-        aligns both its buffers to a page whatever the flags are, and pays a
-        page for it, so this does the same rather than deciding per run.
-*/
-#define DD_PAGE 4096u
-
-/*
         coreutils names a file two ways: quoteaf, which quotes whatever it is
         given, and quotef, which quotes only a name that would not survive a
         shell as it stands. Every dd message but one uses the first. The two
@@ -7812,6 +7804,14 @@ static fn dd_named(string_address name)
                 writer_stderr(name, 0);
 }
 
+/*
+        O_DIRECT hands the buffer to the device, so the kernel wants it on a
+        page boundary; the arena hands out sixteen-byte alignment. coreutils
+        aligns both its buffers to a page whatever the flags are, and pays a
+        page for it, so this does the same rather than deciding per run.
+*/
+#define DD_PAGE 4096u
+
 static p8 address_to dd_buffer(positive bytes)
 {
         /* Too large to align is too large to hold: let the arena refuse it
@@ -7820,10 +7820,11 @@ static p8 address_to dd_buffer(positive bytes)
                 return (p8 address_to)text_arena_take(bytes);
 
         p8 address_to raw = (p8 address_to)text_arena_take(bytes + DD_PAGE);
-        positive at = (positive)raw;
 
         if (!raw)
                 return null;
+
+        positive at = (positive)raw;
 
         return (p8 address_to)((at + (DD_PAGE - 1)) & ~(positive)(DD_PAGE - 1));
 }
