@@ -155119,7 +155119,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
-   "stdout": "e78659274923ef76dfac6932fb534a3b0a8de9c2393cdf128b0f320345afd39f"
+   "stdout": "a7e8a78a6b466b266a5e41f9e3e4d51f64037ecc65f61a6e6329a12a9e8ec0a7"
   },
   "case": {
    "argv": [
@@ -155145,6 +155145,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "pr does not turn the text's own spaces into output tabs for -i, and its line-number width, its double spacing before a form feed and its +PAGE accounting differ from GNU's.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
@@ -156394,7 +156395,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 1,
-   "stdout": "f3a6d0171e3c37dea7a153fe733348281ca5f6d9bd63cbd25da4a8d4036f92ef"
+   "stdout": "3a908cd824bbafa15d58a3e4cb4981291905f199e22eddf0c9481ed6ae9bd88f"
   },
   "case": {
    "argv": [
@@ -156421,6 +156422,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "pr"
  },
  {
@@ -157835,7 +157837,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
-   "stdout": "3537a951ff69e2eb13788051988f97cdc5f22adf85b08450838fb4104128d492"
+   "stdout": "bd570b86446f8c0bd37ec63dd4d3afb0ff34e8730d9d57446b6834d0bd055c47"
   },
   "case": {
    "argv": [
@@ -157862,6 +157864,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "pr"
  },
  {
@@ -158806,7 +158809,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
-   "stdout": "0b45b82df21d292e1243f7c4c084de28b9ac0d8802e24aa891fed43119ea18ec"
+   "stdout": "b176b69f5c328831c9fdd10cbe2241dcb96300ee9211018778855c6fde57dcd7"
   },
   "case": {
    "argv": [
@@ -158832,6 +158835,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "pr"
  },
  {
@@ -159738,7 +159742,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b92847f38872c2d75e0a4f6e7f069421447e6eaddf9ab3630be924bfc07a019a",
    "status": 0,
-   "stdout": "a46a125d59bf4f015ddf4077b032fd5ef80dbd5d22444f9a06465532a876e6d1"
+   "stdout": "77d516eaab9b313be06a01012046533a59223fab22994e796fe0e1af59435024"
   },
   "case": {
    "argv": [
@@ -159763,6 +159767,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r260",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "pr"
  },
  {
