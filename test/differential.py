@@ -115354,7 +115354,7 @@ PINNED = r"""
   "id": "0b780c739a16923a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115391,7 +115391,7 @@ PINNED = r"""
   "id": "212fcf0b855fe05a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115424,7 +115424,7 @@ PINNED = r"""
   "id": "234677d7dc9445d9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -115464,7 +115464,7 @@ PINNED = r"""
   "id": "3137101635aac28f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115503,7 +115503,7 @@ PINNED = r"""
   "id": "3f23d4df7da714e4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115539,7 +115539,7 @@ PINNED = r"""
   "id": "537e65a2f1891954",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115577,7 +115577,7 @@ PINNED = r"""
   "id": "53f7830795b3e16e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115644,7 +115644,7 @@ PINNED = r"""
   "id": "5a16fac215d29d7e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115680,7 +115680,7 @@ PINNED = r"""
   "id": "5e29d42623149609",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115719,7 +115719,7 @@ PINNED = r"""
   "id": "664ac64aeacc00ef",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115758,7 +115758,7 @@ PINNED = r"""
   "id": "7ee4253630d79740",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115797,7 +115797,7 @@ PINNED = r"""
   "id": "99c1cf2f3f7b3689",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115837,7 +115837,7 @@ PINNED = r"""
   "id": "9a434199b9f5b748",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115878,7 +115878,7 @@ PINNED = r"""
   "id": "abaaa47d01ace910",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115911,7 +115911,7 @@ PINNED = r"""
   "id": "ac93828325038473",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -115951,7 +115951,7 @@ PINNED = r"""
   "id": "ae29251a32c7a2fe",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115990,7 +115990,7 @@ PINNED = r"""
   "id": "b7d24dac4d207421",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -116022,7 +116022,7 @@ PINNED = r"""
   "id": "b7fce7b118725f09",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -116058,7 +116058,7 @@ PINNED = r"""
   "id": "c548cd5367805a6f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -116096,7 +116096,7 @@ PINNED = r"""
   "id": "c7b1d03e69341f6b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -116129,7 +116129,7 @@ PINNED = r"""
   "id": "d8c4ee99f467f2ee",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -116172,7 +116172,7 @@ PINNED = r"""
   "id": "e987759ae371f12b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -116205,337 +116205,13 @@ PINNED = r"""
   "id": "f1ad5d9c4312268f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is applied to the digest before the encoding rather than after it, which moves the raw and base64 answers.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
    "stdout": "5f6af0a369fe4245958c1fa46d35d533d655f94205bfa7262c910010ddbada23"
   },
   "utility": "cksum"
- },
- {
-  "candidate": {
-   "effects": "7274ff12ecc99b456aee072b80466b48991849b913b089f9d5f7f9dec3f7dc8a",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "if=two words",
-    "ibs=3",
-    "iflag=skip_bytes",
-    "seek=0",
-    "of=dangling"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "tier": "random",
-   "utility": "dd"
-  },
-  "domain": "misc",
-  "id": "01ff0f09060225d0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
-  "reference": {
-   "effects": "b4b65540c8b9f4dc4985a20830f3e39c2ac6af29720be3df2fd9e118d3afa0a8",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dd"
- },
- {
-  "candidate": {
-   "effects": "d7db3f46261fb0adcffe47c085fea690f50c432a42d94de0c0df945b604e6a4c",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "if=link",
-    "oflag=direct",
-    "iflag=sync",
-    "of=out",
-    "ibs=7",
-    "seek=2B",
-    "cbs=3"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "misc_dd_case",
-   "tier": "random",
-   "utility": "dd"
-  },
-  "domain": "misc",
-  "id": "13438e2a2b8ead38",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
-  "reference": {
-   "effects": "5d6b2db68ef3b437e5130ba0eb6ee850b182a529cd57673cc8db5d7a5e9400d5",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dd"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "bs=1K",
-    "if=two words",
-    "conv=swab",
-    "obs=311",
-    "status=progress",
-    "skip=99"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "misc_dd_1000",
-   "tier": "random",
-   "utility": "dd"
-  },
-  "domain": "misc",
-  "id": "28c07d6be91cdf28",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dd"
- },
- {
-  "candidate": {
-   "effects": "0383f314d38e9535d6a959b016ca0411872b385386f3fc1d6159d8c461b72c91",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "if=ten",
-    "of=two words",
-    "bs=2x3",
-    "ibs=1000",
-    "obs=311",
-    "skip=3B",
-    "seek=5B",
-    "iseek=1B",
-    "conv=ucase",
-    "iflag=fullblock",
-    "oflag=direct",
-    "status=progress"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "long",
-   "tier": "pairs",
-   "utility": "dd"
-  },
-  "domain": "misc",
-  "id": "799045a3bb7357aa",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
-  "reference": {
-   "effects": "0383f314d38e9535d6a959b016ca0411872b385386f3fc1d6159d8c461b72c91",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dd"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "if=nonl",
-    "of=/dev/null",
-    "bs=1w",
-    "ibs=3",
-    "obs=1000",
-    "count=3",
-    "skip=99",
-    "seek=0",
-    "iseek=1B",
-    "oseek=2B",
-    "cbs=3",
-    "conv=noerror",
-    "iflag=direct",
-    "oflag=sync",
-    "status=none"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "nul",
-   "tier": "pairs",
-   "utility": "dd"
-  },
-  "domain": "misc",
-  "id": "8a4ce1429bd53698",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dd"
- },
- {
-  "candidate": {
-   "effects": "d7db3f46261fb0adcffe47c085fea690f50c432a42d94de0c0df945b604e6a4c",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "if=nonl",
-    "of=out",
-    "bs=2x3",
-    "obs=7",
-    "count=1KiB",
-    "skip=1",
-    "seek=2B",
-    "iseek=2",
-    "oseek=2B",
-    "conv=lcase",
-    "iflag=skip_bytes",
-    "status=noxfer"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "tier": "pairs",
-   "utility": "dd"
-  },
-  "domain": "misc",
-  "id": "c21053e8f94a5e5e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
-  "reference": {
-   "effects": "6f5994c03ab20c947d361e8e8804a77afd81d3b8ecaf3ff41f500097fac7c0ab",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dd"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "if=two words",
-    "of=/dev/full",
-    "bs=1",
-    "ibs=3",
-    "obs=7",
-    "count=3",
-    "skip=3B",
-    "seek=2",
-    "iseek=2",
-    "conv=swab",
-    "iflag=nocache",
-    "oflag=append,seek_bytes",
-    "status=none"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "nonl",
-   "tier": "pairs",
-   "utility": "dd"
-  },
-  "domain": "misc",
-  "id": "f12ae8166cf96754",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dd"
- },
- {
-  "candidate": {
-   "effects": "d7db3f46261fb0adcffe47c085fea690f50c432a42d94de0c0df945b604e6a4c",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "if=two words",
-    "of=out",
-    "bs=7",
-    "ibs=997",
-    "obs=7",
-    "count=3B",
-    "skip=9",
-    "seek=2B",
-    "iseek=2",
-    "oseek=1",
-    "conv=fdatasync",
-    "iflag=nonblock",
-    "oflag=seek_bytes",
-    "status=noxfer"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "mixed_case",
-   "tier": "pairs",
-   "utility": "dd"
-  },
-  "domain": "misc",
-  "id": "f411f636911de816",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "direct input and output. O_DIRECT wants an aligned buffer and an aligned length, which this one does not arrange, so a transfer the reference completes fails here with an invalid argument; and a file name with a space in it is quoted by the reference in the diagnostics that name it and written plain here.",
-  "reference": {
-   "effects": "d7db3f46261fb0adcffe47c085fea690f50c432a42d94de0c0df945b604e6a4c",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dd"
  },
  {
   "domain": "misc",
@@ -127201,7 +126877,7 @@ PINNED = r"""
   "id": "2d0ab8c004420b54",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -127232,7 +126908,7 @@ PINNED = r"""
   "id": "2edd1e661e0a5ca0",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -127261,7 +126937,7 @@ PINNED = r"""
   "id": "316adf942ad71e17",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -127292,7 +126968,7 @@ PINNED = r"""
   "id": "3aaebaa66fb8e647",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -127325,7 +127001,7 @@ PINNED = r"""
   "id": "41b657ce1b89a1da",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
    "status": 0,
@@ -127358,7 +127034,7 @@ PINNED = r"""
   "id": "43ec644b0b88ddb7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
    "status": 0,
@@ -127389,7 +127065,7 @@ PINNED = r"""
   "id": "7176e1b3a11cadee",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -127422,7 +127098,7 @@ PINNED = r"""
   "id": "7d182f64366257ea",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
    "status": 0,
@@ -127455,7 +127131,7 @@ PINNED = r"""
   "id": "9fd1dba14ac31587",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
    "status": 0,
@@ -127486,7 +127162,7 @@ PINNED = r"""
   "id": "d7d63c827ba00b54",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the text form back into records. The reference reads its own bracketed dump as fixed columns and this one reads it as fields, so a value that fills its column exactly, or a host that is an address rather than a name, comes back a byte different -- in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
