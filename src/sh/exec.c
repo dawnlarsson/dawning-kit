@@ -1162,6 +1162,25 @@ static fn job_status_text(job_entry address_to entry, bool detailed,
                 }
 
                 string_copy(into, "Stopped");
+
+                /*
+                        POSIX asks for the signal that stopped the job, and
+                        bash writes it only in that mode: Stopped(SIGTSTP),
+                        no space, in the summary a bare `jobs` prints. The
+                        detail `jobs -l` prints says "Stopped (signal)" in
+                        both modes, which is the line above this one.
+                */
+                if (shell_bash_compat && shell_posix_on() && by &&
+                    by < TRAP_NAMES - 1 && trap_names[by])
+                {
+                        positive at = string_length(into);
+
+                        string_copy(into + at, "(SIG");
+                        at += 4;
+                        string_copy(into + at, trap_names[by]);
+                        at += string_length(trap_names[by]);
+                        string_copy(into + at, ")");
+                }
                 return;
         }
 
