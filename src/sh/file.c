@@ -3466,17 +3466,23 @@ static p8 ls_hidden_option;
 static p8 ls_deref_option;
 static p8 ls_size_option;
 static p8 ls_control_option;
+//      --zero read while --format=WORD stood: whether the word was the long
+//      one is not known until the word is read, so the question waits.
+static bool ls_zero_after_word;
 
 static const file_supersede ls_supersedes[] = {
-    {(string_address) "1CxmlgonJMD", address_of ls_format_option},
+    {(string_address) "CxmlgonJMD", address_of ls_format_option},
     {(string_address) "tSUvX3f", address_of ls_sort_option},
     {(string_address) "cu4", address_of ls_time_option},
-    {(string_address) "NQbz", address_of ls_quote_option},
+    //      --zero says how a name is spelled and whether control bytes are
+    //      shown, so it stands in those two rows and a later -Q or -q takes
+    //      it back, which is what the reference does.
+    {(string_address) "NQbz6", address_of ls_quote_option},
     {(string_address) "FpjEY", address_of ls_indicator_option},
     {(string_address) "aAf", address_of ls_hidden_option},
     {(string_address) "HLV", address_of ls_deref_option},
     {(string_address) "hP7", address_of ls_size_option},
-    {(string_address) "q2", address_of ls_control_option},
+    {(string_address) "q26", address_of ls_control_option},
     {null, null},
 };
 
@@ -5593,25 +5599,6 @@ static const file_long ls_longs[] = {
 };
 
 // -I and --hide are the two options ls takes more than once.
-static bool ls_option_seen(p8 letter, string_address value)
-{
-        if ((letter != 'I' && letter != 'W') || !value)
-                return true;
-
-        string_address address_to table = letter == 'I' ? ls_ignore_patterns : ls_hide_patterns;
-        positive address_to have = letter == 'I' ? address_of ls_ignore_count
-                                                 : address_of ls_hide_count;
-
-        if (address_to have >= LS_PATTERNS)
-        {
-                string_format(log_error, "%s: too many patterns to ignore\n", ls_program);
-                return false;
-        }
-
-        table[(address_to have)++] = value;
-        return true;
-}
-
 typedef struct
 {
         string_address word;
@@ -5667,6 +5654,98 @@ static const ls_word ls_quoting_words[] = {
     {"locale", 'o'}, {"clocale", 'o', true}};
 static const ls_word ls_indicator_words[] = {
     {"none", 'N'}, {"slash", '/'}, {"file-type", 'f'}, {"classify", 'F'}};
+
+/*
+        Every option argument is read where the option is, not where the
+        answer needs it.
+
+        The reference is a getopt loop and refuses a word it does not know as
+        it reaches it, so of two bad words the first one written is the one
+        reported -- and a word for something this listing will not print is
+        refused all the same. Only --time-style is left to its own place: the
+        reference reads that one where it writes a time, so a plain listing
+        takes a style it would otherwise refuse.
+*/
+static b32 ls_option_status;
+
+static bool ls_option_word(p8 letter, string_address value)
+{
+        if (!value)
+                return true;
+
+        switch (letter)
+        {
+        case 'J':
+                return ls_word_among((string_address) "--format", value,
+                                     ls_format_words, array_count(ls_format_words)) >= 0;
+        case '3':
+                return ls_word_among((string_address) "--sort", value,
+                                     ls_sort_words, array_count(ls_sort_words)) >= 0;
+        case '4':
+                return ls_word_among((string_address) "--time", value,
+                                     ls_time_words, array_count(ls_time_words)) >= 0;
+        case 'z':
+                return ls_word_among((string_address) "--quoting-style", value,
+                                     ls_quoting_words, array_count(ls_quoting_words)) >= 0;
+        case 'Y':
+                return ls_word_among((string_address) "--indicator-style", value,
+                                     ls_indicator_words, array_count(ls_indicator_words)) >= 0;
+        case 'K':
+                return ls_word_among((string_address) "--color", value,
+                                     ls_when_words, array_count(ls_when_words)) >= 0;
+        case 'y':
+                return ls_word_among((string_address) "--hyperlink", value,
+                                     ls_when_words, array_count(ls_when_words)) >= 0;
+        default:
+                return true;
+        }
+}
+
+static bool ls_option_seen(p8 letter, string_address value)
+{
+        /*
+                -1 and --zero each ask for one name per line, and each of
+                them has no effect after a long listing was asked for. The
+                question is answered where the option is read, so a format
+                written after them wins and one written before does not.
+        */
+        if (letter == '1' || letter == '6')
+        {
+                p8 chosen = ls_format_option;
+
+                if (chosen == 'J')
+                        chosen = 'l'; // decided by its word, checked below
+
+                if (!chosen || !string_first_of((string_address) "lgonMD", chosen))
+                        ls_format_option = '1';
+                else if (ls_format_option == 'J')
+                        ls_zero_after_word = true;
+
+                return true;
+        }
+
+        if (!ls_option_word(letter, value))
+        {
+                ls_option_status = 1;
+                return false;
+        }
+
+        if ((letter != 'I' && letter != 'W') || !value)
+                return true;
+
+        string_address address_to table = letter == 'I' ? ls_ignore_patterns : ls_hide_patterns;
+        positive address_to have = letter == 'I' ? address_of ls_ignore_count
+                                                 : address_of ls_hide_count;
+
+        if (address_to have >= LS_PATTERNS)
+        {
+                string_format(log_error, "%s: too many patterns to ignore\n", ls_program);
+                return false;
+        }
+
+        table[(address_to have)++] = value;
+        return true;
+}
 
 static bool ls_when_active(p8 when)
 {
@@ -5801,6 +5880,8 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         ls_deref_option = 0;
         ls_size_option = 0;
         ls_control_option = 0;
+        ls_zero_after_word = false;
+        ls_option_status = 0;
         ls_ignore_count = 0;
         ls_hide_count = 0;
         ls_status = 0;
@@ -5824,7 +5905,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         };
 
         if (!file_take(address_of taking))
-                return 2;
+                return ls_option_status ? ls_option_status : 2;
 
         positive flags = taking.flags;
         positive first = taking.first;
@@ -5849,14 +5930,26 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                 ls_format = 'l';
         else if (ls_format_option)
                 ls_format = ls_format_option;
-        if (flags & FILE_FLAG('D'))
-                ls_format = 'l';
+
+        //      --zero came after a --format=WORD that turned out not to be
+        //      the long one, so it has its say after all.
+        if (ls_zero_after_word && ls_format != 'l')
+                ls_format = '1';
 
         ls_owner_shown = !(flags & FILE_FLAG('g'));
         ls_group_shown = !(flags & (FILE_FLAG('o') | FILE_FLAG('G')));
         ls_author = (flags & FILE_FLAG('8')) != 0;
         ls_numeric = (flags & FILE_FLAG('n')) != 0;
-        ls_dired = (flags & FILE_FLAG('D')) != 0;
+        //      --dired is a long listing's own annotation: asked for
+        //      beside any other format it is dropped, and asked for beside
+        //      --zero, which the long listing survives, the two cannot both
+        //      be answered.
+        ls_dired = (flags & FILE_FLAG('D')) != 0 && ls_format == 'l';
+
+        if (ls_dired && (flags & FILE_FLAG('6')))
+                return string_report(log_error, 2, "%s: --dired and --zero are incompatible\n",
+                                     program);
+
         ls_context = (flags & FILE_FLAG('Z')) != 0;
         ls_inode = (flags & FILE_FLAG('i')) != 0;
         ls_blocks = (flags & FILE_FLAG('s')) != 0;
@@ -5990,7 +6083,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                 ls_quoting = 'c';
         else if (ls_quote_option == 'b')
                 ls_quoting = 'b';
-        if ((flags & FILE_FLAG('6')) && !ls_quote_option)
+        if (ls_quote_option == '6')
                 ls_quoting = 'L';
 
         ls_hide_controls = ls_control_option ? ls_control_option == 'q'
@@ -6116,6 +6209,11 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
 
                 ls_coloring = ls_colors && string_get(ls_colors) && ls_when_active((p8)when);
         }
+
+        //      A run of names with nothing between them but a zero byte is
+        //      not a place for colour, whichever order the two were asked in.
+        if (flags & FILE_FLAG('6'))
+                ls_coloring = false;
 
         if (ls_coloring)
                 ls_color_parse();
