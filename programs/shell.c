@@ -349,7 +349,9 @@ b32 main()
                 name that is not a tool's, it is a shell.
         */
         {
-                b32 answered = shell_tool_named(called);
+                /* This binary was invoked under an applet's name, so the
+                   process is that applet and nothing follows it. */
+                b32 answered = shell_tool_named_in(called, true);
 
                 if (answered >= 0)
                 {

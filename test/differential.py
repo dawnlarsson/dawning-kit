@@ -19200,6 +19200,14 @@ def harness_floodlight(argv):
     #   write-protects them. Without it a stray write flips a row and leaves
     #   the timestamp at zero, so the report goes on calling the flipped value
     #   the one this kernel was compiled with.
+    #   Built, not merely buildable. The Kconfig entry defaults to y, but a
+    #   profile that does not ask for it leaves the option unset and the module
+    #   out of the kernel entirely -- which is how it shipped for a while: the
+    #   register was written, tested and absent from every image.
+    profile = (ROOT / 'kernel/profile/any').read_text()
+    check('CONFIG_MOONWATER_FLOODLIGHT=y' in profile,
+          'every image is built with the register in it')
+
     check('static const struct rule baseline[] = {' in text,
           'the built-in answers are const, and so cannot be written at runtime')
 
@@ -19356,13 +19364,23 @@ def harness_floodlight(argv):
                    for i in range(len(shell_tokens) - window))
 
     for ok, what in (
-            (calls('floodlight_apply', '(', 'name', ')', ';'),
-             'the dispatcher confines the applet it is about to run'),
-            (calls('floodlight_may', '(', 'name', ',', '"run"', ',', 'true', ')'),
+            (calls('if', '(', 'own_process', ')', 'floodlight_apply', '(', 'name', ')', ';'),
+             'the dispatcher confines the applet it is about to run, and only '
+             'when the process exists to run it'),
+            #   A seccomp filter cannot be taken off, so confining a process
+            #   that goes on to do other things takes its next exec with it.
+            #   The build tool includes this file and runs find inside its own
+            #   process; confining it there left the build unable to exec the
+            #   compiler, and a refused exec says EPERM and prints nothing.
+            (calls('return', 'shell_tool_call_in', '(', 'which', ',', 'false', ')', ';'),
+             'a caller that keeps its process is not confined'),
+            (calls('return', 'shell_tool_named_in', '(', 'name', ',', 'false', ')', ';'),
+             'and neither is one that only borrowed the argument vector'),
+            (calls('floodlight_may', '(', 'name', ',', 'FLOODLIGHT_RUN', ',', 'true', ')'),
              'the dispatcher refuses an applet the register refuses'),
             (calls('shell_tail_command', '&', '&', '!', 'floodlight_confines', '(', 'name', ')'),
              "an applet that must be confined never runs in the shell's own process"),
-            (calls('floodlight_may', '(', 'name', ',', '"spawn"', ',',
+            (calls('floodlight_may', '(', 'name', ',', 'FLOODLIGHT_SPAWN', ',',
                    'floodlight_built_in', '(', 'name', ')', ')'),
              'a register that cannot be read leaves the built-in answers '
              'standing, so removing the device grants nothing'),
@@ -19375,10 +19393,12 @@ def harness_floodlight(argv):
              'and that what it opened is a character device'),
             (calls('facts', '.', 'rdev_major', '!', '=', '10', ')'),
              'and on the misc major the register is on'),
-            (calls('floodlight_report_length', '>', '=', 'sizeof',
-                   '(', 'floodlight_report', ')', '-', '1'),
+            (calls('(', 'positive', ')', 'got', '>', '=', 'sizeof',
+                   '(', 'report', ')', '-', '1'),
              'a report that filled the buffer is thrown away rather than half '
              'believed'),
+            (calls('if', '(', '!', 'floodlight_row_count', ')'),
+             'an untouched register costs an applet one comparison, not a walk'),
             (calls('syscall', '(', 'prctl', ')', ',', 'PR_SET_NO_NEW_PRIVS'),
              'the filter is installed with no-new-privs'),
             (calls('syscall', '(', 'seccomp', ')', ',', 'SECCOMP_SET_MODE_FILTER'),
@@ -19538,6 +19558,41 @@ int main(void)
                       '(child said %s, runner %d)' % (said or '-', ran.returncode))
     else:
         print('  floodlight: seccomp not exercised here, needs Linux')
+
+    #   The writer and the reader, against each other.
+    #
+    #   Everything else checks one side. This runs both: the module produces a
+    #   report exactly as the kernel would, and the shell's reader is handed
+    #   that text and asked what it made of it. The reader had a bug that no
+    #   amount of reading either side would have found -- string_length on a
+    #   word of the report runs to the end of the whole report, so no setting
+    #   name ever compared equal and not one deviation was ever read. Both
+    #   halves were correct on their own and did not meet.
+    reader = shell[shell.index('static string_address const floodlight_denied[]'):
+                   shell.index('/*\n        A filter that refuses one thing')]
+
+    #   Everything but the device read, which is stubbed: this test hands the
+    #   reader the report the module just produced, so there is no device in
+    #   it and nothing for the open, the statx and the read to talk to.
+    reader = (reader[:reader.index('static fn floodlight_load()')] +
+              'static fn floodlight_load(void) { }\n\n' +
+              reader[reader.index('static bool floodlight_says'):])
+
+    #   The reader is shell code, so it wants the shell's spellings.
+    reader_mock = r"""
+typedef unsigned char p8;
+typedef unsigned long positive;
+typedef long bipolar;
+typedef const char *string_address;
+typedef void fn;
+#define address_to *
+#define address_of &
+#define null ((void *)0)
+static positive string_length(string_address s) { return strlen(s); }
+static int memory_compare(const void *a, const void *b, positive n) { return memcmp(a, b, n); }
+static void memory_copy_apart(void *d, const void *s, positive n) { memcpy(d, s, n); }
+static bool word_is(string_address a, string_address b) { return !strcmp(a, b); }
+"""
 
     #   And now the module itself, run.
     #
@@ -19982,6 +20037,52 @@ int main(void)
                 check(guard_intact(), "and the guards untouched");
         }
 
+        /* --- the writer and the reader, against each other ----------------- */
+        reset(0x11223344);
+        {
+                bool said = false;
+
+                reread();
+                check(floodlight_row_count == 0,
+                      "an untouched register gives the reader nothing to carry");
+
+                put("awk spawn allow");
+                reread();
+                check(floodlight_row_count == 1,
+                      "one deviation reaches the reader as one row");
+                check(reader_says("awk", FLOODLIGHT_SPAWN, "", &said) && said,
+                      "and the reader reads back what was written");
+
+                put("env spawn deny");
+                put("curl network deny");
+                put("tar flag --to-command deny");
+                reread();
+                check(floodlight_row_count == 4,
+                      "four deviations reach the reader as four rows");
+
+                said = true;
+                check(reader_says("env", FLOODLIGHT_SPAWN, "", &said) && !said,
+                      "a denial of a built-in allowance is read back");
+                said = true;
+                check(reader_says("curl", FLOODLIGHT_NETWORK, "", &said) && !said,
+                      "a denial for a program this kernel never heard of is read back");
+                said = true;
+                check(reader_says("tar", FLOODLIGHT_FLAG, "--to-command", &said) && !said,
+                      "a refused flag is read back");
+                check(!reader_says("tar", FLOODLIGHT_FLAG, "--other", &said),
+                      "and a flag nobody refused is not");
+                check(!reader_says("find", FLOODLIGHT_SPAWN, "", &said),
+                      "a built-in answer is not carried twice");
+                check(!reader_says("aw", FLOODLIGHT_SPAWN, "", &said) &&
+                      !reader_says("awkk", FLOODLIGHT_SPAWN, "", &said),
+                      "and a name that merely starts the same is not it");
+
+                put("awk spawn deny");   /* back to built in */
+                reread();
+                check(!reader_says("awk", FLOODLIGHT_SPAWN, "", &said),
+                      "a deviation given back stops reaching the reader");
+        }
+
         /* --- the lock is balanced whatever happened ------------------------ */
         check(mock_lock_depth == 0, "every path leaves the lock as it found it");
 
@@ -20001,9 +20102,32 @@ int main(void)
         "static const struct rule baseline[] = {",
         "static struct rule baseline[] = {")
 
+    round_trip = r"""
+/* The report the module just wrote, handed to the shell's reader. */
+static void reread(void)
+{
+        struct seq_file seq = {0};
+
+        mock_report_length = 0; mock_report[0] = 0;
+        floodlight_show(&seq, NULL);
+        mock_report[mock_report_length] = 0;
+
+        floodlight_row_count = 0;
+        floodlight_report_read = true;   /* do not go near a device */
+        floodlight_take(mock_report);
+}
+
+static bool reader_says(const char *name, positive setting, const char *detail,
+                        bool *answer)
+{
+        return floodlight_says(name, setting, detail, answer);
+}
+"""
+
     with tempfile.TemporaryDirectory(prefix='floodlight-run-') as work:
         unit = Path(work) / 'run.c'
-        unit.write_text(mock + runnable + bridge + driver)
+        unit.write_text(mock + runnable + bridge + reader_mock + reader +
+                        round_trip + driver)
         binary = Path(work) / 'run'
         subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
                        ['-std=gnu11', '-O1', '-g', '-w',

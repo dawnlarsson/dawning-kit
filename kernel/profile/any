@@ -9,6 +9,16 @@
 
 CONFIG_MOONWATER_CORE=y
 
+#
+# Floodlight: every runtime allowance on this machine, in one array.
+#
+# Essential rather than optional. It is the thing that decides what programs
+# are allowed to do, and a machine built without it is one where the shell's
+# built-in answers are the only answers -- which is safe, but leaves no way to
+# grant an exception and nothing to read when somebody asks what is allowed.
+#
+CONFIG_MOONWATER_FLOODLIGHT=y
+
 CONFIG_INITRAMFS_SOURCE="../fs"
 
 CONFIG_RD_GZIP=y

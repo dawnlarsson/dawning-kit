@@ -11685,30 +11685,157 @@ static string_address const floodlight_denied[] = {
     "awk", "bowl", "find", "script", "setarch", "xargs", null};
 
 /*
-        The register, read once.
+        The register, read once and reduced to what it changes.
 
-        Reading it per applet would put an open, a read and a close on a path
-        that already costs forty microseconds. Read on the first applet this
-        process runs and kept: a deviation made after that reaches the next
-        program started, which is the next thing anybody runs.
+        Reading it per applet would put four calls on a path that already costs
+        forty microseconds, so it is read on the first applet a process runs
+        and kept. A deviation made after that reaches the next program started,
+        which is the next thing anybody runs.
 
-        Large enough for the largest report the register can produce, worked
-        out rather than guessed: twenty-eight built-in answers and sixteen
-        deviations, each at most a sixty-three character subject, a setting, a
-        thirty-one character flag, a state and a sentence about who changed it
-        and when -- a hundred and sixty-three bytes a row, seven thousand two
-        hundred in all. This was a page, and a page is not enough: a report cut
-        off at four thousand and ninety-six loses the rows past the cut, and a
-        row that is lost is a refusal that never arrives.
+        What is kept is not the report. The report is mostly the built-in
+        answers, and this shell already carries those; only the rows that
+        deviate from them say anything it does not already know. So the text is
+        walked once, at load, and what comes out is a handful of rows -- none
+        at all on a machine nobody has changed, which is every machine most of
+        the time. An applet then costs three comparisons against a count of
+        zero rather than three walks over eight kilobytes of text.
 */
 #define FLOODLIGHT_REPORT 8192
+#define FLOODLIGHT_NAME 64
+#define FLOODLIGHT_DETAIL 32
+#define FLOODLIGHT_ROWS 48
 
-static p8 floodlight_report[FLOODLIGHT_REPORT];
-static positive floodlight_report_length;
+/* The settings, in the order floodlight.c names them. */
+#define FLOODLIGHT_RUN 0
+#define FLOODLIGHT_FLAG 1
+#define FLOODLIGHT_SPAWN 2
+#define FLOODLIGHT_NETWORK 3
+#define FLOODLIGHT_SETTINGS 4
+
+static string_address const floodlight_settings[FLOODLIGHT_SETTINGS] = {
+    "run", "flag", "spawn", "network"};
+
+typedef struct
+{
+        p8 subject[FLOODLIGHT_NAME];
+        p8 detail[FLOODLIGHT_DETAIL];
+        p8 setting;
+        p8 allowed;
+} floodlight_row;
+
+static floodlight_row floodlight_rows[FLOODLIGHT_ROWS];
+static positive floodlight_row_count;
 static bool floodlight_report_read;
+
+/*
+        One word of a report line.
+
+        With its length, because the report is one string and a word in it is
+        not terminated: string_length on a word runs to the end of the whole
+        report, so every comparison against a setting name failed and this
+        shell read no deviation at all. Nothing noticed, because the reader had
+        only ever been checked by reading it.
+*/
+typedef struct
+{
+        string_address at;
+        positive length;
+} floodlight_token;
+
+static floodlight_token floodlight_word(string_address address_to at)
+{
+        floodlight_token word;
+        string_address start = address_to at;
+
+        while (address_to start == ' ')
+                start++;
+
+        address_to at = start;
+        while (address_to(address_to at) && address_to(address_to at) != ' ' &&
+               address_to(address_to at) != '\n')
+                (address_to at)++;
+
+        word.at = start;
+        word.length = (positive)((address_to at) - start);
+        return word;
+}
+
+static bool floodlight_is(floodlight_token word, string_address name)
+{
+        positive named = string_length(name);
+
+        return word.length == named && !memory_compare(word.at, name, named);
+}
+
+/* Everything the register says that this shell does not already know. */
+static fn floodlight_take(string_address text)
+{
+        string_address at = text;
+
+        while (address_to at && floodlight_row_count < FLOODLIGHT_ROWS)
+        {
+                floodlight_token subject, said, state, detail = {null, 0};
+                floodlight_row address_to row;
+                positive i;
+
+                if (address_to at == '#')
+                        goto line;
+
+                subject = floodlight_word(&at);
+                said = floodlight_word(&at);
+                state = floodlight_word(&at);
+
+                if (!subject.length || !said.length || !state.length)
+                        goto line;
+
+                for (i = 0; i < FLOODLIGHT_SETTINGS; i++)
+                        if (floodlight_is(said, floodlight_settings[i]))
+                                break;
+
+                if (i == FLOODLIGHT_SETTINGS)
+                        goto line;
+
+                /* A flag row carries the flag between the setting and the
+                   state, so the state is one word further along. */
+                if (i == FLOODLIGHT_FLAG)
+                {
+                        detail = state;
+                        state = floodlight_word(&at);
+                        if (!state.length)
+                                goto line;
+                }
+
+                /*
+                        Only what deviates. A row this kernel was built with
+                        says what this shell already believes, and keeping it
+                        would be carrying the same answer twice.
+                */
+                if (!floodlight_is(floodlight_word(&at), "changed"))
+                        goto line;
+
+                if (subject.length >= FLOODLIGHT_NAME ||
+                    detail.length >= FLOODLIGHT_DETAIL)
+                        goto line;
+
+                row = address_of floodlight_rows[floodlight_row_count++];
+                memory_copy_apart(row->subject, subject.at, subject.length);
+                row->subject[subject.length] = 0;
+                if (detail.length)
+                        memory_copy_apart(row->detail, detail.at, detail.length);
+                row->detail[detail.length] = 0;
+                row->setting = (p8)i;
+                row->allowed = (p8)floodlight_is(state, "allow");
+
+        line:
+                while (address_to at && address_to at != '\n')
+                        at++;
+                at += address_to at == '\n';
+        }
+}
 
 static fn floodlight_load()
 {
+        p8 report[FLOODLIGHT_REPORT];
         file_facts facts;
         bipolar handle;
         bipolar got;
@@ -11742,12 +11869,11 @@ static fn floodlight_load()
                 return;
         }
 
-        got = system_read_once(handle, floodlight_report,
-                               sizeof(floodlight_report) - 1);
+        got = system_read_once(handle, report, sizeof(report) - 1);
         system_close(handle);
 
-        if (got > 0)
-                floodlight_report_length = (positive)got;
+        if (got <= 0)
+                return;
 
         /*
                 A report that filled the buffer is one that may have been cut,
@@ -11755,77 +11881,54 @@ static fn floodlight_load()
                 is the half that refuses something. Thrown away, so the
                 built-in answers stand.
         */
-        if (floodlight_report_length >= sizeof(floodlight_report) - 1)
-                floodlight_report_length = 0;
+        if ((positive)got >= sizeof(report) - 1)
+                return;
 
-        floodlight_report[floodlight_report_length] = 0;
-}
-
-/* One word of a report line, and where the next one starts. */
-static string_address floodlight_word(string_address at, string_address address_to next)
-{
-        string_address start = at;
-
-        while (*start == ' ')
-                start++;
-
-        at = start;
-        while (*at && *at != ' ' && *at != '\n')
-                at++;
-
-        *next = at;
-        return start == at ? null : start;
+        report[got] = 0;
+        floodlight_take((string_address)report);
 }
 
 /*
         What the register says about one program and one setting, if anything.
 
-        The report is the interface, so this reads the same text a person
-        does -- there is no second encoding of the answers to drift out of
-        step with the one that is printed.
+        A count of zero is every machine nobody has changed, and the whole of
+        the work there is the compare that finds it.
 */
-static bool floodlight_says(string_address name, string_address setting,
-                            bool address_to answer)
+static bool floodlight_says(string_address name, positive setting,
+                            string_address detail, bool address_to answer)
 {
-        string_address at = (string_address)floodlight_report;
-        positive named = string_length(name);
+        positive i;
 
         floodlight_load();
 
-        while (*at)
+        if (!floodlight_row_count)
+                return false;
+
+        for (i = 0; i < floodlight_row_count; i++)
         {
-                string_address subject, said, state, next;
+                floodlight_row address_to row = address_of floodlight_rows[i];
+                floodlight_token held;
 
-                if (*at == '#')
-                {
-                        while (*at && *at != '\n')
-                                at++;
-                        at += *at == '\n';
+                if (row->setting != setting)
                         continue;
-                }
 
-                subject = floodlight_word(at, &next);
-                said = subject ? floodlight_word(next, &next) : null;
-                state = said ? floodlight_word(next, &next) : null;
+                held.at = (string_address)row->subject;
+                held.length = string_length((string_address)row->subject);
 
-                /* A flag row carries the flag between the setting and the
-                   state; nothing here asks about one yet, so it is stepped
-                   over rather than guessed at. */
-                if (said && state && !memory_compare(said, "flag", 4))
-                        state = floodlight_word(next, &next);
+                if (!floodlight_is(held, name))
+                        continue;
 
-                if (subject && state &&
-                    string_length(subject) == named &&
-                    !memory_compare(subject, name, named) &&
-                    !memory_compare(said, setting, string_length(setting)))
+                if (setting == FLOODLIGHT_FLAG)
                 {
-                        *answer = !memory_compare(state, "allow", 5);
-                        return true;
+                        held.at = (string_address)row->detail;
+                        held.length = string_length((string_address)row->detail);
+
+                        if (!floodlight_is(held, detail))
+                                continue;
                 }
 
-                while (*at && *at != '\n')
-                        at++;
-                at += *at == '\n';
+                *answer = row->allowed != 0;
+                return true;
         }
 
         return false;
@@ -11843,12 +11946,14 @@ static bool floodlight_built_in(string_address name)
         return true;
 }
 
-static bool floodlight_may(string_address name, string_address setting,
+static bool floodlight_may(string_address name, positive setting,
                            bool otherwise)
 {
         bool answer;
 
-        return floodlight_says(name, setting, &answer) ? answer : otherwise;
+        return floodlight_says(name, setting, (string_address)"", &answer)
+                   ? answer
+                   : otherwise;
 }
 
 /*
@@ -11959,8 +12064,8 @@ static fn floodlight_confine(const p32 address_to numbers, positive count)
 */
 static bool floodlight_confines(string_address name)
 {
-        return !floodlight_may(name, "spawn", floodlight_built_in(name)) ||
-               !floodlight_may(name, "network", true);
+        return !floodlight_may(name, FLOODLIGHT_SPAWN, floodlight_built_in(name)) ||
+               !floodlight_may(name, FLOODLIGHT_NETWORK, true);
 }
 
 /* Everything the register refuses this applet, as one filter. */
@@ -11969,13 +12074,13 @@ static fn floodlight_apply(string_address name)
         p32 refused[FLOODLIGHT_REFUSED];
         positive count = 0;
 
-        if (!floodlight_may(name, "spawn", floodlight_built_in(name)))
+        if (!floodlight_may(name, FLOODLIGHT_SPAWN, floodlight_built_in(name)))
         {
                 refused[count++] = (p32)syscall(execve);
                 refused[count++] = (p32)syscall(execveat);
         }
 
-        if (!floodlight_may(name, "network", true))
+        if (!floodlight_may(name, FLOODLIGHT_NETWORK, true))
         {
                 refused[count++] = (p32)syscall(socket);
                 refused[count++] = (p32)syscall(connect);
@@ -11984,18 +12089,34 @@ static fn floodlight_apply(string_address name)
         floodlight_confine(refused, count);
 }
 
-static b32 shell_tool_call(positive which)
+/*
+        Running one applet.
+
+        `own_process` says this process exists to run this applet and nothing
+        after it, which is what makes it safe to lock a seccomp filter onto.
+        It is asked for rather than assumed, because a filter cannot be taken
+        off again: the build tool includes this file and runs uname, mkdir and
+        find inside its own process, and confining find there left the tool
+        unable to exec the compiler it was about to run -- a build that failed
+        with no error, because a refused exec says EPERM and prints nothing.
+
+        So the answer is opt-in. A caller that says nothing gets no filter, and
+        the callers that say yes are the three that exit immediately after.
+*/
+static b32 shell_tool_call_in(positive which, bool own_process)
 {
         string_address name = shell_tools[which].name;
         b32 answered;
 
-        /* Refused outright, before it runs at all. */
-        if (!floodlight_may(name, "run", true))
+        /* Refused outright, before it runs at all. Safe everywhere: it stops
+           the applet rather than changing what this process may do later. */
+        if (!floodlight_may(name, FLOODLIGHT_RUN, true))
                 return string_report(log_error, 126,
                                      "%s: refused by floodlight\n", name);
 
         /* And confined, before it reads the data that would drive it. */
-        floodlight_apply(name);
+        if (own_process)
+                floodlight_apply(name);
 
         log_failure_reset();
         answered = shell_tools[which].function() & 0xff;
@@ -12005,6 +12126,12 @@ static b32 shell_tool_call(positive which)
                 answered = 1;
 
         return answered;
+}
+
+/* The ordinary way in: this process goes on to do other things. */
+static b32 shell_tool_call(positive which)
+{
+        return shell_tool_call_in(which, false);
 }
 
 /*
@@ -12052,7 +12179,19 @@ static positive shell_tool_key_find(string_address name)
         is an ordinary shell after all. Nothing is forked: this process is the
         invocation, and it is about to end.
 */
-static b32 shell_tool_named(string_address name)
+/*
+        The applet a name asks for, run.
+
+        own_process is the caller saying this process exists to run this and
+        nothing after it, which is what makes it safe to lock a seccomp filter
+        on. Both callers reach the same table and only one of them is finished
+        afterwards: the shell's own main is here because the binary was invoked
+        under an applet's name, while the build tool sets an argument vector,
+        asks for a tool, and then carries on to run the compiler. Confining the
+        second left the build unable to exec anything, and a refused exec says
+        EPERM and prints nothing -- so the build failed with no error at all.
+*/
+static b32 shell_tool_named_in(string_address name, bool own_process)
 {
         positive which;
 
@@ -12081,7 +12220,13 @@ static b32 shell_tool_named(string_address name)
         if (which == SHELL_TOOLS)
                 return -1;
 
-        return shell_tool_call(which);
+        return shell_tool_call_in(which, own_process);
+}
+
+/* Ordinary callers keep the process afterwards, so nothing is locked on. */
+static b32 shell_tool_named(string_address name)
+{
+        return shell_tool_named_in(name, false);
 }
 
 b32 shell_tool_as_called()
@@ -12154,7 +12299,7 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
                 trap_default_all();
 
                 program_arguments_use(shell_argv, (b32)shell_argc);
-                exit(shell_tool_call(which));
+                exit(shell_tool_call_in(which, true));
         }
 
         if (child < 0)

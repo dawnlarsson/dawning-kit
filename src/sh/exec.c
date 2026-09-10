@@ -2050,7 +2050,7 @@ fn job_execute_tool(positive which)
                 shell_default(JOB_SIGNAL_TTY_OUTPUT);
                 exec_child_began();
                 program_arguments_use(shell_argv, (b32)shell_argc);
-                exit(shell_tool_call(which));
+                exit(shell_tool_call_in(which, true));
         }
 
         if (child < 0)

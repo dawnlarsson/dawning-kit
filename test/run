@@ -6953,6 +6953,27 @@ export SPARK_OWNER=base
 export SPARK_OWNER=parent
 /shell -c 'printf "owner-%s\n" "$SPARK_OWNER"'
 ls /monitor.sh | rev
+#
+#       Floodlight, on a running machine.
+#
+#       Everything else about the register is checked in a harness. This is the
+#       only place it is asked on a kernel that booted: the device is there, it
+#       says what this kernel was built saying, and an applet that turns data
+#       into a command cannot start one. rev keeps the answers out of the
+#       command echo, the way every other check here does.
+#
+printf 'fl-device-%s\n' "$(head -c 12 /dev/floodlight | rev)"
+printf 'fl-awk-%s\n' "$(grep -c '^awk .*spawn .*deny' /dev/floodlight)"
+printf 'fl-env-%s\n' "$(grep -c '^env .*spawn .*allow' /dev/floodlight)"
+#
+#       Reversed, because the console echoes the command before the machine
+#       answers it: a marker written plainly here is in the transcript whether
+#       or not anything ran, which is a check that passes when the thing it
+#       watches is broken. Every other answer in this file is reversed for the
+#       same reason.
+#
+printf 'fl-esc-%s\n' "$(awk 'BEGIN { system("printf out") }' 2>/dev/null | rev)"
+printf 'fl-named-%s\n' "$(env /bin/dash -c 'printf ready' 2>/dev/null | rev)"
 printf 'alias-%s\n' "$(readlink /mointor.sh | rev)"
 printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
 printf 'mount-link-%s\n' "$(readlink /bin/mount | rev)"
@@ -7062,6 +7083,17 @@ never()
 #       Without these two the failure reads as six assertions about arithmetic
 #       and uname going missing, which is a long way from the cause.
 #
+#
+#       The register on a booted machine: present, saying what it was built
+#       saying, and actually stopping the applet it names.
+#
+says 'floodlight device'   'fl-device-thgildoolf #'
+says 'floodlight has awk'  'fl-awk-1'
+says 'floodlight has env'  'fl-env-1'
+says 'awk was asked'       'fl-esc-'
+never 'awk cannot escape'  'fl-esc-tuo'
+says 'a named applet runs' 'fl-named-ydaer'
+
 never 'no invalid opcode'  'invalid opcode'
 never 'no protection fault' 'general protection fault'
 never 'init survived'      'Attempted to kill init'
