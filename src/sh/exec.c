@@ -6333,7 +6333,7 @@ static COLD PURE bool exec_trace_quoting(string_address word)
                 case '(': case ')': case '<': case '>':
                 case '!': case '{': case '}':
                 case '*': case '[': case '?': case ']':
-                case '^': case '$': case '`': case ',':
+                case '^': case '$': case '`':
                         return true;
                 case '~':
                         if (at == word || at[-1] == ':' || at[-1] == '=')
@@ -6350,9 +6350,68 @@ static COLD PURE bool exec_trace_quoting(string_address word)
         return false;
 }
 
+/*
+        A byte that cannot be written as itself.
+
+        In the C locale that is every control character and every byte with
+        the high bit set. A word holding one is written in the $'...'
+        spelling, which is the only one that can carry it back.
+*/
+static COLD PURE bool exec_trace_unprintable(string_address word)
+{
+        for (string_address at = word; string_get(at); at++)
+                if ((p8)string_get(at) < ' ' || (p8)string_get(at) >= 127)
+                        return true;
+
+        return false;
+}
+
+/* $'...': the seven named escapes, \E for escape itself, a backslash in
+   front of a quote or a backslash, and three octal digits for every other
+   byte that cannot be written as itself. */
+static COLD fn exec_trace_ansi(string_address word)
+{
+        static const p8 named[] = "abtnvfr";
+
+        log_error(str("$'"));
+        for (string_address at = word; string_get(at); at++)
+        {
+                p8 value = (p8)string_get(at);
+                p8 said[4];
+
+                said[0] = '\\';
+                if (value >= 7 && value <= 13)
+                {
+                        said[1] = named[value - 7];
+                        log_error(said, 2);
+                }
+                else if (value == 27)
+                {
+                        said[1] = 'E';
+                        log_error(said, 2);
+                }
+                else if (value == '\'' || value == '\\')
+                {
+                        said[1] = value;
+                        log_error(said, 2);
+                }
+                else if (value < ' ' || value >= 127)
+                {
+                        said[1] = (p8)('0' + (value >> 6));
+                        said[2] = (p8)('0' + ((value >> 3) & 7));
+                        said[3] = (p8)('0' + (value & 7));
+                        log_error(said, 4);
+                }
+                else
+                        log_error(at, 1);
+        }
+        log_error(str("'"));
+}
+
 /* One word as Bash writes it: bare where it can be, in single quotes where
-   it cannot, and a bare pair of quotes where the word is empty. A quote
-   inside closes the run, is written escaped, and opens the next. */
+   it cannot, in the $'...' spelling where a quote could not carry it, and a
+   bare pair of quotes where the word is empty. A quote inside a single-quoted
+   run closes the run, is written escaped, and opens the next. */
 static COLD fn exec_trace_word(string_address word)
 {
         string_address run;
@@ -6360,6 +6419,11 @@ static COLD fn exec_trace_word(string_address word)
         if (!string_get(word))
         {
                 log_error(str("''"));
+                return;
+        }
+        if (exec_trace_unprintable(word))
+        {
+                exec_trace_ansi(word);
                 return;
         }
         if (!exec_trace_quoting(word))
