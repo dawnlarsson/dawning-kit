@@ -2720,12 +2720,11 @@ static inline INLINE address_any copy_until_known(address_any destination,
 //      memory_copy_until guards on the size alone and never on the byte. Folding the byte buys nothing — the compare is register against an immediate or against a register, and the length is the same either way — while requiring both would halve the number of call sites the expansion reaches.
 
 /* Shared C policies sit above library.c's assembly and declarations.
-   Declarations come first; errno and allocation precede their consumers.
+   The standard names are declared in library.c itself now, beside the
+   assembly they name; errno and allocation precede their consumers.
    stream.c changes stdin/stdout/stderr from descriptor numbers to stream
    pointers, so descriptor-oriented families precede it. Formatting follows
    streams and errors to use their output and errno implementations. */
-#include "standard/declare.c"
-
 #include "standard/error.c"
 #include "standard/lock.c"
 #define STANDARD_NO_UNDERSCORE_EXIT

@@ -31,7 +31,7 @@
               abs labs llabs        absolute_whole, absolute_wide
               atoi atol atoll       string_to_whole, string_to_whole_wide
 
-        declare.c gives all ten standard names their exact C types. The six
+        library.c gives all ten standard names their exact C types. The six
         operations above remain direct assembly aliases. strtol, strtoll,
         strtoul and strtoull are C bodies here because errno is C-library
         state and deliberately is not a dependency of the raw platform
@@ -53,7 +53,7 @@
         These ten were once declared here in the house types, and are not any
         more.
 
-        declare.c says them first, in C's own spellings -- long labs(long),
+        library.c says them first, in C's own spellings -- long labs(long),
         int atoi(const char *) -- and it is right to and this file was not.
         The house and C spellings disagree about nothing at runtime: their
         integers are the same width in the same register on all three targets.
@@ -63,7 +63,7 @@
 
         So the declarations are gone and nothing else is. The definitions
         this file owns -- the checked strto* wrappers, strtod and the
-        <inttypes.h> spellings below -- use the C declarations from declare.c.
+        <inttypes.h> spellings below -- use the C declarations in library.c.
 */
 
 long strtol(const char address_to input,
@@ -2548,7 +2548,7 @@ NUMBERS_TO(string_to_extended, f128, numbers_extended_shape, numbers_extended,
 */
 //      The end pointer is a char ** and not a string_address address_to,
 //      which is the house spelling everything below the standard names uses.
-//      declare.c settled that question for the ninety eight names it covers
+//      library.c settled that question for the ninety eight names it covers
 //      and these three are the same kind of name reached the same way: a
 //      program that brings its own <stdlib.h> line for strtod must compile
 //      against this one, and it cannot if the tree says the end pointer is

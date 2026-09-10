@@ -203,7 +203,8 @@ static fn test_cases_walk(test_case address_to walk)
 
         It is compiled twice from two files that share nothing but this one.
         CHECK_declare includes src/compiler_memory.c and gets every name
-        below from src/standard/declare.c and the ASM_ALIAS symbols under it.
+        below from the declarations in src/library.c and the ASM_ALIAS
+        symbols beside them.
         CHECK_declare_reference includes the host's <string.h>, <ctype.h>,
         <stdlib.h>, <strings.h>, <math.h> and <setjmp.h> and gets them from
         glibc. If a declaration in declare.c disagreed with the one in a real
