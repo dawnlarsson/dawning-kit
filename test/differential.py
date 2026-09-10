@@ -19130,7 +19130,7 @@ def harness_floodlight(argv):
     from inventory import c_bodies, lex
     from collections import defaultdict
 
-    FILE = ROOT / 'floodlight.c'
+    FILE = ROOT / 'src' / 'floodlight.c'
     IDENTIFIER = re.compile(r'^[A-Za-z_]\w*$')
     checks = failures = 0
 
@@ -19233,7 +19233,11 @@ def harness_floodlight(argv):
     forbidden = set()
     for pattern in ('src/**/*.c', 'src/**/*.inc', 'src/**/*.h', 'programs/**/*.c'):
         for path in sorted(ROOT.glob(pattern)):
-            if 'test' in path.parts:
+            #   Floodlight itself is not Moonwater's library. It lives under
+            #   src/ so that the kernel tree's existing symlink builds it with
+            #   no further wiring, which does not make its own names something
+            #   it is forbidden to say.
+            if 'test' in path.parts or path == FILE:
                 continue
             body = path.read_text(encoding='utf-8', errors='replace')
             forbidden |= {item.name for item in c_bodies(str(path), body)}
@@ -19303,6 +19307,57 @@ def harness_floodlight(argv):
               % name)
     check(not outside, 'floodlight.c reaches into the kernel for %d named '
                        'facilities and no others' % len(called & KERNEL))
+
+    #   The shell carries its own copy of what floodlight refuses, for when the
+    #   register cannot be read -- so that removing the device is not a way of
+    #   removing the policy. Two copies is two things that can drift, and this
+    #   is what stops them.
+    shell = (ROOT / 'src/sh/builtin.c').read_text()
+    fallback = re.search(r'static string_address const floodlight_denied\[\] = \{(.*?)null\}',
+                         shell, re.S)
+    check(bool(fallback), 'the shell carries a built-in copy of what is refused')
+    if fallback:
+        carried = set(re.findall(r'"([^"]+)"', fallback.group(1)))
+        refused = {name for name, state in declared.items() if state == '0'}
+        for name in sorted(refused - carried):
+            check(False, 'floodlight.c refuses %s and the shell does not know it' % name)
+        for name in sorted(carried - refused):
+            check(False, 'the shell refuses %s and floodlight.c does not' % name)
+        check(carried == refused,
+              'the shell refuses exactly what floodlight.c is built refusing')
+
+    #   The confinement has to be installed where the applet is named and
+    #   before it has read anything, and it must not be installed in the
+    #   shell's own process -- an irreversible filter there would outlive the
+    #   applet and take the shell's next exec with it.
+    #   Against the lexed source, not the text: commenting a call out leaves it
+    #   in the file for a regex to find, and a check that a comment satisfies
+    #   is worse than no check because it reads as a passing one.
+    shell_tokens = [token.value for token in lex(shell)[0]]
+
+    def calls(*sequence):
+        window = len(sequence)
+        return any(shell_tokens[i:i + window] == list(sequence)
+                   for i in range(len(shell_tokens) - window))
+
+    for ok, what in (
+            (calls('floodlight_apply', '(', 'name', ')', ';'),
+             'the dispatcher confines the applet it is about to run'),
+            (calls('floodlight_may', '(', 'name', ',', '"run"', ',', 'true', ')'),
+             'the dispatcher refuses an applet the register refuses'),
+            (calls('shell_tail_command', '&', '&', '!', 'floodlight_confines', '(', 'name', ')'),
+             "an applet that must be confined never runs in the shell's own process"),
+            (calls('floodlight_may', '(', 'name', ',', '"spawn"', ',',
+                   'floodlight_built_in', '(', 'name', ')', ')'),
+             'a register that cannot be read leaves the built-in answers '
+             'standing, so removing the device grants nothing'),
+            (calls('syscall', '(', 'prctl', ')', ',', 'PR_SET_NO_NEW_PRIVS'),
+             'the filter is installed with no-new-privs'),
+            (calls('syscall', '(', 'seccomp', ')', ',', 'SECCOMP_SET_MODE_FILTER'),
+             'the confinement is a seccomp filter, so it survives exec'),
+            (calls('BPF_JUMP_EQUAL', ',', '1', ',', '0', ',', 'FLOODLIGHT_AUDIT_ARCH'),
+             'the filter checks which architecture the call arrived on')):
+        check(ok, what)
 
     #   A guard that is correct and not called is not a guard. Testing plain()
     #   alone passed a file that had stopped using it, so the shape of each

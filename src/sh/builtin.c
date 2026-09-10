@@ -11653,9 +11653,307 @@ static string_address shell_tool_name(string_address path)
         return slash ? slash + 1 : path;
 }
 
+/*
+        Floodlight -- what this program is allowed to do.
+
+        The register itself is floodlight.c, a kernel module of its own that
+        holds the answers and every deviation from them. This is the half that
+        acts on them, and it acts here because this is the one place an applet
+        is named before it has read anything: whatever the awk program says, or
+        the filename find walked to, or the line that arrived on xargs' input,
+        the confinement is already on by the time that data exists.
+
+        Which is the whole point. The applets that matter are the ones whose
+        behaviour is driven by what they read; fixing their identity before the
+        reading starts is what closes them.
+*/
+
+#define FLOODLIGHT_PATH "/dev/floodlight"
+
+/*
+        What is refused when the register cannot be read.
+
+        Not "everything", which would refuse the machine, and not "nothing",
+        which would mean removing the device is a way of removing the policy.
+        These are the six floodlight.c is built refusing -- the three that turn
+        data into a command and the three that start a shell -- so the absence
+        of the register leaves the built-in answers standing and only the
+        deviations unavailable. The floodlight harness fails the build if this
+        list and floodlight.c's disagree.
+*/
+static string_address const floodlight_denied[] = {
+    "awk", "bowl", "find", "script", "setarch", "xargs", null};
+
+/*
+        The register, read once.
+
+        A page is more than the report can be, and reading it per applet would
+        put an open, a read and a close on a path that already costs forty
+        microseconds. Read on the first applet this process runs and kept: a
+        deviation made after that reaches the next program started, which is
+        the next thing anybody runs.
+*/
+static p8 floodlight_report[4096];
+static positive floodlight_report_length;
+static bool floodlight_report_read;
+
+static fn floodlight_load()
+{
+        bipolar handle;
+        bipolar got;
+
+        if (floodlight_report_read)
+                return;
+
+        floodlight_report_read = true;
+
+        handle = system_open_at(AT_FDCWD, FLOODLIGHT_PATH, FILE_READ);
+
+        if (handle < 0)
+                return;
+
+        got = system_read_once(handle, floodlight_report,
+                               sizeof(floodlight_report) - 1);
+        system_close(handle);
+
+        if (got > 0)
+                floodlight_report_length = (positive)got;
+
+        floodlight_report[floodlight_report_length] = 0;
+}
+
+/* One word of a report line, and where the next one starts. */
+static string_address floodlight_word(string_address at, string_address address_to next)
+{
+        string_address start = at;
+
+        while (*start == ' ')
+                start++;
+
+        at = start;
+        while (*at && *at != ' ' && *at != '\n')
+                at++;
+
+        *next = at;
+        return start == at ? null : start;
+}
+
+/*
+        What the register says about one program and one setting, if anything.
+
+        The report is the interface, so this reads the same text a person
+        does -- there is no second encoding of the answers to drift out of
+        step with the one that is printed.
+*/
+static bool floodlight_says(string_address name, string_address setting,
+                            bool address_to answer)
+{
+        string_address at = (string_address)floodlight_report;
+        positive named = string_length(name);
+
+        floodlight_load();
+
+        while (*at)
+        {
+                string_address subject, said, state, next;
+
+                if (*at == '#')
+                {
+                        while (*at && *at != '\n')
+                                at++;
+                        at += *at == '\n';
+                        continue;
+                }
+
+                subject = floodlight_word(at, &next);
+                said = subject ? floodlight_word(next, &next) : null;
+                state = said ? floodlight_word(next, &next) : null;
+
+                /* A flag row carries the flag between the setting and the
+                   state; nothing here asks about one yet, so it is stepped
+                   over rather than guessed at. */
+                if (said && state && !memory_compare(said, "flag", 4))
+                        state = floodlight_word(next, &next);
+
+                if (subject && state &&
+                    string_length(subject) == named &&
+                    !memory_compare(subject, name, named) &&
+                    !memory_compare(said, setting, string_length(setting)))
+                {
+                        *answer = !memory_compare(state, "allow", 5);
+                        return true;
+                }
+
+                while (*at && *at != '\n')
+                        at++;
+                at += *at == '\n';
+        }
+
+        return false;
+}
+
+/* The built-in answer this shell carries, for when the register is silent. */
+static bool floodlight_built_in(string_address name)
+{
+        positive i;
+
+        for (i = 0; floodlight_denied[i]; i++)
+                if (word_is(name, floodlight_denied[i]))
+                        return false;
+
+        return true;
+}
+
+static bool floodlight_may(string_address name, string_address setting,
+                           bool otherwise)
+{
+        bool answer;
+
+        return floodlight_says(name, setting, &answer) ? answer : otherwise;
+}
+
+/*
+        A filter that refuses one thing, installed on this process for good.
+
+        Classic BPF, which is what seccomp takes: check the architecture the
+        call arrived on, then the call number, and answer. The architecture
+        check is not decoration -- without it a process could make the same
+        call through a different ABI and arrive at a number that means
+        something else entirely.
+
+        SECCOMP_RET_ERRNO rather than killing: a refused exec should look to
+        the program like a refused exec, so find says it could not run the
+        command and carries on walking rather than dying halfway.
+*/
+#define BPF_LOAD_WORD 0x20
+#define BPF_JUMP_EQUAL 0x15
+#define BPF_RETURN 0x06
+#define SECCOMP_DATA_NR 0
+#define SECCOMP_DATA_ARCH 4
+#define SECCOMP_RET_ERRNO_EPERM 0x00050001u
+#define SECCOMP_RET_ALLOW 0x7fff0000u
+#define SECCOMP_SET_MODE_FILTER 1
+#define PR_SET_NO_NEW_PRIVS 38
+
+#if defined(__x86_64__)
+#define FLOODLIGHT_AUDIT_ARCH 0xc000003eu
+#elif defined(__aarch64__)
+#define FLOODLIGHT_AUDIT_ARCH 0xc00000b7u
+#else
+#define FLOODLIGHT_AUDIT_ARCH 0xc00000f3u
+#endif
+
+typedef struct
+{
+        b16 code;
+        p8 jt;
+        p8 jf;
+        p32 k;
+} floodlight_instruction;
+
+typedef struct
+{
+        b16 count;
+        floodlight_instruction address_to filter;
+} floodlight_program;
+
+#define FLOODLIGHT_REFUSED 8
+
+static fn floodlight_confine(const p32 address_to numbers, positive count)
+{
+        floodlight_instruction filter[6 + FLOODLIGHT_REFUSED];
+        floodlight_program program;
+        positive at = 0;
+        positive i;
+
+        if (!count)
+                return;
+
+        /* Clamped before the jumps are worked out, not while they are being
+           written: every jump below is measured from `count`, so a count the
+           loop quietly truncated would leave every one of them pointing past
+           the end of the filter. */
+        if (count > FLOODLIGHT_REFUSED)
+                count = FLOODLIGHT_REFUSED;
+
+        /* Arrived on the architecture this filter was written for, or refused
+           outright: a call through another ABI reaches a different table. */
+        filter[at++] = (floodlight_instruction){BPF_LOAD_WORD, 0, 0, SECCOMP_DATA_ARCH};
+        filter[at++] = (floodlight_instruction){BPF_JUMP_EQUAL, 1, 0, FLOODLIGHT_AUDIT_ARCH};
+        filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ERRNO_EPERM};
+
+        filter[at++] = (floodlight_instruction){BPF_LOAD_WORD, 0, 0, SECCOMP_DATA_NR};
+
+        for (i = 0; i < count; i++)
+                filter[at++] = (floodlight_instruction){
+                    BPF_JUMP_EQUAL, (p8)(count - i), 0, numbers[i]};
+
+        filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ALLOW};
+        filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ERRNO_EPERM};
+
+        program.count = (p16)at;
+        program.filter = filter;
+
+        /* Without this a filter needs privilege to install. With it the
+           kernel also refuses to grant any through this process's execs,
+           which is the property that makes the filter worth installing. */
+        if (system_call_5(syscall(prctl), PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+                return;
+
+        system_call_3(syscall(seccomp), SECCOMP_SET_MODE_FILTER, 0,
+                      (positive)address_of program);
+}
+
+/*
+        Whether this applet has to be confined, asked before the fork that
+        would make confining it safe.
+
+        The shell runs the last command of a -c in its own process rather than
+        forking for it, which is right for a builtin and wrong for one that is
+        about to have a filter locked onto it for good: the filter would outlive
+        the applet and take the shell's own exec with it, including whatever an
+        EXIT trap was going to run. So an applet that needs confining does not
+        take that path.
+*/
+static bool floodlight_confines(string_address name)
+{
+        return !floodlight_may(name, "spawn", floodlight_built_in(name)) ||
+               !floodlight_may(name, "network", true);
+}
+
+/* Everything the register refuses this applet, as one filter. */
+static fn floodlight_apply(string_address name)
+{
+        p32 refused[FLOODLIGHT_REFUSED];
+        positive count = 0;
+
+        if (!floodlight_may(name, "spawn", floodlight_built_in(name)))
+        {
+                refused[count++] = (p32)syscall(execve);
+                refused[count++] = (p32)syscall(execveat);
+        }
+
+        if (!floodlight_may(name, "network", true))
+        {
+                refused[count++] = (p32)syscall(socket);
+                refused[count++] = (p32)syscall(connect);
+        }
+
+        floodlight_confine(refused, count);
+}
+
 static b32 shell_tool_call(positive which)
 {
+        string_address name = shell_tools[which].name;
         b32 answered;
+
+        /* Refused outright, before it runs at all. */
+        if (!floodlight_may(name, "run", true))
+                return string_report(log_error, 126,
+                                     "%s: refused by floodlight\n", name);
+
+        /* And confined, before it reads the data that would drive it. */
+        floodlight_apply(name);
 
         log_failure_reset();
         answered = shell_tools[which].function() & 0xff;
@@ -11768,7 +12066,10 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
         if (which == SHELL_TOOLS)
                 return false;
 
-        if (shell_tail_command)
+        /* The tail command runs in the shell's own process. An applet the
+           register confines must not, because the filter would stay on after
+           it and take the shell's own exec with it. */
+        if (shell_tail_command && !floodlight_confines(name))
         {
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 shell_answer(shell_tool_call(which));

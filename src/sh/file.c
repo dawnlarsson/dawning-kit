@@ -3320,6 +3320,28 @@ static positive ls_sorted[LS_MAX_ENTRIES];
 static positive ls_sort_spare[LS_MAX_ENTRIES];
 static positive ls_count;
 static p8 ls_arena[LS_ARENA];
+
+/*
+        The subdirectory names each level of -R holds while it descends.
+
+        This used to be an array inside ls_below, which meant LS_ARENA / 8 --
+        128 kB -- of stack per level of nesting, to FILE_MAX_DEPTH. A `ls -R`
+        over a tree anybody can make with mkdir -p walked five megabytes down
+        the stack, of an eight megabyte default, and died outright anywhere the
+        limit was smaller. None of it showed in `size`, in RSS at startup, or
+        in the section table, because stack is the one cost none of those name.
+
+        Here it is bss like every other ls arena, so the pages a listing does
+        not use are never touched and cost nothing. The levels share it end to
+        end: a level takes what its names need, keeps it while it descends, and
+        gives it back on the way out. Sharing is also why the arena is a whole
+        one rather than a slice each -- a directory whose names outgrow what a
+        per-level share would have been can borrow the room the levels above it
+        did not need, so trees that used to be refused now list.
+*/
+#define LS_BELOW_ARENA (1 << 22)
+static p8 ls_below_names[LS_BELOW_ARENA];
+static positive ls_below_used;
 static positive ls_used;
 
 // What was asked for, one letter per question.
@@ -5266,10 +5288,17 @@ static bool ls_already_listed(file_facts address_to facts)
 
 static fn ls_below(string_address path, positive depth)
 {
-        // The names of the subdirectories are taken out of the listing before
-        // descending, because the listing buffers are about to be filled with
-        // whatever is inside the first of them.
-        p8 keep[LS_ARENA / 8];
+        //      The names of the subdirectories are taken out of the listing
+        //      before descending, because the listing buffers are about to be
+        //      filled with whatever is inside the first of them.
+        //
+        //      Taken from the shared arena at the mark this level found it at,
+        //      and given back at that mark on every way out of this function.
+        //      The pointer stays good across the descent because the arena is
+        //      static and deeper levels only ever take from above the mark.
+        positive mark = ls_below_used;
+        p8 address_to keep = ls_below_names + mark;
+        positive room = sizeof(ls_below_names) - mark;
         positive kept = 0;
         positive found = 0;
 
@@ -5287,9 +5316,10 @@ static fn ls_below(string_address path, positive depth)
 
                 positive length = string_length(name);
 
-                if (kept + length + 1 > sizeof(keep))
+                if (kept + length + 1 > room)
                 {
                         ls_limit((string_address) "recursive directory list too large");
+                        ls_below_used = mark;
                         return;
                 }
 
@@ -5298,6 +5328,10 @@ static fn ls_below(string_address path, positive depth)
                 kept += length + 1;
                 found++;
         }
+
+        //      Held while the levels below run, because they take from above
+        //      this and these names are still being read.
+        ls_below_used = mark + kept;
 
         positive at = 0;
 
@@ -5328,6 +5362,8 @@ static fn ls_below(string_address path, positive depth)
 
                 ls_directory(below, true, depth - 1, false);
         }
+
+        ls_below_used = mark;
 }
 
 // A directory that will not open is answered with 2 when it was named on
