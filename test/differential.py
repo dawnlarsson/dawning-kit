@@ -86,10 +86,10 @@ DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "full",
 
 DOMAIN_FLOOR = {
     #       domain: (cases that agreed, cases run, the noise to ignore, what
-    #       the gap is) when the floor was set. An entry is absent once its domain agrees on
-    #       everything, which four of the seven already do -- misc among them since
-    #       2026-09-10, when the last 626 of its cases were closed or pinned and its row
-    #       was taken out of this table.
+    #       the gap is) when the floor was set. An entry is absent once its
+    #       domain agrees on everything, which four of the seven already do --
+    #       misc among them since 2026-09-10, when the last 626 of its cases
+    #       were closed or pinned and its row was taken out of this table.
     #
     #       The fourth field is how far above the floor a run may land before
     #       it is a gain rather than a good day. A handful of cases still flip
