@@ -9405,6 +9405,17 @@ static b32 file_stat()
 
                 if (stat_file_system)
                 {
+                        //      A dash is the standard input, and a stream has
+                        //      no file system to describe; the reference says
+                        //      so rather than looking for a file called -.
+                        if (string_is(path, '-') && !string_get(path + 1))
+                        {
+                                log_error("stat: using '-' to denote standard input "
+                                          "does not work in file system mode\n", 0);
+                                stat_status = 1;
+                                continue;
+                        }
+
                         file_mount_facts facts;
                         bipolar done = system_call_2(syscall(statfs), (positive)path,
                                                      (positive)address_of facts);
@@ -17632,6 +17643,8 @@ static b32 file_rmdir()
                 p8 parent[FILE_PATH_MAX];
                 p8 above[FILE_PATH_MAX];
 
+                bool named = true;
+
                 while (1)
                 {
                         if (flags & FILE_FLAG('v'))
@@ -17649,8 +17662,14 @@ static b32 file_rmdir()
                                 // named a directory that was never followed.
                                 positive length = string_length(path);
 
+                                //      The operand is reported as a name and
+                                //      a parent walked up to as a directory,
+                                //      which is how the reference's two
+                                //      messages differ.
                                 string_format(log_error,
-                                              "rmdir: failed to remove '%s': %s\n", path,
+                                              named ? "rmdir: failed to remove '%s': %s\n"
+                                                    : "rmdir: failed to remove directory '%s': %s\n",
+                                              path,
                                               gone == -ERROR_NOT_DIRECTORY && length &&
                                                       path[length - 1] == '/'
                                                   ? (string_address) "Symbolic link not followed"
@@ -17662,16 +17681,30 @@ static b32 file_rmdir()
                         if (!(flags & FILE_FLAG('p')))
                                 break;
 
+                        //      A parent is what is left when the last
+                        //      component is cut off, and there is one for as
+                        //      long as a slash is left: the reference walks
+                        //      up to '.' and to '/' and asks the kernel about
+                        //      them too.
                         string_copy_max_end(parent, path, FILE_PATH_MAX - 1);
-                        path_head_copy(above, FILE_PATH_MAX, parent);
 
-                        if (string_is(above, '.') && string_is(above + 1, end))
+                        positive cut = string_length(parent);
+
+                        while (cut && parent[cut - 1] == '/')
+                                cut--;
+
+                        while (cut && parent[cut - 1] != '/')
+                                cut--;
+
+                        if (!cut)
                                 break;
 
-                        if (string_is(above, '/') && string_is(above + 1, end))
-                                break;
+                        while (cut > 1 && parent[cut - 1] == '/')
+                                cut--;
 
+                        memory_copy_apart_end(above, parent, cut);
                         path = above;
+                        named = false;
                 }
         }
 
@@ -22178,15 +22211,34 @@ static const file_long nproc_longs[] = {
     {null, 0},
 };
 
+//      --ignore's number is read where the option is written, so a line
+//      that also carries an operand or an option nobody has says what is
+//      wrong with the number first, the way the reference's getopt does.
+static positive nproc_ignore;
+
+static bool nproc_option_seen(p8 letter, string_address value)
+{
+        if (letter != 'i' || !value)
+                return true;
+
+        if (!nproc_decimal(value, true, false, false, address_of nproc_ignore))
+                return string_report(log_error, false, "nproc: invalid number: '%s'\n", value);
+
+        return true;
+}
+
 static b32 file_nproc()
 {
         file_simple_operand_count = 0;
+        nproc_ignore = 0;
+
         file_taking taking = {
             .program = (string_address) "nproc",
             .allowed = (string_address) "",
             .valued = (string_address) "i",
             .longs = nproc_longs,
             .operand = file_simple_operand,
+            .seen = nproc_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -22196,12 +22248,7 @@ static b32 file_nproc()
                 return string_report(log_error, 1, "nproc: extra operand '%s'\n",
                               file_simple_operand_list[0]);
 
-        positive ignore = 0;
-        string_address ignored = file_option_value(address_of taking, 'i');
-
-        if (ignored &&
-            !nproc_decimal(ignored, true, false, false, address_of ignore))
-                return string_report(log_error, 1, "nproc: invalid number: '%s'\n", ignored);
+        positive ignore = nproc_ignore;
 
         bool all = (taking.flags & FILE_FLAG('a')) != 0;
         positive count;
