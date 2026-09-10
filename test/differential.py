@@ -114,7 +114,7 @@ DOMAIN_FLOOR = {
               "echoing the line that was typed, the job listing this shell prints in bash's "
               "columns under every name, and a terminal that goes away, which kills bash "
               "with the hangup where this one exits zero."),
-    "util_linux": (79080, 81037, 80,
+    "util_linux": (79040, 81037, 100,
                    "listings this build does not carry, and a handful of "
                    "usage banners. The mount namespace is no longer the gap: "
                    "umount_live agrees on all 8576 of its cases and "
@@ -170,10 +170,11 @@ DOMAIN_FLOOR = {
                    "rows would move several hundred refusals out of the pins "
                    "and into this gap; the other two are findmnt cases that "
                    "were leaning on the -R row for a refusal of their own, "
-                   "and it had to go once --submounts worked. The lane "
-                   "measures 79123 to 79134 of these; the number recorded "
-                   "here sits a little under the lower of them, for the "
-                   "handful that flap. Measure it the way the lane does, "
+                   "and it had to go once --submounts worked. Four runs of "
+                   "the lane measured 79084, 79123, 79128 and 79134 of "
+                   "these; the number recorded here sits under the lowest, "
+                   "because setsid alone gives up about thirty cases when "
+                   "the machine is busy. Measure it the way the lane does, "
                    "with the work under /tmp: a run whose root is on a "
                    "filesystem mounted without nosuid and nodev cannot see "
                    "the mounts this build used to break"),
