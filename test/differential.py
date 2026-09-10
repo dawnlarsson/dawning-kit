@@ -87,7 +87,9 @@ DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "full",
 DOMAIN_FLOOR = {
     #       domain: (cases that agreed, cases run, the noise to ignore, what
     #       the gap is) when the floor was set. An entry is absent once its domain agrees on
-    #       everything, which four of the seven already do.
+    #       everything, which four of the seven already do -- misc among them since
+    #       2026-09-10, when the last 626 of its cases were closed or pinned and its row
+    #       was taken out of this table.
     #
     #       The fourth field is how far above the floor a run may land before
     #       it is a gain rather than a good day. A handful of cases still flip
@@ -151,33 +153,6 @@ DOMAIN_FLOOR = {
                    "-A, -O and -R choose which lookup answers first, so one "
                    "unmounted name is not mounted to one of them and must be "
                    "superuser to another"),
-    "misc": (49780, 50406, 20,
-             "unfinished work, not undecidable answers. The note this floor "
-             "used to carry named script's transcript timing first, and that "
-             "was the wrong diagnosis: script's recorder held back an "
-             "end-of-file it never let go of, because the flag that says the "
-             "session has spoken was read and never set. The transcripts "
-             "agree now. What is left, largest first: scriptreplay keeps one "
-             "log to a stream, so it refuses --log-io beside --log-in and "
-             "--log-out, refuses the signal and info streams, and refuses a "
-             "zero divisor, all of which util-linux takes; logger refuses "
-             "--sd-id and --sd-param outright and refuses them before the "
-             "checks util-linux reaches first, so it never says --sd-id was "
-             "not specified for --sd-param; ps has no nice, pri, pcpu, ruser, "
-             "lstart or start column and answers -H, -l and -j as options it "
-             "has not got, though the runner normalises the rows away so it "
-             "is the heading and the acceptance that differ; numfmt cannot "
-             "print the float in value too large to be printed: 1.84467e+19, "
-             "there being no floating point in this file; od reads the "
-             "traditional FILE OFFSET operand as a second file and refuses "
-             "-t f before it has validated --endian; dmesg does not read "
-             "--kmsg-file; and what is left of diff is the unified body "
-             "itself, not its diagnostics. None of it depends on the "
-             "reference's own machine. The walk moved from default to full "
-             "in this pass -- 20052 cases to 50406, two minutes and a "
-             "quarter on twenty-four jobs -- and the wider walk is what "
-             "reaches factor's remaining rows and who's, which the narrow "
-             "one never asked about."),
     "files": (58260, 73330, 100,
               "the domain moved from singles to full in one pass, so most of "
               "what pairwise, three-wise and the powerset first reached is "
@@ -123042,82 +123017,6 @@ PINNED = r"""
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
-   "stdout": "0e585cc0b725251e026a6494dcca9b4b54441a34417006ea00c6e54d24e276bc"
-  },
-  "case": {
-   "argv": [
-    "-x",
-    "-F",
-    "-nbad",
-    "-w",
-    "-1",
-    "-0",
-    "-f",
-    "empty"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "last"
-  },
-  "domain": "misc",
-  "id": "08a6d6f6029aa339",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "last"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "a06565f915acd600740c37dec0126c7afce3617035cdcf31dd1304d367c60c99"
-  },
-  "case": {
-   "argv": [
-    "-i",
-    "-x",
-    "-R",
-    "-w",
-    "--time-format=notime",
-    "-a",
-    "-f",
-    "dir"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "last"
-  },
-  "domain": "misc",
-  "id": "1d35a2d94945a8c1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "last"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
    "stdout": "04e02349fee31970fc48c79dcd07bf35183403c56f51eb39e0b568557d18df78"
   },
   "case": {
@@ -123197,83 +123096,6 @@ PINNED = r"""
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
-   "stdout": "0e585cc0b725251e026a6494dcca9b4b54441a34417006ea00c6e54d24e276bc"
-  },
-  "case": {
-   "argv": [
-    "-R",
-    "--time-format=notime",
-    "-T",
-    "-x",
-    "-i",
-    "-0",
-    "-f",
-    "empty"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "last"
-  },
-  "domain": "misc",
-  "id": "359c75691f29f4c5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "last"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "f484b6e7a4c59a83665a81cf6f4e075d64926abf33552a9d4a9884df728aaf36"
-  },
-  "case": {
-   "argv": [
-    "-n",
-    "bad",
-    "-R",
-    "-x",
-    "-3",
-    "-0",
-    "-f",
-    "wtmp",
-    "pts/0"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "last"
-  },
-  "domain": "misc",
-  "id": "40e27374e8ca2535",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "last"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
    "stdout": "1a965a2b9aa72c13794295cf6faa3c0dc06edf9283816030b4d081a9928a9695"
   },
   "case": {
@@ -123306,43 +123128,6 @@ PINNED = r"""
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
    "stdout": "2601ffbf8d1a27360dfdeff4a670819a79753a9390c9f8fbf5ee04d48bf759a4"
-  },
-  "utility": "last"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "a06565f915acd600740c37dec0126c7afce3617035cdcf31dd1304d367c60c99"
-  },
-  "case": {
-   "argv": [
-    "-T",
-    "-i",
-    "--time-format=notime",
-    "-R",
-    "-a",
-    "-f",
-    "dir"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "last"
-  },
-  "domain": "misc",
-  "id": "4a023b055bf00293",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "utility": "last"
  },
@@ -123527,7 +123312,7 @@ PINNED = r"""
   "candidate": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
-   "stdout": "6f20943c5d7032ced39a3a675bd894859fb99e58dd182aae7f826716a3cf7ba2"
+   "stdout": "99e0022008f92568df30087a20510997e4a84073dc47b250fd7d63488a6680fd"
   },
   "case": {
    "argv": [
@@ -123746,39 +123531,6 @@ PINNED = r"""
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
    "stdout": "852c31cbce3afa38054909406d6695056e08be923e79e005ab9653c8c310c198"
-  },
-  "utility": "last"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "ccae67c179ecd678db3a7fa2a618ba14a024863e4f9b16d3b8baefd6b3b288e7"
-  },
-  "case": {
-   "argv": [
-    "--time-format=notime",
-    "-f",
-    "wtmp"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "last"
-  },
-  "domain": "misc",
-  "id": "fc84f1b361bd01e1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "what a login listing does with the columns it cannot fill. A name or a host cut to its column is padded differently, the tab-separated form puts its separator in another place, an input with no records still gets the begins line here and none there, and -n with a word that is no number is refused by the reference and taken by this one.",
-  "reference": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 0,
-   "stdout": "a5e73ba4388c22eee51a167c272590605bf0af34aa7c2d39f913868e8d571762"
   },
   "utility": "last"
  },
@@ -221141,6 +220893,27 @@ PINNED = r"""
   "id": "21a1463d05cd4500",
   "list": "regression",
   "utility": "umount"
+ },
+ {
+  "domain": "misc",
+  "id": "89874bd7e7f073f8",
+  "list": "unstable",
+  "reason": "the line saying when the database begins is stamped with the moment the program ran, so the two runs write it a second apart whenever they straddle one",
+  "utility": "last"
+ },
+ {
+  "domain": "misc",
+  "id": "8fe6a966e05c3d4e",
+  "list": "unstable",
+  "reason": "a listing of the live processes on this terminal, short enough that the runner compares its rows rather than reducing them, so a process that came or went between the two runs moves the answer",
+  "utility": "ps"
+ },
+ {
+  "domain": "misc",
+  "id": "df995940d88ba75b",
+  "list": "unstable",
+  "reason": "a listing of the live processes on this terminal, short enough that the runner compares its rows rather than reducing them, so a process that came or went between the two runs moves the answer",
+  "utility": "ps"
  },
  {
   "domain": "shell",

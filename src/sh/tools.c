@@ -3250,6 +3250,20 @@ static const file_long login_last_longs[] = {
     {null, 0},
 };
 
+/*      The line limit is read where it was written, because that is where
+        the reference reads it: -n with a word that is no number ends the run
+        there, and a -3 written after it cannot rescue it. */
+static bool login_last_seen(p8 letter, string_address value)
+{
+        positive scratch;
+
+        if (letter != 'n' || !value || string_digits_exact(value, address_of scratch))
+                return true;
+        text_flush();
+        string_format(writer_stderr, "last: failed to parse number: '%s'\n", value);
+        return false;
+}
+
 static b32 tools_last()
 {
         file_operands_begin();
@@ -3261,6 +3275,7 @@ static b32 tools_last()
             .operand = file_operand,
             // last -3 is the line limit said without its letter.
             .digits = 'n',
+            .seen = login_last_seen,
         };
         text_begin("last");
         if (!file_take(address_of taking) || file_operand_failed)
