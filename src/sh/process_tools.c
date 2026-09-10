@@ -1218,11 +1218,19 @@ static bipolar process_timeout_wait(b32 child, bipolar pidfd, bipolar signal_fd,
                         if (deadline)
                         {
                                 positive now = clock_monotonic_nanoseconds();
-
-                                if (now >= deadline)
-                                        return 0;
-
-                                positive left = deadline - now;
+                                /*      Overdue is not the same as still
+                                        running. A child that ended while this
+                                        was off the processor -- which a busy
+                                        machine can hold it for longer than
+                                        the whole grace period -- has its
+                                        descriptor ready this moment, and
+                                        asking costs a poll that waits for
+                                        nothing. coreutils reaps without
+                                        waiting before it suspends, for the
+                                        same reason, and so never kills a
+                                        command that had already gone. */
+                                positive left = now >= deadline
+                                                    ? 0 : deadline - now;
                                 span = (timespec){left / 1000000000,
                                                   left % 1000000000};
                                 limit = address_of span;
