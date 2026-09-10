@@ -4671,8 +4671,9 @@ static fn ls_url_bytes(string_address text)
                         continue;
                 }
 
-                p8 escaped[3] = {'%', (p8)"0123456789ABCDEF"[byte >> 4],
-                                 (p8)"0123456789ABCDEF"[byte & 15]};
+                //      The reference spells the two digits in lower case.
+                p8 escaped[3] = {'%', (p8)"0123456789abcdef"[byte >> 4],
+                                 (p8)"0123456789abcdef"[byte & 15]};
 
                 ls_out(escaped, 3);
         }
