@@ -1484,6 +1484,26 @@ static b32 process_timeout()
 
         if (child == 0)
         {
+                /*
+                        An ignored signal stays ignored through exec, and a
+                        shell that starts something in the background hands it
+                        an ignored interrupt. coreutils puts its own handler on
+                        each of the signals it relays before it forks, and exec
+                        turns a handler back into the default, so the command it
+                        starts always answers them however it was started.
+                        Blocking them and unblocking them again, as this does,
+                        leaves an inherited ignore in place -- and a command
+                        that ignores the signal outlives the very signal this
+                        program exists to send it, to be killed a grace period
+                        later for no reason. So hand the command the default
+                        back, for the signals relayed and for the one asked for.
+                */
+                shell_default(SIGHUP);
+                shell_default(SIGINT);
+                shell_default(SIGQUIT);
+                shell_default(SIGTERM);
+                shell_default(signal);
+
                 system_signal_mask(UL_SIGNAL_SET_MASK,
                                    address_of previous_mask, null, 8);
 
