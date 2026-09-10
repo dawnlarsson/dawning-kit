@@ -32106,9 +32106,35 @@ b32 main()
 #endif
 #ifdef CHECK_format
 #ifdef FORMAT_STANDALONE
+/*
+        printf on library.c and library.common.c alone, with none of the
+        families it normally sits among. They live in one file now, so the
+        way to ask for one of them is to skip the rest by name. Not by
+        claiming their include guards: format.c carries its own minimal FILE
+        and errno for exactly this configuration, guarded on stream.c's and
+        error.c's guards, so claiming those would take the fallback away with
+        the family.
+
+        The allocator is the reason this matters rather than being tidy. It
+        reaches for top_bit_known and memory_give, which the umbrella
+        defines, so a build without the umbrella cannot compile it -- which
+        is exactly what this configuration is, and exactly what it is for.
+*/
+#define STANDARD_SKIP_ERROR
+#define STANDARD_SKIP_LOCK
+#define STANDARD_SKIP_ALLOCATOR
+#define STANDARD_SKIP_NUMBERS
+#define STANDARD_SKIP_STDLIB
+#define STANDARD_SKIP_CLOCK
+#define STANDARD_SKIP_MATH
+#define STANDARD_SKIP_SIGNAL
+#define STANDARD_SKIP_STREAM
+#define STANDARD_SKIP_SCAN
+#define STANDARD_SKIP_SPOOL
+#define STANDARD_SKIP_PROCESS
 #include "../src/library.c"
 #include "../src/library.common.c"
-#include "../src/standard/format.c"
+#include "../src/standard.c"
 #else
 #include "../src/compiler_memory.c"
 #endif
@@ -36518,7 +36544,7 @@ b32 main(void)
           down and siglongjmp is what puts it back.
 */
 #ifndef STANDARD_MODERN_C_STANDARD_SIGNAL
-#include "../src/standard/signal.c"
+#include "../src/standard.c"
 #endif
 
 #define SHARED_counted

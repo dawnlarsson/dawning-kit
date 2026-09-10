@@ -2719,31 +2719,18 @@ static inline INLINE address_any copy_until_known(address_any destination,
 //      Note the `<` in string_copy_end where the other three have `<=`. That is not a typo and it is not an inconsistency to tidy: copy_end_known copies length plus one, so a length of exactly KNOWN_SIZE_MAX asks copy_apart_known for 129 bytes, which is past what it is correct for.
 //      memory_copy_until guards on the size alone and never on the byte. Folding the byte buys nothing — the compare is register against an immediate or against a register, and the length is the same either way — while requiring both would halve the number of call sites the expansion reaches.
 
-/* Shared C policies sit above library.c's assembly and declarations.
-   The standard names are declared in library.c itself now, beside the
-   assembly they name; errno and allocation precede their consumers.
-   stream.c changes stdin/stdout/stderr from descriptor numbers to stream
-   pointers, so descriptor-oriented families precede it. Formatting follows
-   streams and errors to use their output and errno implementations. */
-#include "standard/error.c"
-#include "standard/lock.c"
-#define STANDARD_NO_UNDERSCORE_EXIT
-#include "standard/allocator.c"
-#include "standard/numbers.c"
-#include "standard/stdlib.c"
-#include "standard/clock.c"
-#include "standard/math.c"
-#include "standard/signal.c"
+/* The compatibility families, which were src/standard/ and are src/standard.c
+   now: the same thirteen in the same order, because the order is load bearing.
+   errno and allocation precede their consumers, and stream.c changes stdin,
+   stdout and stderr from descriptor numbers into stream pointers partway
+   through, so descriptor-oriented families sit above that point and formatting
+   below it. The file says all of this at its top.
 
-//      stream.c and everything after it. Its last act is to #undef stdin,
-//      stdout and stderr and redefine them from the descriptor numbers into
-//      the pointers a C program means, so anything above this line that
-//      wanted the numbers still has them and anything below gets streams.
-#include "standard/stream.c"
-#include "standard/format.c"
-#include "standard/scan.c"
-#include "standard/spool.c"
-#include "standard/process.c"
+   It is included here and not beside library.common.c above, because here is
+   after the constant-size specializers: a literal-size copy inside it folds to
+   straight line stores, and at the top of this file it would have become a call
+   into the general routine instead. */
+#include "standard.c"
 
 /*
         Returning from main is defined by C to be a call to exit, and exit

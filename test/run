@@ -2477,7 +2477,7 @@ finish
 #           sh test/run allocator
 #
 #       The allocator section of test/checks.c is built four times: once for each architecture
-#       against src/standard/allocator.c with no C library under it, and once
+#       against the allocator in src/standard.c with no C library under it, and once
 #       against glibc. Everything the test prints before its "shared-end" line
 #       is a statement about behaviour rather than about addresses, so those
 #       bytes have to be identical in all four, and that is what is diffed.
