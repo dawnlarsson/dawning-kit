@@ -252,6 +252,140 @@ static inline INLINE address_any copy_apart_known(address_any destination,
         return destination;
 }
 
+/*
+        A size the compiler does not know, which the call sites say is small
+        anyway.
+
+        The specializers above fire on a literal. Most copies in this tree do
+        not have one: a field width, a record length, a token. Those went to
+        the routine, and for the sizes that actually arrive the call is most
+        of the cost. A histogram on printf's own output -- twenty eight bytes
+        for "%08d:%-12s:%6.3f" -- counted nine calls into the routine, six of
+        them to move a single byte. The instrumented counts in
+        kit/code_map/FREQUENCY_FLOOR.md say the same of the tools: sed's
+        literal pass enters the copy 4,333,556 times with 81.9% of those
+        between eight and fifteen bytes, and 666,666 of them zero.
+
+        So the size is tested here rather than there. Under sixteen bytes the
+        run is two loads and two stores in overlapping windows, which needs no
+        branch per width and reads no byte twice that it has not already
+        proved equal. Sixteen and over is the routine's, unchanged.
+
+        Both loads happen before either store, so this is correct for
+        overlapping spans as well: memory_copy and memory_copy_apart share the
+        body and differ only in which routine takes the long runs.
+*/
+static inline INLINE address_any copy_running_small(address_any destination,
+                                                    address_any source,
+                                                    positive size)
+{
+        p8 address_to to = (p8 address_to)destination;
+        p8 address_to from = (p8 address_to)source;
+
+        if (size >= 8)
+        {
+                p64 head = memory_load_unaligned(p64, from);
+                p64 tail = memory_load_unaligned(p64, from + size - 8);
+
+                __builtin_memcpy(to, address_of head, sizeof(head));
+                __builtin_memcpy(to + size - 8, address_of tail, sizeof(tail));
+        }
+        else if (size >= 4)
+        {
+                p32 head = memory_load_unaligned(p32, from);
+                p32 tail = memory_load_unaligned(p32, from + size - 4);
+
+                __builtin_memcpy(to, address_of head, sizeof(head));
+                __builtin_memcpy(to + size - 4, address_of tail, sizeof(tail));
+        }
+        else if (size >= 2)
+        {
+                p16 head = memory_load_unaligned(p16, from);
+                p16 tail = memory_load_unaligned(p16, from + size - 2);
+
+                __builtin_memcpy(to, address_of head, sizeof(head));
+                __builtin_memcpy(to + size - 2, address_of tail, sizeof(tail));
+        }
+        else if (size)
+        {
+                to[0] = from[0];
+        }
+
+        return destination;
+}
+
+static inline INLINE address_any copy_running(address_any destination,
+                                              address_any source, positive size)
+{
+        if (size >= 16)
+                return memory_copy(destination, source, size);
+
+        return copy_running_small(destination, source, size);
+}
+
+static inline INLINE address_any copy_apart_running(address_any destination,
+                                                    address_any source,
+                                                    positive size)
+{
+        if (size >= 16)
+                return memory_copy_apart(destination, source, size);
+
+        return copy_running_small(destination, source, size);
+}
+
+/*
+        The same argument for a run of one repeated byte. Padding, clearing a
+        record, blanking a field: the width is a variable and it is small, and
+        the broadcast is one multiply rather than a call.
+*/
+static inline INLINE address_any fill_running(address_any destination,
+                                              b8 value, positive size)
+{
+        p8 address_to to = (p8 address_to)destination;
+        p64 wide;
+
+        if (size >= 16)
+                return memory_fill(destination, value, size);
+
+        wide = (p64)(p8)value * (p64)0x0101010101010101ull;
+
+        if (size >= 8)
+        {
+                __builtin_memcpy(to, address_of wide, 8);
+                __builtin_memcpy(to + size - 8, address_of wide, 8);
+        }
+        else if (size >= 4)
+        {
+                p32 narrow = (p32)wide;
+
+                __builtin_memcpy(to, address_of narrow, 4);
+                __builtin_memcpy(to + size - 4, address_of narrow, 4);
+        }
+        else if (size >= 2)
+        {
+                p16 pair = (p16)wide;
+
+                __builtin_memcpy(to, address_of pair, 2);
+                __builtin_memcpy(to + size - 2, address_of pair, 2);
+        }
+        else if (size)
+        {
+                to[0] = (p8)value;
+        }
+
+        return destination;
+}
+
+//      bzero is the fill with the byte already chosen; the same small run.
+//      It reaches the long path through memory_fill and not memory_zero for
+//      the reason zero_known does the same: memory_zero is declared in
+//      platform/standard.inc, which a no-platform build compiles out, while
+//      memory_fill is declared above that guard and is always there.
+static inline INLINE fn zero_running(address_any destination, positive size)
+{
+        fill_running(destination, 0, size);
+}
+
 static inline INLINE address_any fill_known(address_any destination,
                                             b8 value, positive size, bool zero)
 {
@@ -2221,12 +2355,12 @@ static inline INLINE address_any copy_until_known(address_any destination,
 #define memory_copy(destination, source, size)                                \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
                  ? copy_known((destination), (source), (size))                \
-                 : memory_copy((destination), (source), (size)))
+                 : copy_running((destination), (source), (size)))
 
 #define memory_copy_apart(destination, source, size)                           \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
                  ? copy_apart_known((destination), (source), (size))           \
-                 : memory_copy_apart((destination), (source), (size)))
+                 : copy_apart_running((destination), (source), (size)))
 
 //      set-literal
 /*
@@ -2462,12 +2596,12 @@ static inline INLINE address_any copy_until_known(address_any destination,
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
                  ? fill_known((destination), (value), (size),                \
                               __builtin_constant_p(value) && (b8)(value) == 0)\
-                 : memory_fill((destination), (value), (size)))
+                 : fill_running((destination), (b8)(value), (size)))
 
 #define memory_zero(destination, size)                                        \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
                  ? zero_known((destination), (size))                          \
-                 : memory_zero((destination), (size)))
+                 : zero_running((destination), (size)))
 
 #define memory_copy_until(destination, source, value, size)                   \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_UNTIL_MAX    \
