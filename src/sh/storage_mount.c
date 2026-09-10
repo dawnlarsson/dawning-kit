@@ -285,6 +285,23 @@ static bool storage_options_merge(storage_mount_options address_to into,
                storage_data_add(into, extra->data.bytes, extra->data.used);
 }
 
+/*      The absolute spelling of a word that names something, and null for
+        one that does not -- `tmpfs` is not a path and stays as it was
+        written, which is how the reference reports both. */
+static p8 address_to storage_mount_canonical(string_address word,
+                                             positive address_to room)
+{
+        bipolar handle = system_open_at(AT_FDCWD, word,
+                                        STORAGE_OPEN_PATH | O_CLOEXEC);
+        p8 address_to resolved;
+
+        if (handle < 0)
+                return null;
+        resolved = storage_fd_path(handle, room);
+        system_close(handle);
+        return resolved;
+}
+
 /*
         Since Linux 2.6.26, an ordinary remount resets unspecified VFS flags.
         A bind remount has the same trap for the subset it can change.  Read
@@ -304,13 +321,25 @@ static bool storage_remount_options(string_address target,
 
         if (loaded)
         {
+                /*      The table spells its targets absolutely, so a word
+                        the caller wrote as `b` finds nothing there and the
+                        remount then asks for flags the kernel locked when
+                        it handed this mount over: EPERM, where the
+                        reference keeps nosuid and nodev and succeeds. */
+                positive room = 0;
+                p8 address_to resolved = storage_mount_canonical(target,
+                                                                 address_of room);
                 storage_mount address_to live =
-                    storage_mount_find_target(address_of table, target);
+                    storage_mount_find_target(address_of table,
+                                              resolved ? (string_address)resolved
+                                                       : target);
 
                 if (live)
                         parsed = storage_options_parse(effective,
                                                        live->options);
 
+                if (resolved)
+                        memory_free(resolved, room);
                 storage_mount_table_release(address_of table);
         }
 
@@ -436,22 +465,6 @@ static bipolar storage_mount_one(string_address source, string_address target,
         swap, a type the filter excludes. mount -a counts those in neither
         column, and the difference is the whole exit status -- one failure
         beside one ignored record is 32, "all failed", not 64. */
-/*      The absolute spelling of a word that names something, and null for
-        one that does not -- `tmpfs` is not a path and stays as it was
-        written, which is how the reference reports both. */
-static p8 address_to storage_mount_canonical(string_address word,
-                                             positive address_to room)
-{
-        bipolar handle = system_open_at(AT_FDCWD, word,
-                                        STORAGE_OPEN_PATH | O_CLOEXEC);
-        p8 address_to resolved;
-
-        if (handle < 0)
-                return null;
-        resolved = storage_fd_path(handle, room);
-        system_close(handle);
-        return resolved;
-}
 
 
 static b32 storage_mount_fstab_record(string_address program,
