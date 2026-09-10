@@ -22,8 +22,12 @@ static const p8 bowl_usage_text[] = bowl_label
     bowl_label "       bowl expose <root> <program> [name]\n";
 
 #define BOWL_NATIVE_SHELL "/shell"
-#define BOWL_ROOT_PREFIX "/bowls/"
-#define BOWL_EXPOSE_DIRECTORY "/bowls/bin"
+/* Where bowl roots live, said once. Everything else that needs to know --
+   including the shell's own path handling -- spells it from here. */
+#define BOWL_ROOT_DIRECTORY "/bowls"
+#define BOWL_ROOT_PREFIX BOWL_ROOT_DIRECTORY "/"
+#define BOWL_EXPOSE_DIRECTORY BOWL_ROOT_PREFIX "bin"
+#define BOWL_DEFAULT_PATH "/bin:/usr/bin:" BOWL_EXPOSE_DIRECTORY ":/"
 #define BOWL_EXPOSE_PREFIX "#!/bowl @"
 #define BOWL_PATH_LIMIT 4096
 #define BOWL_SHEBANG_LIMIT 256
@@ -221,7 +225,7 @@ static b32 bowl_expose(positive count,
                 return 1;
         }
 
-        failed = bowl_mkdir("/bowls");
+        failed = bowl_mkdir(BOWL_ROOT_DIRECTORY);
         if (!failed)
                 failed = bowl_mkdir(BOWL_EXPOSE_DIRECTORY);
         if (failed < 0)
@@ -460,7 +464,7 @@ static b32 bowl_launch(string_address root, string_address program,
 {
         string_address native_arguments[] = {BOWL_NATIVE_SHELL, null};
         string_address fallback_environment[] = {"TERM=ansi",
-                                                   "PATH=/bin:/usr/bin:/bowls/bin:/",
+                                                   "PATH=" BOWL_DEFAULT_PATH,
                                                    "HOME=/root", null};
         string_address address_to environment = file_environment_all();
         bipolar native_shell = -1;

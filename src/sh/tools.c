@@ -10259,8 +10259,6 @@ static b32 tools_hexdump(void)
 #define DIFF_NORMAL 0
 #define DIFF_UNIFIED 1
 
-#define DIFF_LARGE (positive_max / 8)
-
 static bool diff_icase;
 static positive diff_space;
 static bool diff_blank_lines;

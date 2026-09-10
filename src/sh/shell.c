@@ -630,6 +630,17 @@ fn exec_function_import_environment(string_address address_to environment);
 #include "awk.c"
 #include "tools.c"
 #include "pty.c"
+
+/*
+        Before process_tools, because stdbuf has to find its preload library
+        inside a distribution root and that means knowing where those live.
+        It used to know by spelling "/bowls/" out for itself, which is bowl's
+        layout written down twice -- so moving the roots would have left
+        stdbuf quietly failing to find the library under a bowl. Bowl needs
+        nothing of the shell but file.c's environment, so it can come this
+        early and be the one place that says where a root is.
+*/
+#include "../bowl/runtime.c"
 #include "process_tools.c"
 #include "monitor.c"
 #include "net.c"
@@ -639,7 +650,6 @@ fn exec_function_import_environment(string_address address_to environment);
 #include "screen.c"
 #include "edit.c"
 #include "system.c"
-#include "../bowl/runtime.c"
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
 
 static positive shell_syntax_generation;

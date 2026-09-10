@@ -179,21 +179,22 @@ static bool stdbuf_library_under(string_address root)
 static bool stdbuf_bowl_root_from_text(string_address text, positive length,
                                        p8 address_to root)
 {
-        string_address prefix = (string_address) "/bowls/";
+        string_address prefix = (string_address)BOWL_ROOT_PREFIX;
+        positive marked = sizeof(BOWL_ROOT_PREFIX) - 1;
         p8 address_to found = (p8 address_to)memory_search(
-            (address_any)text, length, (address_any)prefix, 7);
+            (address_any)text, length, (address_any)prefix, marked);
 
         if (!found)
                 return false;
 
-        positive used = 7;
+        positive used = marked;
         positive remaining = length - (positive)(found - text);
 
         while (used < remaining && found[used] && found[used] != '/' &&
                found[used] != '\n' && !byte_is_space(found[used]))
                 used++;
 
-        if (used == 7 || used >= FILE_PATH_MAX)
+        if (used == marked || used >= FILE_PATH_MAX)
                 return false;
 
         memory_copy_end(root, found, used);
@@ -206,7 +207,7 @@ static bool stdbuf_bowl_root_from_text(string_address text, positive length,
 static bool stdbuf_bowl_root(string_address target, p8 address_to root)
 {
         if (stdbuf_bowl_root_from_text(target, string_length(target), root) &&
-            string_compare(root, (string_address) "/bowls/bin"))
+            string_compare(root, (string_address)BOWL_EXPOSE_DIRECTORY))
                 return true;
 
         bipolar handle = system_open_at(AT_FDCWD, target,
@@ -220,7 +221,7 @@ static bool stdbuf_bowl_root(string_address target, p8 address_to root)
 
         return got > 0 && stdbuf_bowl_root_from_text(
                               file_transfer, (positive)got, root) &&
-               string_compare(root, (string_address) "/bowls/bin");
+               string_compare(root, (string_address)BOWL_EXPOSE_DIRECTORY);
 }
 
 static bool stdbuf_find_library(string_address preferred_root)
@@ -239,7 +240,7 @@ static bool stdbuf_find_library(string_address preferred_root)
         file_walk walk;
 
         if (!file_walk_open(address_of walk, AT_FDCWD,
-                            (string_address) "/bowls"))
+                            (string_address)BOWL_ROOT_DIRECTORY))
                 return false;
 
         struct linux_dirent64 address_to entry;
@@ -253,7 +254,7 @@ static bool stdbuf_find_library(string_address preferred_root)
 
                 p8 root[FILE_PATH_MAX];
 
-                if (file_path_join(root, (string_address) "/bowls",
+                if (file_path_join(root, (string_address)BOWL_ROOT_DIRECTORY,
                                    entry->d_name))
                         found = stdbuf_library_under(root);
         }
@@ -487,7 +488,7 @@ static b32 process_stdbuf()
         string_address path = file_environment((string_address) "PATH");
 
         if (!path)
-                path = (string_address) "/bin:/usr/bin:/bowls/bin:/";
+                path = (string_address)BOWL_DEFAULT_PATH;
 
         bool target_found = shell_find_in_path_mode(
             words[0], target, sizeof(target), 1, false, path);

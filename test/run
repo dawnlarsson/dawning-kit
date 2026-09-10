@@ -6433,6 +6433,7 @@ python3 test/differential.py --harness spark_entry || exit 1
 python3 kit/function_audit.py --check || exit 1
 python3 test/differential.py --harness floodlight || exit 1
 python3 test/differential.py --harness surface_coreutils_gap || exit 1
+python3 test/differential.py --harness image_nodes || exit 1
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
@@ -7093,6 +7094,26 @@ says 'floodlight has env'  'fl-env-1'
 says 'awk was asked'       'fl-esc-'
 never 'awk cannot escape'  'fl-esc-tuo'
 says 'a named applet runs' 'fl-named-ydaer'
+
+#
+#       The compositor put something on the screen.
+#
+#       Nothing here watched this before, and the log cannot: "terminal: 0"
+#       is spawn_terminal saying it made the worker, not that the worker ran
+#       anything. The exec happens after that return, in a child nobody
+#       waits for, so a path that is not in the image fails as a 127 the log
+#       never sees and the desktop comes up empty behind a line saying 0.
+#       /term is a link the build makes only because term is a SYSTEM
+#       applet; the harness checks those three spellings agree, and this
+#       checks the machine.
+#
+#       The window is the proof, because the terminal is the only thing that
+#       opens one this size -- the console pane is the kernel's own and is
+#       cut to the screen. The compositor prints the grid when a program
+#       asks for text cells, so the line is there when a terminal started
+#       and absent when one did not.
+#
+says 'a terminal opened'   'window grid 80x24'
 
 #
 #       Nothing the kernel felt the need to warn about.

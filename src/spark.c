@@ -133,6 +133,16 @@ _Static_assert(sizeof(struct header) == SPARK_HEADER_SIZE,
 
 #define SPARK_SPAWN_FLAGS (SPARK_SPAWN_SHELL | SPARK_SPAWN_TOOL)
 
+/* What SPARK_SPAWN_TOOL runs. Part of the flag's meaning rather than a path
+   the kernel picks, so it is written here beside it and nowhere else. */
+#define SPARK_TOOL_PROGRAM "/shell"
+
+/* What the compositor starts once it has a screen. A root-level link to the
+   shell image, which the build makes for every applet the SYSTEM category
+   holds -- so the name here has to stay one of those, and the image_nodes
+   harness is what says so. src/sh/tools.inc is the list. */
+#define SPARK_TERMINAL_PROGRAM "/term"
+
 // _IOR('s', 2, struct stats). Nanoseconds accumulated inside the kernel,
 // so the split between creating the task and loading the image is measured
 // where it happens rather than inferred from the outside.

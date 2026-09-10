@@ -1360,7 +1360,7 @@ fn shell_env_init(string_address address_to process_environment)
         // read it, save it and put it back, and under set -u one that is
         // absent rather than defaulted is an error where every other shell
         // hands over the three bytes.
-        string_address defaults[] = {"PATH=/bin:/usr/bin:/bowls/bin:/",
+        string_address defaults[] = {"PATH=" BOWL_DEFAULT_PATH,
                                      "SHELL=/bin/sh",
                                      "IFS= \t\n",
                                      "OPTIND=1", null};

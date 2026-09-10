@@ -1911,10 +1911,23 @@ def self_test():
                              "test/run asks for a harness HARNESS_CHECKS has no key "
                              "for: " + ", ".join(unknown))
 
-            #      The other direction is deliberately not an error: a harness
-            #      may be registered for a person to run by hand without any
-            #      lane calling it. Silence is only a fault when something is
-            #      asking and nothing answers.
+            #      The other direction was left open for a harness meant to
+            #      be run by hand, and that is the exact silence this test was
+            #      written about: floodlight kept its key both times it was
+            #      reverted, and what stopped was the line in test/run. So the
+            #      allowance stays available and stops being silent -- a
+            #      harness no lane runs has to be named here, by someone who
+            #      meant it. The list is empty, and every registered harness
+            #      is asked for by a lane.
+            BY_HAND = set()
+
+            unrun = sorted(set(registered) - asked - BY_HAND)
+            self.assertEqual(unrun, [],
+                             "registered and run by no lane, which is a check "
+                             "nobody performs -- give it a lane in test/run, or "
+                             "name it in BY_HAND above: " + ", ".join(unrun))
+            self.assertEqual(sorted(BY_HAND & asked), [],
+                             "named as hand-run and asked for by a lane anyway")
 
         def test_no_definition_in_this_file_shadows_another(self):
             """The same hazard from the other side. Assembling modules into
@@ -15429,6 +15442,10 @@ def harness_core_state(argv):
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+/* pid_t, which do_spawn declares. It used to arrive through stdio.h and
+   stopped: gcc 16 does not pull it in there any more, and the whole lane
+   went red on a machine whose compiler had moved on. Ask for it directly. */
+#include <sys/types.h>
 typedef uint8_t u8;
 typedef uint32_t u32;
 typedef uint64_t u64;
@@ -20500,6 +20517,179 @@ int main(void)
     return 1 if failures else 0
 
 
+def harness_image_nodes(argv):
+    """The image's device nodes and directories against the code that owns them.
+
+    A misc device registers a minor; the initramfs makes the node. There is no
+    devtmpfs at the moment either module registers -- Moonwater's core mounts
+    it during its own init, and floodlight deliberately depends on nothing of
+    Moonwater's -- so the number is written down twice, once where the driver
+    claims it and once where the build makes the node, and nothing but a
+    comment has ever said the two must agree. A minor changed on one side and
+    not the other is a device that opens the wrong driver or opens nothing,
+    at boot, silently, with the shell falling back to its built-in answers and
+    no line anywhere saying why.
+
+    Same shape for the two other places the image repeats something a source
+    file owns: the directory bowl's exposed launchers land in, and the device
+    path window.c opens. window.c may not reference SPARK_DEVICE -- it is
+    documented as includable on its own by a program with no runtime -- so the
+    spelling is duplicated there on purpose. On purpose is not the same as
+    free, and this is the bill.
+    """
+    ROOT = HARNESS_ROOT
+    checks = failures = 0
+
+    def check(ok, what):
+        nonlocal checks, failures
+        checks += 1
+        if not ok:
+            failures += 1
+            print('  FAIL ' + what)
+
+    build = (ROOT / 'src/build/build.c').read_text()
+    spark = (ROOT / 'src/spark.c').read_text()
+    flood = (ROOT / 'src/floodlight.c').read_text()
+    bowl = (ROOT / 'src/bowl/runtime.c').read_text()
+    window = (ROOT / 'src/canvas/window.c').read_text()
+
+    def setting(name):
+        """One build setting, whose value is a run of adjacent string literals."""
+        at = build.index('{"%s",' % name)
+        stop = build.index('},', at)
+        return ''.join(re.findall(r'"((?:[^"\\]|\\.)*)"', build[at + len(name) + 4:stop]))
+
+    def define(source, name):
+        found = re.search(r'^\s*#\s*define\s+%s\s+(.+?)\s*$' % re.escape(name),
+                          source, re.M)
+        return found.group(1) if found else None
+
+    #   Every row of image_nodes, as the four words mknod is given.
+    rows = {}
+    words = setting('image_nodes').split()
+    check(len(words) % 4 == 0,
+          'image_nodes is whole rows of name, type, major, minor (%d words)'
+          % len(words))
+    for i in range(0, len(words) - 3, 4):
+        rows[words[i]] = (words[i + 1], words[i + 2], words[i + 3])
+
+    #   10 is the misc major, fixed by the kernel's device numbering and not
+    #   by anything here, so it is named rather than derived.
+    MISC_MAJOR = '10'
+
+    for node, source, name, minor_name in (
+            ('spark', spark, 'spark', 'SPARK_DEVICE_MINOR'),
+            ('floodlight', flood, 'floodlight', 'FLOODLIGHT_DEVICE_MINOR')):
+        path = 'dev/' + name
+        check(path in rows, 'the image makes %s' % path)
+        if path not in rows:
+            continue
+        kind, major, minor = rows[path]
+        declared = define(source, minor_name)
+        check(kind == 'c', '%s is a character device' % path)
+        check(major == MISC_MAJOR,
+              '%s uses the misc major %s, not %s' % (path, MISC_MAJOR, major))
+        check(declared is not None, '%s says what its minor is' % minor_name)
+        check(declared == minor,
+              '%s is %s and the image makes minor %s'
+              % (minor_name, declared, minor))
+        #   240 to 254 is the range set aside for local use. A dynamic minor
+        #   would be a node that cannot be made before there is a devtmpfs.
+        check(declared is not None and 240 <= int(declared) <= 254,
+              '%s is in the local range 240-254 (%s)' % (minor_name, declared))
+
+    check(len({rows[k][1:] for k in rows}) == len(rows),
+          'no two image nodes claim the same major and minor')
+
+    #   The driver's own name for itself, which is what the node is called.
+    check('.name = "floodlight"' in flood,
+          'floodlight registers under the name the image makes')
+    device = define(spark, 'SPARK_DEVICE')
+    check(device == '"/dev/spark"',
+          'SPARK_DEVICE is the path the image makes (%s)' % device)
+    check(define(spark, 'SPARK_DEVICE_MAJOR') == MISC_MAJOR,
+          'SPARK_DEVICE_MAJOR is the misc major')
+
+    #   window.c carries its own copy because it is includable alone.
+    check(define(window, 'WINDOW_DEVICE') == device,
+          'window.c opens the device spark publishes (%s against %s)'
+          % (define(window, 'WINDOW_DEVICE'), device))
+
+    #   Bowl's exposed launchers need a directory before bowl can write one,
+    #   and the image is where it gets made. The list is relative; the macro
+    #   is absolute, so the leading slash is what the two differ by.
+    expose = define(bowl, 'BOWL_EXPOSE_DIRECTORY')
+    root = define(bowl, 'BOWL_ROOT_DIRECTORY')
+    check(expose == 'BOWL_ROOT_PREFIX "bin"',
+          'bowl builds its expose directory from its root (%s)' % expose)
+    check(define(bowl, 'BOWL_ROOT_PREFIX') == 'BOWL_ROOT_DIRECTORY "/"',
+          'bowl builds its prefix from its root')
+    check(root is not None and root.startswith('"/'),
+          'BOWL_ROOT_DIRECTORY is an absolute path (%s)' % root)
+    if root:
+        wanted = root.strip('"').lstrip('/') + '/bin'
+        made = setting('image_directories').split()
+        check(wanted in made,
+              'the image makes %s, where bowl expose writes (%s)'
+              % (wanted, ' '.join(made[-3:])))
+
+    #   The compositor's first program, which is the one crossing here with
+    #   no compiler behind it at all. The kernel execs a path; the path is a
+    #   link the build makes for every applet in the SYSTEM category, and it
+    #   is made because of that category and nothing else. Move term to
+    #   another category and the link stops being made, the exec fails in a
+    #   worker that has already returned success -- a 127 in a child nobody
+    #   waits for -- and the desktop comes up with nothing on it while the
+    #   log still says terminal: 0. Three files have to agree and none of
+    #   them can see the other two.
+    core = (ROOT / 'src/core.c').read_text()
+    tools = (ROOT / 'src/sh/tools.inc').read_text()
+    system = {name for category, name in re.findall(
+        r'SHELL_TOOL\(\s*(\w+)\s*,\s*([^,\s]+)\s*,', tools)
+        if category == 'SYSTEM'}
+    check(bool(system), 'tools.inc still has a SYSTEM category')
+    terminal = define(spark, 'SPARK_TERMINAL_PROGRAM')
+    check(terminal is not None, 'spark names what the compositor starts')
+    if terminal:
+        name = terminal.strip('"')
+        check(name.startswith('/') and '/' not in name[1:],
+              'the terminal is at the image root, where the links are (%s)'
+              % terminal)
+        check(name.lstrip('/') in system,
+              '%s is a SYSTEM applet, which is why the image links it to the '
+              'shell' % terminal)
+    check('work->path = SPARK_TERMINAL_PROGRAM;' in core,
+          'the compositor asks for the path spark publishes')
+    #   And spells none of its own, which is the shape that could drift.
+    at = core.index('static int spawn_terminal(void)')
+    body = core[at:core.index('\n}', at)]
+    check('"' not in body.split('*/')[-1],
+          'spawn_terminal spells no path of its own')
+
+    #   The build's side of the same agreement: SYSTEM is what makes the link.
+    check('word_is(build_tool_table[at].category, "SYSTEM") &&' in build and
+          'build_link("shell",' in build,
+          'the build links every SYSTEM applet at the root to the shell')
+
+    #   One place says where a bowl root lives. Anything else spelling it is
+    #   the drift this whole harness exists to catch.
+    for path in sorted(ROOT.glob('src/**/*.c')):
+        if path.name == 'runtime.c' and path.parent.name == 'bowl':
+            continue
+        source = re.sub(r'/\*.*?\*/', '', path.read_text(errors='replace'),
+                        flags=re.S)
+        source = re.sub(r'//[^\n]*', '', source)
+        check('"/bowls' not in source,
+              '%s spells a bowl root out for itself instead of asking bowl'
+              % path.relative_to(ROOT))
+
+    print('image nodes %d/%d' % (checks - failures, checks))
+    if os.environ.get("TEST_TALLY"):
+        with open(os.environ["TEST_TALLY"], "a") as tally:
+            tally.write("image_nodes %d %d\n" % (checks - failures, checks))
+    return 1 if failures else 0
+
+
 HARNESS_CHECKS = {
     "engines": harness_engines_main,
     "core_state": harness_core_state,
@@ -20516,6 +20706,7 @@ HARNESS_CHECKS = {
     "canvas_view": harness_canvas_view,
     "floodlight": harness_floodlight,
     "code_map": harness_code_map,
+    "image_nodes": harness_image_nodes,
 }
 
 

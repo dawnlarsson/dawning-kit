@@ -570,8 +570,15 @@ static int spawn_terminal(void)
 
         /* Borrow the literal like do_spawn borrows its fixed /shell path;
            copying it for a worker whose next action is execve adds a slab
-           round trip and no lifetime. */
-        work->path = "/term";
+           round trip and no lifetime.
+
+           /term is a link to the shell that the image makes for every applet
+           in the SYSTEM category, so this is the one shell image reached
+           under the name of the applet wanted -- the same multicall
+           convention as every other name at the root, and it stops working
+           the moment term stops being a SYSTEM applet. Nothing said the two
+           had to agree until the image_nodes harness did. */
+        work->path = SPARK_TERMINAL_PROGRAM;
         work->arguments = kvmalloc(sizeof(*work->arguments) +
                                    2 * sizeof(char *), GFP_KERNEL);
 
@@ -783,7 +790,7 @@ static long do_spawn(struct file *file, struct spawn __user *request)
                 return -EINVAL;
 
         shell_fallback = args.flags & SPARK_SPAWN_SHELL;
-        fixed_path = args.flags & SPARK_SPAWN_TOOL ? "/shell" : NULL;
+        fixed_path = args.flags & SPARK_SPAWN_TOOL ? SPARK_TOOL_PROGRAM : NULL;
 
         work = kzalloc(sizeof(*work), GFP_KERNEL);
         if (!work)
