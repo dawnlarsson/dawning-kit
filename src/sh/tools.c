@@ -5368,9 +5368,7 @@ static fn numfmt_record(p8 address_to bytes, positive length)
    starts a fresh one. */
 static fn numfmt_fields_begin()
 {
-        memory_fill(text_list, 0, sizeof(text_list));
-        memory_fill(text_list_begins, 0, sizeof(text_list_begins));
-        text_list_open = 0;
+        text_list_reset();
 }
 
 static bool numfmt_hint()

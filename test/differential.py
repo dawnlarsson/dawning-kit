@@ -19443,6 +19443,11 @@ def harness_floodlight(argv):
     check('CONFIG_MOONWATER_FLOODLIGHT=y' in profile,
           'every image is built with the register in it')
 
+    minor = re.search(r'#define FLOODLIGHT_DEVICE_MINOR (\d+)', text)
+    nodes = (ROOT / 'src/build/build.c').read_text()
+    check(bool(minor) and ('dev/floodlight c 10 %s' % minor.group(1)) in nodes,
+          'the image ships a node at the minor the module registers')
+
     check('static const struct rule baseline[] = {' in text,
           'the built-in answers are const, and so cannot be written at runtime')
 
@@ -19679,6 +19684,10 @@ def harness_floodlight(argv):
             #   put a warning in the kernel log until this was cleared.
             (r'file->private_data = NULL;\s*\n\s*\n\s*return single_open', text,
              'the open clears what misc_open left, so seq_open does not warn'),
+            #   The node is made in the initramfs, before there is a devtmpfs
+            #   to make it, so the two numbers have to agree.
+            (r'#define FLOODLIGHT_DEVICE_MINOR (\d+)', text,
+             'the register has a fixed minor, so it needs no devtmpfs'),
             (r'return fold\(secret \^ [0-9]+u, row,', text,
              'a row seal is folded with the boot secret'),
             (r'return fold\(secret \^ [0-9]+u, baseline, sizeof\(baseline\)\);', text,

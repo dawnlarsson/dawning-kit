@@ -781,8 +781,21 @@ static const struct file_operations floodlight_ops = {
  * every future reader of the device; after init the pages it sits in are not
  * writable and that redirection is not available.
  */
+/*
+ * A fixed minor, for the same reason spark has one.
+ *
+ * There is no devtmpfs when this registers: Moonwater's core mounts it during
+ * its own init, and this module deliberately depends on nothing of Moonwater's
+ * -- so a kernel built with the register and without the core would have
+ * registered a device that never got a node, and the shell would have fallen
+ * back to its built-in answers for ever with nothing to say why. The node is
+ * made in the initramfs instead, and both sides have to agree on the number.
+ * 240-254 is the range set aside for local use; spark has 250.
+ */
+#define FLOODLIGHT_DEVICE_MINOR 249
+
 static struct miscdevice floodlight_device __ro_after_init = {
-	.minor = MISC_DYNAMIC_MINOR,
+	.minor = FLOODLIGHT_DEVICE_MINOR,
 	.name = "floodlight",
 	.fops = &floodlight_ops,
 	.mode = 0644, /* anyone may read what is allowed; only root may change it */

@@ -11975,6 +11975,22 @@ static p8 text_list[TEXT_LIST_MAX];
 static p8 text_list_begins[TEXT_LIST_MAX];
 
 static positive text_list_open;
+
+/*
+        One past the highest position either bitmap has had a byte written to.
+
+        The two of them are a megabyte each, and a shell may run cut and then
+        numfmt in one process, so the second has to start from a clean list.
+        Clearing them whole costs two megabytes of writes and makes two
+        megabytes of otherwise untouched reservation resident, to forget a
+        handful of positions -- `cut -c1,3` writes three bytes.
+
+        A high-water mark is enough because every write below is a run that
+        starts at `first` and ends at `through`: nothing is ever set above
+        this, so nothing above it needs clearing.
+*/
+static positive text_list_used;
+
 static bool text_list_single;
 static positive text_list_single_first;
 static positive text_list_single_last;
@@ -12077,11 +12093,17 @@ static bool text_list_parse(string_address spec)
                         if (!text_list[first])
                                 text_list_begins[first] = 1;
 
+                        if (first >= text_list_used)
+                                text_list_used = first + 1;
+
                         if (last >= first)
                         {
                                 positive through = min(last, TEXT_LIST_MAX - 1);
 
                                 memory_fill(text_list + first, 1, through - first + 1);
+
+                                if (through >= text_list_used)
+                                        text_list_used = through + 1;
                         }
                 }
 
@@ -12100,6 +12122,28 @@ static bool text_list_parse(string_address spec)
         }
 
         return pieces != 0;
+}
+
+/*
+        Forget every position the list holds, and no more than that.
+
+        For the caller that has to: a tool reached in a process where another
+        one has already parsed a list of its own.
+*/
+static fn text_list_reset()
+{
+        if (text_list_used)
+        {
+                memory_fill(text_list, 0, text_list_used);
+                memory_fill(text_list_begins, 0, text_list_used);
+                text_list_used = 0;
+        }
+
+        text_list_open = 0;
+        text_list_single = false;
+        text_list_single_first = 0;
+        text_list_single_last = 0;
+        text_list_too_large = false;
 }
 
 static bool text_list_has(positive which)

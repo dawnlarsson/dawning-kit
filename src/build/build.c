@@ -188,7 +188,10 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
 
         /*      The image's own layout: the directories every build makes and
                 the device nodes it boots with, as name, type, major, minor.
-                The spark minor has to match SPARK_DEVICE_MINOR in src/spark.c. */
+                The spark minor has to match SPARK_DEVICE_MINOR in src/spark.c,
+                and the floodlight one FLOODLIGHT_DEVICE_MINOR in
+                src/floodlight.c. Both are fixed rather than allocated because
+                the node is made here, before there is a devtmpfs to make it. */
         {"image_directories",
          "sys proc dev tmp etc root bin sbin usr lib lib64 var opt bowls/bin"},
         {"image_nodes",
@@ -199,7 +202,8 @@ static build_setting build_settings[BUILD_SETTING_ROOM] = {
          " dev/random c 1 8"
          " dev/urandom c 1 9"
          " dev/kmsg c 1 11"
-         " dev/spark c 10 250"},
+         " dev/spark c 10 250"
+         " dev/floodlight c 10 249"},
 
         /*      The profiles composed ahead of whatever was asked for, in this
                 order, so the last two win the choices the earlier ones touch. */
