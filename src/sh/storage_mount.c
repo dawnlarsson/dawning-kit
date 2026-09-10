@@ -856,9 +856,16 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         {
                 /* Propagation changes name only a target and never consult
                    fstab. Remount can infer source/type from mountinfo. */
+                /*  A propagation change stands alone even beside other
+                    options, so long as one of them is the recursion the
+                    change itself asked for: the reference reads the rest as
+                    attributes of that one operation and never looks the
+                    target up in fstab. */
                 if (options.propagation &&
-                    !(options.flags & (STORAGE_MS_BIND | STORAGE_MS_MOVE |
-                                       STORAGE_MS_REMOUNT)))
+                    (!(options.flags & (STORAGE_MS_BIND | STORAGE_MS_MOVE |
+                                        STORAGE_MS_REMOUNT)) ||
+                     ((options.flags | options.propagation) &
+                      STORAGE_MS_REC)))
                 {
                         bipolar answer = storage_mount_one((string_address)"none",
                                                            operand[0], null,
@@ -955,7 +962,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                     symlink there: the reference refuses such a target where
                     the canonical spelling would have reached the directory
                     under it. */
-                if (!canonical)
+                if (!canonical && !options.fake)
                 {
                         file_facts itself;
 
@@ -977,7 +984,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                     usage answer 1, not the 32 a refused mount(2) leaves. A
                     target that is not there at all never gets that far. */
                 if ((options.flags & STORAGE_MS_MOVE) &&
-                    (options.flags & STORAGE_MS_REMOUNT))
+                    (options.flags & STORAGE_MS_REMOUNT) && !options.fake)
                 {
                         positive room = 0;
                         p8 address_to shown = canonical

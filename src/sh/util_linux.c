@@ -13261,6 +13261,16 @@ static b32 util_linux_ipcrm()
         positive count = (positive)program_argument_count();
         b32 failed = 0;
         static const p8 letters[] = {'q', 'm', 's'};
+
+        /*  Named alone, ipcrm has nothing to remove and says so: it is the
+            one word it refuses before it reads anything at all. */
+        if (count < 2)
+        {
+                string_format(log_error, "ipcrm: bad usage\n"
+                              "Try 'ipcrm --help' for more information.\n");
+                log_flush();
+                return 1;
+        }
         static const p8 keys[] = {'Q', 'M', 'S'};
         for (positive type = 0; type < UL_IPC_TYPES; type++)
         {
