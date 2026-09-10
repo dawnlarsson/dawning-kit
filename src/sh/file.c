@@ -3093,19 +3093,53 @@ bool file_copy_contents(bipolar from_directory, string_address from,
         made is copied into `failed`, because that is the name the reference
         quotes and not the whole path it was given.
 */
+/*
+        What the reference says about a component that is already there.
+
+        mkdir answers EEXIST and the walk then asks what the name is: a
+        directory is the component already made and nothing to report, a name
+        that can be looked at and is not a directory is Not a directory, and
+        a name that cannot be looked at at all -- a symbolic link pointing at
+        nothing -- keeps the EEXIST the kernel gave, because there is
+        something there whatever it points at.
+*/
+static bipolar file_exists_as(string_address work)
+{
+        file_facts facts;
+
+        if (file_look(AT_FDCWD, work, 0, address_of facts))
+                return (facts.mode & MODE_FORMAT) == MODE_DIRECTORY
+                           ? 0
+                           : -ERROR_NOT_DIRECTORY;
+
+        return -ERROR_EXISTS;
+}
+
 static bipolar file_make_parents_walk(string_address path, positive mode,
                                       fn(address_to told)(string_address),
-                                      p8 address_to failed)
+                                      p8 address_to failed, bool address_to created)
 {
         p8 work[FILE_PATH_MAX];
         positive length = string_length(path);
+
+        if (created)
+                address_to created = false;
 
         if (length >= FILE_PATH_MAX)
                 return -ERROR_NAME_TOO_LONG;
 
         memory_copy_apart_end(work, path, length);
 
-        for (positive i = 1; i < length; i++)
+        //      A trailing run of slashes names the same directory as the
+        //      name without them, so it is not a component of its own: the
+        //      whole path, slashes and all, is what the last step makes and
+        //      what -v then names.
+        positive components = length;
+
+        while (components > 1 && work[components - 1] == '/')
+                components--;
+
+        for (positive i = 1; i < components; i++)
         {
                 if (work[i] != '/')
                         continue;
@@ -3113,19 +3147,30 @@ static bipolar file_make_parents_walk(string_address path, positive mode,
                 work[i] = end;
 
                 bipolar made = system_make_directory_at(AT_FDCWD, work, mode);
+                bipolar already = made == -ERROR_EXISTS ? file_exists_as(work) : 0;
 
-                if (made < 0 &&
-                    (made != -ERROR_EXISTS || !file_is_directory_through(work)))
+                if (made < 0 && (made != -ERROR_EXISTS || already))
                 {
                         if (failed)
                                 string_copy(failed, work);
 
                         work[i] = '/';
-                        //      Something is there and it is not a directory,
-                        //      which is what the reference says about it
-                        //      rather than that it exists.
-                        return made == -ERROR_EXISTS ? -ERROR_NOT_DIRECTORY
-                                                     : made;
+
+                        return made == -ERROR_EXISTS ? already : made;
+                }
+
+                //      The reference walks into each component it has made
+                //      or found before making the next one, so a directory
+                //      it cannot search is named here rather than the child
+                //      that could not be reached through it.
+                if (system_access_at(AT_FDCWD, work, 1) < 0)
+                {
+                        if (failed)
+                                string_copy(failed, work);
+
+                        work[i] = '/';
+
+                        return -ERROR_ACCESS;
                 }
 
                 if (!made && told)
@@ -3138,13 +3183,20 @@ static bipolar file_make_parents_walk(string_address path, positive mode,
 
         if (!made)
         {
+                if (created)
+                        address_to created = true;
+
                 if (told)
                         told(work);
 
                 return 0;
         }
 
-        if (made == -ERROR_EXISTS && file_is_directory_through(work))
+        //      The last component is the one that was asked for, and the
+        //      reference reports the kernel's own word about it: a name that
+        //      is there and is not a directory is File exists here, where the
+        //      same name in the middle of a path is Not a directory.
+        if (made == -ERROR_EXISTS && !file_exists_as(work))
                 return 0;
 
         if (failed)
@@ -3157,7 +3209,7 @@ static bipolar file_make_parents_walk(string_address path, positive mode,
 
 bool file_make_parents(string_address path, positive mode)
 {
-        return file_make_parents_walk(path, mode, null, null) == 0;
+        return file_make_parents_walk(path, mode, null, null, null) == 0;
 }
 
 /*
@@ -3674,6 +3726,69 @@ static fn ls_quote_c(writer write, string_address name, positive length, p8 styl
 
         if (quote)
                 write(address_of quote, 1);
+}
+
+/*
+        A name inside a diagnostic's quotes.
+
+        The reference does not write a name into a message as it stands: a
+        byte that is not printable, a backslash and the quote itself are all
+        spelled out, so that one line stays one line whatever the name holds.
+        mkdir writes the locale style, which in the C locale is a C string
+        between single quotes, and that is what this renders -- the body of
+        it, because the quotes are already in every format string that asks.
+
+        A name with nothing to escape is handed back as it came, so a name
+        longer than this buffer is still written whole.
+*/
+#define FILE_SHOWN_MAX (FILE_PATH_MAX * 2)
+
+static p8 file_shown_store[FILE_SHOWN_MAX];
+
+static string_address file_shown_c(string_address name)
+{
+        positive length = string_length(name);
+        positive plain = 0;
+
+        while (plain < length)
+        {
+                p8 byte = string_get(name + plain);
+
+                if (byte == '\\' || byte == '\'' || ls_byte_unprintable(byte))
+                        break;
+
+                plain++;
+        }
+
+        if (plain == length)
+                return name;
+
+        positive used = 0;
+
+        for (positive at = 0; at < length && used < FILE_SHOWN_MAX - 5; at++)
+        {
+                p8 byte = string_get(name + at);
+
+                if (byte == '\\' || byte == '\'')
+                {
+                        file_shown_store[used++] = '\\';
+                        file_shown_store[used++] = byte;
+                }
+                else if (ls_byte_unprintable(byte))
+                {
+                        p8 spelled[4];
+                        positive wide = ls_escape_letter(byte, spelled);
+
+                        for (positive i = 0; i < wide; i++)
+                                file_shown_store[used++] = spelled[i];
+                }
+                else
+                        file_shown_store[used++] = byte;
+        }
+
+        file_shown_store[used] = end;
+
+        return file_shown_store;
 }
 
 static fn ls_quote_literal(writer write, string_address name, positive length)
@@ -12667,14 +12782,30 @@ static b32 file_pathchk()
 // mkdir [-p] [-m MODE] DIRECTORY...
 // -Z asks for the default label and --context=VALUE for a named one; a
 // kernel with no labels at all ignores the second and says so.
-static fn file_context_warned(string_address program, file_taking address_to taking,
-                              p8 letter)
+/*
+        --context on a kernel with no labels at all.
+
+        Written as the option is read rather than after the whole line has
+        been taken, because that is where the reference writes it: mkdir
+        --context=x -dash warns and then complains about -d, and a later bare
+        --context does not take back the warning an earlier --context=x
+        earned. Once per run, whatever the option was spelled or repeated.
+*/
+static string_address file_context_program;
+static bool file_context_said;
+
+static bool file_context_seen(p8 letter, string_address value)
 {
-        if (file_option_value(taking, letter))
+        if ((letter == 'Z' || letter == 'C') && value && !file_context_said)
+        {
+                file_context_said = true;
                 string_format(log_error,
                               "%s: warning: ignoring --context; it requires an "
                               "SELinux/SMACK-enabled kernel\n",
-                              program);
+                              file_context_program);
+        }
+
+        return true;
 }
 
 static const file_long mkdir_longs[] = {
@@ -12687,7 +12818,7 @@ static const file_long mkdir_longs[] = {
 
 static fn mkdir_told(string_address path)
 {
-        string_format(log, "mkdir: created directory '%s'\n", path);
+        string_format(log, "mkdir: created directory '%s'\n", file_shown_c(path));
 }
 
 static b32 file_mkdir()
@@ -12699,12 +12830,14 @@ static b32 file_mkdir()
             .valued = (string_address) "m",
             .long_optional = (string_address) "Z",
             .longs = mkdir_longs,
+            .seen = file_context_seen,
         };
+
+        file_context_program = (string_address) "mkdir";
+        file_context_said = false;
 
         if (!file_take(address_of taking))
                 return 1;
-
-        file_context_warned((string_address) "mkdir", address_of taking, 'Z');
 
         positive index = taking.first;
         positive mode = 0777;
@@ -12712,22 +12845,27 @@ static b32 file_mkdir()
         bool given_mode = (taking.flags & FILE_FLAG('m')) != 0;
         bool loud = (taking.flags & FILE_FLAG('v')) != 0;
 
-        // -m is read against a=rwx the way the reference mkdir reads it: a
-        // clause that names no class is filtered through the umask, and so
-        // is every bit no clause mentions at all.
+        //      An operand is asked for before -m is read, the way the
+        //      reference asks: mkdir -m nonsense with nothing to make is a
+        //      missing operand and not an invalid mode.
+        if (index >= count)
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "mkdir");
+
+        //      -m is read against a=rwx the way the reference mkdir reads
+        //      it: the base is all nine bits and not the umask-filtered set,
+        //      so mkdir -m u=rwx is 0777 and not 0755. Only a clause that
+        //      names no class is filtered through the umask, which is what
+        //      keeps -m -w at 0577 under a mask of 022.
         if (given_mode &&
             (!string_get(file_option_value(address_of taking, 'm')) ||
              !file_mode_masked(file_option_value(address_of taking, 'm'),
-                               0777 & ~file_umask(), true, file_umask(),
+                               0777, true, file_umask(),
                                address_of mode)))
         {
                 string_format(log_error, "mkdir: invalid mode '%s'\n",
                               file_option_value(address_of taking, 'm'));
                 return 1;
         }
-
-        if (index >= count)
-                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "mkdir");
 
         b32 status = 0;
 
@@ -12743,19 +12881,32 @@ static b32 file_mkdir()
                         //      made and none that was already there, and a
                         //      failure names the component that failed.
                         p8 failed[FILE_PATH_MAX];
+                        bool made_it = false;
+
+                        failed[0] = end;
+
                         bipolar made = file_make_parents_walk(
-                            path, 0777, loud ? mkdir_told : null, failed);
+                            path, 0777, loud ? mkdir_told : null, failed,
+                            address_of made_it);
 
                         if (made < 0)
                         {
+                                //      A name too long for the walk's buffer
+                                //      never became a component, so the whole
+                                //      operand is what failed and what the
+                                //      reference names.
                                 string_format(log_error,
                                               "mkdir: cannot create directory '%s': %s\n",
-                                              failed, file_reason(made));
+                                              file_shown_c(string_get(failed) ? failed : path),
+                                              file_reason(made));
                                 status = 1;
                                 continue;
                         }
 
-                        if (given_mode)
+                        //      -p over a directory that was already there
+                        //      leaves it as it was; -m names the mode of what
+                        //      this call makes.
+                        if (given_mode && made_it)
                                 system_change_mode_at(AT_FDCWD, path, mode);
 
                         continue;
@@ -12766,11 +12917,12 @@ static b32 file_mkdir()
                 if (made < 0)
                 {
                         string_format(log_error, "mkdir: cannot create directory '%s': %s\n",
-                                      path, file_reason(made));
+                                      file_shown_c(path), file_reason(made));
                         status = 1;
                 }
                 else if (loud)
-                        string_format(log, "mkdir: created directory '%s'\n", path);
+                        string_format(log, "mkdir: created directory '%s'\n",
+                                      file_shown_c(path));
 
                 if (made >= 0 && given_mode)
                         // mkdirat applies the umask; -m names the mode after
@@ -12797,11 +12949,12 @@ static const file_long file_node_longs[] = {
     {null, 0},
 };
 
+//      A mode outside the nine permission bits is read here and refused by
+//      the caller, which is where the reference's own sentence about it goes.
 static bool file_node_mode(string_address specification,
                            positive address_to mode)
 {
-        return file_mode_masked(specification, 0666, false, file_umask(), mode) &&
-               !(address_to mode & ~0777);
+        return file_mode_masked(specification, 0666, false, file_umask(), mode);
 }
 
 static b32 file_make_node(string_address program, string_address path,
@@ -12840,6 +12993,12 @@ static bool file_node_options(string_address program, file_taking address_to tak
         taking->optional = (string_address) "C";
         taking->longs = file_node_longs;
         taking->operand = file_operand;
+        //      This image has neither SELinux nor SMACK. -Z and a bare
+        //      --context are no-ops; a named context is ignored with a
+        //      warning, written where the option is read.
+        taking->seen = file_context_seen;
+        file_context_program = program;
+        file_context_said = false;
 
         if (!file_take(taking) || file_operand_failed)
                 return false;
@@ -12847,18 +13006,30 @@ static bool file_node_options(string_address program, file_taking address_to tak
         address_to given = (taking->flags & FILE_FLAG('m')) != 0;
         address_to mode = 0666;
 
-        if (address_to given &&
-            !file_node_mode(file_option_value(taking, 'm'), mode))
+        return true;
+}
+
+/*
+        -m, read after the operands have been counted.
+
+        The reference asks for its operands first -- mkfifo -m1777 with
+        nothing to make is a missing operand, not an invalid mode -- and then
+        refuses a mode carrying anything but the nine permission bits, which
+        is a sentence of its own and not the invalid-mode one.
+*/
+static bool file_node_mode_taken(string_address program, file_taking address_to taking,
+                                 positive address_to mode, bool given)
+{
+        if (!given)
+                return true;
+
+        if (!file_node_mode(file_option_value(taking, 'm'), mode))
                 return string_report(log_error, false, "%s: invalid mode\n", program);
 
-        // This image has neither SELinux nor SMACK. GNU treats -Z and a bare
-        // --context as no-ops in that case, and only warns for an explicit
-        // context value while leaving the creation and status untouched.
-        if (file_option_value(taking, 'C'))
-                string_format(log_error,
-                              "%s: warning: ignoring --context; it requires "
-                              "an SELinux/SMACK-enabled kernel\n",
-                              program);
+        if (address_to mode & ~(positive)0777)
+                return string_report(log_error, false,
+                                     "%s: mode must specify only file permission bits\n",
+                                     program);
 
         return true;
 }
@@ -12875,6 +13046,10 @@ static b32 file_mkfifo()
 
         if (!file_operand_count)
                 return string_report(log_error, 1, "%s: missing operand\n", (string_address) "mkfifo");
+
+        if (!file_node_mode_taken((string_address) "mkfifo", address_of taking,
+                                  address_of mode, given_mode))
+                return 1;
 
         b32 status = 0;
 
@@ -12942,26 +13117,63 @@ static b32 file_mknod()
                                address_of mode, address_of given_mode))
                 return 1;
 
-        positive expected = file_operand_count > 1 &&
-                                    string_is(file_operand_at(1), 'p')
-                                ? 2
-                                : 4;
+        /*
+                The operand count, counted the way the reference counts it:
+                the name, the type, and for everything but a pipe a major and
+                a minor. Each complaint names the operand it is about -- the
+                last one written when something is missing, the first spare
+                one when there are too many -- and a type that wants numbers
+                says so in a line of its own.
+        */
+        if (!file_operand_count)
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "mknod");
 
-        if (file_operand_count != expected)
+        if (file_operand_count == 1)
+                return string_report(log_error, 1, "mknod: missing operand after '%s'\n",
+                                     file_operand_at(0));
+
+        //      Only the first letter of the type is read, so that the
+        //      mnemonic spellings the reference allows -- character, block,
+        //      pipe -- are the letters they begin with.
+        bool pipe = string_is(file_operand_at(1), 'p');
+
+        if (pipe)
         {
-                return string_report(log_error, 1, !file_operand_count
-                              ? (string_address) "mknod: missing operand\n"
-                              : file_operand_count < expected
-                                    ? (string_address) "mknod: missing operand\n"
-                                    : (string_address) "mknod: extra operand\n");
+                if (file_operand_count > 2)
+                {
+                        string_format(log_error, "mknod: extra operand '%s'\n",
+                                      file_operand_at(2));
+                        log_error("Fifos do not have major and minor device numbers.\n", 0);
+                        return 1;
+                }
         }
+        else if (file_operand_count < 4)
+        {
+                string_format(log_error, "mknod: missing operand after '%s'\n",
+                              file_operand_at(file_operand_count - 1));
+
+                //      The line about what a special file needs is written
+                //      only when nothing but the name and the type were
+                //      given; a line with a major and no minor has said it.
+                if (file_operand_count == 2)
+                        log_error("Special files require major and minor device numbers.\n", 0);
+
+                return 1;
+        }
+        else if (file_operand_count > 4)
+                return string_report(log_error, 1, "mknod: extra operand '%s'\n",
+                                     file_operand_at(4));
+
+        if (!file_node_mode_taken((string_address) "mknod", address_of taking,
+                                  address_of mode, given_mode))
+                return 1;
 
         string_address path = file_operand_at(0);
         p8 type = string_get(file_operand_at(1));
         positive kind;
         positive device = 0;
 
-        if (type == 'p')
+        if (pipe)
                 kind = MODE_PIPE;
         else if (type == 'b' || type == 'c' || type == 'u')
         {
@@ -12979,10 +13191,19 @@ static b32 file_mknod()
 
                 kind = type == 'b' ? MODE_BLOCK : MODE_CHARACTER;
                 device = file_device(major, minor);
+
+                //      The reference hands the device number to a library
+                //      that refuses one wider than the syscall's argument
+                //      rather than letting the kernel see a truncated one,
+                //      and answers with that refusal's reason.
+                if (device != (positive)(p32)device)
+                        return string_report(log_error, 1, "mknod: %s: %s\n", path,
+                                             file_reason(-ERROR_INVALID));
         }
         else
                 return string_report(log_error, 1, "mknod: invalid device type '%s'\n",
                               file_operand_at(1));
+
 
         b32 status = file_make_node((string_address) "mknod", path, kind,
                                     device, mode, given_mode);
