@@ -91,12 +91,13 @@ DOMAIN_FLOOR = {
     #
     #       The fourth field is how far above the floor a run may land before
     #       it is a gain rather than a good day. A handful of cases still flip
-    #       that the unstable list has not caught -- three runs of the shell
-    #       gave 22995, 23007 and 23019, the lowest of them with three other
-    #       agents' suites competing for the machine -- so the floor sits a
-    #       little under the lowest and says how much of what is above it to
-    #       ignore. Without that a green run nags on every pass, and a gate
-    #       that always speaks is one nobody reads. The shell's slack is wider
+    #       that the unstable list has not caught -- runs of the shell landed
+    #       between 22995 and 23037 across this pass as the machine's load
+    #       moved and as the tree did, and the two taken against it as it
+    #       stands gave 23011 and 23012 -- so the floor sits a little under
+    #       the lowest and says how much of what is above it to ignore.
+    #       Without that a green run nags on every pass, and a gate that
+    #       always speaks is one nobody reads. The shell's slack is wider
     #       than the twenty it used to be because a third of what it now
     #       disagrees about is a session driven through a pseudo-terminal on
     #       wall-clock pauses, and how many of those land the same way twice
