@@ -2491,8 +2491,90 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
                 return shape.value;                                          \
         }
 
-NUMBERS_TO(string_to_decimal, decimal, numbers_shape, numbers_binary64, p64,
-           NUMBERS_FAST(decimal, numbers_exact_double, numbers_binary64, p64))
+/*
+        A plain short decimal, which is nearly every one a program parses.
+
+        The general conversion builds a 1,912 byte frame and clears thirteen
+        fields of a scan record before it looks at a byte, because it has to
+        be ready for an exponent, a hexadecimal significand, an infinity and
+        a significand too long to hold. awk asking for the value of a three
+        character field pays all of it: string_to_decimal is 11.0% of an awk
+        run over a two megabyte file of "word:NNN:word".
+
+        Fifteen digits is the most that is exactly a double without rounding
+        -- ten to the fifteenth is under two to the fifty third -- so a run of
+        them needs no rounding decision at all. Anything with a point, an
+        exponent, a sixteenth digit, leading space or a leading letter is the
+        general path's, untouched.
+*/
+static inline INLINE bool numbers_short_decimal(
+    string_address input, string_address address_to stopped,
+    decimal address_to answer)
+{
+        string_address at = input;
+        positive value = 0;
+        positive digits = 0;
+        bool negative = false;
+        p8 byte = string_get(at);
+
+        if (byte == '-')
+        {
+                negative = true;
+                at++;
+        }
+        else if (byte == '+')
+        {
+                at++;
+        }
+
+        while (digits < 15)
+        {
+                p32 digit = (p32)string_get(at) - '0';
+
+                if (digit > 9)
+                        break;
+
+                value = value * 10 + digit;
+                digits++;
+                at++;
+        }
+
+        if (!digits)
+                return false;
+
+        byte = string_get(at);
+
+        //      A point or an exponent is the general path's, and so is a
+        //      sixteenth digit. So is an x: a leading zero followed by one is
+        //      the start of a hexadecimal significand, which this cannot
+        //      read and which reaches here as a plain zero otherwise --
+        //      0x1p0 is one, not nought, and the ULP lane says so.
+        if (byte == '.' || byte == 'e' || byte == 'E' ||
+            byte == 'x' || byte == 'X' ||
+            (p32)((p32)byte - '0') <= 9)
+                return false;
+
+        if (stopped)
+                address_to stopped = (string_address)at;
+
+        address_to answer = negative ? -(decimal)value : (decimal)value;
+        return true;
+}
+
+NUMBERS_TO(string_to_decimal_general, decimal, numbers_shape, numbers_binary64,
+           p64, NUMBERS_FAST(decimal, numbers_exact_double, numbers_binary64,
+                             p64))
+
+static decimal string_to_decimal(string_address input,
+                                 string_address address_to stopped)
+{
+        decimal quick;
+
+        if (numbers_short_decimal(input, stopped, address_of quick))
+                return quick;
+
+        return string_to_decimal_general(input, stopped);
+}
 NUMBERS_TO(string_to_narrow, f32, numbers_narrow_shape, numbers_binary32, p32,
            NUMBERS_FAST(f32, numbers_exact_narrow, numbers_binary32, p32))
 

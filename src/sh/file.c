@@ -6750,6 +6750,12 @@ static string_address file_exec_refusal(bipolar answer)
         {
         case ERROR_ACCESS:
                 return "Permission denied";
+        case ERROR_NOT_PERMITTED:
+                //      A filter refused the call rather than the file being
+                //      unreachable. Without this a seccomp refusal read as
+                //      "No such file or directory", which sent a whole
+                //      afternoon looking for a missing echo.
+                return "Operation not permitted";
         case ERROR_NOT_DIRECTORY:
                 return "Not a directory";
         case ERROR_IS_DIRECTORY:

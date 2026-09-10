@@ -41195,8 +41195,21 @@ static fn storage_test_replay(void)
         check("replay fixture descriptor", handle >= 0);
         if (handle < 0)
                 return;
-        static p8 bytes[66564];
-        static const positive headers[] = {18, 4094, 4095, 4096, 65534, 65535, 65536};
+        /*
+                The header the reader will carry, and one byte past it. The
+                bound moved from 64 kB to a megabyte when the reader was
+                made to drop the transcript's opening line whatever it holds
+                -- the reference reads that line with getline and does not
+                care how long it is -- so what is checked here is the bound
+                that exists, with a case either side of it. The differential
+                never compiles this file, so the domain stayed green for a
+                whole pass while this check had stopped agreeing with the
+                reader it tests.
+        */
+        #define REPLAY_HEADER_MAX ((positive)1 << 20)
+        static p8 bytes[REPLAY_HEADER_MAX + 2048];
+        static const positive headers[] = {18, 4094, 4095, 4096, 65534, 65535, 65536,
+                                           REPLAY_HEADER_MAX - 1, REPLAY_HEADER_MAX};
         static const positive widths[] = {0, 1, 1022, 1023, 1024};
         for (positive h = 0; h < array_count(headers); h++)
                 for (positive w = 0; w < array_count(widths); w++)
@@ -41218,7 +41231,8 @@ static fn storage_test_replay(void)
                                 if (!prepared) continue;
                                 process_replay_reader reader = {.handle = handle};
                                 bool accepted = process_replay_skip_header(address_of reader);
-                                check("replay header bound", accepted == (header < 65536));
+                                check("replay header bound",
+                                      accepted == (header < REPLAY_HEADER_MAX));
                                 if (!accepted) continue;
                                 p8 line[1026];
                                 memory_fill(line, 0xa5, sizeof(line));
