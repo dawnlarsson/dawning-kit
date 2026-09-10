@@ -16798,14 +16798,17 @@ static bool shuf_seen(p8 letter, string_address value)
                 positive low;
                 positive high;
 
+                //      A second -i is refused before the word it carries is
+                //      read, the way the reference refuses it: two ranges is
+                //      the complaint whether or not the second one parses.
+                if (shuf_ranged)
+                        return string_report(log_error, false,
+                                             "shuf: multiple -i options specified\n");
+
                 if (!shuf_range(value, address_of low, address_of high) ||
                     high - low == positive_max)
                         return string_report(log_error, false,
                                              "shuf: invalid input range: '%s'\n", value);
-
-                if (shuf_ranged)
-                        return string_report(log_error, false,
-                                             "shuf: multiple -i options specified\n");
 
                 shuf_ranged = true;
         }
@@ -16839,9 +16842,10 @@ static b32 file_shuf()
         string_address range_text = file_option_value(address_of taking, 'i');
 
         if (echo && range_text)
-                return string_report(log_error, 1, "shuf: cannot combine --echo and --input-range\n");
+                return string_report(log_error, 1, "shuf: cannot combine -e and -i options\n");
         if (range_text && file_operand_count)
-                return string_report(log_error, 1, "shuf: extra operand with --input-range\n");
+                return string_report(log_error, 1, "shuf: extra operand '%s'\n",
+                                     file_operand_at(0));
         if (!echo && !range_text && file_operand_count > 1)
         {
                 string_format(log_error, "shuf: extra operand '%s'\n",
