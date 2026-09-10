@@ -7401,7 +7401,11 @@ static b32 tools_mcookie()
 
 #define DD_FULLBLOCK 0x001
 #define DD_COUNT_BYTES 0x002
-#define DD_SKIP_BYTES 0x004
+// Above the shared bits, not among them: at 0x004 this shared a bit with
+// DD_DIRECT, so iflag=skip_bytes opened the input O_DIRECT -- every read of
+// an unaligned buffer failing with an invalid argument -- and iflag=direct
+// counted skip= in bytes rather than in input blocks.
+#define DD_SKIP_BYTES 0x800
 #define DD_APPEND 0x001
 #define DD_SEEK_BYTES 0x002
 #define DD_O_APPEND 02000
@@ -7428,6 +7432,9 @@ static positive dd_out_full;
 static positive dd_out_partial;
 static positive dd_written;
 static positive dd_status_level;
+/* What the output was opened with, for the one thing O_DIRECT cannot do. */
+static bool dd_out_direct;
+static positive dd_out_block;
 static positive dd_started;
 
 // Set in the handler, acted on where a block boundary is, because printing
@@ -7780,16 +7787,88 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
 }
 
 /*
+        O_DIRECT hands the buffer to the device, so the kernel wants it on a
+        page boundary; the arena hands out sixteen-byte alignment. coreutils
+        aligns both its buffers to a page whatever the flags are, and pays a
+        page for it, so this does the same rather than deciding per run.
+*/
+#define DD_PAGE 4096u
+
+/*
+        coreutils names a file two ways: quoteaf, which quotes whatever it is
+        given, and quotef, which quotes only a name that would not survive a
+        shell as it stands. Every dd message but one uses the first. The two
+        writers below belong to diff, further down this file, and say the same
+        thing about a name.
+*/
+static bool diff_name_special(string_address name);
+fn shell_quoted(writer write, string_address value);
+
+static fn dd_named(string_address name)
+{
+        if (diff_name_special(name))
+                shell_quoted(writer_stderr, name);
+        else
+                writer_stderr(name, 0);
+}
+
+static p8 address_to dd_buffer(positive bytes)
+{
+        /* Too large to align is too large to hold: let the arena refuse it
+           and keep its complaint, rather than wrapping the page on. */
+        if (bytes > TEXT_ARENA_BYTES)
+                return (p8 address_to)text_arena_take(bytes);
+
+        p8 address_to raw = (p8 address_to)text_arena_take(bytes + DD_PAGE);
+        positive at = (positive)raw;
+
+        if (!raw)
+                return null;
+
+        return (p8 address_to)((at + (DD_PAGE - 1)) & ~(positive)(DD_PAGE - 1));
+}
+
+/*
         Every output path has the same failure contract. Keeping it here
         prevents regrouped blocks, the final partial block and seek padding
         from quietly accepting a short write while the equal-size fast path
         reports it.
 */
 static positive dd_output(positive handle, string_address name,
-                          p8 address_to bytes, positive length, bool copied)
+                          p8 address_to bytes, positive length, bool copied,
+                          bool regrouped)
 {
         positive wrote = 0;
         bipolar code = 0;
+
+        /*
+                O_DIRECT will not take a write shorter than the output block,
+                so the last piece of a copy is unwritable through it. coreutils
+                turns the flag off for that write rather than failing on it,
+                and never turns it back on.
+        */
+        if (dd_out_direct && length < dd_out_block)
+        {
+                bipolar flags = system_call_3(syscall(fcntl), handle,
+                                              FILE_F_GETFL, 0);
+                bipolar set = flags < 0
+                                  ? flags
+                                  : system_call_3(syscall(fcntl), handle,
+                                                  FILE_F_SETFL,
+                                                  (positive)flags &
+                                                      ~(positive)DD_O_DIRECT);
+
+                dd_out_direct = false;
+
+                if (set < 0 && dd_status_level != DD_STATUS_NONE)
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "dd: failed to turn off O_DIRECT: '%s': %s\n",
+                            name ? name : (string_address)"standard output",
+                            file_reason(set));
+                }
+        }
 
         // Written a piece at a time so the kernel's reason for a refusal
         // reaches the complaint, as coreutils' does.
@@ -7814,12 +7893,20 @@ static positive dd_output(positive handle, string_address name,
         if (wrote != length)
         {
                 text_flush();
+                /* A short write of a whole output block is coreutils'
+                   write_output, which names the file it was writing to; a
+                   short write of the last piece, or of an input block passed
+                   straight through, is its error writing. */
                 if (code < 0)
-                        string_format(writer_stderr, "dd: error writing '%s': %s\n",
+                        string_format(writer_stderr,
+                                      regrouped ? (string_address)"dd: writing to '%s': %s\n"
+                                                : (string_address)"dd: error writing '%s': %s\n",
                                       name ? name : (string_address)"standard output",
                                       file_reason(code));
                 else
-                        string_format(writer_stderr, "dd: error writing '%s'\n",
+                        string_format(writer_stderr,
+                                      regrouped ? (string_address)"dd: writing to '%s'\n"
+                                                : (string_address)"dd: error writing '%s'\n",
                                       name ? name : (string_address)"standard output");
         }
 
@@ -8178,13 +8265,21 @@ static b32 tools_dd(void)
                 out_handle = (positive)opened;
         }
 
-        p8 address_to ibuf = (p8 address_to)text_arena_take(ibs + 16);
-        p8 address_to obuf = ibs == obs && !(conv & DD_SWAB)
-                                 ? ibuf
-                                 : (p8 address_to)text_arena_take(obs + 16);
-        p8 address_to converted = conv & DD_SWAB
-                                      ? (p8 address_to)text_arena_take(ibs + 16)
-                                      : ibuf;
+        /*
+                One buffer or two, which is coreutils' rule and not a size
+                comparison: bs= asks for the input block to be passed straight
+                through, and everything else -- ibs= and obs= named apart, or
+                a conversion that rewrites the block -- gathers partial reads
+                into whole output blocks first. The two differ on a short read
+                and on which complaint a refused write gets.
+        */
+        bool two_buffers = !bs_set || (conv & (DD_SWAB | DD_LCASE | DD_UCASE));
+        p8 address_to ibuf = dd_buffer(ibs + 16);
+        p8 address_to obuf = two_buffers ? dd_buffer(obs + 16) : ibuf;
+        p8 address_to converted = conv & DD_SWAB ? dd_buffer(ibs + 16) : ibuf;
+
+        dd_out_direct = (oflags & DD_DIRECT) != 0;
+        dd_out_block = obs;
 
         if (!ibuf || !obuf || !converted)
                 return 1;
@@ -8241,10 +8336,10 @@ static b32 tools_dd(void)
                 if (short_of_it && dd_status_level != DD_STATUS_NONE)
                 {
                         text_flush();
-                        string_format(writer_stderr,
-                            input ? (string_address)"dd: %s: cannot skip to specified offset\n"
-                                  : (string_address)"dd: '%s': cannot skip to specified offset\n",
-                                      input ? input : (string_address)"standard input");
+                        writer_stderr("dd: ", 4);
+                        dd_named(input ? input
+                                       : (string_address)"standard input");
+                        writer_stderr(": cannot skip to specified offset\n", 0);
                 }
         }
 
@@ -8345,10 +8440,19 @@ static b32 tools_dd(void)
 
                 if (got < 0)
                 {
-                        text_flush();
-                        string_format(writer_stderr, "dd: error reading '%s': %s\n",
-                                      input ? input : (string_address)"standard input",
-                                      file_reason(got));
+                        /* The one place coreutils keeps quiet about a read it
+                           could not do: conv=noerror says go on past it and
+                           status=none says say nothing, and only the two
+                           together silence the complaint itself. */
+                        if (!(conv & DD_NOERROR) ||
+                            dd_status_level != DD_STATUS_NONE)
+                        {
+                                text_flush();
+                                string_format(writer_stderr,
+                                    "dd: error reading '%s': %s\n",
+                                    input ? input : (string_address)"standard input",
+                                    file_reason(got));
+                        }
 
                         if (!(conv & DD_NOERROR))
                         {
@@ -8406,7 +8510,7 @@ static b32 tools_dd(void)
                 if (ibuf == obuf)
                 {
                         positive wrote = dd_output(out_handle, output, obuf,
-                                                   read_bytes, true);
+                                                   read_bytes, true, false);
 
                         if (wrote != read_bytes)
                         {
@@ -8442,7 +8546,7 @@ static b32 tools_dd(void)
                                 continue;
 
                         positive wrote = dd_output(out_handle, output, obuf, obs,
-                                                   true);
+                                                   true, true);
                         held = 0;
 
                         if (wrote != obs)
@@ -8466,7 +8570,7 @@ static b32 tools_dd(void)
 
         if (held)
         {
-                positive wrote = dd_output(out_handle, output, obuf, held, true);
+                positive wrote = dd_output(out_handle, output, obuf, held, true, false);
 
                 if (wrote)
                 {
