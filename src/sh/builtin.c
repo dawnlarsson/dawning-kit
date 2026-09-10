@@ -12198,23 +12198,17 @@ static b32 shell_tool_named_in(string_address name, bool own_process)
         if (!name)
                 return -1;
 
-        /* Installed shell entry names are overwhelmingly more common than a
-           multicall utility entry. Reject their exact short spellings before
-           walking the one-shot tool table; utility lookup remains unchanged. */
-        if ((string_is(name, 's') && string_is(name + 1, 'h') &&
-             !string_get(name + 2)) ||
-            (string_is(name, 's') && string_is(name + 1, 'h') &&
-             string_is(name + 2, 'e') && string_is(name + 3, 'l') &&
-             string_is(name + 4, 'l') && !string_get(name + 5)) ||
-            (string_is(name, 'b') && string_is(name + 1, 'a') &&
-             string_is(name + 2, 's') && string_is(name + 3, 'h') &&
-             !string_get(name + 4)) ||
-            word_is(name, "dash") || word_is(name, "moonwater"))
-                return -1;
-
         /* One lookup in a process is cheaper than constructing the reusable
            index. Ordinary shell dispatch below is where repeated names use
-           the index; argv[0] is asked only once. */
+           the index; argv[0] is asked only once.
+
+           sh, shell, bash, dash and moonwater used to be spelled out here
+           and rejected before the walk, because the walk compared the name
+           against every tool's and each comparison read a string somewhere
+           else in the image. It reads two bytes out of one array now, so
+           skipping it saved a microsecond of nothing -- measured at 130 us a
+           run against 129 without -- and none of those five is a tool, so
+           the shortcut never decided anything the table would not have. */
         which = shell_tool_key_find(name);
 
         if (which == SHELL_TOOLS)
@@ -14162,18 +14156,22 @@ fn shell_which(writer write, string_address input)
                 if (string_not(word, '-') || !string_get(word + 1))
                         break;
 
+                //      The ones that are recognised and do nothing. A list
+                //      rather than ten comparisons written out, because a
+                //      list is all it is: nothing here is decided, only
+                //      spelled.
+                static string_address const accepted[] = {
+                    "-i",           "--read-alias",     "--skip-alias",
+                    "--read-functions", "--skip-functions",
+                    "--skip-dot",   "--skip-tilde",
+                    "--show-dot",   "--show-tilde",     "--tty-only",
+                };
+
                 if (word_is(word, "-a") || word_is(word, "--all"))
                         every = true;
-                else if (!word_is(word, "-i") &&
-                         !word_is(word, "--read-alias") &&
-                         !word_is(word, "--skip-alias") &&
-                         !word_is(word, "--read-functions") &&
-                         !word_is(word, "--skip-functions") &&
-                         !word_is(word, "--skip-dot") &&
-                         !word_is(word, "--skip-tilde") &&
-                         !word_is(word, "--show-dot") &&
-                         !word_is(word, "--show-tilde") &&
-                         !word_is(word, "--tty-only"))
+                else if (string_table_find(word, accepted, sizeof(accepted[0]),
+                                           array_count(accepted)) ==
+                         array_count(accepted))
                         string_format(log_error,
                                       "which: invalid option -- '%s'\n",
                                       word + 1);

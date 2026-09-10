@@ -7094,6 +7094,17 @@ says 'awk was asked'       'fl-esc-'
 never 'awk cannot escape'  'fl-esc-tuo'
 says 'a named applet runs' 'fl-named-ydaer'
 
+#
+#       Nothing the kernel felt the need to warn about.
+#
+#       A warning is not a crash, so nothing else here would notice one: the
+#       machine boots, every check passes, and the log fills up. Floodlight put
+#       one in for every process that read it -- misc_open leaves the
+#       miscdevice in private_data and seq_open warns on anything it finds
+#       there -- and the boot lane said everything agreed.
+#
+never 'kernel warned'      'cut here'
+
 never 'no invalid opcode'  'invalid opcode'
 never 'no protection fault' 'general protection fault'
 never 'init survived'      'Attempted to kill init'

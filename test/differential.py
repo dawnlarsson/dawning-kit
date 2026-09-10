@@ -19439,6 +19439,11 @@ def harness_floodlight(argv):
     for guard, where, what in (
             (r'if \(!intact\(\)\) \{\s*\n\s*seq_puts\(seq, "# floodlight: TAMPERED', show,
              'the report refuses to speak for a machine that has been tampered with'),
+            #   misc_open leaves the miscdevice in private_data and seq_open
+            #   warns on anything found there, so every reader of the register
+            #   put a warning in the kernel log until this was cleared.
+            (r'file->private_data = NULL;\s*\n\s*\n\s*return single_open', text,
+             'the open clears what misc_open left, so seq_open does not warn'),
             (r'return fold\(secret \^ [0-9]+u, row,', text,
              'a row seal is folded with the boot secret'),
             (r'return fold\(secret \^ [0-9]+u, baseline, sizeof\(baseline\)\);', text,
@@ -19646,7 +19651,7 @@ typedef long long loff_t;
 #define init_user_ns mock_ns
 
 struct inode;
-struct file;
+struct file { void *private_data; };
 struct file_operations { int owner; void *open, *read, *llseek, *release, *write; };
 struct miscdevice { int minor; const char *name; const struct file_operations *fops; int mode; };
 struct seq_file { char *at; unsigned room; };

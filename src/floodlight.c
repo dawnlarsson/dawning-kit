@@ -753,6 +753,16 @@ out:
 
 static int floodlight_open(struct inode *inode, struct file *file)
 {
+	/*
+	 * misc_open leaves the miscdevice in private_data for a driver that
+	 * wants to know which node it was opened through, and seq_open warns
+	 * if it finds anything there at all -- so every process that read this
+	 * register put a kernel warning in the log, once each, for the whole
+	 * life of the machine. Nothing below wants the pointer: the register is
+	 * one device and one array.
+	 */
+	file->private_data = NULL;
+
 	return single_open(file, floodlight_show, NULL);
 }
 
