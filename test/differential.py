@@ -91,29 +91,64 @@ DOMAIN_FLOOR = {
     #
     #       The fourth field is how far above the floor a run may land before
     #       it is a gain rather than a good day. A handful of cases still flip
-    #       that the unstable list has not caught -- two runs of the shell gave
-    #       16105 and 16108, one of them with four other agents' suites
-    #       competing for the machine -- so the floor sits a little under the
-    #       lowest and says how much of what is above it to ignore. Without
-    #       that a green run nags on every pass, and a gate that always speaks
-    #       is one nobody reads.
-    "shell": (16095, 25681, 20,
-              "the process-surface families, and a diagnostic's wording wherever a "
-              "terminal puts it on the same stream as the answer. startup and set_options "
-              "hold about six of every ten cases that do not agree, and one answer holds "
-              "most of that: bash writes its whole usage banner for an option nobody has, "
-              "which the startup family replays, and three in five of that family's option "
-              "sets carry such an option. The pseudo-terminal families are no longer the "
-              "prompt, the interleaving of the job notices or the history file -- those are "
-              "the terminal's and are normalised away now -- but this: every other case in "
-              "this domain compares a diagnostic only as present or absent, and a session "
-              "has one stream, so a session compares its wording byte for byte. Of eighty "
-              "sessions sampled, two thirds of what still differs is a diagnostic: the name "
-              "and the input line dash writes in front of one, and the sentences "
-              "themselves. The rest is a builtin one shell has and the other has not, bash "
-              "echoing the line that was typed, the job listing this shell prints in bash's "
-              "columns under every name, and a terminal that goes away, which kills bash "
-              "with the hangup where this one exits zero."),
+    #       that the unstable list has not caught -- three runs of the shell
+    #       gave 22995, 23007 and 23019, the lowest of them with three other
+    #       agents' suites competing for the machine -- so the floor sits a
+    #       little under the lowest and says how much of what is above it to
+    #       ignore. Without that a green run nags on every pass, and a gate
+    #       that always speaks is one nobody reads. The shell's slack is wider
+    #       than the twenty it used to be because a third of what it now
+    #       disagrees about is a session driven through a pseudo-terminal on
+    #       wall-clock pauses, and how many of those land the same way twice
+    #       depends on what else the machine is doing.
+    "shell": (22970, 25681, 60,
+              "what a session says when something goes wrong. The process-surface "
+              "families are no longer the gap. bash answers an option nobody has with "
+              "its whole usage banner, which the startup family replays onto stdout, and "
+              "this shell writes that banner under a bash name now: the sixteen GNU long "
+              "options are taken, read the way bash reads them -- over the leading run of "
+              "words only, so `-x --posix` is still a usage error where `--posix -x` is "
+              "not -- an -O name is held back until the rest of the invocation has been "
+              "read, and an errexit already on leaves 1 with no banner where a plain "
+              "usage error leaves 2. set reads its whole option list before it applies "
+              "any of it, and writes the shell's name, the line and bash's usage line "
+              "with its complaint. startup went from 4238 of 7968 to 7932 and "
+              "set_options from 1042 of 3893 to 3661. One warning about the banner: it "
+              "spells out the long option names and the set letters of the bash it is "
+              "compared against, so a reference bash whose own invocation surface moves "
+              "moves this number with it. "
+              "What is left, largest first. terminal_session, 328 of 1665, is "
+              "the wording of a diagnostic and almost nothing else. Every other family "
+              "in this domain compares a diagnostic as present or absent; a session has "
+              "one stream, so a session compares it byte for byte -- and both references "
+              "write their own name and the line the command was written on in front of "
+              "every one, where this shell writes the bare sentence: `x: bad "
+              "substitution` against dash's `2: Bad substitution`, `arithmetic: 1/0` "
+              "against bash's `let: 1/0: division by 0 (error token is \"0\")`, and its "
+              "own words for a syntax error. set is the one builtin that writes that "
+              "prefix now, which is what made set_options agree; the mechanism exists "
+              "for one caller and is missing at the three hundred others, and that is "
+              "the shape of the work rather than the wording of any one sentence. "
+              "terminal_jobs, 86 of 549, and terminal_vanish, 15 of 144. The "
+              "listing itself is each shell's own now -- dash's spacing around the mark, "
+              "its command without the trailing ampersand, its whole line padded to one "
+              "column, and the stopping signal in parentheses under --posix -- and what "
+              "is left around it is a dash session refusing to leave the first time it "
+              "is asked with a job stopped where this one leaves, disown, which is a "
+              "builtin under every name here and is not one of dash's, and the wording "
+              "of kill's usage and of wait's and bg's refusals. terminal_vanish is a "
+              "terminal that goes away: it kills both references with the hangup in "
+              "cases where this one leaves 0 or 1, and dash says it cannot reach the tty "
+              "where this one says nothing. "
+              "names_bash, 216 of 392: -r and --restricted are taken now and "
+              "reach $-, and nothing is restricted by them -- a command name with a "
+              "slash in it, an output redirection and cd all still run -- and the login "
+              "spellings of argv[0] still choose differently. The rest is small and "
+              "named in its own pinned rows: startup's remaining cases are the "
+              "reference's own machine, /etc/bash.bashrc and the bashdb file --debugger "
+              "looks for; set_options' are the order two stages of a pipeline trace "
+              "themselves in; and xtrace-shape's are PS4 itself, which bash reads "
+              "backslash escapes and a command substitution out of before writing it."),
     "util_linux": (76810, 81037, 70,
                    "the mount namespace and what a process can watch inside it. "
                    "The slack is wider than other domains keep because the live "
