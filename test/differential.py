@@ -117200,22 +117200,6 @@ PINNED = r"""
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
-  "option": "--sd-id",
-  "reason_id": "r211",
-  "utility": "logger"
- },
- {
-  "domain": "misc",
-  "kind": "deliberate",
-  "list": "ledger",
-  "option": "--sd-param",
-  "reason_id": "r212",
-  "utility": "logger"
- },
- {
-  "domain": "misc",
-  "kind": "deliberate",
-  "list": "ledger",
   "option": "-F",
   "reason_id": "r215",
   "utility": "od"

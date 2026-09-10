@@ -415,6 +415,15 @@ static positive logger_timestamp_5424(logger_builder address_to build,
         return length + 13;
 }
 
+/*      One structured-data element, the last --sd-id named, and the
+        parameters written after it. An element nobody gave a parameter is
+        not written at all, and a parameter before any element is refused
+        where it stands. */
+#define LOGGER_SD_PARAMETERS 8
+static string_address logger_seen_sd_id;
+static string_address logger_seen_sd_parameter[LOGGER_SD_PARAMETERS];
+static positive logger_seen_sd_count;
+
 static bool logger_header(logger_control address_to control,
                           p8 address_to into, positive room,
                           positive priority, positive address_to length)
@@ -474,7 +483,19 @@ static bool logger_header(logger_control address_to control,
                                 logger_build_string(address_of build,
                                     "[timeQuality tzKnown=\"1\" isSynced=\"0\"]");
                 }
-                else
+                if (logger_seen_sd_count)
+                {
+                        logger_build_character(address_of build, '[');
+                        logger_build_string(address_of build, logger_seen_sd_id);
+                        for (positive at = 0; at < logger_seen_sd_count; at++)
+                        {
+                                logger_build_character(address_of build, ' ');
+                                logger_build_string(address_of build,
+                                                    logger_seen_sd_parameter[at]);
+                        }
+                        logger_build_character(address_of build, ']');
+                }
+                else if (!control->rfc_quality)
                         logger_build_character(address_of build, '-');
                 logger_build_character(address_of build, ' ');
         }
@@ -521,6 +542,8 @@ typedef struct
         p8 path[LOGGER_UNIX_PATH];
 } logger_unix_address;
 
+static bool logger_port_unknown;
+
 static bipolar logger_connect_kind(logger_control address_to control,
                                    p8 transport)
 {
@@ -553,6 +576,10 @@ static bipolar logger_connect_kind(logger_control address_to control,
                     (!string_digits_exact(control->port, address_of port) ||
                      !port || port > 65535))
                 {
+                        //      A port that is neither a number nor a service
+                        //      name is a lookup that failed, and the
+                        //      reference says so in those words.
+                        logger_port_unknown = true;
                         socket_close((b32)handle);
                         return -ERROR_INVALID;
                 }
@@ -619,13 +646,17 @@ static bool logger_connect(logger_control address_to control)
         if (control->server)
         {
                 text_flush();
-                string_format(writer_stderr,
-                              "logger: failed to connect to %s port %s\n",
+                string_format(writer_stderr, logger_port_unknown
+                    ? (string_address)"logger: failed to resolve name %s port %s: Servname not supported for ai_socktype\n"
+                    : (string_address)"logger: failed to connect to %s port %s\n",
                               control->server,
+                              //      The reference names the port it was
+                              //      given, and what it was given when
+                              //      nobody said is a service name.
                               control->port ? control->port
                               : control->transport == LOGGER_TRANSPORT_STREAM
-                                  ? (string_address)"601"
-                                  : (string_address)"514");
+                                  ? (string_address)"syslog-conn"
+                                  : (string_address)"syslog");
                 return false;
         }
         if (control->socket_errors)
@@ -762,13 +793,14 @@ static bool logger_stream(logger_control address_to control,
         }
 
         bool answer = true;
+        positive base_priority = control->priority;
         positive default_priority = control->priority;
         while (text_line_next(text_line, 0))
         {
                 positive from = 0;
                 positive priority = default_priority;
 
-                if (control->priority_prefix && text_line_length >= 3 &&
+                if (control->priority_prefix && text_line_length &&
                     text_line[0] == '<')
                 {
                         positive at = 1;
@@ -791,6 +823,15 @@ static bool logger_stream(logger_control address_to control,
                                 default_priority = prefixed;
                                 priority = prefixed;
                                 from = at + 1;
+                        }
+                        else
+                        {
+                                /* A line that opened a prefix and did not
+                                   finish one is not a line without a prefix:
+                                   the reference takes the failed reading as
+                                   the priority it was given to start with. */
+                                default_priority = base_priority;
+                                priority = base_priority;
                         }
                 }
 
@@ -887,77 +928,99 @@ static const file_long logger_longs[] = {
 };
 
 static bool logger_journald(logger_control address_to control,
-                            string_address path)
+                            string_address path, bool named)
 {
 #if defined(LINUX) && !defined(KERNEL_MODE)
         text_arena_used = 0;
 
-        /* The reference names this open itself rather than leaving it to
-           the reader's own complaint. */
+        /*      The reference names this open itself rather than leaving it
+                to the reader's own complaint -- but only when --journald
+                named the file. A file that arrived through --file stands
+                where the standard input stood, and an input that cannot be
+                read is simply an entry with nothing in it. */
+        positive length = 0;
+        p8 address_to entry = (p8 address_to)"";
         {
                 bipolar handle = path ? text_open_handle(path, FILE_READ, 0) : 0;
 
-                if (handle < 0)
+                if (handle < 0 && named)
                 {
                         text_flush();
                         string_format(writer_stderr, "logger: cannot open %s: %s\n",
                                       path, file_reason(handle));
                         return false;
                 }
-                if (path)
+                if (path && handle >= 0)
                         system_close((positive)handle);
+                if (handle >= 0)
+                {
+                        if (!text_open(path))
+                                return false;
+
+                        bool failed;
+                        entry = text_arena_read_all(text_input.handle, 65536,
+                                                    address_of length,
+                                                    address_of failed);
+                        text_close();
+                        if (!entry || failed)
+                        {
+                                entry = (p8 address_to)"";
+                                length = 0;
+                        }
+                }
         }
 
-        if (!text_open(path))
-                return false;
+        /*      The reference collects lines until one is blank or the input
+                ends, taking the blank space off the end of each, and what it
+                echoes and what it sends are that collection. A field with no
+                equals sign in it, or none before it, is one the journal
+                refuses, and then the whole entry could not be written.
+        */
+        positive fields = 0;
+        positive collected = 0;
+        bool malformed = false;
+        for (positive at = 0; at < length;)
+        {
+                positive stop = at + memory_span_without_byte(entry + at, '\n',
+                                                              length - at);
+                positive trimmed = stop;
 
-        positive length;
-        bool failed;
-        p8 address_to entry = text_arena_read_all(text_input.handle, 65536,
-                                                   address_of length,
-                                                   address_of failed);
-        text_close();
-        if (!entry || failed)
-                return false;
+                while (trimmed > at && byte_is_space(entry[trimmed - 1]))
+                        trimmed--;
+                if (trimmed == at)
+                        break;
+                positive name = memory_span_without_byte(entry + at, '=',
+                                                         trimmed - at);
+                if (!name || name == trimmed - at)
+                        malformed = true;
+                fields++;
+                collected = trimmed;
+                at = stop < length ? stop + 1 : length;
+        }
 
-        /* An entry with nothing in it is nothing to write. */
-        if (!length)
+        if (control->standard_error && collected)
+        {
+                text_out_to(2);
+                text_put(entry, collected);
+                text_put_character('\n');
+                text_flush();
+                text_out_to(1);
+        }
+
+        /*      --no-act stops before the write, and the complaint about an
+                entry that cannot be written is the write's and not the
+                entry's: the reference reads and echoes whatever it was
+                handed and then says nothing at all. */
+        if (control->no_action)
+                return true;
+
+        if (!fields || malformed)
         {
                 text_flush();
                 string_format(writer_stderr,
                     "logger: journald entry could not be written\n");
                 return false;
         }
-
-        for (positive at = 0; at < length;)
-        {
-                positive stop = at + memory_span_without_byte(entry + at, '\n',
-                                                              length - at);
-                positive name = memory_span_without_byte(entry + at, '=',
-                                                         stop - at);
-
-                if (stop > at && (name == stop - at || !name))
-                {
-                        text_flush();
-                        string_format(writer_stderr,
-                            "logger: journald entry could not be written\n");
-                        return false;
-                }
-                at = stop < length ? stop + 1 : length;
-        }
-
-        if (control->standard_error)
-        {
-                text_out_to(2);
-                text_put(entry, length);
-                if (!length || entry[length - 1] != '\n')
-                        text_put_character('\n');
-                text_flush();
-                text_out_to(1);
-        }
-
-        if (control->no_action)
-                return true;
 
         control->socket_path = (string_address)"/run/systemd/journal/socket";
         control->transport = LOGGER_TRANSPORT_DGRAM;
@@ -968,6 +1031,7 @@ static bool logger_journald(logger_control address_to control,
 #else
         (void)control;
         (void)path;
+        (void)named;
         return false;
 #endif
 }
@@ -1017,6 +1081,13 @@ static bool logger_option_seen(p8 letter, string_address value)
                 string_format(writer_stderr,
                               "logger: --msgid cannot contain space\n");
                 return false;
+        }
+        //      -i and --id answer the same question, so the last of them
+        //      written is the one that means it.
+        if (letter == 'i')
+        {
+                logger_seen_process_given = true;
+                logger_seen_process = (positive)system_call(syscall(getpid));
         }
         if (letter == 'I')
         {
@@ -1082,9 +1153,40 @@ static bool logger_option_seen(p8 letter, string_address value)
                     "logger: invalid argument: %s: using automatic errors\n",
                     value);
         }
-        if (letter == 'D' || letter == 'X')
-                return string_diagnostic(&text_diagnostic, 0, null,
-                    "structured-data and signature fields are not supported");
+        if (letter == 'J' && value)
+        {
+                //      The reference opens the journald entry where the
+                //      option stands, so a name it cannot read is reported
+                //      before whatever was written after it.
+                bipolar handle = text_open_handle(value, FILE_READ, 0);
+
+                if (handle < 0)
+                {
+                        text_flush();
+                        string_format(writer_stderr, "logger: cannot open %s: %s\n",
+                                      value, file_reason(handle));
+                        return false;
+                }
+                system_close((positive)handle);
+        }
+        if (letter == 'D' && value)
+        {
+                logger_seen_sd_id = value;
+                logger_seen_sd_count = 0;
+        }
+        if (letter == 'X' && value)
+        {
+                if (!logger_seen_sd_id)
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "logger: --sd-id was not specified for --sd-param %s\n",
+                            value);
+                        return false;
+                }
+                if (logger_seen_sd_count < LOGGER_SD_PARAMETERS)
+                        logger_seen_sd_parameter[logger_seen_sd_count++] = value;
+        }
 
         return true;
 }
@@ -1114,6 +1216,9 @@ static b32 tools_logger()
 
         text_begin("logger");
         text_delimiter = '\n';
+        logger_port_unknown = false;
+        logger_seen_sd_id = null;
+        logger_seen_sd_count = 0;
         logger_seen_priority = 13;
         logger_seen_size = LOGGER_DEFAULT_SIZE;
         logger_seen_process = 0;
@@ -1181,8 +1286,6 @@ static b32 tools_logger()
                     address_of journal);
         }
 
-        if (taking.flags & FILE_FLAG('i'))
-                control.process = (positive)system_call(syscall(getpid));
         if (logger_seen_process_given)
                 control.process = logger_seen_process;
 
@@ -1216,8 +1319,18 @@ static b32 tools_logger()
 
         if (taking.flags & FILE_FLAG('J'))
         {
-                bool answer = logger_journald(
-                    address_of control, file_option_value(address_of taking, 'J'));
+                /*      --file puts its file where the standard input was, so
+                        a bare --journald reads that file and not the
+                        terminal -- even when the file was ignored for the
+                        message. And a journald entry goes to the journal's
+                        own socket whatever server was named. */
+                string_address entry = file_option_value(address_of taking, 'J');
+                bool named = entry != null;
+                if (!entry)
+                        entry = file_option_value(address_of taking, 'f');
+                control.server = null;
+                control.port = null;
+                bool answer = logger_journald(address_of control, entry, named);
 #if defined(LINUX) && !defined(KERNEL_MODE)
                 if (control.handle >= 0)
                         socket_close((b32)control.handle);
