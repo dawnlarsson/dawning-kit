@@ -104,7 +104,7 @@ DOMAIN_FLOOR = {
     #       disagrees about is a session driven through a pseudo-terminal on
     #       wall-clock pauses, and how many of those land the same way twice
     #       depends on what else the machine is doing.
-    "shell": (22970, 25681, 60,
+    "shell": (23535, 26254, 120,
               "what a session says when something goes wrong. The process-surface "
               "families are no longer the gap. bash answers an option nobody has with "
               "its whole usage banner, which the startup family replays onto stdout, and "
