@@ -97125,38 +97125,6 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "7318cfbc4e9b4e57108561871cd1b541666a3a3f9c65a81234152ea0b0f39def"
-  },
-  "case": {
-   "argv": [
-    "--hyperlink=always"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "dir"
-  },
-  "domain": "files",
-  "id": "b3701af9e272279b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r324",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "4a38f17bac761ca14fc4d301873ae3b97b3c244d87a38b1f53ebf16c6d45ea44"
-  },
-  "utility": "dir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
    "stdout": "32da2c07c604a0967a080c5a30009166605e8dd7f51ebb36544e4d9e22946468"
   },
   "case": {
@@ -112093,59 +112061,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "d596207afe5235772a6c9c4cf1a3ed5f763f8727f6eaafc99632bbcffdb563dd"
-  },
-  "case": {
-   "argv": [
-    "--hyperlink=always",
-    "-1"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "858479b2fd8c26a7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "d596207afe5235772a6c9c4cf1a3ed5f763f8727f6eaafc99632bbcffdb563dd"
-  },
-  "case": {
-   "argv": [
-    "--hyperlink=always"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "bc3c5014709097fb",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "ls"
  },
  {
@@ -134999,7 +134914,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "f664367686139670ad7003e6800e79fba53d1821809c3aaf26a4b528b8e70a29"
+   "stdout": "a27b4104834e55bd504a377659af57b51b86d32c3ed33ea31da6da9e2e40e95c"
   },
   "case": {
    "argv": [
