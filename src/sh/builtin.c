@@ -11843,7 +11843,7 @@ static string_address shell_tool_name(string_address path)
         list and floodlight.c's disagree.
 */
 static string_address const floodlight_denied[] = {
-    "awk", "bowl", "find", "script", "setarch", "xargs", null};
+    "awk", "bowl", "script", "setarch", null};
 
 /*
         The register, read once and reduced to what it changes.

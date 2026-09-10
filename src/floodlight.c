@@ -109,9 +109,28 @@ struct rule {
 };
 
 static const struct rule baseline[] = {
+	/*
+	 * awk alone among the three, because it is the only one where the
+	 * name of the program to run comes out of the data.
+	 *
+	 * find and xargs take the command on their own command line and put
+	 * data in its arguments; whoever wrote the line had already chosen
+	 * what runs. awk's system() and "cmd" | getline build the name from
+	 * the program text, and awk program text arrives in files and in
+	 * variables. That is the avenue worth closing, and closing the other
+	 * two as well did not narrow anything -- it removed -exec from find,
+	 * which is what find is for, and left xargs a program that reads its
+	 * input and does nothing with it. A tool that cannot do the thing it
+	 * exists to do is not running at a basic level; it is broken, and a
+	 * policy people have to turn off to get work done is one they turn
+	 * off everywhere.
+	 *
+	 * They keep their rows, so a machine that wants them shut can say so
+	 * in one line and this file is still where that is written down.
+	 */
 	{ "awk", SPAWN, 0 },       /* DERIVED: system(), "cmd" | getline */
-	{ "find", SPAWN, 0 },      /* DERIVED: -exec, -execdir, -ok, -okdir */
-	{ "xargs", SPAWN, 0 },     /* DERIVED: commands built from its input */
+	{ "find", SPAWN, 1 },      /* NAMED: -exec runs what the line named */
+	{ "xargs", SPAWN, 1 },     /* NAMED: likewise, with data in the args */
 	{ "bowl", SPAWN, 0 },      /* SHELL: another distribution's userspace */
 	{ "script", SPAWN, 0 },    /* SHELL: the session it records is a shell */
 	{ "setarch", SPAWN, 0 },   /* SHELL: falls back to /bin/sh given no command */

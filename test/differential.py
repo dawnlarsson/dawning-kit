@@ -19648,11 +19648,32 @@ def harness_floodlight(argv):
     check(can_spawn == set(declared),
           'the array describes exactly the applets that can start a program')
 
-    #   Refusing the ones that turn data into execution is the whole reason the
-    #   array exists; an edit that quietly allows them again should be loud.
-    for name in ('awk', 'find', 'xargs'):
+    #   Refusing the ones that turn data into execution is the whole reason
+    #   the array exists, and an edit that quietly allows them again should be
+    #   loud. What counts is where the *name of the program* comes from.
+    #
+    #   awk builds it out of the program text, and program text arrives in
+    #   files and variables: system() and "cmd" | getline are the avenue.
+    #   bowl, script and setarch each end at a shell by design. Those five
+    #   stay shut, and this is what says so.
+    #
+    #   find and xargs are not that shape and were denied here until it was
+    #   measured: they take the command on their own command line and put
+    #   data in its arguments, so whoever wrote the line already chose what
+    #   runs. Denying them removed -exec from find and left xargs reading its
+    #   input to no purpose -- five lanes of this suite went red saying so.
+    #   They keep their rows, because a machine that wants them shut should
+    #   still say it here, and the check below is what notices if a row goes
+    #   missing rather than changing value.
+    for name in ('awk', 'bowl', 'script', 'setarch'):
         check(declared.get(name) == '0',
-              '%s builds a command out of what it reads and must be denied by default' % name)
+              '%s reaches a shell or builds a command out of what it reads, '
+              'and must be denied by default' % name)
+
+    for name in ('find', 'xargs'):
+        check(name in declared,
+              '%s can still start a program, so the register still has to '
+              'carry a row for it' % name)
 
     #   Isolation.
     allowed = re.compile(r'^\s*#\s*include\s*<(linux|asm|asm-generic|uapi)/[\w/.-]+>\s*$')
