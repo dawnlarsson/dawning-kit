@@ -133595,9 +133595,9 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "88e5f5bc415792d396572a6c9565dc8985bd3a887cfadc231c2a96bc4d85e39c",
+   "effects": "ed246954640ee828539586c9af010ebace7314f9a3c5cfb5887c47a4587c078e",
    "status": 0,
-   "stdout": "934f8fe6122aafb2330398cc69e753993f638ecda489bf828483bc97876656a5"
+   "stdout": "6c410baaef2d1e1aff99258480626a94890727abcea0e53d05829d0d83f91f6f"
   },
   "case": {
    "argv": [
@@ -133674,9 +133674,9 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "88e5f5bc415792d396572a6c9565dc8985bd3a887cfadc231c2a96bc4d85e39c",
+   "effects": "ed246954640ee828539586c9af010ebace7314f9a3c5cfb5887c47a4587c078e",
    "status": 0,
-   "stdout": "934f8fe6122aafb2330398cc69e753993f638ecda489bf828483bc97876656a5"
+   "stdout": "6c410baaef2d1e1aff99258480626a94890727abcea0e53d05829d0d83f91f6f"
   },
   "case": {
    "argv": [
