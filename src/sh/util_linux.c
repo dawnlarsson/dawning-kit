@@ -13221,17 +13221,23 @@ static b32 ul_ipcrm_remove(p8 type, string_address text, bool key,
                               key ? (string_address)"key"
                                   : (string_address)"id", text);
         bipolar id = key ? ul_ipc_id_by_key(type, value) : (bipolar)value;
-        bipolar removed = id < 0 ? id
-                                  : ul_ipc_remove_one(type, (positive)id);
+        bipolar removed;
+
+        if (id < 0)
+                return string_report(log_error, 1, "ipcrm: invalid %s (%s)\n",
+                              key ? (string_address)"key"
+                                  : (string_address)"id", text);
+        /*  The reference says what it is about to do, then does it: an id
+            that parses but names nothing is still announced before the
+            refusal. */
+        if (verbose)
+                string_format(log, "removing %s id `%b'\n",
+                              ul_ipc_kind(type), id);
+        removed = ul_ipc_remove_one(type, (positive)id);
         if (removed < 0)
                 return string_report(log_error, 1, "ipcrm: invalid %s (%s)\n",
                               key ? (string_address)"key"
                                   : (string_address)"id", text);
-        if (verbose)
-        {
-                string_format(log, "removing %s id `%b'\n",
-                              ul_ipc_kind(type), id);
-        }
         return 0;
 }
 
@@ -13252,6 +13258,7 @@ static b32 util_linux_ipcrm()
                 return string_report(log_error, 1, "%s: %s\n", "ipcrm", "bulk removal is not supported");
 
         bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        positive count = (positive)program_argument_count();
         b32 failed = 0;
         static const p8 letters[] = {'q', 'm', 's'};
         static const p8 keys[] = {'Q', 'M', 'S'};
@@ -13265,23 +13272,40 @@ static b32 util_linux_ipcrm()
                 if (key) failed |= ul_ipcrm_remove((p8)type, key, true, verbose);
         }
 
-        positive count = (positive)program_argument_count();
+        /*  The old spelling -- `ipcrm shm 12` -- is recognised by the first
+            word alone and before any option is read, which is why an option
+            in front of it turns the type name into an argument nobody asked
+            for. It is also the only spelling that says how it went. */
         if (taking.first < count)
         {
-                string_address kind = program_argument((b32)taking.first++);
+                string_address kind = program_argument((b32)taking.first);
                 p8 type = string_equals(kind, "msg") ? UL_IPC_MESSAGE
                           : string_equals(kind, "shm") ? UL_IPC_SHARED
                           : string_equals(kind, "sem") ? UL_IPC_SEMAPHORE
                                                        : UL_IPC_TYPES;
-                if (type == UL_IPC_TYPES || taking.first == count)
-                        return string_report(log_error, 1, "%s: %s\n", "ipcrm", "invalid resource type");
+
+                if (taking.first != 1 || type == UL_IPC_TYPES)
+                {
+                        string_format(log_error,
+                                      "ipcrm: unknown argument: %s\n"
+                                      "Try 'ipcrm --help' for more information.\n",
+                                      kind);
+                        log_flush();
+                        return 1;
+                }
+                if (count < 3)
+                        return string_report(log_error, 1, "%s: %s\n", "ipcrm",
+                                             "not enough arguments");
+                taking.first++;
                 while (taking.first < count)
                         failed |= ul_ipcrm_remove(
                             type, program_argument((b32)taking.first++), false,
-                            verbose);
+                            false);
+                if (!failed)
+                        log("resource(s) deleted\n", 20);
+                log_flush();
+                return failed;
         }
-        if (verbose && !failed)
-                log("resource(s) deleted\n", 20);
         log_flush();
         return failed;
 }
