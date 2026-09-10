@@ -2020,6 +2020,14 @@ static b32 process_script_record(process_script_state address_to state,
            a command started with its input already exhausted never sees it
            and waits for a line that cannot come. */
         bool session_spoke = false;
+        /* One offer of it is not enough either. A shell that reads its line
+           through readline takes the terminal back when it accepts the line
+           and throws away whatever was typed ahead, so an end-of-file written
+           while the line was still being read is gone -- and a command that
+           says nothing at all never lets the first one go. So it is offered
+           again each time the session falls quiet, a few times, and after
+           that the child is simply waited for. */
+        positive offered = 0;
         positive status = 0;
 
         while (!master_end)
@@ -2056,8 +2064,11 @@ static b32 process_script_record(process_script_state address_to state,
                 }
 
                 timespec drain = {1, 0};
-                timespec address_to timeout = child_done ? address_of drain
-                                                         : null;
+                timespec quiet = {0, 100000000};
+                bool offering = input_end && !child_done && offered < 4;
+                timespec address_to timeout =
+                    child_done ? address_of drain
+                               : (offering ? address_of quiet : null);
                 bipolar ready = system_call_5(
                     syscall(ppoll), (positive)waited, count,
                     (positive)timeout, 0, 8);
@@ -2070,6 +2081,17 @@ static b32 process_script_record(process_script_state address_to state,
                 }
                 if (!ready)
                 {
+                        if (offering)
+                        {
+                                //      Quiet, and our own input is spent:
+                                //      offer the end-of-file again.
+                                input[0] = 4;
+                                input_at = 0;
+                                input_length = 1;
+                                session_spoke = true;
+                                offered++;
+                                continue;
+                        }
                         /* A descendant retaining the slave must not hold the
                            recorder forever after the command is reaped. */
                         process_timeout_signal((b32)child, SIGHUP, false,
@@ -2282,42 +2304,38 @@ static b32 process_script()
                         break;
                 }
 
+        /*      The log operand is whatever stands before the separator; a
+                bare -- at the end names no command at all, which is why the
+                reference takes --command beside one. */
+        positive tail = separator < count ? separator : count;
+        positive operands = tail > taking.first ? tail - taking.first : 0;
         string_address command = file_option_value(address_of taking, 'c');
         positive command_first = count;
-        string_address positional = null;
+        string_address positional = operands ? program_argument((b32)taking.first)
+                                             : null;
         if (command)
         {
-                if (separator < count || count - taking.first > 1)
+                if (separator + 1 < count || operands > 1)
                         return string_report(log_error, 1, "%s: %s\n", "script", "--command cannot be combined with -- command");
-                if (taking.first < count)
-                        positional = program_argument((b32)taking.first);
         }
         else if (separator < count)
         {
                 // A bare -- with nothing after it means the shell itself.
-                positive before = separator > taking.first
-                                      ? separator - taking.first : 0;
-                if (before > 1)
+                if (operands > 1)
                         return string_report(log_error, 1, "%s: %s\n", "script", "invalid command operands");
-                if (before)
-                        positional = program_argument((b32)taking.first);
                 command_first = separator + 1;
         }
-        else
-        {
-                if (count - taking.first > 1)
-                        return string_report(log_error, 1, "%s: %s\n", "script", "extra operand");
-                if (taking.first < count)
-                        positional = program_argument((b32)taking.first);
-        }
+        else if (operands > 1)
+                return string_report(log_error, 1, "%s: %s\n", "script", "extra operand");
 
         bool has_io = (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
                                        FILE_FLAG('B'))) != 0;
         if (positional && has_io)
                 return string_report(log_error, 1, "%s: %s\n", "script", "positional log conflicts with explicit log");
-        if ((taking.flags & FILE_FLAG('B')) &&
-            (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O'))))
-                return string_report(log_error, 1, "%s: %s\n", "script", "--log-io conflicts with separate logs");
+        //      --log-timing and --timing name the same file by two spellings,
+        //      and the reference refuses the pair rather than choosing.
+        if ((taking.flags & FILE_FLAG('T')) && (taking.flags & FILE_FLAG('t')))
+                return string_report(log_error, 1, "%s: %s\n", "script", "options --log-timing and --timing cannot be combined");
 
         process_script_state state;
         memory_fill(address_of state, 0, sizeof(state));
@@ -2331,14 +2349,14 @@ static b32 process_script()
 
         string_address format = file_option_value(address_of taking, 'm');
         state.advanced = (taking.flags & (FILE_FLAG('I') | FILE_FLAG('B'))) != 0;
+        bool classic_asked = false;
         if (format)
         {
                 if (string_equals(format, (string_address)"advanced"))
                         state.advanced = true;
                 else if (string_equals(format, (string_address)"classic"))
                 {
-                        if (state.advanced)
-                                return string_report(log_error, 1, "%s: %s\n", "script", "classic timing cannot log input");
+                        classic_asked = true;
                         state.advanced = false;
                 }
                 else
@@ -2387,12 +2405,20 @@ static b32 process_script()
         string_address old_timing = file_option_value(address_of taking, 't');
         if (!timing_path && old_timing)
                 timing_path = old_timing;
-        // util-linux takes the same path for a log and the timing (the
-        // typical case being /dev/null for both); only the two logs are
-        // kept apart, which --log-io exists for.
-        if (!combined_path && output_path && input_path &&
-            string_equals(output_path, input_path))
-                return string_report(log_error, 1, "%s: %s\n", "script", "log paths must be distinct");
+        /*      util-linux takes the same path for a log and the timing, and
+                for both logs -- the typical case being /dev/null everywhere.
+                What it minds is one regular file written from two places,
+                which the check below the opens answers with the objects
+                themselves rather than with the spelling of their names. */
+
+        /*      A classic timing file has one column of byte counts and no
+                column saying which stream they came from, so it cannot time
+                two streams at once. Logging both without asking for a timing
+                file is no conflict, and the reference allows it. */
+        if (classic_asked && output_path && input_path &&
+            (timing_path || (taking.flags & FILE_FLAG('t'))))
+                return string_report(log_error, 1, "%s: %s\n", "script",
+                                     "log multiple streams is mutually exclusive with 'classic' format");
 
         string_address paths[] = {
             output_path, combined_path ? null : input_path, timing_path};
