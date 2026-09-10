@@ -27,6 +27,12 @@ the body is no longer than the call that reaches it, or the only foldable
 parameter is a value no reachable call site hands over as a literal. Both are
 a decision not to build, and both are recorded rather than left implicit.
 
+``placed`` folds no argument at all. It is for a routine small enough that
+the call is a measurable part of it, where the expansion puts the routine's own
+instructions at the call site instead of calling them. It names an expansion
+and a measurement like ``specialized`` does, and no parameter, because there
+is none.
+
 ``nothing_to_fold`` takes no parameter the compiler could know: handles,
 pointers into memory the caller owns, and the arguments of a syscall whose
 work happens on the far side of the trap.
@@ -70,6 +76,7 @@ ROWS = []
 
 CATEGORY_DESCRIPTION = {
     'specialized': 'a known-argument path ships today',
+    'placed': 'no argument folds; the routine is placed rather than called',
     'worth_it': 'a foldable parameter that changes the shape of the work',
     'folds_already': 'foldable, but the expansion would remove nothing',
     'nothing_to_fold': 'no parameter the compiler could know',
@@ -77,7 +84,7 @@ CATEGORY_DESCRIPTION = {
 
 #       Only these carry a measured claim, and only these are counted as
 #       evidence in the summary.
-MEASURED = ('specialized', 'worth_it')
+MEASURED = ('specialized', 'worth_it', 'placed')
 
 
 def cover(category, parameter, names, note, expansion=None, evidence=None,
@@ -304,9 +311,21 @@ cover('folds_already', 'bytes', 'memory_take',
       'the shelf number folds at a literal request, but the saving has not '
       'been separated from the free-list chain that dominates the pair')
 
-cover('nothing_to_fold', None, 'string_to_decimal_short',
-      'a pointer into text the caller owns and two places to put the answer; '
-      'nothing a call site could hand over as a literal')
+# The one specializer here that folds no argument. It exists because the
+# routine is small enough that the call is a measurable part of it, so the
+# same instructions are placed at the call site instead.
+cover('placed', None, 'string_to_decimal_short',
+      'Measured. Nothing folds: the expansion places the routine\'s own '
+      'instructions rather than narrowing them. An awk run over two megabytes '
+      'of "word:NNN:word" is 29,831,078 core cycles calling it and 29,356,936 '
+      'placing it, medians of nine on a quiet 9950X, against 32,920,010 for '
+      'the general conversion it fronts. The call was five cycles of a body '
+      'of about thirty. A memory clobber costs more than the call it saves -- '
+      '30,852,018 with one -- so the read is declared as an incomplete array '
+      'instead, which says an unspecified amount is read at that address and '
+      'is what GCC documents for a span whose length the constraint cannot '
+      'state',
+      expansion='decimal_short_placed', evidence='test/checks.c#CHECK_number')
 
 cover('nothing_to_fold', None, 'memory_give',
       'a pointer into memory the caller owns, and a shelf number read back '
@@ -611,11 +630,12 @@ def validate():
     macro_specialized = set(re.findall(
         r'^#define\s+([a-z_][a-z_0-9]*)\s*\(', specializers, re.MULTILINE)) & inventory
     manifested_specialized = {
-        row.routine for row in ROWS if row.category == 'specialized'
+        row.routine for row in ROWS
+        if row.category in ('specialized', 'placed')
     }
     if macro_specialized != manifested_specialized:
         if macro_specialized - manifested_specialized:
-            errors.append('live specializers not labelled specialized: ' +
+            errors.append('live specializers not labelled specialized or placed: ' +
                           ', '.join(sorted(macro_specialized - manifested_specialized)))
         if manifested_specialized - macro_specialized:
             errors.append('specialized rows without public macros: ' +
@@ -633,6 +653,18 @@ def validate():
             if row.evidence is not None:
                 errors.append('%s: nothing_to_fold row carries evidence' %
                               row.routine)
+            continue
+
+        #      A placed row folds nothing by definition: it exists because
+        #      the call is worth more than any argument, so it names an
+        #      expansion and its measurement and no parameter at all.
+        if row.category == 'placed':
+            if row.parameter is not None:
+                errors.append('%s: placed row names a parameter' % row.routine)
+            if not row.expansion:
+                errors.append('%s: placed row names no expansion' % row.routine)
+            if not row.evidence:
+                errors.append('%s: placed row carries no evidence' % row.routine)
             continue
 
         #      Everything else claims a foldable parameter, and the claim is
@@ -689,7 +721,8 @@ def print_report(mode):
         print('  %-18s %3d  %s' %
               (category, counts[category], CATEGORY_DESCRIPTION[category]))
     print('  candidates whose harness is in the tree %d/%d' %
-          (timed, counts['specialized'] + counts['worth_it']))
+          (timed, counts['specialized'] + counts['worth_it'] +
+                  counts['placed']))
 
     if mode == 'summary':
         pending = sorted(row.routine for row in ROWS

@@ -323,6 +323,89 @@ static inline INLINE address_any copy_running(address_any destination,
         return copy_running_small(destination, source, size);
 }
 
+/*
+        The short decimal, placed rather than called.
+
+        library.c owns string_to_decimal_short and is where its reasoning
+        lives. A routine there is a call, though, and this one is small
+        enough that the call is a measurable part of it: five cycles against
+        a body of about thirty, which came to 2% of an awk run.
+
+        So the same instructions are written here as well, in the shape the
+        compiler can drop at the call site, the way KNOWN_FILL_ASM already
+        does for a folded fill. The out-of-line routine stays: it is the
+        symbol, the inventory entry, and what anything taking the address
+        gets. This is the fast placement of it, and the two are checked
+        against each other by the ULP lane, which runs whichever is wired.
+*/
+#if X64 && !defined(KERNEL_MODE)
+#define DECIMAL_SHORT_PLACED 1
+
+static inline INLINE bool decimal_short_placed(string_address input,
+                                               string_address address_to stopped,
+                                               decimal address_to answer)
+{
+        positive at, value, digits, negative, byte, scratch;
+        decimal made;
+        bool ok;
+
+        __asm__(
+            "xor %k[val], %k[val]\n"
+            "xor %k[dig], %k[dig]\n"
+            "xor %k[neg], %k[neg]\n"
+            "mov %[in], %[at]\n"
+            "movzbl (%[at]), %k[byte]\n"
+            "cmp $45, %k[byte]\n   jne Lp_%=\n"
+            "mov $1, %k[neg]\n   inc %[at]\n   jmp Ld_%=\n"
+            "Lp_%=:  cmp $43, %k[byte]\n   jne Ld_%=\n"
+            "inc %[at]\n"
+            "Ld_%=:  cmp $15, %k[dig]\n   jae Le_%=\n"
+            "movzbl (%[at]), %k[byte]\n"
+            "sub $48, %k[byte]\n"
+            "cmp $9, %k[byte]\n   ja Le_%=\n"
+            "lea (%[val],%[val],4), %[val]\n"
+            "add %[val], %[val]\n"
+            "add %[byte], %[val]\n"
+            "inc %[at]\n   inc %k[dig]\n"
+            "jmp Ld_%=\n"
+            "Le_%=:  xor %k[ok], %k[ok]\n"
+            "test %k[dig], %k[dig]\n   jz Lx_%=\n"
+            "movzbl (%[at]), %k[byte]\n"
+            "cmp $46, %k[byte]\n   je Lx_%=\n"
+            "or $32, %k[byte]\n"
+            "cmp $101, %k[byte]\n   je Lx_%=\n"
+            "cmp $120, %k[byte]\n   je Lx_%=\n"
+            "lea -48(%[byte]), %[scratch]\n"
+            "cmp $9, %k[scratch]\n   jbe Lx_%=\n"
+            "pxor %[made], %[made]\n"
+            "cvtsi2sdq %[val], %[made]\n"
+            "test %k[neg], %k[neg]\n   jz Ls_%=\n"
+            "movq %[made], %[scratch]\n"
+            "movabs $0x8000000000000000, %[byte]\n"
+            "xor %[byte], %[scratch]\n"
+            "movq %[scratch], %[made]\n"
+            "Ls_%=:  mov $1, %k[ok]\n"
+            "Lx_%=:\n"
+            : [at] "=&r"(at), [val] "=&r"(value), [dig] "=&r"(digits),
+              [neg] "=&r"(negative), [byte] "=&r"(byte),
+              [scratch] "=&r"(scratch), [made] "=&x"(made), [ok] "=&r"(ok)
+            : [in] "r"(input), [seen] "m"(*(const p8 (address_to)[])input)
+            : "cc");
+
+        if (!ok)
+                return false;
+
+        if (stopped)
+                address_to stopped = (string_address)at;
+
+        address_to answer = made;
+        return true;
+}
+
+#define string_to_decimal_short(input, stopped, answer)                       \
+        decimal_short_placed((input), (stopped), (answer))
+#endif
+
 static inline INLINE address_any copy_apart_running(address_any destination,
                                                     address_any source,
                                                     positive size)
