@@ -19054,7 +19054,12 @@ REASONS = {
  "r325": "the reference names itself in these diagnostics by the path it was run from, which a farm of links cannot match, and du writes one line per byte of a character that is not an option where this writes one per character",
  "r326": "hardlink here compares whole contents where 2.41 takes a sha256 of them, so its report names a different method, and a - operand is a name it stats rather than a path it resolves",
  "r327": "the compiled dircolors database is deliberately shorter than GNU 9.11's, so anything that prints it differs; whereis keeps a lone - as a name to look up where the reference drops it",
+ "r328": "the target of a symbolic link in a long listing is written as the link holds it: the reference colours it for what it leads to and wraps it in the hyperlink --hyperlink asks for, and this one writes the text alone.",
+ "r329": "a name holding a shell metacharacter is written as it stands where the reference escapes the character with a backslash.",
  "r33": "gawk's --use-lc-numeric; refused with usage",
+ "r330": "under --quoting-style=shell a name holding a byte that does not print is quoted here and written as it stands there, so it begins two columns later.",
+ "r331": "the names -L could not follow are reported with the ./ the walk reached them by, where the reference reports them as they were written.",
+ "r332": "the blank line between a group of files and the directories after it is written here only when the first of those directories opens; the reference writes it before it tries to open one.",
  "r34": "gawk's --optimize; refused with usage",
  "r35": "gawk's --posix; ours is the POSIX awk already and has no modes, refused with usage",
  "r36": "gawk's --sandbox; refused with usage",
@@ -112236,8 +112241,7 @@ PINNED = r"""
   "id": "f3d7be22bae3a8b7",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r111",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r328",
   "utility": "ls"
  },
  {
@@ -112264,8 +112268,7 @@ PINNED = r"""
   "id": "fc2999e2b60f3470",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r111",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r332",
   "utility": "ls"
  },
  {
@@ -134844,8 +134847,7 @@ PINNED = r"""
   "id": "08f50fbd935092b9",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r324",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r328",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -134906,8 +134908,7 @@ PINNED = r"""
   "id": "19ccde8218bb7366",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r96",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r328",
   "utility": "vdir"
  },
  {
@@ -134933,8 +134934,7 @@ PINNED = r"""
   "id": "1f7761e761ed0a40",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r324",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r328",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -134965,8 +134965,7 @@ PINNED = r"""
   "id": "63cc2e331e210c59",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r324",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r328",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -135022,8 +135021,7 @@ PINNED = r"""
   "id": "7b2b3603a8588f32",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r324",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r329",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -135054,8 +135052,7 @@ PINNED = r"""
   "id": "a295c2dc5abbffb6",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r324",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r330",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -135086,8 +135083,7 @@ PINNED = r"""
   "id": "bebcdab80ce37a0c",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r324",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r331",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -135118,8 +135114,7 @@ PINNED = r"""
   "id": "fc7f5f5603d3783c",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r324",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "reason_id": "r329",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
