@@ -224,13 +224,19 @@ static fn shell_usage_said(writer write, string_address self)
 */
 static b32 shell_invocation_refused(string_address self, p8 sign, p8 letter)
 {
-        p8 said[2] = {letter, end};
+        //      The sign is part of what is quoted back, and dash quotes a
+        //      plus back as a minus. The two bytes are made into a word
+        //      because the formatter takes strings and not characters.
+        p8 said[3] = {sign, letter, end};
 
         if (!shell_bash_compat)
-                return string_report(log_error, 2, "%s: 0: Illegal option -%s\n",
+        {
+                said[0] = '-';
+                return string_report(log_error, 2, "%s: 0: Illegal option %s\n",
                                      self, said);
+        }
 
-        string_format(log_error, "%s: %c%s: invalid option\n", self, sign, said);
+        string_format(log_error, "%s: %s: invalid option\n", self, said);
         if (shell_options & SHELL_FLAG('e'))
                 return 1;
         shell_usage_said(log_error, self);
