@@ -105,6 +105,11 @@ sh test/run bench               the benchmarks instead
 sh test/run bench --list        what there is to measure
 ```
 
+Two lanes want a built image and will say so rather than pass quietly:
+`boot` starts it under QEMU and talks to the shell it reaches, and
+`canvas` reads the desktop back a pixel at a time. Point them at one
+with `MOONWATER_IMAGE=dist/bootx64.efi` if it is not where they look.
+
 Three files, and no more: `test/run` is the command, `test/checks.c` holds
 every C check and benchmark as a `CHECK_<name>` or `BENCH_<name>` section, and
 `test/differential.py` is the engine, the grammars and the pinned rows.
