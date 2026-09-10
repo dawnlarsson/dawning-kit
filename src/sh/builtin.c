@@ -11517,45 +11517,90 @@ static positive shell_name_index_find(string_address name, address_any table,
         return count;
 }
 
-static shell_tool shell_tools[] = {
+/*
+        Which categories this build keeps, decided once.
+
+        The table below and the key array beside it both expand through
+        SHELL_TOOL_KEEP, so a configuration cannot hand them different sets of
+        tools: there is one cascade and they read it in turn. Spelling the
+        cascade twice is what would let the key array describe a table that is
+        not there.
+*/
 #ifdef SHELL_NO_UTILITIES
 #define SHELL_TOOL_GENERAL(name, function)
 #define SHELL_TOOL_UTIL_BIN(name, function)
 #define SHELL_TOOL_UTIL_SBIN(name, function)
 #define SHELL_TOOL_MONITOR(name, function)
 #else
-#define SHELL_TOOL_GENERAL(name, function) {#name, function},
+#define SHELL_TOOL_GENERAL(name, function) SHELL_TOOL_KEEP(name, function)
 #ifdef SHELL_NO_UTIL_LINUX
 #define SHELL_TOOL_UTIL_BIN(name, function)
 #define SHELL_TOOL_UTIL_SBIN(name, function)
 #else
-#define SHELL_TOOL_UTIL_BIN(name, function) {#name, function},
-#define SHELL_TOOL_UTIL_SBIN(name, function) {#name, function},
+#define SHELL_TOOL_UTIL_BIN(name, function) SHELL_TOOL_KEEP(name, function)
+#define SHELL_TOOL_UTIL_SBIN(name, function) SHELL_TOOL_KEEP(name, function)
 #endif
 #ifdef SHELL_NO_MONITOR
 #define SHELL_TOOL_MONITOR(name, function)
 #else
-#define SHELL_TOOL_MONITOR(name, function) {#name, function},
+#define SHELL_TOOL_MONITOR(name, function) SHELL_TOOL_KEEP(name, function)
 #endif
 #endif
 #ifdef SHELL_UTILITY_PROGRAM
 #define SHELL_TOOL_SYSTEM(name, function)
 #else
-#define SHELL_TOOL_SYSTEM(name, function) {#name, function},
+#define SHELL_TOOL_SYSTEM(name, function) SHELL_TOOL_KEEP(name, function)
 #endif
 #define SHELL_TOOL(category, name, function) \
         SHELL_TOOL_##category(name, function)
+
+static shell_tool shell_tools[] = {
+#define SHELL_TOOL_KEEP(name, function) {#name, function},
 #include "tools.inc"
+#undef SHELL_TOOL_KEEP
+    {null, null},
+};
+
+#define SHELL_TOOLS (array_count(shell_tools) - 1)
+
+/*
+        The first byte and the length of every name, in table order.
+
+        A name is a pointer into the string pool, and the pool is laid out by
+        the compiler in whatever order the literals were emitted, so walking
+        the table to compare names reads a byte here and a byte there across
+        the whole of it. Answering "no" from two bytes held together keeps
+        that walk inside this array: 197 names are 394 bytes, one page that
+        was going to be read anyway, instead of the eleven pages of pool that
+        the string compares used to touch.
+
+        It matters most to the one caller that cannot avoid the walk. Every
+        installed utility name is found by the index below, but argv[0] is
+        asked once per process and init -- what the kernel execs, PID 1 for
+        the life of the machine -- sits near the end of the table, so it used
+        to read almost every name in the image to discover its own.
+
+        Two bytes is the whole key on purpose. It fits 197 entries in one
+        page, and the pair already separates the table into 102 groups of
+        which the largest is six, so what survives the filter is a handful of
+        candidates rather than a shorter list of the same kind.
+*/
+static const p8 shell_tool_key[][2] = {
+#define SHELL_TOOL_KEEP(name, function) \
+        {(p8)(#name)[0], (p8)(sizeof(#name) - 1)},
+#include "tools.inc"
+#undef SHELL_TOOL_KEEP
+};
+
 #undef SHELL_TOOL
 #undef SHELL_TOOL_SYSTEM
 #undef SHELL_TOOL_UTIL_SBIN
 #undef SHELL_TOOL_UTIL_BIN
 #undef SHELL_TOOL_MONITOR
 #undef SHELL_TOOL_GENERAL
-    {null, null},
-};
 
-#define SHELL_TOOLS (array_count(shell_tools) - 1)
+_Static_assert(array_count(shell_tool_key) == SHELL_TOOLS,
+               "the key array and the tool table describe the same tools");
 /*
         Room for every name with slots to spare, because the index is open:
         a full one has nowhere to put the next name and nowhere to stop
@@ -11623,6 +11668,44 @@ static b32 shell_tool_call(positive which)
 }
 
 /*
+        The one name in the table, found without reading the rest of them.
+
+        string_table_find compares the name against every entry, and each
+        comparison is a read of a string somewhere else in the image. This
+        asks the two byte key first and only follows the pointer when the key
+        matches, which for a name that is not a tool's -- the ordinary case,
+        since a shell is what this binary usually is -- means the table is
+        walked without leaving this array at all.
+
+        The length is taken once. A name longer than a byte can hold is not
+        any tool's, and stopping on it here keeps the comparison below from
+        having to describe what it would mean.
+*/
+static positive shell_tool_key_find(string_address name)
+{
+        positive length = string_length(name);
+        p8 first = (p8)name[0];
+
+        if (length > 255)
+                return SHELL_TOOLS;
+
+        for (positive at = 0; at < SHELL_TOOLS; at++)
+        {
+                if (shell_tool_key[at][0] != first ||
+                    shell_tool_key[at][1] != (p8)length)
+                        continue;
+
+                /* The key already agreed about the first byte and the
+                   length, so the terminator is what the length says it is
+                   and comparing it again would prove nothing. */
+                if (!memory_compare(name, shell_tools[at].name, length))
+                        return at;
+        }
+
+        return SHELL_TOOLS;
+}
+
+/*
         Run as the tool the binary was called as, if it was called as one.
 
         Returns what it answered, or -1 when the name is not a tool's and this
@@ -11653,8 +11736,7 @@ static b32 shell_tool_named(string_address name)
         /* One lookup in a process is cheaper than constructing the reusable
            index. Ordinary shell dispatch below is where repeated names use
            the index; argv[0] is asked only once. */
-        which = string_table_find(name, shell_tools, sizeof(shell_tool),
-                                  SHELL_TOOLS);
+        which = shell_tool_key_find(name);
 
         if (which == SHELL_TOOLS)
                 return -1;

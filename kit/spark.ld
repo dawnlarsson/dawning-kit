@@ -22,12 +22,32 @@ SECTIONS
            jumps to the entry recorded in the header, which points here. */
         . = SPARK_BASE + 64;
 
+        /* Hot code first, cold code last, because what a program touches is
+           what it pays for: a page is read in whole and stays, so a cold
+           routine sitting between two hot ones is read in beside them and
+           never used. The compiler already says which is which -- .text.hot
+           and .text.startup for the code it expects to run, .text.unlikely
+           for the error paths it does not -- and this is where that answer
+           is worth anything. .moonwater.span_byte is the same idea written
+           by hand, and it keeps its place beside them.
+
+           An input section goes to the first pattern that matches it, so
+           .text.unlikely has to be named before the catch-all below or the
+           catch-all takes it and the order here means nothing. The hot/cold
+           jumps this separates are already cross-section and relocated to
+           32 bits, so no distance inside an image can be too far. */
         .text : {
-                *(.text .text.*)
+                *(.text.hot .text.hot.*)
+                *(.text.startup .text.startup.*)
+                *(.text .text.exit .text.exit.*)
+
                 *(.moonwater.span_byte)
                 *(.rodata .rodata.*)
                 /* riscv64 puts read only globals of a few bytes here. */
                 *(.srodata .srodata.*)
+
+                *(.text.unlikely .text.unlikely.*)
+                *(.text.*)
         }
 
         . = ALIGN(4096);
