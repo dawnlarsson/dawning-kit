@@ -2153,9 +2153,22 @@ static fn file_change_paths(positive first, positive count, bool recursive,
                             string_address program, b32 address_to status,
                             file_visit visit)
 {
+        bool ended = false;
+
         while (first < count)
         {
                 string_address path = program_argument((b32)first++);
+
+                //      A -- among the operands is the end of the options and
+                //      not a name: the reference's getopt reads the whole
+                //      line, so chmod 0600 -- -dash changes -dash. Only the
+                //      first one is the marker; a second is a file called --.
+                if (!ended && string_is(path, '-') && string_is(path + 1, '-') &&
+                    !string_get(path + 2))
+                {
+                        ended = true;
+                        continue;
+                }
 
                 if (recursive)
                         file_change_walk_as(AT_FDCWD, path, path, FILE_MAX_DEPTH,
@@ -10338,6 +10351,22 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
 
         if (looked < 0)
         {
+                //      A symbolic link pointing at nothing was reached and
+                //      followed, and the reference says that rather than
+                //      that the name could not be found.
+                if (through && looked == -ERROR_NO_ENTRY &&
+                    file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of facts) &&
+                    (facts.mode & MODE_FORMAT) == MODE_LINK)
+                {
+                        if (!chmod_quiet)
+                                string_format(log_error,
+                                              "chmod: cannot operate on dangling symlink '%s'\n",
+                                              shown);
+
+                        chmod_status = 1;
+                        return;
+                }
+
                 // -v says what it could not do on the output stream as well,
                 // because it reports on every file it was handed and not
                 // only on the ones it changed.
@@ -10414,8 +10443,15 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         }
 }
 
+static p8 chmod_loudness_option;
+static p8 chmod_traverse_option;
+
 static const file_supersede chmod_supersedes[] = {
     {(string_address) "dh", address_of chmod_dereference_option},
+    //      How much to say -- every mode, only the ones that moved -- and
+    //      which links a -R walk goes through. Each row's last letter wins.
+    {(string_address) "cv", address_of chmod_loudness_option},
+    {(string_address) "HLP", address_of chmod_traverse_option},
     {null, null},
 };
 
@@ -10439,6 +10475,8 @@ static b32 file_chmod()
         chmod_status = 0;
         chmod_referenced = false;
         chmod_dereference_option = 'd';
+        chmod_loudness_option = 0;
+        chmod_traverse_option = 0;
 
         //      -H, -L and -P say which symbolic links a -R walk goes
         //      through. This walk goes through none of them, which is what
@@ -10458,9 +10496,17 @@ static b32 file_chmod()
 
         positive first = taking.first;
 
-        chmod_loud = (taking.flags & FILE_FLAG('v')) != 0;
-        chmod_changes = (taking.flags & FILE_FLAG('c')) != 0;
+        chmod_loud = chmod_loudness_option == 'v';
+        chmod_changes = chmod_loudness_option == 'c';
         chmod_quiet = (taking.flags & FILE_FLAG('f')) != 0;
+
+        //      A recursive walk told to follow links has to be told which
+        //      ones, and this is asked before --reference's file is looked
+        //      at, the way the reference asks it.
+        if ((taking.flags & FILE_FLAG('R')) && (taking.flags & FILE_FLAG('d')) &&
+            chmod_traverse_option != 'H' && chmod_traverse_option != 'L')
+                return string_report(log_error, 1,
+                                     "chmod: -R --dereference requires either -H or -L\n");
 
         string_address like = file_option_value(address_of taking, 'e');
 
@@ -10511,7 +10557,8 @@ static b32 file_chmod()
         }
 
         if (minus_mode && chmod_referenced)
-                return string_report(log_error, 1, "chmod: invalid mode: '%s'\n", minus_mode);
+                return string_report(log_error, 1,
+                                     "chmod: cannot combine mode and --reference options\n");
 
         chmod_surprising = minus_mode != null;
 
@@ -16384,8 +16431,9 @@ static bool shred_one(string_address path, positive iterations,
         bipolar handle = shred_open(path, force);
 
         if (handle < 0)
-                return string_report(log_error, false, "shred: '%s': cannot open: %s\n", path,
-                              file_reason(handle));
+                return string_report(log_error, false,
+                                     "shred: %s: failed to open for writing: %s\n", path,
+                                     file_reason(handle));
 
         file_facts facts;
         bool good = file_look(handle, (string_address) "", AT_EMPTY_PATH,
@@ -16433,11 +16481,6 @@ static bool shred_one(string_address path, positive iterations,
                 }
         }
 
-        if (verbose)
-                string_format(log_error,
-                              "shred: '%s': caution: storage layers may retain old copies\n",
-                              path);
-
         file_random_state random;
 
         if (iterations && good && !file_random_seed(address_of random))
@@ -16447,12 +16490,17 @@ static bool shred_one(string_address path, positive iterations,
                 good = false;
         }
 
+        //      The zero pass is one of the passes and is counted with
+        //      them, which is how the reference numbers them: -n1 -z is
+        //      pass 1/2 random and pass 2/2 of zeroes.
+        positive passes = iterations + (zero ? 1 : 0);
+
         for (positive pass = 0; pass < iterations && good; pass++)
         {
                 if (verbose)
                         string_format(log_error,
-                                      "shred: '%s': pass %p/%p (random)\n",
-                                      path, pass + 1, iterations);
+                                      "shred: %s: pass %p/%p (random)...\n",
+                                      path, pass + 1, passes);
 
                 good = shred_pass(handle, path, length, false,
                                   address_of random);
@@ -16461,8 +16509,8 @@ static bool shred_one(string_address path, positive iterations,
         if (zero && good)
         {
                 if (verbose)
-                        string_format(log_error, "shred: '%s': pass (zero)\n",
-                                      path);
+                        string_format(log_error, "shred: %s: pass %p/%p (000000)...\n",
+                                      path, passes, passes);
 
                 good = shred_pass(handle, path, length, true, null);
         }
@@ -16515,7 +16563,7 @@ static bool shred_one(string_address path, positive iterations,
                                 good = false;
                         }
                         else if (verbose)
-                                string_format(log_error, "shred: '%s': removed\n",
+                                string_format(log_error, "shred: %s: removed\n",
                                               path);
                 }
         }
@@ -16523,9 +16571,62 @@ static bool shred_one(string_address path, positive iterations,
         return good;
 }
 
+/*
+        Every word an option carries is read where the option is written.
+
+        The reference is a getopt loop: a pass count that is not a count, a
+        size that is not a size and a --remove that names no removal it knows
+        are each reported as that option is reached, so of two bad words the
+        first one written is the one reported. What this shred will not do --
+        wipe a name before unlinking it, take randomness from a file -- is
+        said afterwards, because the reference has nothing to say there and
+        the order can only be ours.
+*/
+static const file_word shred_removals[] = {
+    {(string_address) "unlink", 'u', false},
+    {(string_address) "wipe", 'w', false},
+    {(string_address) "wipesync", 's', false},
+};
+
+static positive shred_iterations;
+static positive shred_asked_size;
+static p8 shred_removal;
+
+static bool shred_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'n' && value &&
+            !file_unsigned_decimal(value, address_of shred_iterations))
+                return string_report(log_error, false,
+                                     "shred: invalid number of passes: '%s'\n", value);
+
+        if (letter == 's' && value && !shred_size(value, address_of shred_asked_size))
+                return string_report(log_error, false,
+                                     "shred: invalid file size: '%s'\n", value);
+
+        if (letter == 'u' && value)
+        {
+                b32 which = file_word_among((string_address) "shred",
+                                            (string_address) "--remove", value,
+                                            shred_removals,
+                                            array_count(shred_removals));
+
+                if (which < 0)
+                        return false;
+
+                shred_removal = (p8)which;
+        }
+
+        return true;
+}
+
 static b32 file_shred()
 {
         file_operands_begin();
+
+        shred_iterations = 3;
+        shred_asked_size = 0;
+        shred_removal = 'u';
+
         file_taking taking = {
             .program = (string_address) "shred",
             .allowed = (string_address) "fnsuvxz",
@@ -16533,40 +16634,31 @@ static b32 file_shred()
             .long_optional = (string_address) "u",
             .longs = shred_longs,
             .operand = file_operand,
+            .seen = shred_option_seen,
         };
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
         if (!file_operand_count)
-                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "shred");
+                return string_report(log_error, 1, "%s: missing file operand\n", (string_address) "shred");
 
         if (file_option_value(address_of taking, 'R'))
                 return string_report(log_error, 1, "shred: --random-source is unsupported; kernel randomness is mandatory\n");
 
-        string_address remove_how = file_option_value(address_of taking, 'u');
-
-        if (remove_how && !string_equals(remove_how, (string_address) "unlink"))
+        if (shred_removal != 'u')
                 return string_report(log_error, 1, "shred: filename wiping modes are unsupported; use --remove=unlink\n");
 
-        positive iterations = 3;
-        string_address iteration_text = file_option_value(address_of taking, 'n');
-
-        if (iteration_text &&
-            !file_unsigned_decimal(iteration_text, address_of iterations))
-                return string_report(log_error, 1, "shred: invalid number of passes: '%s'\n",
-                              iteration_text);
-
-        positive size = 0;
+        positive iterations = shred_iterations;
+        positive size = shred_asked_size;
         string_address size_text = file_option_value(address_of taking, 's');
-
-        if (size_text && !shred_size(size_text, address_of size))
-                return string_report(log_error, 1, "shred: invalid size: '%s'\n", size_text);
 
         positive flags = taking.flags;
         bool remove = (flags & FILE_FLAG('u')) != 0;
         b32 status = 0;
 
-        if (remove && !remove_how)
+        //      -u on its own asks the reference for a wiping removal, and
+        //      this one only unlinks; --remove=unlink asked for what it does.
+        if (remove && !file_option_value(address_of taking, 'u'))
                 log_error("shred: warning: -u uses unlink removal without filename wiping\n",
                           0);
 
