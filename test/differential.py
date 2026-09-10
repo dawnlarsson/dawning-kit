@@ -115354,7 +115354,7 @@ PINNED = r"""
   "id": "0b780c739a16923a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115391,7 +115391,7 @@ PINNED = r"""
   "id": "212fcf0b855fe05a",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115422,9 +115422,9 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "234677d7dc9445d9",
-  "kind": "bug",
+  "kind": "deliberate",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason_id": "r142",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -115464,7 +115464,7 @@ PINNED = r"""
   "id": "3137101635aac28f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115503,7 +115503,7 @@ PINNED = r"""
   "id": "3f23d4df7da714e4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115539,7 +115539,7 @@ PINNED = r"""
   "id": "537e65a2f1891954",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115577,7 +115577,7 @@ PINNED = r"""
   "id": "53f7830795b3e16e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115644,7 +115644,7 @@ PINNED = r"""
   "id": "5a16fac215d29d7e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115680,7 +115680,7 @@ PINNED = r"""
   "id": "5e29d42623149609",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115719,7 +115719,7 @@ PINNED = r"""
   "id": "664ac64aeacc00ef",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115758,7 +115758,7 @@ PINNED = r"""
   "id": "7ee4253630d79740",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115797,7 +115797,7 @@ PINNED = r"""
   "id": "99c1cf2f3f7b3689",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115837,7 +115837,7 @@ PINNED = r"""
   "id": "9a434199b9f5b748",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115878,7 +115878,7 @@ PINNED = r"""
   "id": "abaaa47d01ace910",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115909,9 +115909,9 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "ac93828325038473",
-  "kind": "bug",
+  "kind": "deliberate",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason_id": "r142",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -115951,7 +115951,7 @@ PINNED = r"""
   "id": "ae29251a32c7a2fe",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -115990,7 +115990,7 @@ PINNED = r"""
   "id": "b7d24dac4d207421",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -116020,9 +116020,9 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "b7fce7b118725f09",
-  "kind": "bug",
+  "kind": "deliberate",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason_id": "r142",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -116058,7 +116058,7 @@ PINNED = r"""
   "id": "c548cd5367805a6f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -116096,7 +116096,7 @@ PINNED = r"""
   "id": "c7b1d03e69341f6b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -116127,9 +116127,9 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "d8c4ee99f467f2ee",
-  "kind": "bug",
+  "kind": "deliberate",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason_id": "r142",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -116172,7 +116172,7 @@ PINNED = r"""
   "id": "e987759ae371f12b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 1,
@@ -116203,9 +116203,9 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "f1ad5d9c4312268f",
-  "kind": "bug",
+  "kind": "deliberate",
   "list": "ledger",
-  "reason": "-a names the algorithm a manifest is read as here, where the reference reads each line as the algorithm the manifest itself was written with: a sha256 manifest checked under --algorithm=blake2b is a formatting complaint to this one and a row of FAILED to that one. Beside it, crc32b, sysv, bsd and sm3 are algorithms the shared checksum engine does not carry, and --length is taken and then ignored: this always computes the whole 512-bit BLAKE2b and tags it BLAKE2b, where the reference parameterises the hash by the length asked for -- a different digest, not a truncation of the long one -- tags it BLAKE2b-<bits>, and refuses a length that is not a multiple of eight or is over 512.",
+  "reason_id": "r142",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
