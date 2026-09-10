@@ -173,6 +173,59 @@ typedef struct
         bool takes_word;
 } shell_long_option;
 
+/*
+        -O names, kept rather than acted on.
+
+        A shopt asked for on the command line is not applied where it is
+        read: interactive startup and posix mode both write over parts of
+        the same state afterwards, so Bash holds the names until that is
+        done and only then turns them on. It is observable through the one
+        that is not a name at all -- `sh -O bogus --nonsense` complains
+        about --nonsense, because the shopt list has not been looked at
+        yet, and the shell that complains about bogus first leaves a
+        different status behind.
+
+        Sixteen is more than the option walk ever asks for; past that the
+        name is applied where it was read, which is the old behaviour and
+        wrong only in the ordering nothing that deep is looking at.
+*/
+#define SHELL_SHOPT_ASKED 16
+
+static struct
+{
+        string_address name;
+        bool on;
+} shell_shopt_asked[SHELL_SHOPT_ASKED];
+static positive shell_shopt_asked_count;
+
+/* One name, applied. Answers false having said which name it was. */
+static bool shell_shopt_apply(string_address self, string_address name, bool on)
+{
+        positive item = shell_shopt_find(name);
+
+        if (item >= SHELL_SHOPT_NAMES)
+                return string_report(log_error, false,
+                    "%s: line 0: %s: invalid shell option name\n", self, name);
+        if (item == SHELL_SHOPT_EXPAND_ALIASES)
+                shell_alias_startup_told = true;
+        if (on)
+                shell_shopt_state |= (positive)1 << item;
+        else
+                shell_shopt_state &= ~((positive)1 << item);
+        return true;
+}
+
+/* The held names, in the order they were written. */
+static bool shell_shopt_asked_apply(string_address self)
+{
+        for (positive at = 0; at < shell_shopt_asked_count; at++)
+                if (!shell_shopt_apply(self, shell_shopt_asked[at].name,
+                                       shell_shopt_asked[at].on))
+                        return false;
+        shell_shopt_asked_count = 0;
+        return true;
+}
+
 static const shell_long_option shell_long_options[] = {
     {"debug", false}, {"debugger", false}, {"dump-po-strings", false},
     {"dump-strings", false}, {"help", false}, {"init-file", true},
@@ -463,27 +516,21 @@ static bool shell_start_options(string_address address_to arguments,
                                              item < SHELL_SHOPT_NAMES; item++)
                                                 shell_shopt_said(log, item,
                                                                  !on);
-                                else
+                                else if (shell_shopt_asked_count <
+                                         SHELL_SHOPT_ASKED)
                                 {
-                                        positive item =
-                                            shell_shopt_find(arguments[++at]);
-
-                                        if (item >= SHELL_SHOPT_NAMES)
-                                        {
-                                                invocation->status = 2;
-                                                invocation->next = at;
-                                                return string_report(log_error, false,
-                                                    "%s: line 0: %s: invalid shell option name\n",
-                                                    self, arguments[at]);
-                                        }
-                                        if (item == SHELL_SHOPT_EXPAND_ALIASES)
-                                                shell_alias_startup_told = true;
-                                        if (on)
-                                                shell_shopt_state |=
-                                                    (positive)1 << item;
-                                        else
-                                                shell_shopt_state &=
-                                                    ~((positive)1 << item);
+                                        shell_shopt_asked[
+                                            shell_shopt_asked_count].name =
+                                                arguments[++at];
+                                        shell_shopt_asked[
+                                            shell_shopt_asked_count++].on = on;
+                                }
+                                else if (!shell_shopt_apply(self,
+                                                            arguments[++at], on))
+                                {
+                                        invocation->status = 2;
+                                        invocation->next = at;
+                                        return false;
                                 }
                         }
                         else if (!shell_option_letter_told(value, on))
@@ -709,6 +756,17 @@ b32 main()
                 shell_posix_changed(true);
         if (shell_bash_compat && !shell_posix_variable())
                 return 1;
+
+        /* The -O names, now that posix mode and the environment have had
+           their turn at the same state. A name nobody has is a usage error
+           here and not where it was read, which is why it is the last thing
+           the invocation complains about rather than the first. */
+        if (!shell_shopt_asked_apply(process_arguments && arguments[0]
+                                         ? arguments[0] : (string_address) "sh"))
+        {
+                log_flush();
+                return 2;
+        }
 
         /*
                 sh file [word ...]
