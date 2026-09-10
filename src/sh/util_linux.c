@@ -2190,7 +2190,7 @@ static const file_long ul_flock_longs[] = {
     {(string_address)"nonblocking", 'n'}, {(string_address)"timeout", 'w'},
     {(string_address)"wait", 'w'},
     {(string_address)"conflict-exit-code", 'E'},
-    {(string_address)"close", 'o'}, {(string_address)"command", 'c'},
+    {(string_address)"close", 'o'},
     {(string_address)"no-fork", 'F'}, {(string_address)"fcntl", 'L'},
     {(string_address)"start", 'S'}, {(string_address)"length", 'N'},
     {(string_address)"verbose", 'v'}, {(string_address)"help", 'h'},
@@ -2255,8 +2255,8 @@ static b32 util_linux_flock()
 {
         file_taking taking = {
             .program = (string_address)"flock",
-            .allowed = (string_address)"sxunwEocFVh",
-            .valued = (string_address)"wEcSN",
+            .allowed = (string_address)"sxunwEoFVh",
+            .valued = (string_address)"wESN",
             .longs = ul_flock_longs,
             .supersedes = ul_flock_supersedes,
             .seen = ul_flock_seen,
@@ -2331,23 +2331,22 @@ static b32 util_linux_flock()
         }
 
         string_address target = program_argument((b32)taking.first);
-        string_address command_text = file_option_value(address_of taking, 'c');
-        bool command_option = command_text != null;
+        string_address command_text = null;
+        bool command_option = false;
 
-        /* GNU getopt accepts the documented `flock file -c command` order.
-           The shared scanner deliberately stops at the first operand, so
-           consume this one post-operand spelling here instead of teaching
-           every file applet to permute options. */
-        if (!command_option && taking.first + 1 < count &&
-            string_equals(program_argument((b32)taking.first + 1), "-c"))
+        /*  There is no -c option and no --command option: the reference
+            stops reading options at the file, and `file -c command` is the
+            one place either spelling means anything. Written in front of the
+            file, both are the invalid option 'c'. */
+        if (taking.first + 1 < count &&
+            (string_equals(program_argument((b32)taking.first + 1), "-c") ||
+             string_equals(program_argument((b32)taking.first + 1), "--command")))
         {
                 if (taking.first + 3 != count)
                         return ul_flock_usage();
                 command_text = program_argument((b32)taking.first + 2);
                 command_option = true;
         }
-        else if (command_option && taking.first + 1 != count)
-                return ul_flock_usage();
         bool descriptor = false;
         bipolar descriptor_number = 0;
         if (!command_option && taking.first + 1 == count)
