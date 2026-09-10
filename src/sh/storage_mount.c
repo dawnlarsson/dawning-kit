@@ -432,11 +432,34 @@ static bipolar storage_mount_one(string_address source, string_address target,
 }
 
 
+/*      ignored says the record was passed over rather than mounted: noauto,
+        swap, a type the filter excludes. mount -a counts those in neither
+        column, and the difference is the whole exit status -- one failure
+        beside one ignored record is 32, "all failed", not 64. */
+/*      The absolute spelling of a word that names something, and null for
+        one that does not -- `tmpfs` is not a path and stays as it was
+        written, which is how the reference reports both. */
+static p8 address_to storage_mount_canonical(string_address word,
+                                             positive address_to room)
+{
+        bipolar handle = system_open_at(AT_FDCWD, word,
+                                        STORAGE_OPEN_PATH | O_CLOEXEC);
+        p8 address_to resolved;
+
+        if (handle < 0)
+                return null;
+        resolved = storage_fd_path(handle, room);
+        system_close(handle);
+        return resolved;
+}
+
+
 static b32 storage_mount_fstab_record(string_address program,
                                       storage_fstab address_to record,
                                       storage_mount_options address_to extra,
                                       string_address type_filter, bool explicit,
-                                      writer diagnostic, writer write)
+                                      writer diagnostic, writer write,
+                                      bool address_to ignored)
 {
         storage_mount_options options;
         string_address selected_type = record->type;
@@ -451,7 +474,11 @@ static b32 storage_mount_fstab_record(string_address program,
                 return string_report(diagnostic, 1, "%s: no memory\n", program);
         }
         if (extra)
+        {
                 options.fake = extra->fake;
+                options.verbose = extra->verbose;
+        }
+        address_to ignored = false;
 
         /* With one fstab operand, util-linux treats a single positive -t as
            an override.  Under -a it is a filter. */
@@ -471,6 +498,7 @@ static b32 storage_mount_fstab_record(string_address program,
                 if (options.verbose && write)
                         string_format(write, "%s: ignored\n", record->target);
                 storage_options_free(address_of options);
+                address_to ignored = true;
                 return 0;
         }
 
@@ -526,11 +554,13 @@ static b32 storage_mount_fstab(string_address program, string_address wanted,
                                               record->target);
                         continue;
                 }
+                bool ignored = false;
                 b32 one = storage_mount_fstab_record(program, record, extra,
                                                      type_filter, !all,
-                                                     diagnostic, write);
+                                                     diagnostic, write,
+                                                     address_of ignored);
                 failed |= one;
-                if (!one)
+                if (!one && !ignored)
                         mounted++;
                 if (!all)
                         break;
@@ -920,6 +950,55 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                         status = 1;
                         goto done;
                 }
+                /*  --no-canonicalize hands the target to the kernel as it
+                    was written, and the mount API does not follow a trailing
+                    symlink there: the reference refuses such a target where
+                    the canonical spelling would have reached the directory
+                    under it. */
+                if (!canonical)
+                {
+                        file_facts itself;
+
+                        if (file_look(AT_FDCWD, operand[1], AT_SYMLINK_NOFOLLOW,
+                                      address_of itself) &&
+                            (itself.mode & MODE_FORMAT) == MODE_LINK)
+                        {
+                                string_format(diagnostic,
+                                              "mount: %s on %s failed: %s\n",
+                                              operand[0], operand[1],
+                                              strerror(STORAGE_ERROR_INVALID));
+                                status = 32;
+                                goto done;
+                        }
+                }
+                /*  A move and a remount asked for together: the reference
+                    takes the remount, which leaves the move undone, and
+                    calls that a subsequent operation that failed -- the
+                    usage answer 1, not the 32 a refused mount(2) leaves. A
+                    target that is not there at all never gets that far. */
+                if ((options.flags & STORAGE_MS_MOVE) &&
+                    (options.flags & STORAGE_MS_REMOUNT))
+                {
+                        positive room = 0;
+                        p8 address_to shown = canonical
+                            ? storage_mount_canonical(operand[1],
+                                                      address_of room)
+                            : null;
+
+                        if (shown || !canonical)
+                        {
+                                string_format(diagnostic,
+                                              "mount: %s: filesystem was mounted,"
+                                              " but any subsequent operation"
+                                              " failed: Invalid argument.\n",
+                                              shown ? (string_address)shown
+                                                    : operand[1]);
+                                if (shown)
+                                        memory_free(shown, room);
+                                status = 1;
+                                goto done;
+                        }
+                }
                 answer = storage_mount_one(operand[0], operand[1], type,
                                            address_of options);
                 if (answer)
@@ -929,31 +1008,48 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                       strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
                 else if (options.verbose)
                 {
-                        /*  The reference names the target it actually
-                            mounted on, which is the canonical path and not
-                            the relative word that was written. */
+                        /*  The reference names both words the way it
+                            resolved them: the canonical path where the word
+                            is one, and the word itself where it is not, so
+                            `tmpfs` stays `tmpfs` while `c` becomes its
+                            absolute spelling. --no-canonicalize resolves
+                            neither. And it says which operation it did:
+                            moved, bound, or mounted -- with a propagation
+                            change reported on a line of its own after it. */
                         positive shown_room = 0;
-                        p8 address_to shown = null;
-                        bipolar target_handle = canonical
-                            ? system_open_at(AT_FDCWD, operand[1],
-                                             STORAGE_OPEN_PATH | O_CLOEXEC)
-                            : -1;
+                        positive source_room = 0;
+                        p8 address_to shown = canonical
+                            ? storage_mount_canonical(operand[1],
+                                                      address_of shown_room)
+                            : null;
+                        p8 address_to source_shown = canonical
+                            ? storage_mount_canonical(operand[0],
+                                                      address_of source_room)
+                            : null;
+                        string_address target = shown ? (string_address)shown
+                                                      : operand[1];
+                        string_address source = source_shown
+                            ? (string_address)source_shown : operand[0];
 
-                        if (target_handle >= 0)
-                        {
-                                shown = storage_fd_path(target_handle,
-                                                        address_of shown_room);
-                                system_close(target_handle);
-                        }
-                        string_format(write,
-                                      options.flags & STORAGE_MS_BIND
-                                          ? "mount: %s bound on %s.\n"
-                                          : "mount: %s mounted on %s.\n",
-                                      operand[0],
-                                      shown ? (string_address)shown
-                                            : operand[1]);
+                        if (options.flags & STORAGE_MS_MOVE)
+                                string_format(write, "mount: %s moved to %s.\n",
+                                              source, target);
+                        else if (options.flags & STORAGE_MS_BIND)
+                                string_format(write, "mount: %s bound on %s.\n",
+                                              source, target);
+                        else
+                                string_format(write, "mount: %s mounted on %s.\n",
+                                              source, target);
+                        if (options.propagation &&
+                            !(options.flags & (STORAGE_MS_MOVE |
+                                               STORAGE_MS_BIND)))
+                                string_format(write,
+                                              "mount: %s propagation flags changed.\n",
+                                              target);
                         if (shown)
                                 memory_free(shown, shown_room);
+                        if (source_shown)
+                                memory_free(source_shown, source_room);
                 }
                 status = answer ? 32 : 0;
                 goto done;
