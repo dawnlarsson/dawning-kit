@@ -7830,7 +7830,23 @@ static b32 exec_simple(b32 index)
         while (leading < node->word_count &&
                (parse_word_flags[node->word + leading] &
                 PARSE_WORD_ASSIGNMENT))
+        {
+                /*
+                        dash has no subscripted assignment, so `a[1]=x` is
+                        not a failed assignment to it -- it is not an
+                        assignment at all. The whole word is a command name
+                        and dash reports it not found, with or without a
+                        command after it. Under a dash name the leading run
+                        ends here rather than the word being taken for an
+                        assignment that then turns out not to name anything.
+                */
+                if (!shell_bash_compat &&
+                    parse_words[node->word + leading][
+                        parse_word_name_lengths[node->word + leading] - 1] == ']')
+                        break;
+
                 leading++;
+        }
 
         if (shell_keyword_on())
                 word_order = exec_keyword_order(node, address_of leading);
