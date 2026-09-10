@@ -853,6 +853,20 @@ static positive job_started(bipolar address_to children, positive count,
 
         job_mark(entry->number);
 
+        /*
+                Bash names a job the moment it puts one in the background,
+                with the number it will be asked about by and the pid of
+                its last stage: "[1] 4242" and nothing else. It only says
+                so where somebody is watching, so a script sees nothing.
+                dash names it at the prompt afterwards, along with every
+                other change, which is the report below and not this.
+        */
+        if (background && shell_bash_compat && shell_is_interactive)
+        {
+                string_format(log, "[%p] %b\n", entry->number, entry->last);
+                log_flush();
+        }
+
         return entry->number;
 }
 
