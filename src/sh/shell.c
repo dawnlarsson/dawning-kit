@@ -182,6 +182,21 @@ bool shell_dash_compat;
 */
 bool shell_restricted;
 
+/*
+        How many readers deep this is, and a syntax failure's scope.
+
+        The process reader leaves on one, while eval and dot return it to the
+        executor so POSIX special-builtin policy can distinguish a direct
+        invocation from one behind command. A generation, rather than a
+        sticky bit, lets nested readers notice only failures that happened
+        inside their own input.
+
+        It is also the depth Bash marks an xtrace line with, which is why it
+        is declared here rather than beside the reader below: the executor is
+        included first and reads it.
+*/
+static positive shell_run_depth;
+
 // Whether output that can carry colour does. An interface that draws its own
 // screen turns it off while it holds the terminal.
 bool shell_styles = true;
@@ -1256,16 +1271,7 @@ bool shell_reading_more()
         return shell_more;
 }
 
-/*
-        A syntax failure is scoped to the reader that encountered it.
-
-        The process reader leaves on one, while eval and dot return it to the
-        executor so POSIX special-builtin policy can distinguish a direct
-        invocation from one behind command. A generation, rather than a
-        sticky bit, lets nested readers notice only failures that happened
-        inside their own input.
-*/
-static positive shell_run_depth;
+/* Defined above the included readers, which trace under it. */
 
 static fn run_line_inner(string_address line)
 {

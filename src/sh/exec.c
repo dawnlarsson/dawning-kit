@@ -6237,6 +6237,79 @@ static b32 exec_call(positive slot)
 */
 #define SHELL_XTRACE ((positive)1 << ('x' - 'a'))
 
+/*
+        Whether Bash would have to quote a word to write it back.
+
+        Its list, not a guess at one: the blanks, the quoting characters,
+        everything the parser reads as an operator, the globbing characters,
+        the two expansion characters and a comma. A tilde only counts where
+        it would expand -- at the front, or after the colon or equals sign
+        an assignment puts it behind -- and a hash only where a comment
+        would begin.
+*/
+static COLD PURE bool exec_trace_quoting(string_address word)
+{
+        for (string_address at = word; string_get(at); at++)
+                switch (string_get(at))
+                {
+                case ' ': case '\t': case '\n':
+                case '\'': case '"': case '\\':
+                case '|': case '&': case ';':
+                case '(': case ')': case '<': case '>':
+                case '!': case '{': case '}':
+                case '*': case '[': case '?': case ']':
+                case '^': case '$': case '`': case ',':
+                        return true;
+                case '~':
+                        if (at == word || at[-1] == ':' || at[-1] == '=')
+                                return true;
+                        break;
+                case '#':
+                        if (at == word)
+                                return true;
+                        break;
+                default:
+                        break;
+                }
+
+        return false;
+}
+
+/* One word as Bash writes it: bare where it can be, in single quotes where
+   it cannot, and a bare pair of quotes where the word is empty. A quote
+   inside closes the run, is written escaped, and opens the next. */
+static COLD fn exec_trace_word(string_address word)
+{
+        string_address run;
+
+        if (!string_get(word))
+        {
+                log_error(str("''"));
+                return;
+        }
+        if (!exec_trace_quoting(word))
+        {
+                log_error(word, 0);
+                return;
+        }
+
+        log_error(str("'"));
+        for (run = word; string_get(run);)
+        {
+                string_address stop = run;
+
+                while (string_get(stop) && string_get(stop) != '\'')
+                        stop++;
+                if (stop != run)
+                        log_error(run, (positive)(stop - run));
+                if (!string_get(stop))
+                        break;
+                log_error(str("'\\''"));
+                run = stop + 1;
+        }
+        log_error(str("'"));
+}
+
 static fn exec_trace(b32 count)
 {
         string_address prefix;
@@ -6246,14 +6319,37 @@ static fn exec_trace(b32 count)
                 return;
 
         prefix = env_get("PS4");
-        log_error(prefix ? prefix : (string_address) "+ ", 0);
+        if (!prefix)
+                prefix = (string_address) "+ ";
+
+        /*
+                How deep the reader is, marked the way Bash marks it: the
+                first character of PS4 written once per level and then the
+                rest of PS4, so the line an eval or a sourced file runs
+                traces under ++ where the line that reached it traced
+                under +. dash does not mark depth at all and neither does
+                this shell under a dash name.
+        */
+        if (shell_bash_compat && string_get(prefix))
+        {
+                positive depth = shell_run_depth ? shell_run_depth : 1;
+
+                for (positive again = 0; again < depth && again < 99; again++)
+                        log_error(prefix, 1);
+                log_error(prefix + 1, 0);
+        }
+        else
+                log_error(prefix, 0);
 
         for (at = 0; at < count; at++)
         {
                 if (at)
                         log_error((string_address) " ", 1);
 
-                log_error(shell_argv[at], 0);
+                if (shell_bash_compat)
+                        exec_trace_word(shell_argv[at]);
+                else
+                        log_error(shell_argv[at], 0);
         }
 
         log_error((string_address) "\n", 1);
