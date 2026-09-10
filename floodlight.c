@@ -57,6 +57,7 @@
 #include <linux/cred.h>
 #include <linux/fs.h>
 #include <linux/init.h>
+#include <linux/lockdep.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -262,10 +263,30 @@ static struct {
 	unsigned char after[GUARD];
 } parse;
 
+/*
+ * The two bytes the guards are filled with, worked out once.
+ *
+ * Never zero, because .bss begins as zeros and a guard that happened to be
+ * zero is one an overrun writing zeros walks straight through -- and the low
+ * byte of a random word is zero one boot in two hundred and fifty six.
+ *
+ * Never the same as each other either, so a run of one repeated value is
+ * caught whichever end it started from. xor with a fixed non-zero byte gives
+ * both properties without another draw from the pool.
+ */
+static unsigned char guard_head __ro_after_init;
+static unsigned char guard_tail __ro_after_init;
+
 static void guard_arm(void)
 {
-	memset(parse.before, (unsigned char)secret, GUARD);
-	memset(parse.after, (unsigned char)(secret >> 8), GUARD);
+	guard_head = (unsigned char)secret;
+	if (!guard_head || guard_head == 0x5a)
+		guard_head = 0xa5;
+
+	guard_tail = guard_head ^ 0x5a;
+
+	memset(parse.before, guard_head, GUARD);
+	memset(parse.after, guard_tail, GUARD);
 }
 
 static bool guard_intact(void)
@@ -273,8 +294,8 @@ static bool guard_intact(void)
 	unsigned int i;
 
 	for (i = 0; i < GUARD; i++)
-		if (parse.before[i] != (unsigned char)secret ||
-		    parse.after[i] != (unsigned char)(secret >> 8))
+		if (parse.before[i] != guard_head ||
+		    parse.after[i] != guard_tail)
 			return false;
 
 	return true;
@@ -290,6 +311,8 @@ static bool guard_intact(void)
 static bool intact(void)
 {
 	unsigned int i;
+
+	lockdep_assert_held(&lock);
 
 	if (compromised)
 		return false;
@@ -375,6 +398,8 @@ static struct light *find(const char *subject, unsigned int setting,
 			  const char *detail)
 {
 	int i;
+
+	lockdep_assert_held(&lock);
 
 	for (i = 0; i < CHANGES; i++) {
 		struct light *row = &changed[i];
@@ -532,6 +557,15 @@ static ssize_t floodlight_write(struct file *file, const char __user *from,
 		goto out;
 	}
 
+	/*
+	 * The copy happens with the lock held, because the buffer it lands in
+	 * is floodlight's own and there is one of it. That means a caller can
+	 * hold the lock for as long as the fault behind an unmapped address
+	 * takes to service, and every reader waits. It is allowed to stay that
+	 * way because getting here at all needs CAP_SYS_ADMIN, and somebody who
+	 * has that can seal the register or change the policy outright -- a
+	 * stalled read is not the worst thing available to them.
+	 */
 	line = parse.line;
 	if (copy_from_user(line, from, count)) {
 		answer = -EFAULT;
@@ -746,7 +780,18 @@ static int __init floodlight_start(void)
 	return answer;
 }
 
-device_initcall(floodlight_start);
+/*
+ * late_initcall, not device_initcall.
+ *
+ * The secret this file's seals are folded with comes from the random pool, and
+ * the pool is not necessarily seeded as early as the device level -- a secret
+ * drawn before it is seeded is one an attacker has a chance of guessing, which
+ * is the one thing it exists not to be. Nothing in the kernel consults this
+ * register, and userspace does not start until every initcall has run, so
+ * waiting costs nothing and there is no window where a program could ask
+ * before the answers were ready.
+ */
+late_initcall(floodlight_start);
 
 MODULE_DESCRIPTION("Runtime allowances, in one array and in plain sight");
 MODULE_AUTHOR("Dawn Larsson");

@@ -19281,7 +19281,7 @@ def harness_floodlight(argv):
         'capable', 'from_kuid', 'current_uid',
         'ktime_get_real_seconds', 'misc_register', 'single_open',
         'copy_from_user', 'get_random_u32', 'pr_alert', 'offsetof',
-        'ARRAY_SIZE',
+        'lockdep_assert_held', 'late_initcall', 'ARRAY_SIZE',
         'MODULE_DESCRIPTION', 'MODULE_AUTHOR', 'MODULE_LICENSE',
         'device_initcall', 'sizeof',
     }
@@ -19341,7 +19341,13 @@ def harness_floodlight(argv):
             (r'return fold\(secret \^ [0-9]+u, baseline, sizeof\(baseline\)\);', text,
              'the built-in answers are summed with the boot secret'),
             (r'secret = get_random_u32\(\);', text,
-             'the secret is drawn fresh at every boot'),):
+             'the secret is drawn fresh at every boot'),
+            (r'late_initcall\(floodlight_start\);', text,
+             'the secret is drawn late enough that the random pool is seeded'),
+            (r'guard_tail = guard_head \^ 0x5a;', text,
+             'the two guard bytes are never zero and never each other'),
+            (r'lockdep_assert_held\(&lock\);', text,
+             'the checks that walk the tables say they need the lock'),):
         check(bool(re.search(guard, where)), what)
 
     #   The seal has to notice any change at all to a row, because what it is
