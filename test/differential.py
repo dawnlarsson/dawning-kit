@@ -114,7 +114,7 @@ DOMAIN_FLOOR = {
               "echoing the line that was typed, the job listing this shell prints in bash's "
               "columns under every name, and a terminal that goes away, which kills bash "
               "with the hangup where this one exits zero."),
-    "util_linux": (79120, 81037, 70,
+    "util_linux": (79090, 81037, 80,
                    "listings this build does not carry, and a handful of "
                    "usage banners. The mount namespace is no longer the gap: "
                    "umount_live agrees on all 8576 of its cases and "
@@ -170,7 +170,11 @@ DOMAIN_FLOOR = {
                    "rows would move several hundred refusals out of the pins "
                    "and into this gap; the other two are findmnt cases that "
                    "were leaning on the -R row for a refusal of their own, "
-                   "and it had to go once --submounts worked"),
+                   "and it had to go once --submounts worked. A quiet box "
+                   "measures about 79140 of these; the number recorded here "
+                   "sits under that, because the live families read a "
+                   "machine other work is also using and give up a few dozen "
+                   "cases when it is busy"),
     "misc": (49780, 50406, 20,
              "unfinished work, not undecidable answers. The note this floor "
              "used to carry named script's transcript timing first, and that "
