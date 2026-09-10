@@ -14924,25 +14924,39 @@ static PURE p8 file_size_power(p8 suffix, bool every_lower)
 /* GNU's SIZE grammar here is deliberately narrower than dd's: an integer,
    optionally followed by K..Q, with bare suffixes meaning one. A trailing B
    selects powers of 1000; no B or iB selects powers of 1024. */
+/*
+        A size, read where its option is written.
+
+        The reference reads every -s as the getopt loop reaches it, and the
+        modifier it carries stays behind for the next one: -s +4 --size=4 is
+        still relative, which is why it may stand beside --reference, and a
+        second plus or minus over a modifier already standing is the one thing
+        it calls multiple relative modifiers. The number itself is the last
+        one written.
+*/
+static bool truncate_two_modifiers;
+//      A number whose digits are a number but whose value is past what a
+//      size can hold: the reference names the number and then the reason.
+static bool truncate_too_large;
+
 static bool truncate_size(string_address text, b64 address_to out,
                           p8 address_to relation)
 {
         while (byte_is_space(string_get(text)))
                 text++;
 
-        p8 mode = TRUNCATE_ABSOLUTE;
+        p8 mode = address_to relation;
+        p8 lead = string_get(text);
 
-        if (string_is(text, '<'))
-                mode = TRUNCATE_AT_MOST;
-        else if (string_is(text, '>'))
-                mode = TRUNCATE_AT_LEAST;
-        else if (string_is(text, '/'))
-                mode = TRUNCATE_ROUND_DOWN;
-        else if (string_is(text, '%'))
-                mode = TRUNCATE_ROUND_UP;
+        truncate_two_modifiers = false;
+        truncate_too_large = false;
 
-        if (mode != TRUNCATE_ABSOLUTE)
+        if (lead == '<' || lead == '>' || lead == '/' || lead == '%')
         {
+                mode = lead == '<'   ? TRUNCATE_AT_MOST
+                       : lead == '>' ? TRUNCATE_AT_LEAST
+                       : lead == '/' ? TRUNCATE_ROUND_DOWN
+                                     : TRUNCATE_ROUND_UP;
                 text++;
 
                 while (byte_is_space(string_get(text)))
@@ -14954,7 +14968,10 @@ static bool truncate_size(string_address text, b64 address_to out,
         if (negative || string_is(text, '+'))
         {
                 if (mode != TRUNCATE_ABSOLUTE)
+                {
+                        truncate_two_modifiers = true;
                         return false;
+                }
 
                 mode = TRUNCATE_RELATIVE;
                 text++;
@@ -14967,7 +14984,10 @@ static bool truncate_size(string_address text, b64 address_to out,
         p64 magnitude = string_digits_max(text, 20, address_of digits);
 
         if (digits == 20)
+        {
+                truncate_too_large = true;
                 return false;
+        }
 
         text += digits;
 
@@ -14995,19 +15015,27 @@ static bool truncate_size(string_address text, b64 address_to out,
                 while (power--)
                 {
                         if (magnitude > (p64)b64_max / base)
+                        {
+                                truncate_too_large = true;
                                 return false;
+                        }
 
                         magnitude *= base;
                 }
         }
 
-        if (string_get(text) || magnitude > (p64)b64_max + (p64)negative)
+        if (string_get(text))
                 return false;
 
-        if ((mode == TRUNCATE_ROUND_DOWN || mode == TRUNCATE_ROUND_UP) &&
-            !magnitude)
+        if (magnitude > (p64)b64_max + (p64)negative)
+        {
+                truncate_too_large = true;
                 return false;
+        }
 
+        //      A rounding step of nothing is read as the number it is; the
+        //      caller says it is a division by zero, which is what the
+        //      reference calls it rather than an invalid number.
         address_to out = negative
                              ? (magnitude == (p64)b64_max + 1
                                     ? b64_min
@@ -15144,36 +15172,75 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
         return true;
 }
 
+static b64 truncate_asked;
+static p8 truncate_relation;
+static bool truncate_given;
+
+static bool truncate_option_seen(p8 letter, string_address value)
+{
+        if (letter != 's' || !value)
+                return true;
+
+        if (!truncate_size(value, address_of truncate_asked,
+                           address_of truncate_relation))
+        {
+                if (truncate_two_modifiers)
+                        return string_report(log_error, false,
+                                             "truncate: multiple relative modifiers specified\n");
+
+                if (truncate_too_large)
+                        return string_report(log_error, false,
+                                             "truncate: Invalid number: '%s': "
+                                             "Value too large for defined data type\n",
+                                             value);
+
+                return string_report(log_error, false,
+                                     "truncate: Invalid number: '%s'\n", value);
+        }
+
+        //      A rounding step of nothing is a division by nothing, and the
+        //      reference says which of the two it is.
+        if ((truncate_relation == TRUNCATE_ROUND_DOWN ||
+             truncate_relation == TRUNCATE_ROUND_UP) && !truncate_asked)
+                return string_report(log_error, false, "truncate: division by zero\n");
+
+        truncate_given = true;
+
+        return true;
+}
+
 static b32 file_truncate()
 {
         file_operands_begin();
+
+        truncate_asked = 0;
+        truncate_relation = TRUNCATE_ABSOLUTE;
+        truncate_given = false;
+
         file_taking taking = {
             .program = (string_address) "truncate",
             .allowed = (string_address) "cors",
             .valued = (string_address) "rs",
             .longs = truncate_longs,
             .operand = file_operand,
+            .seen = truncate_option_seen,
         };
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
 
-        string_address size_text = file_option_value(address_of taking, 's');
         string_address reference_path = file_option_value(address_of taking, 'r');
         bool blocks = (taking.flags & FILE_FLAG('o')) != 0;
         bool no_create = (taking.flags & FILE_FLAG('c')) != 0;
-        b64 size = 0;
-        p8 relation = TRUNCATE_ABSOLUTE;
+        b64 size = truncate_asked;
+        p8 relation = truncate_relation;
+        bool size_text = truncate_given;
 
         if (!reference_path && !size_text)
         {
                 log_error("truncate: you must specify either '--size' or '--reference'\n", 0);
                 return 1;
         }
-
-        if (size_text && !truncate_size(size_text, address_of size,
-                                        address_of relation))
-                return string_report(log_error, 1, "truncate: Invalid number: '%s'\n", size_text);
 
         if (reference_path && size_text && relation == TRUNCATE_ABSOLUTE)
         {
@@ -15183,7 +15250,8 @@ static b32 file_truncate()
         }
 
         if (blocks && !size_text)
-                return string_report(log_error, 1, "truncate: --io-blocks requires --size\n");
+                return string_report(log_error, 1,
+                                     "truncate: '--io-blocks' was specified but '--size' was not\n");
 
         if (!file_operand_count)
                 return string_report(log_error, 1, "truncate: missing file operand\n");
@@ -15193,10 +15261,12 @@ static b32 file_truncate()
         if (reference_path)
         {
                 file_facts facts;
+                bipolar looked = file_look_code(AT_FDCWD, reference_path, 0,
+                                                address_of facts);
 
-                if (!file_look_at(reference_path, address_of facts))
-                        return string_report(log_error, 1, "truncate: cannot stat '%s'\n",
-                                      reference_path);
+                if (looked < 0)
+                        return string_report(log_error, 1, "truncate: cannot stat '%s': %s\n",
+                                      reference_path, file_reason(looked));
 
                 bipolar handle = -1;
 
