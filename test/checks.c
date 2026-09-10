@@ -23662,7 +23662,9 @@ static string_address table_field(address_any row, p8 column,
 }
 
 static const ul_table_column table_columns[] = {
-    {"value", "VALUE", 0, false, UL_TABLE_STRING, true}
+    {"value", "VALUE", 0, false, UL_TABLE_STRING, true},
+    {"other", "OTHER", 0, false, UL_TABLE_STRING, true},
+    {"third", "THIRD", 0, false, UL_TABLE_STRING, true}
 };
 static p8 table_selected[] = {0};
 
@@ -23680,17 +23682,40 @@ static p8 table_hex_digit(p8 nibble)
 
 static fn name_list_checks(void)
 {
-        p8 columns[1] = {0xa5};
+        /*
+                The reader answers which of three things happened rather
+                than yes or no, and hands back the name it could not place:
+                an empty list is refused without a word, a name it does not
+                know is named, and a name written twice is a column written
+                twice -- `lsns -o TYPE,TYPE` prints TYPE beside TYPE.
+        */
+        p8 columns[8] = {0xa5};
         positive have = 99;
+        p8 unknown[UL_COLUMN_NAME];
+
         check("table defaults without an output option",
-              ul_table_column_list(null, table_columns, 1, table_selected, 1,
-                                   columns, address_of have) && have == 1 && !columns[0]);
+              ul_table_column_list(null, table_columns, 3, table_selected, 1,
+                                   columns, address_of have, unknown) == UL_COLUMNS_OK &&
+              have == 1 && !columns[0]);
         check("table defaults stay bounded",
-              !ul_table_column_list(null, table_columns, 0, table_selected, 1,
-                                    columns, address_of have) && !have);
-        check("table append keeps defaults and removes duplicates",
-              ul_table_column_list("+VALUE,value", table_columns, 1, table_selected, 1,
-                                   columns, address_of have) && have == 1 && !columns[0]);
+              ul_table_column_list(null, table_columns, 0, table_selected, 1,
+                                   columns, address_of have, unknown) == UL_COLUMNS_UNKNOWN &&
+              !have);
+        check("table append keeps the defaults in front",
+              ul_table_column_list("+other", table_columns, 3, table_selected, 1,
+                                   columns, address_of have, unknown) == UL_COLUMNS_OK &&
+              have == 2 && !columns[0] && columns[1] == 1);
+        check("table keeps a column named twice",
+              ul_table_column_list("value,value", table_columns, 3, table_selected, 1,
+                                   columns, address_of have, unknown) == UL_COLUMNS_OK &&
+              have == 2 && !columns[0] && !columns[1]);
+        check("table refuses an empty list without a word",
+              ul_table_column_list("", table_columns, 3, table_selected, 1,
+                                   columns, address_of have, unknown) == UL_COLUMNS_EMPTY);
+        check("table names the column it does not know",
+              ul_table_column_list("value,nosuch", table_columns, 3, table_selected, 1,
+                                   columns, address_of have, unknown) == UL_COLUMNS_UNKNOWN &&
+              !string_compare(unknown, "nosuch"));
         typedef struct
         {
                 string_address name;
@@ -24259,12 +24284,24 @@ static fn table_limit_checks(void)
                 }
         }
         positive count = 0;
+        p8 refused[UL_COLUMN_NAME];
+
+        //      Answers which of the three things happened, as the shared
+        //      reader does, and hands back the name it could not place.
         check("prlimit preserves duplicate selected columns",
-              ul_limit_columns("soft,SOFT,units", selected, &count) &&
+              ul_limit_columns("soft,SOFT,units", selected, &count,
+                               refused) == UL_COLUMNS_OK &&
               count == 3 && selected[0] == UL_LIMIT_SOFT &&
               selected[1] == UL_LIMIT_SOFT && selected[2] == UL_LIMIT_UNITS);
         check("prlimit rejects appended defaults syntax",
-              !ul_limit_columns("+SOFT", selected, &count));
+              ul_limit_columns("+SOFT", selected, &count,
+                               refused) == UL_COLUMNS_UNKNOWN);
+        check("prlimit refuses an empty list without a word",
+              ul_limit_columns("", selected, &count, refused) == UL_COLUMNS_EMPTY);
+        check("prlimit names the column it does not know",
+              ul_limit_columns("soft,nosuch", selected, &count,
+                               refused) == UL_COLUMNS_UNKNOWN &&
+              !string_compare(refused, "nosuch"));
 }
 
 static string_address table_pair_field(address_any opaque, p8 column,
