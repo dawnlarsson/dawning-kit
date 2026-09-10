@@ -114,7 +114,7 @@ DOMAIN_FLOOR = {
               "echoing the line that was typed, the job listing this shell prints in bash's "
               "columns under every name, and a terminal that goes away, which kills bash "
               "with the hangup where this one exits zero."),
-    "util_linux": (79090, 81037, 80,
+    "util_linux": (79080, 81037, 80,
                    "listings this build does not carry, and a handful of "
                    "usage banners. The mount namespace is no longer the gap: "
                    "umount_live agrees on all 8576 of its cases and "
@@ -128,7 +128,7 @@ DOMAIN_FLOOR = {
                    "MNTID), with TCP and eventpoll where this one says SOCK "
                    "and anon_inode. The rows are the feature and the columns "
                    "follow them; it is the one large piece of work in this "
-                   "list. findmnt (166): the tree is drawn now, and "
+                   "list. findmnt (168): the tree is drawn now, and "
                    "--submounts with it, so what is left is JSON, whose "
                    "shape is nested children rather than rows, the columns "
                    "mountinfo does not carry (LABEL, UUID, SIZE, "
@@ -170,11 +170,13 @@ DOMAIN_FLOOR = {
                    "rows would move several hundred refusals out of the pins "
                    "and into this gap; the other two are findmnt cases that "
                    "were leaning on the -R row for a refusal of their own, "
-                   "and it had to go once --submounts worked. A quiet box "
-                   "measures about 79140 of these; the number recorded here "
-                   "sits under that, because the live families read a "
-                   "machine other work is also using and give up a few dozen "
-                   "cases when it is busy"),
+                   "and it had to go once --submounts worked. The lane "
+                   "measures 79123 to 79134 of these; the number recorded "
+                   "here sits a little under the lower of them, for the "
+                   "handful that flap. Measure it the way the lane does, "
+                   "with the work under /tmp: a run whose root is on a "
+                   "filesystem mounted without nosuid and nodev cannot see "
+                   "the mounts this build used to break"),
     "misc": (49780, 50406, 20,
              "unfinished work, not undecidable answers. The note this floor "
              "used to carry named script's transcript timing first, and that "
