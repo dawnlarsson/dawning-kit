@@ -5357,9 +5357,12 @@ static fn ls_below(string_address path, positive depth)
 
                 at += string_length(name) + 1;
 
-                // Each level of -R holds a listing and a block of names on
-                // the stack, so a tree that links into itself stops here,
-                // and says so, rather than by running out of stack.
+                // A tree that links into itself stops here, and says so.
+                // It used to be the stack that stopped it -- each level held
+                // its names there -- and the cap is what kept that from
+                // being a crash. The names are in an arena now, so this is
+                // the only thing standing between a symlink loop and a walk
+                // that never ends.
                 if (depth == 0)
                 {
                         string_format(log_error, "%s: '%s/%s' is nested too deep\n",
@@ -6113,7 +6116,6 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         ls_count = 0;
         ls_used = 0;
 
-        positive directories = 0;
         positive given = count - first;
 
         for (positive i = first; i < count; i++)
@@ -6124,9 +6126,6 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
 
                 if (!ls_operand(path, address_of facts, address_of directory))
                         continue;
-
-                if (directory)
-                        directories++;
 
                 if (!ls_add(AT_FDCWD, path, path, 0, null, address_of facts))
                         break;

@@ -4254,18 +4254,18 @@ test_type_decimal(f32, 3.402823466e+38f, 1.175494351e-38f);
 test_type_decimal(f64, 1.7976931348623157e+308, 2.2250738585072014e-308);
 test_type_decimal(f128, __LDBL_MAX__, __LDBL_MIN__);
 
-test(bit_flip_zero_to_one) { 
+test(bit_flip_zero_to_one) {
     p32 value = 0;
     bit_flip(0, &value);
     fail_not_equals(value, 1);
-    return true; 
+    return true;
 }
 
-test(bit_flip_one_to_zero) { 
+test(bit_flip_one_to_zero) {
     p32 value = 1;
     bit_flip(0, &value);
     fail_not_equals(value, 0);
-    return true; 
+    return true;
 }
 
 test(bit_set_basic) {
@@ -4307,10 +4307,10 @@ test(addresses) {
 
         fail_not_equals(address_to ptr, some_positive);
         fail_not_equals(ptr, &some_positive);
-        
+
         positive address_to null_ptr = (positive address_to)0;
         fail(is_null(null_ptr));
-        
+
         positive arr[2] = {1,2};
         positive address_to arr_ptr = &arr[0];
         fail_not_equals(*(arr_ptr+1), 2);
@@ -4323,10 +4323,10 @@ test(is_null) {
         fail(is_null(null));
         fail(is_null(0));
         fail(!is_null(&p32_nulled));
-        
+
         positive value = 0;
         fail(!is_null(&value));
-        
+
         int stack_var = 1;
         fail(!is_null(&stack_var));
 
@@ -4339,78 +4339,78 @@ test(is_null) {
 // Atomic operations test (basic)
 test(atomic_operations) {
         positive value = 0;
-        
+
         atomic_add(&value, 5);
         fail_not_equals(value, 5);
-        
+
         atomic_sub(&value, 2);
         fail_not_equals(value, 3);
-        
+
         atomic_inc(&value);
         fail_not_equals(value, 4);
-        
+
         atomic_dec(&value);
         fail_not_equals(value, 3);
-        
+
         positive old = atomic_exchange(&value, 10);
         fail_not_equals(old, 3);
         fail_not_equals(value, 10);
-        
+
         bool success = atomic_compare_exchange(&value, 10, 20);
         fail(success);
         fail_not_equals(value, 20);
-        
+
         success = atomic_compare_exchange(&value, 10, 30);
         fail(!success);
         fail_not_equals(value, 20);
-        
+
         return true;
 }
 
 test(memory_fill) {
         p8 buffer[100];
-        
+
         memory_fill(buffer, 0x42, 100);
-        
+
         for(positive i = 0; i < 100; i++) {
                 fail_not_equals(buffer[i], 0x42);
         }
-        
+
         memory_fill(buffer, 0, 50);
-        
+
         for(positive i = 0; i < 50; i++) {
                 fail_not_equals(buffer[i], 0);
         }
-        
+
         for(positive i = 50; i < 100; i++) {
                 fail_not_equals(buffer[i], 0x42);
         }
 
         memory_fill(buffer, 0x99, 0);
-        
+
         for(positive i = 0; i < 100; i++) {
                 fail(buffer[i] == 0 || buffer[i] == 0x42);
         }
-        
+
         memory_fill(buffer, 0xFF, 100);
-        
+
         for(positive i = 0; i < 100; i++) {
                 fail_not_equals(buffer[i], 0xFF);
         }
-        
+
         return true;
 }
 
 test(memory_copy) {
-        
+
         p8 buffer[] = "1234567890";
         p8 source[] = "Hello, World!";
         p8 destination[50] = {0};
-        
+
         memory_copy(buffer + 2, buffer, 5);
         fail_not_equals(buffer[2], '1');
         fail_not_equals(buffer[6], '5');
-        
+
         /*
         // non-overlapping regions
         memory_copy(destination, source, 16);
@@ -4421,18 +4421,18 @@ test(memory_copy) {
 }
 
 test(string_length) {
-        
+
         fail_not_equals(string_length(""), 0);
         fail_not_equals(string_length("a"), 1);
         fail_not_equals(string_length("Hello"), 5);
         fail_not_equals(string_length("Visible\0Hidden"), 7);
-        
+
         p8 buffer[100];
         memory_fill(buffer, 'A', 99);
-        
+
         buffer[99] = end;
         fail_not_equals(string_length(buffer), 99);
-        
+
         p8 only_null[1] = {end};
         fail_not_equals(string_length(only_null), 0);
 
@@ -4454,19 +4454,19 @@ test(string_compare) {
 
 test(string_copy) {
         p8 dest[100];
-        
+
         string_copy(dest, "Hello");
         fail_not_equals(string_compare(dest, "Hello"), 0);
-        
+
         string_copy(dest, "");
         fail_not_equals(string_length(dest), 0);
 
         string_copy(dest, "A very long string that tests the copy function");
         fail_not_equals(string_length(dest), 47);
-        
+
         string_copy(dest, dest);
         fail_not_equals(string_compare(dest, "A very long string that tests the copy function"), 0);
-        
+
         return true;
 }
 
@@ -4476,7 +4476,7 @@ test(string_copy_max) {
 
         memory_fill(dest, 'X', 100);
         string_copy_max(dest, "Hello, World!", 5);
-        
+
         fail_not_equals(dest[5], 'X');
         fail_not_equals(dest[0], 'H');
         fail_not_equals(dest[4], 'o');
@@ -4489,7 +4489,7 @@ test(string_copy_max) {
         memory_fill(dest, 'H', 4);
         string_copy_max(dest, "Zebra", 0);
         fail_not_equals(dest[0], 'H');
-        
+
         return true;
 }
 
@@ -4499,22 +4499,22 @@ test(string_first_of) {
         result = string_first_of("Hello, World!", 'o');
         fail(result != null);
         fail_not_equals(*result, 'o');
-        
+
         result = string_first_of("Hello, World!", 'z');
         fail_not_equals(result, null);
-        
+
         result = string_first_of("Hello, World!", end);
         fail(result != null);
         fail_not_equals(*result, end);
-        
+
         result = string_first_of("abc", 'a');
         fail(result != null);
         fail_not_equals(*result, 'a');
-        
+
         result = string_first_of("abc", 'c');
         fail(result != null);
         fail_not_equals(*result, 'c');
-        
+
         return true;
 }
 
@@ -4524,36 +4524,36 @@ test(string_last_of) {
         result = string_last_of("Hello, World!", 'o');
         fail(result != null);
         fail_not_equals(*result, 'o');
-        
+
         result = string_last_of("Hello, World!", 'H');
         fail(result != null);
-        
+
         result = string_last_of("Hello, World!", 'z');
         fail_not_equals(result, null);
-        
+
         result = string_last_of("abc", 'c');
         fail(result != null);
         fail_not_equals(*result, 'c');
-        
+
         result = string_last_of("abc", 'a');
         fail(result != null);
         fail_not_equals(*result, 'a');
-        
+
         return true;
 }
 
 test(string_cut) {
         p8 buffer[] = "Hello, World!";
-        
+
         string_address result = string_cut(buffer, ' ');
         fail(result != null);
         fail_not_equals(string_compare(buffer, "Hello,"), 0);
         fail_not_equals(string_compare(result, "World!"), 0);
-        
+
         p8 buffer2[] = "NoSpaces";
         result = string_cut(buffer2, ' ');
         fail_not_equals(result, null);
-        
+
         p8 buffer3[] = "End ";
         result = string_cut(buffer3, ' ');
         fail_not_equals(result, null);
@@ -4573,7 +4573,7 @@ test(string_replace_all) {
         p8 buffer2[] = "aaaa";
         string_replace_all(buffer2, 'a', 'b');
         fail_not_equals(string_compare(buffer2, "bbbb"), 0);
-        
+
         p8 buffer3[] = "cccc";
         string_replace_all(buffer3, 'c', 'c');
         fail_not_equals(string_compare(buffer3, "cccc"), 0);
@@ -4581,57 +4581,57 @@ test(string_replace_all) {
         p8 buffer4[] = "dddd";
         string_replace_all(buffer4, 'z', 'y');
         fail_not_equals(string_compare(buffer4, "dddd"), 0);
-        
+
         return true;
 }
 
 test(string_format_basic) {
         test_write_pos = 0;
         memory_fill(test_write_buffer, 0, 1000);
-        
+
         string_format(test_writer, "Hello %s!", "World");
         test_write_buffer[test_write_pos] = end;
         fail_not_equals(string_compare(test_write_buffer, "Hello World!"), 0);
-        
+
         test_write_pos = 0;
         string_format(test_writer, "%% test");
         test_write_buffer[test_write_pos] = end;
         fail_not_equals(string_compare(test_write_buffer, "% test"), 0);
-        
+
         return true;
 }
 
 test(string_format_numbers) {
         test_write_pos = 0;
         memory_fill(test_write_buffer, 0, 1000);
-        
+
         string_format(test_writer, "Positive: %p", 12345);
         test_write_buffer[test_write_pos] = end;
         fail_not_equals(string_compare(test_write_buffer, "Positive: 12345"), 0);
-        
+
         test_write_pos = 0;
         string_format(test_writer, "Bipolar: %b", -42);
         test_write_buffer[test_write_pos] = end;
         fail_not_equals(string_compare(test_write_buffer, "Bipolar: -42"), 0);
-        
+
         test_write_pos = 0;
         string_format(test_writer, "Zero: %p", 0);
         test_write_buffer[test_write_pos] = end;
         fail_not_equals(string_compare(test_write_buffer, "Zero: 0"), 0);
-        
+
         return true;
 }
 
 test(string_format_mixed) {
         test_write_pos = 0;
         memory_fill(test_write_buffer, 0, 1000);
-        
+
         string_format(test_writer, "%s has %p items worth %b each", "Ada", 5, -10);
 
         test_write_buffer[test_write_pos] = end;
 
         fail_not_equals(string_compare(test_write_buffer, "Ada has 5 items worth -10 each"), 0);
-        
+
         return true;
 }
 
@@ -4639,62 +4639,62 @@ test(string_format_mixed) {
 test(path_basename) {
         test_write_pos = 0;
         memory_fill(test_write_buffer, 0, 1000);
-        
+
         path_basename(test_writer, "/usr/bin/test");
         test_write_buffer[test_write_pos] = end;
         fail_not_equals(string_compare(test_write_buffer, "test"), 0);
-        
+
         test_write_pos = 0;
         path_basename(test_writer, "/usr/bin/");
         test_write_buffer[test_write_pos] = end;
         fail_not_equals(string_compare(test_write_buffer, "bin"), 0);
-        
+
         test_write_pos = 0;
         path_basename(test_writer, "/");
         test_write_buffer[test_write_pos] = end;
         fail_not_equals(string_compare(test_write_buffer, "/"), 0);
-        
+
         test_write_pos = 0;
         path_basename(test_writer, "test.txt");
         test_write_buffer[test_write_pos] = end;
         fail_not_equals(string_compare(test_write_buffer, "test.txt"), 0);
-        
+
         return true;
 }
 
 test(str_macro) {
         string_address data;
         positive length;
-        
+
         data = str("Hello");
         fail_not_equals(data[0], 'H');
         fail_not_equals(data[1], 'e');
-        
+
         return true;
 }
 
 test(string_end) {
         fail_not_equals(end, '\0');
         fail_not_equals(end, 0);
-        
+
         p8 buffer[] = "Test";
         fail_not_equals(buffer[4], end);
-        
+
         return true;
 }
 
 test(writer_pattern) {
         test_write_pos = 0;
         memory_fill(test_write_buffer, 0, 1000);
-        
+
         test_writer("Hello", 5);
         fail_not_equals(test_write_pos, 5);
         fail_not_equals(string_compare(test_write_buffer, "Hello"), 0);
-        
+
         test_writer(", ", 2);
         test_writer("World!", 0);
         fail_not_equals(string_compare(test_write_buffer, "Hello, World!"), 0);
-        
+
         return true;
 }
 
@@ -8074,10 +8074,10 @@ test_case test_cases[] = {
         case(addresses),
         case(is_null),
         case(atomic_operations),
-        
+
         case(memory_fill),
         case(memory_copy),
-        
+
         case(string_length),
         case(string_compare),
         case(string_copy),
@@ -8089,11 +8089,11 @@ test_case test_cases[] = {
         case(string_format_basic),
         case(string_format_numbers),
         case(string_format_mixed),
-        
+
         case(path_basename),
-        
+
         case(str_macro),
-        
+
         case(string_end),
 
         case(writer_pattern),
@@ -8233,7 +8233,7 @@ fn generate_report(writer write)
 
         // table
         write(str("<table border=\"1\"><tr><th>Test</th><th>Result</th></tr>"));
-        
+
         test_case address_to test = test_cases;
 
         while (test->name)
@@ -24840,7 +24840,7 @@ static fn error_test_wrappers(void)
                         unlink((string_address)ERROR_TEST_LINK));
 
         errno = 0;
-        error_test_said((string_address) "unlink", 
+        error_test_said((string_address) "unlink",
                         unlink((string_address)ERROR_TEST_FILE));
 
         errno = 0;
