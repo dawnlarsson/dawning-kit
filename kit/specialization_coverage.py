@@ -304,6 +304,10 @@ cover('folds_already', 'bytes', 'memory_take',
       'the shelf number folds at a literal request, but the saving has not '
       'been separated from the free-list chain that dominates the pair')
 
+cover('nothing_to_fold', None, 'string_to_decimal_short',
+      'a pointer into text the caller owns and two places to put the answer; '
+      'nothing a call site could hand over as a literal')
+
 cover('nothing_to_fold', None, 'memory_give',
       'a pointer into memory the caller owns, and a shelf number read back '
       'out of the block rather than handed over by the call site')

@@ -28004,6 +28004,12 @@ b32 main(void)
         The number conversions: text into an integer, and text into a float
         that is the nearest one.
 
+        Every strtod case here also exercises library.c's
+        string_to_decimal_short, which reads a plain run of at most fifteen
+        digits and hands everything harder to the general path. Its bail set
+        is what this lane is for: the first version answered nought for
+        0x1p0 and failed 129 of these cases, all hexadecimal.
+
         Six things are checked here and they are checked in six different
         ways, because the failure modes are not alike.
 

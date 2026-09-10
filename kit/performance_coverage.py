@@ -97,6 +97,12 @@ cover('direct_benchmark', 'test/checks.c#BENCH_reserve', 'memory_reserve',
       'fresh-process mapping growth timing and peak resident memory, with '
       'dense and sparse inputs; hardware/RSS claims require native execution')
 
+cover('correctness_only', 'test/checks.c#CHECK_number', 'string_to_decimal_short',
+      'the short-decimal reader is exercised by every strtod case the ULP '
+      'lane runs against glibc, 702,066 a machine; its speed was measured on '
+      'an awk workload rather than in a dedicated harness, so no isolated '
+      'timing row is claimed here')
+
 cover('direct_benchmark', 'test/checks.c#BENCH_allocator', 'memory_take memory_give',
       'malloc/free pair timing against an empty ABI control and a free-list '
       'traffic floor that pops and pushes the same words; the shelf-hit path '

@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        258 routines (248 public, 10 local), 257 of them on all three and 1 local to one.
+        259 routines (249 public, 10 local), 258 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -299,6 +299,7 @@
           string_span_without_set        public  yes     yes     yes
           string_table_find              public  yes     yes     yes
           string_to_bipolar              public  yes     yes     yes
+          string_to_decimal_short        public  yes     yes     yes
           string_to_field                public  yes     yes     yes
           string_to_host                 public  yes     yes     yes
           string_to_number               public  yes     yes     yes
@@ -19253,6 +19254,174 @@ __asm__(
     //      tail rather than j, for the reason memory_take gives.
     "9:  tail allocator_give_slow\n"
     ASM_END(memory_give)
+);
+#endif
+#endif // KERNEL_MODE
+
+/*
+        The short decimal, read without the frame a hard one needs.
+
+        strtod has to be ready for an exponent, a hexadecimal significand, an
+        infinity and a significand longer than a register: src/standard's
+        conversion subtracts 0x778 from the stack pointer and clears thirteen
+        fields of a scan record before it looks at a byte. Nothing in "042"
+        reaches any of it, and awk asking for a three character field was
+        spending 11.0% of its run there.
+
+        Fifteen digits is the most that lands on a double with no rounding
+        decision to make -- ten to the fifteenth is under two to the fifty
+        third -- so a run of at most fifteen with an optional sign converts
+        with one instruction and no rounding at all. Anything else answers
+        false and the caller takes the general path, untouched.
+
+        What counts as "anything else" is the whole of the correctness. A
+        point and an exponent are obvious. A sixteenth digit is not, and
+        neither is an x: 0x1p0 arrives as a leading zero followed by a byte
+        that is none of the above, and answering nought for it is wrong by
+        4607182418800017408. The ULP lane found exactly that, 129 cases of
+        2,352,654, every one hexadecimal.
+
+        The sign is applied to the double and not to the integer, because
+        negating nought as an integer gives nought and strtod owes -0.0 for
+        "-0".
+
+        Not in a kernel build: this reads the vector registers to convert,
+        and kernel paths stay outside vector state.
+*/
+#ifndef KERNEL_MODE
+bool string_to_decimal_short(string_address input,
+                             string_address address_to stopped,
+                             decimal address_to answer);
+
+#if X64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(string_to_decimal_short)
+    //   rdi = input, rsi = stopped, rdx = answer
+    "xor %eax, %eax\n"
+    "xor %ecx, %ecx\n"
+    "xor %r8d, %r8d\n"
+    "mov %rdi, %r9\n"
+    "movzbl (%r9), %r10d\n"
+    "cmp $45, %r10d\n   jne 1f\n"
+    "mov $1, %r8d\n   inc %r9\n   jmp 2f\n"
+    "1:  cmp $43, %r10d\n   jne 2f\n"
+    "inc %r9\n"
+    //   value * 10 is a five scale and a double, which is two address
+    //   arithmetic and no multiplier.
+    "2:  cmp $15, %ecx\n   jae 4f\n"
+    "movzbl (%r9), %r10d\n"
+    "sub $48, %r10d\n"
+    "cmp $9, %r10d\n   ja 4f\n"
+    "lea (%rax,%rax,4), %rax\n"
+    "add %rax, %rax\n"
+    "add %r10, %rax\n"
+    "inc %r9\n   inc %ecx\n"
+    "jmp 2b\n"
+    "4:  test %ecx, %ecx\n   jz 9f\n"
+    "movzbl (%r9), %r10d\n"
+    //   e and E, x and X differ by the case bit alone, so one or folds
+    //   four compares into two.
+    "cmp $46, %r10d\n   je 9f\n"
+    "or $32, %r10d\n"
+    "cmp $101, %r10d\n   je 9f\n"
+    "cmp $120, %r10d\n   je 9f\n"
+    "lea -48(%r10), %r11d\n"
+    "cmp $9, %r11d\n   jbe 9f\n"
+    "test %rsi, %rsi\n   jz 5f\n"
+    "mov %r9, (%rsi)\n"
+    "5:  pxor %xmm0, %xmm0\n"
+    "cvtsi2sdq %rax, %xmm0\n"
+    "test %r8d, %r8d\n   jz 6f\n"
+    "movq %xmm0, %rax\n"
+    "movabs $0x8000000000000000, %r10\n"
+    "xor %r10, %rax\n"
+    "movq %rax, %xmm0\n"
+    "6:  movsd %xmm0, (%rdx)\n"
+    "mov $1, %eax\n"
+    ASM_RET
+    "9:  xor %eax, %eax\n"
+    ASM_RET
+    ASM_END(string_to_decimal_short)
+);
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(string_to_decimal_short)
+    //   x0 = input, x1 = stopped, x2 = answer
+    "mov x9, x0\n"
+    "mov x10, #0\n   mov x11, #0\n   mov x12, #0\n   mov x14, #10\n"
+    "ldrb w13, [x9]\n"
+    "cmp w13, #45\n   b.ne 1f\n"
+    "mov x12, #1\n   add x9, x9, #1\n   b 2f\n"
+    "1:  cmp w13, #43\n   b.ne 2f\n"
+    "add x9, x9, #1\n"
+    "2:  cmp x11, #15\n   b.hs 4f\n"
+    "ldrb w13, [x9]\n"
+    "sub w13, w13, #48\n"
+    "cmp w13, #9\n   b.hi 4f\n"
+    "madd x10, x10, x14, x13\n"
+    "add x9, x9, #1\n   add x11, x11, #1\n"
+    "b 2b\n"
+    "4:  cbz x11, 9f\n"
+    "ldrb w13, [x9]\n"
+    //   the case bit folds four compares into two, as x86_64 says.
+    "cmp w13, #46\n   b.eq 9f\n"
+    "orr w15, w13, #32\n"
+    "cmp w15, #101\n   b.eq 9f\n"
+    "cmp w15, #120\n   b.eq 9f\n"
+    "sub w15, w13, #48\n   cmp w15, #9\n   b.ls 9f\n"
+    "cbz x1, 5f\n"
+    "str x9, [x1]\n"
+    //   fneg flips the sign bit, so nought comes out negative as it must.
+    "5:  scvtf d0, x10\n"
+    "cbz x12, 6f\n"
+    "fneg d0, d0\n"
+    "6:  str d0, [x2]\n"
+    "mov w0, #1\n"
+    ASM_RET
+    "9:  mov w0, #0\n"
+    ASM_RET
+    ASM_END(string_to_decimal_short)
+);
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(string_to_decimal_short)
+    //   a0 = input, a1 = stopped, a2 = answer
+    "mv a3, a0\n"
+    "li a4, 0\n   li a5, 0\n   li a6, 0\n"
+    "lbu a7, 0(a3)\n"
+    "li t0, 45\n   bne a7, t0, 1f\n"
+    "li a6, 1\n   addi a3, a3, 1\n   j 2f\n"
+    "1:  li t0, 43\n   bne a7, t0, 2f\n"
+    "addi a3, a3, 1\n"
+    "2:  li t0, 15\n   bgeu a5, t0, 4f\n"
+    "lbu a7, 0(a3)\n"
+    "addi a7, a7, -48\n"
+    "li t0, 9\n   bltu t0, a7, 4f\n"
+    "li t0, 10\n   mul a4, a4, t0\n   add a4, a4, a7\n"
+    "addi a3, a3, 1\n   addi a5, a5, 1\n"
+    "j 2b\n"
+    "4:  beqz a5, 9f\n"
+    "lbu a7, 0(a3)\n"
+    //   the case bit folds four compares into two, as x86_64 says.
+    "li t0, 46\n   beq a7, t0, 9f\n"
+    "ori t1, a7, 32\n"
+    "li t0, 101\n   beq t1, t0, 9f\n"
+    "li t0, 120\n   beq t1, t0, 9f\n"
+    "addi t1, a7, -48\n   li t0, 9\n   bgeu t0, t1, 9f\n"
+    "beqz a1, 5f\n"
+    "sd a3, 0(a1)\n"
+    "5:  fcvt.d.l fa0, a4\n"
+    "beqz a6, 6f\n"
+    "fneg.d fa0, fa0\n"
+    "6:  fsd fa0, 0(a2)\n"
+    "li a0, 1\n"
+    ASM_RET
+    "9:  li a0, 0\n"
+    ASM_RET
+    ASM_END(string_to_decimal_short)
 );
 #endif
 #endif // KERNEL_MODE
