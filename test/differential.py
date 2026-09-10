@@ -18827,7 +18827,6 @@ REASONS = {
  "r119": "a missing component and an unreadable directory are reported by the reason the resolver reached rather than the one the kernel gave.",
  "r12": "a split() or match() target that is not an array: ours refuses it when parsing (exit 1), gawk when it runs (exit 2)",
  "r120": "-I asks once for many names, --interactive takes a word, and a dot operand is refused by the kernel rather than by name.",
- "r121": "-I and --interactive with a word are a second prompting policy over the one -i asks for, and --preserve-root with a word names a second root.",
  "r122": "a count written in hexadecimal is not read.",
  "r123": "--random-source is refused because kernel randomness is mandatory here, and the filename-wiping removals are refused because a name is not overwritten before it is unlinked.",
  "r124": "kernel randomness is mandatory here, so --random-source is refused; and a name is not overwritten before it is unlinked, so the wiping removals are refused rather than pretended.",
@@ -109275,14 +109274,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r120",
-  "utility": "rm"
- },
- {
-  "domain": "files",
-  "kind": "bug",
-  "list": "ledger",
-  "option": "-I",
-  "reason_id": "r121",
   "utility": "rm"
  },
  {
