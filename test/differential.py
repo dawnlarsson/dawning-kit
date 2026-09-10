@@ -150,7 +150,11 @@ DOMAIN_FLOOR = {
               "reference's own machine, /etc/bash.bashrc and the bashdb file --debugger "
               "looks for; set_options' are the order two stages of a pipeline trace "
               "themselves in; and xtrace-shape's are PS4 itself, which bash reads "
-              "backslash escapes and a command substitution out of before writing it."),
+              "backslash escapes and a command substitution out of before writing it. "
+              "One of set_options' own is not this domain's to close: the probe that "
+              "asks `hash` about an empty table gets a sentence from bash and nothing "
+              "from this shell, because one hash listing is written under every name "
+              "here and it is dash's, which the builtins ledger pins as a policy."),
     "util_linux": (76810, 81037, 70,
                    "the mount namespace and what a process can watch inside it. "
                    "The slack is wider than other domains keep because the live "
