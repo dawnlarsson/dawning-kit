@@ -61,7 +61,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl reuse_shell audit regex slurp wait writer native probe checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl reuse_shell audit regex slurp wait writer native probe stack checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
 
 describe()
 {
@@ -104,6 +104,7 @@ describe()
         writer)   echo "buffer boundaries, direct policy and write ordering, on three machines" ;;
         native)   echo "arm64 assembly on an arm64 machine, with no emulator in the way" ;;
         probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
+        stack)    echo "what each function puts on the stack, and what a deep walk costs" ;;
         differential_oracle) echo "the differential engine's own checks: comparison, covering arrays, ledger and shrinking" ;;
         text)     echo "the text utilities against GNU coreutils, every option combination the grammar reaches" ;;
         files)    echo "the file utilities against coreutils, by output and by effect on the directory" ;;
@@ -2983,6 +2984,213 @@ riscv_default_startup()
 #       probes existed for a long time and nothing ran them, so a stack of
 #       arguments that arrived wrong, a .bss that arrived dirty or an exit
 #       status that never came back would all have been silent.
+#       What a function puts on the stack, and what a deep walk costs.
+#
+#       Two questions in one lane because they are one failure seen from two
+#       sides. A frame is a number in the disassembly and costs nothing to
+#       look at; a recursive walk turns that number into megabytes of
+#       committed memory, and the first machine with a smaller stack turns it
+#       into a crash. Neither `size`, nor RSS at startup, nor the section
+#       table shows any of it, which is why it went unnoticed for so long:
+#       ls_below held each level's subdirectory names in an array sized
+#       LS_ARENA / 8 -- 128 kB of stack per level of nesting, to
+#       FILE_MAX_DEPTH -- and file_ls_as put another 320 kB under it, so
+#       `ls -R` over a tree anybody can make with mkdir -p walked five
+#       megabytes down the stack. Both are arenas now and the walk needs 320
+#       kB, which is why this lane exists rather than a note somewhere: the
+#       number is only true until somebody puts an array back on the stack.
+#
+#       The ceilings below are pins in the same sense the differential engine
+#       uses the word: they record what a function costs today so that growth
+#       fails here rather than on the machine with the smaller stack. They are
+#       not endorsements. ls_below's is a bug with a ceiling drawn around it,
+#       and the ceiling is what keeps it from getting worse while it waits to
+#       be fixed. A function that shrinks passes; lower its pin when it does,
+#       and delete it when the frame drops under the notice threshold.
+#
+#       Reading frames out of the disassembly is written for x86_64 only. On
+#       arm64 a large frame is built with a scratch register rather than an
+#       immediate, so the same scan would quietly report nothing rather than
+#       fail, and a check that cannot see what it is looking for is worse than
+#       one that says so. The recursion measurement below is arithmetic the
+#       kernel does and runs everywhere.
+STACK_FRAME_NOTICE=32768
+
+#       name ceiling -- the most this function may move %rsp in one go.
+stack_frame_pins()
+{
+        cat <<'PINS'
+text_join 133000
+text_comm 133000
+tools_factor 67000
+tools_dmesg_follow 66000
+text_tail_start 66000
+awk_option_seen 66000
+PINS
+}
+
+#       The largest single stack allocation in each function, base names only:
+#       gcc's .part/.isra/.constprop/.cold clones are the same source function
+#       and would otherwise need a pin each, renamed by every compiler bump.
+stack_frames_of()
+{
+        objdump -d --no-show-raw-insn "$1" 2>/dev/null | awk -v notice="$STACK_FRAME_NOTICE" '
+                /^[0-9a-f]+ <.*>:/ {
+                        name = $2
+                        gsub(/[<>:]/, "", name)
+                        sub(/\.(part|isra|constprop|cold)\.[0-9]+$/, "", name)
+                        sub(/\.cold$/, "", name)
+                }
+                /^ +[0-9a-f]+:\tsub +\$0x[0-9a-f]+,%rsp$/ {
+                        match($0, /0x[0-9a-f]+/)
+                        v = strtonum(substr($0, RSTART, RLENGTH))
+                        #       A borrow written as a subtraction of a huge
+                        #       unsigned constant is not a frame.
+                        if (v < 1073741824 && v > m[name]) m[name] = v
+                }
+                END { for (k in m) if (m[k] >= notice) printf "%d %s\n", m[k], k }
+        ' | sort -rn
+}
+
+stack_frame_check()
+{
+        if [ "$host_arch" != x86_64 ]; then
+                note "stack frames: read from x86_64 disassembly only, and this is $host_arch"
+                return 2
+        fi
+
+        command -v objdump > /dev/null 2>&1 || {
+                note "stack frames: no objdump here"
+                return 2
+        }
+
+        stack_frames_of "$shell_binary" > "$work/frames" || return 1
+        stack_frame_pins > "$work/frame-pins"
+
+        frame_failed=0
+
+        while read -r size name; do
+                [ -n "$name" ] || continue
+                ceiling=$(awk -v n="$name" '$1 == n { print $2 }' "$work/frame-pins")
+
+                if [ -z "$ceiling" ]; then
+                        note "$name puts $size bytes on the stack and has no pin"
+                        note "  a new frame this large is the ls_below shape again; pin it or shrink it"
+                        frame_failed=$((frame_failed + 1))
+                        continue
+                fi
+
+                if [ "$size" -gt "$ceiling" ]; then
+                        note "$name grew to $size bytes of stack, over its $ceiling pin"
+                        frame_failed=$((frame_failed + 1))
+                fi
+        done < "$work/frames"
+
+        [ "$frame_failed" -eq 0 ]
+}
+
+#       What `ls -R` costs, measured the way the failure is met: by giving it
+#       a stack and seeing whether it lives. The ladder is reported rather
+#       than asserted, so the number moves visibly as the frame is fixed; the
+#       assertion is only that the common default still works, because that
+#       is the one whose failure would be a crash on an ordinary machine.
+#
+#       As it stands that assertion has no headroom at all -- the walk needs
+#       the whole 8 MB default -- so this passing is the narrowest possible
+#       pass, and any growth in ls_below's frame turns it into a failure.
+#       That is the intended behaviour of the pin and not a flaky test: the
+#       margin really is zero, and the lane should say so the moment it goes.
+LS_RECURSION_DEPTH=40
+LS_RECURSION_STACK_KB=8192
+
+stack_recursion_check()
+{
+        tree=$work/deep-tree
+        rm -rf "$tree" || return 1
+
+        deep=$tree
+        at=0
+        while [ "$at" -lt "$LS_RECURSION_DEPTH" ]; do
+                deep=$deep/a
+                at=$((at + 1))
+        done
+
+        mkdir -p "$deep" || return 1
+        : > "$deep/leaf" || return 1
+
+        #       A subshell so the limit dies with it, and a limit this shell
+        #       is allowed to set: a hard limit below the ask would otherwise
+        #       report the ulimit's failure as the tool's.
+        #       A frame this size dies on a signal, and the shell announces
+        #       that on its own stderr along with a core file. Both are the
+        #       expected result of the measurement rather than news, so the
+        #       subshell drops its cores and the announcement with them.
+        lowest=none
+        for limit in 16 32 64 128 256 384 512 1024 2048 4096 8192; do
+                ( ulimit -c 0 2>/dev/null
+                  ulimit -s "$limit" 2>/dev/null || exit 111
+                  "$farm/ls" -R "$tree" > /dev/null 2>&1 ) 2>/dev/null
+                case $? in
+                0|1) [ "$lowest" = none ] && lowest=$limit ;;
+                111) ;;
+                esac
+        done
+
+        if [ "$lowest" = none ]; then
+                note "ls -R survived no stack limit up to ${LS_RECURSION_STACK_KB} kB"
+        else
+                note "ls -R over $LS_RECURSION_DEPTH levels needs ${lowest} kB of stack (GNU ls: 16)"
+        fi
+
+        ( ulimit -c 0 2>/dev/null
+          ulimit -s "$LS_RECURSION_STACK_KB" 2>/dev/null || exit 111
+          "$farm/ls" -R "$tree" > /dev/null 2>&1 ) 2>/dev/null
+        outcome=$?
+
+        case $outcome in
+        111)
+                note "ls -R: cannot set a ${LS_RECURSION_STACK_KB} kB stack limit here"
+                return 2 ;;
+        0|1)
+                return 0 ;;
+        *)
+                note "ls -R died with status $outcome under a ${LS_RECURSION_STACK_KB} kB stack"
+                note "  a recursive walk outgrowing the ordinary default is a crash, not a slowdown"
+                return 1 ;;
+        esac
+}
+
+lane_stack()
+(
+failed=0
+
+need_shell || exit 1
+
+frame_outcome=0
+stack_frame_check || frame_outcome=$?
+case $frame_outcome in
+0) tally stack-frames 1 1 ;;
+2) ;;
+*)
+        tally stack-frames 0 1
+        failed=$((failed + 1))
+        ;;
+esac
+
+recursion_outcome=0
+stack_recursion_check || recursion_outcome=$?
+case $recursion_outcome in
+0) tally stack-recursion 1 1 ;;
+2) ;;
+*)
+        tally stack-recursion 0 1
+        failed=$((failed + 1))
+        ;;
+esac
+
+[ "$failed" -eq 0 ]
+)
+
 #
 lane_probe()
 (
@@ -6218,10 +6426,12 @@ lane_kit()
 (
 python3 test/differential.py --harness core_state || exit 1
 python3 test/differential.py --harness canvas_lifetime || exit 1
+python3 test/differential.py --harness canvas_view || exit 1
 python3 test/differential.py --harness audit_shell_functions || exit 1
 python3 test/differential.py --harness code_map || exit 1
 python3 test/differential.py --harness spark_entry || exit 1
 python3 kit/function_audit.py --check || exit 1
+python3 test/differential.py --harness floodlight || exit 1
 python3 test/differential.py --harness surface_coreutils_gap || exit 1
 
 work=$(mktemp -d)
@@ -6743,6 +6953,27 @@ export SPARK_OWNER=base
 export SPARK_OWNER=parent
 /shell -c 'printf "owner-%s\n" "$SPARK_OWNER"'
 ls /monitor.sh | rev
+#
+#       Floodlight, on a running machine.
+#
+#       Everything else about the register is checked in a harness. This is the
+#       only place it is asked on a kernel that booted: the device is there, it
+#       says what this kernel was built saying, and an applet that turns data
+#       into a command cannot start one. rev keeps the answers out of the
+#       command echo, the way every other check here does.
+#
+printf 'fl-device-%s\n' "$(head -c 12 /dev/floodlight | rev)"
+printf 'fl-awk-%s\n' "$(grep -c '^awk .*spawn .*deny' /dev/floodlight)"
+printf 'fl-env-%s\n' "$(grep -c '^env .*spawn .*allow' /dev/floodlight)"
+#
+#       Reversed, because the console echoes the command before the machine
+#       answers it: a marker written plainly here is in the transcript whether
+#       or not anything ran, which is a check that passes when the thing it
+#       watches is broken. Every other answer in this file is reversed for the
+#       same reason.
+#
+printf 'fl-esc-%s\n' "$(awk 'BEGIN { system("printf out") }' 2>/dev/null | rev)"
+printf 'fl-named-%s\n' "$(env /bin/dash -c 'printf ready' 2>/dev/null | rev)"
 printf 'alias-%s\n' "$(readlink /mointor.sh | rev)"
 printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
 printf 'mount-link-%s\n' "$(readlink /bin/mount | rev)"
@@ -6852,6 +7083,28 @@ never()
 #       Without these two the failure reads as six assertions about arithmetic
 #       and uname going missing, which is a long way from the cause.
 #
+#
+#       The register on a booted machine: present, saying what it was built
+#       saying, and actually stopping the applet it names.
+#
+says 'floodlight device'   'fl-device-thgildoolf #'
+says 'floodlight has awk'  'fl-awk-1'
+says 'floodlight has env'  'fl-env-1'
+says 'awk was asked'       'fl-esc-'
+never 'awk cannot escape'  'fl-esc-tuo'
+says 'a named applet runs' 'fl-named-ydaer'
+
+#
+#       Nothing the kernel felt the need to warn about.
+#
+#       A warning is not a crash, so nothing else here would notice one: the
+#       machine boots, every check passes, and the log fills up. Floodlight put
+#       one in for every process that read it -- misc_open leaves the
+#       miscdevice in private_data and seq_open warns on anything it finds
+#       there -- and the boot lane said everything agreed.
+#
+never 'kernel warned'      'cut here'
+
 never 'no invalid opcode'  'invalid opcode'
 never 'no protection fault' 'general protection fault'
 never 'init survived'      'Attempted to kill init'

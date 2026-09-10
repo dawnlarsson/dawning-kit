@@ -111,23 +111,27 @@ _Static_assert(sizeof(struct header) == SPARK_HEADER_SIZE,
 // the kernel ioctl macros to talk to it. The size is part of the encoding, so
 // this changes if the request struct does. Generation-keyed environments make
 // repeated launches on one open descriptor a pointer handoff after the first.
-#define SPARK_IOCTL_SPAWN 0x40307301u
+//
+// One opcode carries every launch. What used to be five differed only in two
+// independent booleans and how many descriptors trailed the request, so the
+// kernel decoded a cross product of them from the opcode number and copied
+// the descriptors in a second time at an offset that depended on which one
+// arrived. Both now live in the request itself, where a caller can set them
+// in any combination and the loader reads them in the one copy it already
+// does.
+#define SPARK_IOCTL_SPAWN 0x40407301u
 
-// Same request, with the shell's ENOEXEC rule: executable text without a #!
-// line is handed to /bin/sh. Kept separate so raw spawn remains an exact
-// execve-like interface and callers that do not want shell interpretation do
-// not acquire it accidentally.
-#define SPARK_IOCTL_SPAWN_SHELL 0x40307304u
+// The shell's ENOEXEC rule: executable text without a #! line is handed to
+// /bin/sh. Off by default so a raw spawn stays an exact execve-like interface
+// and callers that do not want shell interpretation cannot acquire it by
+// accident.
+#define SPARK_SPAWN_SHELL 0x1u
 
-// Run the argv[0] utility in the immutable system /shell image.
-#define SPARK_IOCTL_SPAWN_TOOL 0x40307307u
+// Take argv[0] as a utility in the immutable system /shell image rather than
+// as a path to open.
+#define SPARK_SPAWN_TOOL 0x2u
 
-// The same launch with stdout and stderr installed before exec.
-#define SPARK_IOCTL_SPAWN_TOOL_TO 0x40387308u
-
-// _IOW('s', 9, struct spawn_into). The shell's ENOEXEC rule, with stdin,
-// stdout and stderr installed before exec: one pipeline stage.
-#define SPARK_IOCTL_SPAWN_SHELL_INTO 0x40407309u
+#define SPARK_SPAWN_FLAGS (SPARK_SPAWN_SHELL | SPARK_SPAWN_TOOL)
 
 // _IOR('s', 2, struct stats). Nanoseconds accumulated inside the kernel,
 // so the split between creating the task and loading the image is measured
@@ -309,6 +313,25 @@ _Static_assert(sizeof(struct snapshot_request) == 32,
 // _IOWR('s', 9, struct snapshot_request)
 #define SPARK_IOCTL_SNAPSHOT 0xc0207309u
 
+/*
+        One launch request.
+
+        stdio names the child's standard descriptors, and a pipeline stage is
+        the reason it is here. Every stage of "a | b | c" is a fresh program
+        with a pipe on one side and a pipe on the other, and the shell had no
+        way to say so: it forked itself once per stage so the child could
+        arrange its own descriptors, and paid a page table copy each time for
+        an address space the child discards at exec. Naming them in the
+        request lets a stage be spawned rather than forked.
+
+        A descriptor of -1 is left alone, so a stage at either end of the
+        pipeline keeps the shell's own. Every end the shell still holds is
+        inherited by the child as a copy, the same as a fork, so the shell
+        opens pipeline pipes close-on-exec: the three named here are installed
+        without that flag and survive, and every other copy goes when the
+        image loads. A reader that inherited its own write end would wait for
+        an end of file that could never arrive.
+*/
 struct spawn {
         unsigned long path;       // user pointer, NUL terminated
         unsigned long argv;       // user pointer to the flat argv block
@@ -318,37 +341,12 @@ struct spawn {
         unsigned int envp_bytes;
         unsigned int envp_count;
         unsigned long envp_generation; // 0 copies; equal nonzero values reuse
+        unsigned int flags;       // SPARK_SPAWN_*, none of them required
+        int stdio[3];             // stdin, stdout, stderr; -1 leaves one alone
 };
 
-struct spawn_to {
-        struct spawn spawn;
-        int output;
-        int error;
-};
-
-/*
-        A launch with all three standard descriptors installed.
-
-        A pipeline stage is the reason this exists. Every stage of
-        "a | b | c" is a fresh program with a pipe on one side and a pipe on
-        the other, and the shell had no way to say so: it forked itself once
-        per stage so the child could arrange its own descriptors, and paid a
-        page table copy each time for an address space the child discards at
-        exec. Naming the descriptors in the request lets a stage be spawned
-        rather than forked.
-
-        Every end the shell still holds is inherited by the child as a copy,
-        the same as a fork, so the shell opens pipeline pipes close-on-exec:
-        the three named here are installed without that flag and survive,
-        and every other copy goes when the image loads. A reader that
-        inherited its own write end would wait for an end of file that could
-        never arrive.
-*/
-struct spawn_into {
-        struct spawn spawn;
-        int input;
-        int output;
-        int error;
-};
+// Userspace fills this field by field and the loader reads it in one
+// copy_from_user, so the two only agree while the size does.
+_Static_assert(sizeof(struct spawn) == 64, "spark spawn request ABI");
 
 #endif

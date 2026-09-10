@@ -132,8 +132,40 @@ static unsigned long canvas_pane_budget(void)
         return (totalram_pages() / 4) * PAGE_SIZE;
 }
 
+/*
+        A pane going away, and everything that was still pointing at it.
+
+        The desktop remembers a particular window between events -- what a
+        hand has hold of, what it last pressed, where the keys go -- and every
+        one of those outlives the window unless it is told otherwise. This was
+        written at window_release's call site, which left the other caller
+        freeing a pane the desktop could still be holding: console_stop runs
+        on the way out of the module, and a console that had been clicked was
+        freed with desktop.focused still naming it.
+
+        Here rather than there, so that freeing a pane is the whole of
+        forgetting one and a third caller cannot be written that forgets to.
+*/
 static void pane_free(struct pane *pane)
 {
+        if (desktop.dragging == pane)
+                desktop.dragging = NULL;
+
+        if (desktop.resizing == pane)
+                desktop.resizing = NULL;
+
+        if (desktop.barring == pane)
+                desktop.barring = NULL;
+
+        if (desktop.press_pane == pane)
+                desktop.press_pane = NULL;
+
+        // Who gets the keys instead is the caller's: window_release hands
+        // them to the window underneath, and nothing is left to hand them to
+        // when the module is going away.
+        if (desktop.focused == pane)
+                desktop.focused = NULL;
+
         list_del(&pane->link);
         canvas_pane_bytes -= pane->bytes;
         vfree(pane->mapping);
@@ -435,6 +467,38 @@ static _Bool pane_view_live(struct pane *pane)
 }
 
 /*
+        The view is never later in the ring than following the end would be.
+
+        pane_view_set refuses to place the view past the last screenful, so
+        that there is always a full window of lines below it. What it cannot
+        do is keep that true afterwards: the rule is about where the end is,
+        and the end moves. A window made taller shows more rows, and a window
+        made wider folds its lines into fewer -- both pull the top of the last
+        screenful EARLIER in the ring, and a view left where it was is then
+        past it. compose_cells draws what there is and fills the rest with
+        blank rows, so a scrolled-back window dragged taller grew a band of
+        empty rows under its last line and kept them until the wheel moved.
+
+        The same test pane_view_set makes, made again against the size the
+        window is now.
+*/
+static _Bool pane_view_clamp(struct pane *pane)
+{
+        unsigned int live, live_skip;
+
+        if (!pane->cells || pane->view == PANE_LIVE)
+                return false;
+
+        live = pane_view_at(pane, PANE_LIVE, &live_skip);
+
+        if (pane->view < live ||
+            (pane->view == live && pane->view_skip < live_skip))
+                return false;
+
+        return pane_view_live(pane);
+}
+
+/*
         A window, of pixels or of cells.
 
         An owned one is the compositor's own: nothing maps it, so there is no
@@ -601,23 +665,49 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
         is rounded down to one and the program is told how many it now has --
         it is the program that has to lay its text out again.
 */
+/*
+        The size a window of cells will actually be given, which is a whole
+        number of them and never more than the ring was cut for.
+
+        Separate from pane_regrid because a resize has to know the answer
+        before it can decide where to put the window. The edge a hand is not
+        holding stays where it was only if the rounding is taken off the edge
+        it IS holding, and that cannot be arranged after the fact -- so the
+        one rule lives here and both of them ask it.
+*/
+static void pane_grid_fit(struct pane *pane, int *width, int *height)
+{
+        unsigned int columns, rows;
+
+        // A window of pixels is whatever size it was asked for; it has no
+        // cells to be a whole number of, and no ceiling but its own buffer.
+        if (!pane->cells)
+                return;
+
+        columns =
+            min((unsigned int)(max(*width - canvas_bar, 0) / canvas_cell_w),
+                pane->max_columns);
+        rows = min((unsigned int)(*height / canvas_cell_h), pane->max_rows);
+
+        *width = (int)max(columns, 1u) * canvas_cell_w + canvas_bar;
+        *height = (int)max(rows, 1u) * canvas_cell_h;
+}
+
 static void pane_regrid(struct pane *pane)
 {
         if (!pane->cells)
                 return;
 
-        pane->columns = min((unsigned int)(max(pane->width - canvas_bar, 0) / canvas_cell_w),
-                            pane->max_columns);
-        pane->rows = min((unsigned int)(pane->height / canvas_cell_h), pane->max_rows);
+        pane_grid_fit(pane, &pane->width, &pane->height);
 
-        if (!pane->columns)
-                pane->columns = 1;
+        // Exact, because the fit is what made these a whole number of cells.
+        pane->columns = (unsigned int)(pane->width - canvas_bar) / canvas_cell_w;
+        pane->rows = (unsigned int)pane->height / canvas_cell_h;
 
-        if (!pane->rows)
-                pane->rows = 1;
-
-        pane->width = (int)pane->columns * canvas_cell_w + canvas_bar;
-        pane->height = (int)pane->rows * canvas_cell_h;
+        // Against the shape just worked out, not the one it replaced: whether
+        // the view still has a full window of lines below it is a question
+        // about the rows there are now.
+        pane_view_clamp(pane);
 
         /*
                 A resize reaches here from drag.c without going through
@@ -669,8 +759,13 @@ static void pane_refresh(struct pane *pane)
 
                 pane->width = (int)min(width, pane->max_width);
                 pane->height = (int)min(height, pane->max_height);
-                pane->x = READ_ONCE(shared->x);
-                pane->y = READ_ONCE(shared->y);
+                // Clamped the way z is, and for the same reason: these
+                // are a program's numbers and everything drawn is measured
+                // from them.
+                pane->x = clamp(READ_ONCE(shared->x),
+                                -WINDOW_COORD_MAX, WINDOW_COORD_MAX);
+                pane->y = clamp(READ_ONCE(shared->y),
+                                -WINDOW_COORD_MAX, WINDOW_COORD_MAX);
         }
         pane->z = clamp(READ_ONCE(shared->z), -WINDOW_Z_MAX, WINDOW_Z_MAX);
         pane->region = READ_ONCE(shared->region);
@@ -924,6 +1019,22 @@ static void pane_damage_rows(struct pane *pane, unsigned int row, unsigned int c
 }
 
 /*
+        The strip the scrollbar is drawn in, in desktop coordinates.
+
+        The bounding box, worked out arithmetically, and never pane_bar: that
+        walks all five hundred lines of the ring twice over to place the thumb
+        exactly, which is the right price to pay once inside compose_bar --
+        which rejects by this same box first -- and the wrong one to pay for
+        every window on every pass of the refresh loop.
+*/
+static void pane_damage_bar(struct pane *pane)
+{
+        desktop_damage(pane->x + pane->width - canvas_bar,
+                       pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0),
+                       canvas_bar, (int)pane->rows * canvas_cell_h);
+}
+
+/*
         Reads every shared page and records what moved.
 
         A program that changed a few rows of text should not cost a repaint of
@@ -960,6 +1071,21 @@ static void desktop_refresh_panes(void)
                                 pane->damage_rows = 0;
                                 pane_frame(pane, &fx, &fy, &fw, &fh);
                                 desktop_damage(fx, fy, fw, fh);
+                                continue;
+                        }
+
+                        /*
+                                Scrolled back, the same as a program's window
+                                below: the rows are not what is being shown,
+                                so only the bar is redrawn -- and the report
+                                is taken either way, or the desktop would be
+                                told for ever that something had changed.
+                        */
+                        if (pane->cells && pane->view != PANE_LIVE)
+                        {
+                                pane_damage_bar(pane);
+                                pane->damage_row = 0;
+                                pane->damage_rows = 0;
                                 continue;
                         }
 
@@ -1005,15 +1131,30 @@ static void desktop_refresh_panes(void)
                                  (unsigned int)pane->z != was_z ||
                                  pane->style != was_style;
 
-                /*
-                        Nothing that reaches the screen changed. A view that
-                        has been scrolled away from counts as nothing however
-                        much the program drew, because what it drew is not
-                        what is being shown.
-                */
-                if (!reshaped &&
-                    (pane->sequence == was_sequence || pane->view != PANE_LIVE))
+                // Nothing that reaches the screen changed.
+                if (!reshaped && pane->sequence == was_sequence)
                         continue;
+
+                /*
+                        Scrolled back: what the program drew is not what is
+                        being shown, so none of its rows are repainted.
+
+                        The bar is the exception, and used to be skipped with
+                        them. It is a picture of how much there is and how far
+                        down it you are looking, and both of those change with
+                        every line that arrives -- so a window left scrolled
+                        back while its program kept writing showed a thumb
+                        that grew steadily more wrong about a ring that had
+                        moved on underneath it, and only told the truth again
+                        once the wheel was touched.
+                */
+                if (!reshaped && pane->view != PANE_LIVE)
+                {
+                        if (pane->cells)
+                                pane_damage_bar(pane);
+
+                        continue;
+                }
 
                 // Anything but text changing in place is easier to repaint
                 // whole than to reason about.
@@ -1205,21 +1346,8 @@ static void window_release(struct file *file)
 
         mutex_lock(&desktop.lock);
 
-        if (desktop.dragging == pane)
-                desktop.dragging = NULL;
-
-        if (desktop.resizing == pane)
-                desktop.resizing = NULL;
-
-        if (desktop.barring == pane)
-                desktop.barring = NULL;
-
-        if (desktop.press_pane == pane)
-                desktop.press_pane = NULL;
-
+        // Asked before the free, which is what clears it.
         refocus = desktop.focused == pane;
-        if (refocus)
-                desktop.focused = NULL;
 
         pane_free(pane);
 

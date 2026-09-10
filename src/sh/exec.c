@@ -2144,7 +2144,7 @@ fn job_execute_tool(positive which)
                 shell_default(JOB_SIGNAL_TTY_OUTPUT);
                 exec_child_began();
                 program_arguments_use(shell_argv, (b32)shell_argc);
-                exit(shell_tool_call(which));
+                exit(shell_tool_call_in(which, true));
         }
 
         if (child < 0)
@@ -7926,8 +7926,31 @@ static b32 exec_simple(b32 index)
                     word[parse_word_name_lengths[word_index] - 1] == ']')
                 {
                         shell_argv[at] = word;
-                        string_format(log_error, "%.*s: not a valid identifier\n",
-                            (int)parse_word_name_lengths[word_index], word);
+                        /*
+                                string_format knows %s %p %b %f and %%, and
+                                drops anything else with its percent -- so
+                                "%.*s" printed the tail of the format itself,
+                                "*s: not a valid identifier", and the name
+                                never appeared. The name is cut into a buffer
+                                and written whole, quoted the way Bash quotes
+                                it.
+
+                                dash does not come here at all: it takes
+                                a[1]=x for a command and reports it not
+                                found, which is a control-flow difference
+                                rather than a wording one and belongs to
+                                whoever is holding the shell domain.
+                        */
+                        {
+                                positive named = parse_word_name_lengths[word_index];
+                                p8 shown[FILE_NAME_MAX];
+                                positive kept = min(named, (positive)FILE_NAME_MAX - 1);
+
+                                memory_copy_apart(shown, (address_any)word, kept);
+                                shown[kept] = 0;
+                                string_format(log_error,
+                                    "`%s': not a valid identifier\n", shown);
+                        }
                         if (!exec_assignment_error(exec_assignment_error_status(false, shell_argv[first])))
                                 break;
                         continue;

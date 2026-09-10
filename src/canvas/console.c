@@ -70,15 +70,19 @@ static void console_put_line(struct console *console, const char *text,
         pane->head = window->head;
 
         /*
-                Only while the view is at the end: scrolled back, what arrives
-                changes the ring and not what is being looked at, which is the
-                whole point of having scrolled back.
+                Said whether or not the view is at the end, because what it
+                means is "the ring moved", not "repaint these rows".
+
+                Scrolled back, what arrives changes the ring and not what is
+                being looked at -- but the bar beside it is a picture of the
+                ring, so it does change, and the refresh loop is where that
+                is decided. Saying nothing here instead was a console whose
+                only report was one nobody wanted while scrolled back, so
+                desktop_sequence_changed answered that nothing had happened
+                and the loop that would have redrawn the bar never ran.
         */
-        if (pane->view == PANE_LIVE)
-        {
-                pane->damage_row = 0;
-                pane->damage_rows = pane->grid_rows;
-        }
+        pane->damage_row = 0;
+        pane->damage_rows = pane->grid_rows;
 
         spin_unlock_irqrestore(&console_cells, flags);
 

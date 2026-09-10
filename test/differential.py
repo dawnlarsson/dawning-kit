@@ -155,43 +155,70 @@ DOMAIN_FLOOR = {
               "asks `hash` about an empty table gets a sentence from bash and nothing "
               "from this shell, because one hash listing is written under every name "
               "here and it is dash's, which the builtins ledger pins as a policy."),
-    "util_linux": (76810, 81037, 70,
-                   "the mount namespace and what a process can watch inside it. "
-                   "The slack is wider than other domains keep because the live "
-                   "families are counted again: 185 rows that said a case "
-                   "contradicts itself were lslocks padding a column by "
-                   "whatever the box happened to hold, and they are gone. "
-                   "The column families this floor used to name are not the gap "
-                   "and mostly never were: lsblk's default listing is the "
-                   "reference's byte for byte, tree and all, and findmnt's "
-                   "default columns are TARGET SOURCE FSTYPE OPTIONS as 2.42's "
-                   "are -- what findmnt lacks is the tree, so its plain listing "
-                   "is exactly the reference's --list. Only lsfd differs by "
-                   "columns, and matching them alone would gate nothing: asked "
-                   "about one process 2.42 writes 44 rows to this one's 4, "
-                   "listing exe, cwd, rtd, the pidfd, every namespace and every "
-                   "file-backed mapping beside the numbered descriptors, so the "
-                   "rows differ before the columns do. What is left, largest "
-                   "first: umount_live and mount_live (1695 of the 4181), where "
-                   "--all-targets reaches mounts the reference leaves alone and "
-                   "a bind or a remount that half succeeds is 1 to the "
-                   "reference and 32 here; flock_live and flock, the lock a "
-                   "second process holds and -E read at each occurrence rather "
-                   "than the last; findmnt_live, still the tree; ipcrm_live, "
-                   "ipcs_live and lsipc_live, the verbose removals, the Times, "
-                   "Creators and PIDs listings, and a column of the "
-                   "shared-memory listing a space wider than the reference's; "
-                   "lsfd_live, the row set above; bits, whose width is checked "
-                   "at every occurrence and against a maximum and whose list "
-                   "can be read from the standard input; prlimit, which sets "
-                   "nothing until every limit it was given parses and writes "
-                   "the table even when the command cannot be run; rfkill and "
-                   "uclampset, whose long usage banners are a page of text "
-                   "each; lsblk_live, where -t and -S ask for the topology and "
-                   "SCSI metadata this one does not carry; and umount, where "
-                   "-A, -O and -R choose which lookup answers first, so one "
-                   "unmounted name is not mounted to one of them and must be "
-                   "superuser to another"),
+    "util_linux": (79040, 81037, 100,
+                   "listings this build does not carry, and a handful of "
+                   "usage banners. The mount namespace is no longer the gap: "
+                   "umount_live agrees on all 8576 of its cases and "
+                   "mount_live on 5397 of 5445, and flock, which the last "
+                   "floor put beside them, is down to one case from 314. "
+                   "What is left, largest first. lsfd (178): asked about one "
+                   "process 2.42 lists exe, cwd, rtd, the pidfd, ten "
+                   "namespaces and every file-backed mapping beside the nine "
+                   "numbered descriptors this build stops at, and names them "
+                   "in columns this build has not got (ASSOC, XMODE, SOURCE, "
+                   "MNTID), with TCP and eventpoll where this one says SOCK "
+                   "and anon_inode. The rows are the feature and the columns "
+                   "follow them; it is the one large piece of work in this "
+                   "list. findmnt (168): the tree is drawn now, and "
+                   "--submounts with it, so what is left is JSON, whose "
+                   "shape is nested children rather than rows, the columns "
+                   "mountinfo does not carry (LABEL, UUID, SIZE, "
+                   "PROPAGATION), and the widths -- 2.42 right-aligns ID and "
+                   "PARENT where this one does not, and shares the leftover "
+                   "width out between the columns by another rule, which "
+                   "moves MAJ:MIN within its field. bits (129): the width is "
+                   "checked at each occurrence and against a maximum, and "
+                   "the list can be read from the standard input. prlimit "
+                   "(121): it sets nothing until every limit it was given "
+                   "parses, and writes the table even when the command "
+                   "cannot be run. rfkill (113) and uclampset (93): long "
+                   "usage banners, a page of text each. ipcrm_live (109): "
+                   "bulk removal (-a) and the POSIX names, refused outright. "
+                   "lsblk_live (90) and lsblk (25): -t and -S ask for "
+                   "topology and SCSI metadata this build does not carry, "
+                   "and -Q, --filter and --ct-filter are an expression "
+                   "language. chrt (84): which of the deadline parameters is "
+                   "checked first, and 127 against 1 when the command cannot "
+                   "be run. lsipc_live (73), ipcs_live (44) and ipcmk_live "
+                   "(23): the detail, time, pid, creator and limits "
+                   "listings, the global summary and POSIX IPC. taskset "
+                   "(67), mount (66), mount_live (48) and umount (31): a "
+                   "mask with an empty element, mount -a -o remount reading "
+                   "mountinfo rather than fstab, and a propagation change "
+                   "carrying other options -- 2.42 applies those through "
+                   "mount_setattr(2) as attributes of the one call, so `-o "
+                   "noexec --make-rprivate /` really does make / noexec, "
+                   "where this one refuses the combination. lscpu (46): "
+                   "--arm-id and --arm-model want a static ARM implementer "
+                   "table. Then blkid (41), waitpid (33), renice (31) and a "
+                   "long tail of ten and under. Nine cases are the pinning "
+                   "mechanism rather than behaviour: seven (wipefs -a, "
+                   "--all, -o and blockdev --report) sit under ledger rows "
+                   "that say the whole option is refused, which is too broad "
+                   "-- `wipefs -a --no-act` lists what it would erase and "
+                   "agrees -- and an option row is all or nothing, so "
+                   "narrowing it is not expressible and dropping the four "
+                   "rows would move several hundred refusals out of the pins "
+                   "and into this gap; the other two are findmnt cases that "
+                   "were leaning on the -R row for a refusal of their own, "
+                   "and it had to go once --submounts worked. Four runs of "
+                   "the lane measured 79084, 79123, 79128 and 79134 of "
+                   "these; the number recorded here sits under the lowest, "
+                   "because setsid alone gives up about thirty cases when "
+                   "the machine is busy. Measure it the way the lane does, "
+                   "with the work under /tmp: a run whose root is on a "
+                   "filesystem mounted without nosuid and nodev cannot see "
+                   "the mounts this build used to break"),
     "misc": (49780, 50406, 20,
              "unfinished work, not undecidable answers. The note this floor "
              "used to carry named script's transcript timing first, and that "
@@ -219,21 +246,41 @@ DOMAIN_FLOOR = {
              "quarter on twenty-four jobs -- and the wider walk is what "
              "reaches factor's remaining rows and who's, which the narrow "
              "one never asked about."),
-    "files": (58260, 73330, 100,
-              "the domain moved from singles to full in one pass, so most of "
-              "what pairwise, three-wise and the powerset first reached is "
-              "answered but not yet pinned. Where it was looked at: mkdir and "
-              "mktemp read -m, -p and --tmpdir as one value each where the "
-              "reference reads every occurrence of them; kill's option order "
-              "is util-linux's own hand-rolled one and not a getopt; whereis "
-              "calls combinations bad usage that these accept; cp --debug "
-              "names the transfer method the kernel chose; and chmod, chown "
-              "and chgrp walk no symbolic link under -R, so -L asks for a "
-              "traversal they do not do. realpath, shred, touch, truncate, "
-              "csplit, rm and rename have not been looked at. The slack is "
-              "wide because the denominator itself moves: seventy or so cases "
-              "a run are dropped as invalid oracles, and which ones depends "
-              "on how loaded the machine is"),
+    "files": (66900, 73339, 150,
+              "6353 cases are still untriaged, and a dozen causes hold most "
+              "of them. kill, 1141: util-linux's option loop is hand-rolled "
+              "and not a getopt -- it counts its arguments before it reads "
+              "them, so a line with one too many is refused for its length "
+              "where this one refuses a word inside it, and a word beginning "
+              "with a dash that it does not know is read as a signal name "
+              "rather than as an option. realpath, 915: an empty "
+              "--relative-base is refused here and read as the empty name "
+              "there; a name outside --relative-base is still measured from "
+              "--relative-to where the reference falls back to the whole "
+              "path; and a --relative-to that is not there is not noticed at "
+              "all. cp 910, ln 464, xargs 428, mv "
+              "361, install 124 and split 88 are all one shape: the "
+              "reference is a getopt loop that reads each option's word where "
+              "it is written, so of two bad words the first written is the "
+              "one reported, and these read several of them only after the "
+              "whole line is in. ls 106, dir 119 and vdir 107: the target of "
+              "a symbolic link in a long listing is written without the "
+              "colour and the hyperlink the reference gives it, and a name "
+              "holding a shell metacharacter is written unescaped. mktemp, "
+              "104: the six X's are filled from kernel randomness, so the "
+              "name printed and the file made are different every run and can "
+              "never be the reference's. The rest is a long tail of tools "
+              "each with a handful of orderings and features left -- find "
+              "213, rm 210, touch 128, hardlink 121, env 110, chmod 88, date "
+              "86, cal 77, csplit 68, chown 58, mknod 58, namei 57, seq 54, "
+              "chgrp 48, readlink 47, du 30, rename 14, pathchk 12, shuf 6, "
+              "df 1. Twenty-nine ledger rows -- find's twenty-four, "
+              "hardlink's four and du's one -- carry reason_unverified: their "
+              "answers moved before this branch began and their sentences "
+              "have not been re-checked against them. The slack covers the "
+              "denominator, which moves on its own: sixty or so cases a run "
+              "are dropped as invalid oracles, and which ones depends on how "
+              "loaded the machine is"),
 }
 DOMAINS = ("text", "files", "misc", "util_linux", "shell", "builtins", "awk")
 SHELL_MODES = {"bash": ("/bin/bash", [], "bash"),
@@ -1868,6 +1915,73 @@ def self_test():
             self.assertEqual([n for n in named if n not in described], [],
                              "a lane nothing says the purpose of")
 
+        def test_every_harness_is_registered_defined_and_invoked(self):
+            """A harness that loses its registration stops running and says
+            nothing, which is the same silence as a lane leaving the list.
+            Three spellings have to agree here too: the key in HARNESS_CHECKS,
+            the function it names, and the --harness word test/run asks for.
+
+            This is not hypothetical. The floodlight harness was reverted whole
+            twice while it was being written, and both times the suite went on
+            printing that everything agreed -- a missing key is not an error,
+            it is simply a check nobody runs.
+
+            The two silences worth guarding are a key that vanishes and a
+            --harness word nothing answers. A renamed function is loud already
+            and needs no help."""
+            import ast
+            import re
+            source = Path(__file__).resolve().read_text()
+            tree = ast.parse(source)
+
+            defined = {node.name for node in tree.body
+                       if isinstance(node, ast.FunctionDef)}
+
+            registered = {}
+            for node in tree.body:
+                if not isinstance(node, ast.Assign):
+                    continue
+                if not any(isinstance(t, ast.Name) and t.id == "HARNESS_CHECKS"
+                           for t in node.targets):
+                    continue
+                self.assertIsInstance(node.value, ast.Dict,
+                                      "HARNESS_CHECKS is not written as a literal")
+                for key, value in zip(node.value.keys, node.value.values):
+                    self.assertIsInstance(key, ast.Constant,
+                                          "a HARNESS_CHECKS key is not a plain name")
+                    self.assertIsInstance(value, ast.Name,
+                                          f"{key.value} is registered to something "
+                                          "other than a named function")
+                    registered[key.value] = value.id
+
+            self.assertTrue(registered, "HARNESS_CHECKS is empty or not a literal")
+
+            #      Python catches this one on its own -- a key naming a
+            #      function that is gone is a NameError before this file
+            #      finishes loading, so nothing runs at all. Kept because it
+            #      costs nothing and stops being free the day this dictionary
+            #      is built from anything but literal names.
+            missing = sorted(name for name, function in registered.items()
+                             if function not in defined)
+            self.assertEqual(missing, [],
+                             "registered to a function this file does not define: "
+                             + ", ".join(missing))
+
+            runner = Path(__file__).resolve().parent / "run"
+            if not runner.is_file():
+                self.skipTest("test/run is not beside this file")
+
+            asked = set(re.findall(r"--harness\s+(\w+)", runner.read_text()))
+            unknown = sorted(asked - set(registered))
+            self.assertEqual(unknown, [],
+                             "test/run asks for a harness HARNESS_CHECKS has no key "
+                             "for: " + ", ".join(unknown))
+
+            #      The other direction is deliberately not an error: a harness
+            #      may be registered for a person to run by hand without any
+            #      lane calling it. Silence is only a fault when something is
+            #      asking and nothing answers.
+
         def test_no_definition_in_this_file_shadows_another(self):
             """The same hazard from the other side. Assembling modules into
             one file lets a name arrive twice, and the later one wins in
@@ -3501,18 +3615,23 @@ def awk_extra():
     names, so adding one does not reshuffle another."""
     rows = []
     for name, generator, count in (
-            ("expressions", awk_gen_expressions, 180),
-            ("printf", awk_gen_printf, 180),
-            ("fields", awk_gen_fields, 200),
-            ("strings", awk_gen_strings, 200),
-            ("control", awk_gen_control, 160),
-            ("getline", awk_gen_getline, 70),
-            ("redirect", awk_gen_redirect, 70),
-            ("cmdline", awk_gen_cmdline, 90),
-            ("regex", awk_gen_regex, 180),
-            ("syntax", awk_gen_syntax, 100),
-            ("numbers", awk_gen_numbers, 120),
-            ("records", awk_gen_records, 30)):
+            #       The seed is the generator's name, so a larger count
+            #       carries the same sequence further rather than dealing a
+            #       new one: every program these made before, they still
+            #       make. This is awk's budget dial, and the language has
+            #       more surface than the first count reached.
+            ("expressions", awk_gen_expressions, 900),
+            ("printf", awk_gen_printf, 900),
+            ("fields", awk_gen_fields, 1000),
+            ("strings", awk_gen_strings, 1000),
+            ("control", awk_gen_control, 800),
+            ("getline", awk_gen_getline, 350),
+            ("redirect", awk_gen_redirect, 350),
+            ("cmdline", awk_gen_cmdline, 450),
+            ("regex", awk_gen_regex, 900),
+            ("syntax", awk_gen_syntax, 500),
+            ("numbers", awk_gen_numbers, 600),
+            ("records", awk_gen_records, 150)):
         rows.extend(generator(awk_seeded(name), count))
     rows.extend(awk_audit())
     rows.extend(awk_refusals())
@@ -15380,8 +15499,10 @@ typedef int64_t s64;
 #define clamp_t(t,a,b,c) clamp((t)(a),(t)(b),(t)(c))
 static unsigned allocations, fail_allocation, copies, fail_copy, failures, checks;
 static unsigned cpu_records, network_records, growing, captures;
-static void mutex_lock(int *lock) { assert(!*lock); *lock=1; }
-static void mutex_unlock(int *lock) { assert(*lock); *lock=0; }
+/* Takes void * so it serves both a bare int lock and a struct mutex whose
+   first member is one. */
+static void mutex_lock(void *held) { int *lock=held; assert(!*lock); *lock=1; }
+static void mutex_unlock(void *held) { int *lock=held; assert(*lock); *lock=0; }
 static void *kvrealloc(void *old, size_t bytes, int flags) {
     (void)flags;
     return ++allocations == fail_allocation ? NULL : realloc(old, bytes);
@@ -15453,11 +15574,15 @@ static struct output *output_by_index(unsigned index) { return index ? NULL : &s
 static int point_in_rect(int x,int y,int w,int h,int px,int py) {
     return px>=x && px<x+w && py>=y && py<y+h;
 }
-static unsigned regrids,wakes;
+static unsigned regrids,wakes,view_clamps;
 static void console_regrid(struct pane *p) { (void)p;regrids++; }
+// The ring lives on the real struct pane, not this geometry mock; what this
+// harness can say is that a reshape asks the view whether it still fits.
+static _Bool pane_view_clamp(struct pane *p) { (void)p;view_clamps++;return 0; }
 static void wake_up_interruptible(int *wait) { (void)wait;wakes++; }
 '''
-    source += section(pane, "static void pane_regrid", "static void pane_refresh")
+    source += section(pane, "/*\n        The size a window of cells will actually be given",
+                      "static void pane_refresh")
     source += r'''
 static void pane_limits(struct pane *p,int *w,int *h) { *w=p->max_width; *h=p->max_height; }
 static void pane_reshape(struct pane *p,int x,int y,int w,int h) {
@@ -15509,50 +15634,169 @@ typedef unsigned refcount_t;
 #define kvfree free
 #define memory_first_of memchr
 '''
-    source += section(core, "struct spawn_strings", "struct pane;")
-    source += section(core, "static int copy_strings", "static long do_spawn")
     source += r'''
-struct file { int unused; };
-static struct spawn *spawn_request;
-static const char *spawn_path;
-static int spawn_descriptors[3], spawn_shell, spawn_calls;
-static long do_spawn(struct file *file, struct spawn *request, _Bool shell,
-                     const char *path, int input, int output, int error) {
-    (void)file; spawn_calls++; spawn_request=request; spawn_shell=shell; spawn_path=path;
-    spawn_descriptors[0]=input; spawn_descriptors[1]=output; spawn_descriptors[2]=error;
-    return 321;
+#include <stdbool.h>
+struct mutex { int locked; };
+struct pid; struct cred; struct pane;
+#ifndef array_count
+#define array_count(a) (sizeof(a)/sizeof((a)[0]))
+#endif
+#define refcount_dec_and_test(p) (--*(p) == 0)
+'''
+    source += section(core, "struct spawn_strings",
+                      "#ifdef CONFIG_MOONWATER_CANVAS\n#include <linux/workqueue.h>")
+    # The real request path, not a stub: one opcode now carries every launch,
+    # so what used to be decided by the opcode number -- interpretation policy
+    # and the descriptors -- is decided by fields the caller controls, and the
+    # rejection of a flag this kernel does not define is the boundary.
+    source += r'''
+struct file { int references; void *private_data; };
+static struct file open_files[8];
+static struct file *fget(int fd) {
+    if (fd < 0 || fd >= (int)(sizeof(open_files)/sizeof(open_files[0]))) return NULL;
+    open_files[fd].references++; return &open_files[fd];
 }
+static void fput(struct file *file) { file->references--; }
+static void *kzalloc(size_t bytes, int flags) {
+    void *got = kvrealloc(NULL, bytes, flags);
+    if (got) memset(got, 0, bytes);
+    return got;
+}
+#define kfree free
+#undef PATH_MAX
+#define PATH_MAX 4096
+#define IS_ERR(p) ((unsigned long)(void *)(p) >= (unsigned long)-4095)
+#define PTR_ERR(p) ((long)(p))
+static char *strndup_user(const char *from, long limit) {
+    (void)limit;
+    if (++allocations == fail_allocation) return (char *)(long)-ENOMEM;
+    return strdup(from);
+}
+static int current, spawn_pid = 4242;
+static int spawn_entered;
+/* The work the launch was handed. Interpretation policy is decided in the
+   request and only shows up here, on the task that is about to exec. */
+static void *spawn_handed;
+#define task_tgid(t) ((void *)(long)(t))
+#define current_cred() ((const void *)&current)
+#define get_pid(p) (p)
+#define put_pid(p) ((void)(p))
+#define get_cred(c) (c)
+#define put_cred(c) ((void)(c))
+#define refcount_inc(p) (++*(p))
+#undef SIGCHLD
+#define SIGCHLD 17
+#define atomic_long_add(n, p) ((void)(n), (void)(p))
+#define atomic_long_inc(p) ((void)(p))
+static long stat_task_ns, stat_spawns;
+#define user_mode_thread(fn, arg, sig) \
+        ((void)(sig), spawn_handed=(arg), spawn_entered++, spawn_pid)
+'''
+    source += section(core, "struct spawn_work", "/*\n        Starts one program")
+    source += section(core, "static int copy_strings", "static long do_spawn")
+    source += section(core, "static long do_spawn", "static long report_stats")
+    source += r'''
 static long report_stats(struct stats *out) { (void)out; return 322; }
 '''
     source += section(core, "static long device_ioctl", "/*\n        misc_open")
     source += r'''
 static void check_spawn_dispatch(void) {
-    _Static_assert(sizeof(struct spawn)==48 && sizeof(struct spawn_to)==56 &&
-                   sizeof(struct spawn_into)==64, "spawn ioctl encoded sizes");
-    _Static_assert(offsetof(struct spawn_to,output)==sizeof(struct spawn) &&
-                   offsetof(struct spawn_into,input)==sizeof(struct spawn), "spawn descriptor prefix");
-    const unsigned commands[]={SPARK_IOCTL_SPAWN,SPARK_IOCTL_SPAWN_SHELL,
-        SPARK_IOCTL_SPAWN_TOOL,SPARK_IOCTL_SPAWN_SHELL_INTO,SPARK_IOCTL_SPAWN_TOOL_TO};
-    struct spawn_into into={.input=0,.output=INT_MAX,.error=-9};
-    struct spawn_to to={.output=-9,.error=0};
-    for (unsigned i=0;i<5;i++) for (unsigned fail=0;fail<2;fail++) {
-        void *request=i==4?(void *)&to:(void *)&into;
-        int rejected=i>=3 && fail;
-        spawn_calls=0; copies=0; fail_copy=fail;
-        check(device_ioctl(NULL,commands[i],(unsigned long)request)==(rejected?-EFAULT:321),
-              "spawn dispatch and descriptor-copy failure");
-        check(spawn_calls==!rejected && copies==(i>=3),"spawn copies only its descriptor forms");
-        if (!rejected) {
-            check(spawn_request==request && spawn_shell==(i==1 || i==3) &&
-                  (i==2 || i==4 ? spawn_path && !strcmp(spawn_path,"/shell") : !spawn_path),
-                  "spawn entry prefix and interpretation policy");
-            check(spawn_descriptors[0]==(i==3?0:-1) &&
-                  spawn_descriptors[1]==(i==3?INT_MAX:i==4?-9:-1) &&
-                  spawn_descriptors[2]==(i==3?-9:i==4?0:-1),"spawn keeps descriptor order and bits");
+    /* The opcode encodes the request size, so a field added to struct spawn
+       without a matching opcode would leave the two silently disagreeing --
+       the one desync a single-opcode ABI can still suffer. */
+    _Static_assert(sizeof(struct spawn)==64,"spawn request size");
+    _Static_assert(((SPARK_IOCTL_SPAWN>>16)&0x3fffu)==sizeof(struct spawn),
+                   "spawn opcode encodes the request size");
+    _Static_assert(offsetof(struct spawn,flags)==48 &&
+                   offsetof(struct spawn,stdio)==52,
+                   "spawn carries its flags and descriptors in the request");
+    _Static_assert(SPARK_SPAWN_FLAGS==(SPARK_SPAWN_SHELL|SPARK_SPAWN_TOOL),
+                   "the accepted flag set is exactly the defined flags");
+
+    char argv_block[]="/thing\0-v\0";
+    struct device_context context={0};
+    struct file caller={.private_data=&context};
+
+    /* Every flag combination, defined and not. A bit this kernel does not
+       define has to be refused rather than ignored, or a caller built against
+       a later loader would silently get the default policy here. */
+    for (unsigned flags=0;flags<8;flags++) {
+        struct spawn request={.path=(unsigned long)"/thing",
+            .argv=(unsigned long)argv_block,.argv_bytes=sizeof(argv_block)-1,
+            .argv_count=2,.flags=flags,.stdio={-1,-1,-1}};
+        long got;
+        memset(open_files,0,sizeof(open_files));
+        spawn_entered=0; spawn_handed=NULL;
+        allocations=fail_allocation=0; copies=0; fail_copy=0;
+        got=device_ioctl(&caller,SPARK_IOCTL_SPAWN,(unsigned long)&request);
+        if (flags & ~SPARK_SPAWN_FLAGS) {
+            check(got==-EINVAL,"spawn refuses a flag it does not define");
+            check(!spawn_entered,"a refused flag starts no task");
+        } else if (got!=spawn_pid || spawn_entered!=1)
+            check(0,"every defined flag combination launches");
+        else {
+            const struct spawn_work *handed=spawn_handed;
+            /* Which flag means what: SHELL is the ENOEXEC rule and nothing
+               else, TOOL redirects the launch into the system image and
+               nothing else, and the two are independent. */
+            check(handed->shell_fallback==!!(flags & SPARK_SPAWN_SHELL),
+                  "SHELL alone decides the ENOEXEC fallback");
+            if (flags & SPARK_SPAWN_TOOL)
+                check(!handed->path_owned && !strcmp(handed->path,"/shell"),
+                      "TOOL launches the system image and borrows its path");
+            else
+                check(handed->path_owned && !strcmp(handed->path,"/thing"),
+                      "without TOOL the launch takes the path it was given");
         }
     }
-    check(device_ioctl(NULL,0,0)==-ENOTTY,"unknown device ioctl remains rejected");
-    fail_copy=0;
+
+    /* The descriptors are installed from the request, in order, and -1 is
+       left alone -- a stage at either end of a pipeline keeps the shell's. */
+    {
+        struct spawn request={.path=(unsigned long)"/thing",
+            .argv=(unsigned long)argv_block,.argv_bytes=sizeof(argv_block)-1,
+            .argv_count=2,.flags=SPARK_SPAWN_SHELL,.stdio={3,-1,5}};
+        memset(open_files,0,sizeof(open_files));
+        spawn_entered=0; allocations=fail_allocation=0; copies=0; fail_copy=0;
+        check(device_ioctl(&caller,SPARK_IOCTL_SPAWN,(unsigned long)&request)==spawn_pid,
+              "a launch naming descriptors is accepted");
+        check(open_files[3].references==1 && open_files[5].references==1 &&
+              open_files[4].references==0,
+              "spawn takes exactly the descriptors the request names");
+    }
+
+    /* A descriptor that cannot be resolved fails the whole request, and every
+       reference already taken for it goes back. */
+    {
+        struct spawn request={.path=(unsigned long)"/thing",
+            .argv=(unsigned long)argv_block,.argv_bytes=sizeof(argv_block)-1,
+            .argv_count=2,.stdio={3,99,-1}};
+        memset(open_files,0,sizeof(open_files));
+        spawn_entered=0; allocations=fail_allocation=0; copies=0; fail_copy=0;
+        check(device_ioctl(&caller,SPARK_IOCTL_SPAWN,(unsigned long)&request)==-EBADF,
+              "a descriptor that does not resolve fails the launch");
+        check(!spawn_entered && open_files[3].references==0,
+              "the failed launch starts nothing and keeps no reference");
+    }
+
+    /* One copy in, and a fault in it is the caller's error rather than a
+       half-built request. The second copy the descriptor opcodes used to
+       need is gone with them. */
+    {
+        struct spawn request={.path=(unsigned long)"/thing",
+            .argv=(unsigned long)argv_block,.argv_bytes=sizeof(argv_block)-1,
+            .argv_count=2,.stdio={-1,-1,-1}};
+        memset(open_files,0,sizeof(open_files));
+        spawn_entered=0; allocations=fail_allocation=0; copies=0; fail_copy=1;
+        check(device_ioctl(&caller,SPARK_IOCTL_SPAWN,(unsigned long)&request)==-EFAULT,
+              "a faulting request is refused");
+        check(copies==1 && !spawn_entered,
+              "the request arrives in one copy and a fault starts nothing");
+        fail_copy=0;
+    }
+
+    check(device_ioctl(&caller,0,0)==-ENOTTY,"unknown device ioctl remains rejected");
+    allocations=fail_allocation=0; copies=0; fail_copy=0;
 }
 '''
     source += r'''
@@ -15598,6 +15842,15 @@ static struct {
     struct window_key key_ring[WINDOW_KEYS];
     int input_lock;
     u64 accel_stamp,motion_stamp,shake_window;
+    /*
+            What a resize measures from. struct pane is declared further down
+            with the geometry it belongs to, so the pane being resized is held
+            as void * here -- resize_move's own first line is what gives it a
+            type, and this mock has no business having an opinion about it.
+    */
+    unsigned resize_edges;
+    int resize_x,resize_y,resize_w,resize_h,press_x,press_y;
+    void *resizing;
 } desktop;
 static unsigned long pointer_counts,pointer_moved;
 static unsigned wakes,wheel_cas,drain_race;
@@ -15661,11 +15914,27 @@ static unsigned long int_sqrt(unsigned long value) {
     source += section(drag, "#define WHEEL_LINES", "static void wheel_deliver")
     source += section(pointer, "#define ACCEL_ONE", "static void desktop_confine_cursor")
     source += section(pointer, "static void pointer_commit", "#define POINTER_OPEN_TRIES")
+    # Here rather than beside the geometry it reshapes: resize_move reads the
+    # drag state off desktop, and desktop is the mock declared just above.
+    source += r'''
+#define EDGE_LEFT 1u
+#define EDGE_RIGHT 2u
+#define EDGE_TOP 4u
+#define EDGE_BOTTOM 8u
+#define WINDOW_MIN_WIDTH 96
+#define WINDOW_MIN_HEIGHT 48
+'''
+    source += section(drag, "static void resize_move", "/*\n        The bar under the hand, in rows.")
     # Run the real owned-pane release after printk has drained its callbacks.
     source += r'''
 struct console_test_pane { int link; unsigned long bytes; void *mapping; };
 static struct console_test_pane *console_pane;
-static struct { int lock; } console_desktop;
+// pane_free untangles the desktop's pointers to the pane it is freeing, so
+// the mock carries them and the teardown check below can watch them clear.
+static struct {
+    int lock;
+    struct console_test_pane *dragging,*resizing,*barring,*press_pane,*focused;
+} console_desktop;
 static int console_registered,canvas_console,console_callbacks,console_listed,console_frees;
 static unsigned long canvas_pane_bytes;
 static void unregister_console(int *console) {
@@ -15697,9 +15966,18 @@ static void check_console_teardown(void) {
         *console_pane=(struct console_test_pane){1,4096,malloc(4096)};
         assert(console_pane->mapping);
         console_registered=console_callbacks=console_listed=1;canvas_pane_bytes=4096;
+        // A console that had been clicked, dragged and scrolled is exactly
+        // the one whose release used to leave the desktop pointing at it.
+        console_desktop.dragging=console_desktop.resizing=console_pane;
+        console_desktop.barring=console_desktop.press_pane=console_pane;
+        console_desktop.focused=console_pane;
         console_stop();
         check(!console_pane && !canvas_pane_bytes && console_frees==(int)run+1,
               "console release returns its owned pane and ring budget");
+        check(!console_desktop.dragging && !console_desktop.resizing &&
+              !console_desktop.barring && !console_desktop.press_pane &&
+              !console_desktop.focused,
+              "console release leaves the desktop pointing at no freed pane");
         console_stop();
         check(console_frees==(int)run+1 && !console_desktop.lock,
               "console release is idempotent");
@@ -15716,6 +15994,48 @@ static void keyboard_send(struct pointer_handle *p,unsigned code,int value) {
     mutex_lock(&desktop.input_lock);
     pointer_event_locked(&p->handle,EV_KEY,code,value);
     mutex_unlock(&desktop.input_lock);
+}
+/*
+        The edge a hand is not holding stays where it is.
+
+        A window of cells is only ever a whole number of them, so the size a
+        drag settles on is not the size it asked for -- and the corner it pins
+        has to be worked out from the size it will actually be given. Worked
+        out from the size it asked for instead, dragging one edge walked the
+        opposite one in and out by up to a cell as the rounding changed.
+*/
+static void check_resize_anchor(void) {
+    static const unsigned held[]={EDGE_LEFT,EDGE_RIGHT,EDGE_TOP,EDGE_BOTTOM,
+                                  EDGE_TOP|EDGE_LEFT,EDGE_BOTTOM|EDGE_RIGHT,
+                                  EDGE_TOP|EDGE_RIGHT,EDGE_BOTTOM|EDGE_LEFT};
+    for(unsigned scale=1;scale<=3;scale++)
+    for(unsigned e=0;e<sizeof held/sizeof*held;e++)
+    for(int step=-60;step<=60;step++) {
+        canvas_cell_w=8*scale;canvas_cell_h=16*scale;canvas_bar=10*scale;
+        struct pane page={0},p={.cells=&page,.shared=&page,
+            .max_columns=80,.max_rows=24,.max_width=4000,.max_height=4000};
+        p.x=100;p.y=60;
+        p.width=40*canvas_cell_w+canvas_bar;p.height=10*canvas_cell_h;
+        pane_regrid(&p);
+        int right=p.x+p.width,bottom=p.y+p.height;
+        desktop.resizing=&p;desktop.resize_edges=held[e];
+        desktop.resize_x=p.x;desktop.resize_y=p.y;
+        desktop.resize_w=p.width;desktop.resize_h=p.height;
+        desktop.press_x=200;desktop.press_y=200;
+        resize_move(200+step,200+step);
+        // A whole number of cells however the drag came out.
+        check((p.width-canvas_bar)%canvas_cell_w==0 && p.height%canvas_cell_h==0,
+              "a resized window of cells is a whole number of them");
+        if(held[e]&EDGE_LEFT)
+            check(p.x+p.width==right,"a left-edge drag leaves the right edge where it was");
+        if(held[e]&EDGE_RIGHT)
+            check(p.x==desktop.resize_x,"a right-edge drag leaves the left edge where it was");
+        if(held[e]&EDGE_TOP)
+            check(p.y+p.height==bottom,"a top-edge drag leaves the bottom where it was");
+        if(held[e]&EDGE_BOTTOM)
+            check(p.y==desktop.resize_y,"a bottom-edge drag leaves the top where it was");
+    }
+    desktop.resizing=NULL;desktop.resize_edges=0;
 }
 // What keys_deliver reads to decide whether the focused window is snapped
 // back to the end of its scrollback. Only a key that reaches the program as
@@ -16040,9 +16360,10 @@ int main(void) {
         struct pane page={0},p={.width=widths[w],.height=99,.cells=&page,
             .max_columns=80,.max_rows=24,.shared=shared?&page:NULL};
         unsigned columns=max(min(max(widths[w]-canvas_bar,0)/canvas_cell_w,80),1);
-        regrids=wakes=0;pane_regrid(&p);
+        regrids=wakes=view_clamps=0;pane_regrid(&p);
         check(p.columns==columns && p.width==(int)columns*canvas_cell_w+canvas_bar,
               "grid reserves gutter before rounding and clamps tiny widths");
+        check(view_clamps==1,"a reshaped grid re-tests the view against it");
         check(shared ? page.columns==columns && page.width==p.width && wakes==1 :
             p.grid_columns==columns && p.grid_rows==p.rows && regrids==1,
             "resized grid reaches client or owned console");
@@ -16154,6 +16475,7 @@ int main(void) {
               desktop.abs_have==(high>low?(1u<<axis):0),"absolute axis range and ownership");
     }
     check_pointer_state(&handle);
+    check_resize_anchor();
     check_key_typed();
     check_keyboard_state();
     free(output);
@@ -18799,6 +19121,1423 @@ def harness_code_map(argv):
     return 0 if unittest.TextTestRunner(verbosity=verbosity).run(suite).wasSuccessful() else 1
 
 
+
+def harness_canvas_view(argv):
+    """The scrollback view arithmetic in src/canvas/pane.c, as properties.
+
+    The wheel, the scrollbar and the snap-to-end all move one number: which
+    line of the ring is at the top of the window. Everything drawn is measured
+    from it, and the rules it has to obey are not local to any one of the
+    functions that move it -- so they are asserted here over generated rings
+    rather than re-derived per function.
+    """
+    ROOT = HARNESS_ROOT
+    parser = argparse.ArgumentParser(description=harness_canvas_view.__doc__)
+    parser.add_argument("--source-root", type=Path, default=ROOT)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args(argv)
+
+    pane = (args.source_root / "src/canvas/pane.c").read_text()
+    first = "// One line of the ring"
+    following = "/*\n        A window, of pixels or of cells."
+    if first not in pane or following not in pane:
+        raise ValueError("pane.c no longer carries the view section markers")
+    section = pane[pane.index(first):pane.index(following)]
+
+    prefix = r'''
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define PURE
+#define true 1
+#define false 0
+#define PANE_LIVE ((unsigned int)-1)
+#define min(a,b) ((a)<(b)?(a):(b))
+#define max(a,b) ((a)>(b)?(a):(b))
+#define clamp(v,lo,hi) max(lo,min(v,hi))
+#define max_t(type,a,b) ((type)(a)>(type)(b)?(type)(a):(type)(b))
+static unsigned checks, failures;
+static void check(const char *what, int ok) {
+    checks++;
+    if (!ok) { failures++; if (failures<=20) printf("  FAIL %s\n", what); }
+}
+/*
+        Only the fields the view arithmetic reads. Everything else a pane
+        carries -- its frame, its place on the desktop, the page a program
+        shares -- is not reachable from any of these functions, and putting it
+        here would only invite a test to depend on it.
+*/
+struct pane {
+    unsigned int columns, rows, grid_columns, grid_rows;
+    unsigned int stride, history, head;
+    unsigned int view, view_skip;
+    _Bool view_moved;
+    unsigned int *lengths;
+    void *cells;
+};
+'''
+
+    runner = r'''
+/*
+        How many drawn rows there are between the view and the end of the ring,
+        counted the way compose_cells walks it. Short of the window's rows is
+        exactly the band of blank rows a reader sees under the last line.
+*/
+static unsigned int rows_from(struct pane *p, unsigned int view)
+{
+    unsigned int skip, at = pane_view_at(p, view, &skip), n = 0;
+    while (at != p->head) { n += pane_line_rows(p, at); at++; }
+    return n > skip ? n - skip : 0;
+}
+
+// Every row the ring still holds, which is the most a window could ever show.
+static unsigned int rows_held(struct pane *p)
+{
+    unsigned int at = pane_oldest(p), n = 0;
+    while (at != p->head) { n += pane_line_rows(p, at); at++; }
+    return n;
+}
+
+/*
+        The rule pane_view_set applies when it places the view, restated as a
+        question about where the view is now: is it earlier in the ring than
+        following the end would put it?
+*/
+static int before_live(struct pane *p)
+{
+    unsigned int live_skip, live = pane_view_at(p, PANE_LIVE, &live_skip);
+    return p->view < live || (p->view == live && p->view_skip < live_skip);
+}
+
+int main(void)
+{
+    static unsigned int lengths[64]; // history is at most 13 * 2 + 1
+    static char cells[1];
+    unsigned int seed = 2463534242u;
+
+    for (unsigned int trial = 0; trial < 40000; trial++) {
+        struct pane p;
+        /*
+                The shape a ring is actually cut for, because pane_oldest
+                counts backwards past what the ring holds otherwise.
+
+                pane_ring gives every window a history of at least twice the
+                tallest grid it could ever be given plus one, and pane_regrid
+                and pane_refresh both clamp the rows to that same ceiling. So
+                pane_rows is always below history in a real window, and the
+                generator that let it be above spent its time on a shape no
+                compositor can build.
+        */
+        unsigned int max_rows = 1 + trial % 13;
+        unsigned int max_columns = 1 + (trial / 13) % 23;
+        unsigned int history = max_rows * 2 + 1;
+        unsigned int width = 1 + (trial / 299) % max_columns;
+        unsigned int rows = 1 + (trial / 3887) % max_rows;
+        unsigned int i;
+
+        for (i = 0; i < history; i++) {
+            seed = seed * 1664525u + 1013904223u;
+            // Empty, short, exactly one row, and long enough to fold several
+            // times -- a line's fold count is what every walk here counts in.
+            lengths[i] = (seed >> 9) % 5 == 0 ? 0 : (seed >> 13) % (max_columns + 1);
+        }
+
+        memset(&p, 0, sizeof(p));
+        p.history = history;
+        p.stride = max_columns;
+        p.grid_columns = width;
+        p.columns = width;
+        p.grid_rows = rows;
+        p.rows = rows;
+        p.lengths = lengths;
+        p.cells = cells;
+        // head is a program's own number, so the ring may be part full or
+        // long since wrapped. Never below history: pane_refresh holds that.
+        p.head = history + trial % (history * 3 + 1);
+        p.view = PANE_LIVE;
+        p.view_skip = 0;
+
+        {
+            unsigned int held = rows_held(&p);
+            unsigned int want = min(pane_rows(&p), held);
+
+            check("following the end fills the window",
+                  rows_from(&p, PANE_LIVE) >= want);
+
+            /*
+                    The wheel, over the whole range that can reach anywhere
+                    plus a margin past both ends, so the clamps are exercised
+                    rather than only the middle.
+            */
+            for (int lines = -(int)held - 2; lines <= (int)held + 2; lines++) {
+                p.view = PANE_LIVE;
+                p.view_skip = 0;
+                p.view_moved = 0;
+                pane_scroll(&p, lines);
+
+                check("a scrolled view is never past the end",
+                      p.view == PANE_LIVE || before_live(&p));
+                check("a scrolled view still fills the window",
+                      rows_from(&p, p.view) >= want);
+                check("scrolling towards the end arrives at following it",
+                      lines > 0 || p.view == PANE_LIVE);
+                check("a view that did not move is not reported as moved",
+                      p.view_moved || (p.view == PANE_LIVE && !p.view_skip));
+            }
+
+            /*
+                    The bar. Where pane_extent says the view sits has to be
+                    where pane_view_set puts it back, or the thumb and the
+                    hand disagree about what a row of bar means.
+            */
+            for (unsigned int above = 0; above <= held + 1; above++) {
+                unsigned int at, shown, total;
+
+                p.view = PANE_LIVE;
+                p.view_skip = 0;
+                pane_view_set(&p, above);
+                pane_extent(&p, &at, &shown, &total);
+
+                check("the bar puts the view where it says it is",
+                      p.view == PANE_LIVE || at == above);
+                check("a view placed by the bar still fills the window",
+                      rows_from(&p, p.view) >= want);
+                check("the extent counts every row the ring holds",
+                      total == held);
+            }
+
+            /*
+                    A window made taller or wider pulls the last screenful
+                    earlier in the ring, which is what leaves a view chosen
+                    against the old shape sitting past the end of the new one.
+                    pane_view_clamp is what puts it back.
+            */
+            for (unsigned int grown = 1; grown <= 3; grown++) {
+                // Never past the ceiling: a window cannot be given a grid
+                // larger than the ring was cut for.
+                unsigned int wider = min(width * grown, max_columns);
+                unsigned int taller = min(rows * grown, max_rows);
+
+                p.view = PANE_LIVE;
+                p.view_skip = 0;
+                pane_scroll(&p, (int)held);
+
+                p.grid_rows = taller;
+                p.rows = taller;
+                p.grid_columns = wider;
+                p.columns = wider;
+
+                pane_view_clamp(&p);
+
+                check("a reshaped window's view still fills it",
+                      rows_from(&p, p.view) >=
+                          min(pane_rows(&p), rows_held(&p)));
+                check("a reshaped view is never past the end",
+                      p.view == PANE_LIVE || before_live(&p));
+
+                p.grid_rows = rows;
+                p.rows = rows;
+                p.grid_columns = width;
+                p.columns = width;
+            }
+
+            // Already at the end is nothing to put back, and saying otherwise
+            // costs a full repaint of the window every pass.
+            p.view = PANE_LIVE;
+            p.view_skip = 0;
+            p.view_moved = 0;
+            check("following the end is already clamped",
+                  !pane_view_clamp(&p) && !p.view_moved);
+            check("following the end is already live",
+                  !pane_view_live(&p) && !p.view_moved);
+        }
+    }
+
+    printf("canvas-view %u/%u\n", checks - failures, checks);
+    return failures ? 1 : 0;
+}
+'''
+
+    def run(out):
+        out.mkdir(parents=True, exist_ok=True)
+        unit = out / "canvas-view.c"
+        unit.write_text(prefix + section + runner)
+        binary = out / "canvas-view"
+        command = shlex.split(os.environ.get("CC", "cc")) + [
+            "-std=gnu11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+            "-Wno-unused-function", "-fsanitize=address,undefined",
+            str(unit), "-o", str(binary)]
+        subprocess.run(command, check=True)
+        result = subprocess.run([str(binary)], text=True, capture_output=True)
+        tally = re.search(r"canvas-view (\d+)/(\d+)", result.stdout)
+        if tally and os.environ.get("TEST_TALLY"):
+            with open(os.environ["TEST_TALLY"], "a") as stream:
+                stream.write("canvas-view " + " ".join(tally.groups()) + "\n")
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        return result.returncode
+
+    if args.output:
+        return run(args.output.resolve())
+    with tempfile.TemporaryDirectory(prefix="canvas-view-") as work:
+        return run(Path(work))
+
+
+
+def harness_floodlight(argv):
+    """floodlight.c is the whole policy, and this is what keeps it the whole policy.
+
+    Two questions, both answered from the source rather than from a list some-
+    body maintains:
+
+      Does the array still describe the machine?  Every applet that can start
+      another program must have a row, and every row must name an applet that
+      can.  Both directions, because a list that only grows becomes a list of
+      things that used to be true.
+
+      Is the file still on its own?  It may include <linux/...> and nothing
+      else, and it may name nothing that Moonwater's library defines.  The
+      compiler already refuses an undeclared call; what this catches is the
+      next step, where somebody makes that error go away by adding an include.
+    """
+    ROOT = HARNESS_ROOT
+    sys.path.insert(0, str(ROOT / 'kit/compact'))
+    from inventory import c_bodies, lex
+    from collections import defaultdict
+
+    FILE = ROOT / 'src' / 'floodlight.c'
+    IDENTIFIER = re.compile(r'^[A-Za-z_]\w*$')
+    checks = failures = 0
+
+    def check(ok, what):
+        nonlocal checks, failures
+        checks += 1
+        if not ok:
+            failures += 1
+            print('  FAIL ' + what)
+
+    def bodies(path):
+        """Top-level function bodies, and every name inside each."""
+        tokens, _ = lex(path.read_text(encoding='utf-8', errors='replace'))
+        found, depth, header, name, seen = defaultdict(set), 0, [], None, set()
+        for token in tokens:
+            value = token.value
+            if value == '{':
+                if depth == 0:
+                    name, seen = None, set()
+                    for i in range(len(header) - 1, -1, -1):
+                        if header[i].value != '(':
+                            continue
+                        for j in range(i - 1, -1, -1):
+                            if IDENTIFIER.match(header[j].value):
+                                name = header[j].value
+                                break
+                        break
+                depth += 1
+            elif value == '}':
+                depth -= 1
+                if depth == 0:
+                    if name:
+                        found[name] |= seen
+                    header, name, seen = [], None, set()
+            elif depth == 0:
+                header = [] if value == ';' else header + [token]
+            elif IDENTIFIER.match(value):
+                seen.add(value)
+        return found
+
+    #   Which applets can start a program, transitively, through any helper.
+    graph = defaultdict(set)
+    for pattern in ('src/sh/*.c', 'src/core.c', 'src/bowl/runtime.c',
+                    'src/library.common.c'):
+        for path in sorted(ROOT.glob(pattern)):
+            for name, seen in bodies(path).items():
+                graph[name] |= seen
+
+    reaches, edge = {'system_execute'}, {'system_execute'}
+    while edge:
+        step = {n for n, seen in graph.items() if n not in reaches and seen & edge}
+        reaches |= step
+        edge = step
+
+    applets = {}
+    for line in (ROOT / 'src/sh/tools.inc').read_text().splitlines():
+        row = re.search(r'SHELL_TOOL\(\s*(\w+)\s*,\s*([^,\s]+)\s*,\s*(\w+)\s*\)', line)
+        if row:
+            applets[row.group(2)] = row.group(3)
+
+    can_spawn = {name for name, entry in applets.items() if entry in reaches}
+
+    #   What the array says. The rows are the policy and the declaration at once.
+    text = FILE.read_text()
+
+    #   const, so the built-in answers live in .rodata and the machine
+    #   write-protects them. Without it a stray write flips a row and leaves
+    #   the timestamp at zero, so the report goes on calling the flipped value
+    #   the one this kernel was compiled with.
+    #   Built, not merely buildable. The Kconfig entry defaults to y, but a
+    #   profile that does not ask for it leaves the option unset and the module
+    #   out of the kernel entirely -- which is how it shipped for a while: the
+    #   register was written, tested and absent from every image.
+    profile = (ROOT / 'kernel/profile/any').read_text()
+    check('CONFIG_MOONWATER_FLOODLIGHT=y' in profile,
+          'every image is built with the register in it')
+
+    check('static const struct rule baseline[] = {' in text,
+          'the built-in answers are const, and so cannot be written at runtime')
+
+    array = text[text.index('static const struct rule baseline[]'):]
+    array = array[:array.index('\n};')]
+    declared = {row.group(1): row.group(2)
+                for row in re.finditer(r'\{\s*"([^"]+)"\s*,\s*SPAWN\s*,\s*([01])\s*\}',
+                                       array)}
+
+    for name in sorted(can_spawn - set(declared)):
+        check(False, '%s can start a program and floodlight.c has no row for it' % name)
+    for name in sorted(set(declared) - can_spawn):
+        check(False, '%s has a row in floodlight.c but can no longer start a program' % name)
+    check(can_spawn == set(declared),
+          'the array describes exactly the applets that can start a program')
+
+    #   Refusing the ones that turn data into execution is the whole reason the
+    #   array exists; an edit that quietly allows them again should be loud.
+    for name in ('awk', 'find', 'xargs'):
+        check(declared.get(name) == '0',
+              '%s builds a command out of what it reads and must be denied by default' % name)
+
+    #   Isolation.
+    allowed = re.compile(r'^\s*#\s*include\s*<(linux|asm|asm-generic|uapi)/[\w/.-]+>\s*$')
+    for number, line in enumerate(text.splitlines(), 1):
+        if re.match(r'^\s*#\s*include\s', line):
+            check(bool(allowed.match(line)),
+                  'floodlight.c:%d includes something that is not the kernel: %s'
+                  % (number, line.strip()))
+
+    forbidden = set()
+    for pattern in ('src/**/*.c', 'src/**/*.inc', 'src/**/*.h', 'programs/**/*.c'):
+        for path in sorted(ROOT.glob(pattern)):
+            #   Floodlight itself is not Moonwater's library. It lives under
+            #   src/ so that the kernel tree's existing symlink builds it with
+            #   no further wiring, which does not make its own names something
+            #   it is forbidden to say.
+            if 'test' in path.parts or path == FILE:
+                continue
+            body = path.read_text(encoding='utf-8', errors='replace')
+            forbidden |= {item.name for item in c_bodies(str(path), body)}
+            forbidden |= set(re.findall(r'^\s*#\s*define\s+([A-Za-z_]\w*)', body, re.M))
+            forbidden |= set(re.findall(r'ASM_FUNC\(\s*([A-Za-z_]\w*)', body))
+
+    #   A shouted name is a constant, and constants are where the two
+    #   vocabularies genuinely collide: EPERM is the kernel's and Moonwater
+    #   spells its copy the same way because there is only one spelling for it.
+    forbidden = {n for n in forbidden if n.upper() != n}
+    forbidden -= {'bool', 'true', 'false', 'null', 'min', 'max', 'container_of'}
+    own = {item.name for item in c_bodies(str(FILE), text)}
+
+    #   In call position only. A local named `start` is this file's own word,
+    #   not a reference to somebody else's function that happens to share it,
+    #   and the thing worth refusing is calling Moonwater's code -- which is
+    #   always a name with a bracket after it, macros included. A Moonwater
+    #   TYPE would slip past this, and the include rule above is what catches
+    #   that: a type cannot arrive without a header either.
+    tokens, _ = lex(text)
+    for index, token in enumerate(tokens):
+        after = tokens[index + 1].value if index + 1 < len(tokens) else ''
+        before = tokens[index - 1].value if index else ''
+
+        if after != '(' or before in ('.', '->'):
+            continue
+        if not IDENTIFIER.match(token.value):
+            continue
+        if token.value in forbidden and token.value not in own:
+            check(False, 'floodlight.c:%d calls %s, which belongs to Moonwater'
+                  % (token.line, token.value))
+
+    check(True, 'floodlight.c is ordinary kernel C')
+
+    #   The whole of what this module can reach into the kernel for.
+    #
+    #   Enumerated rather than described, because "minimal trusted base" is a
+    #   claim and this is the thing that makes it checkable: every kernel
+    #   facility floodlight uses is on this line, and adding a fourteenth has
+    #   to be a deliberate edit here rather than a call that slipped in.
+    KERNEL = {
+        'strcmp', 'strlen', 'strscpy', 'memset',
+        'pr_warn', 'pr_err', 'seq_printf', 'seq_puts',
+        'mutex_lock', 'mutex_unlock', 'DEFINE_MUTEX',
+        'capable', 'from_kuid', 'current_uid',
+        'ktime_get_real_seconds', 'misc_register', 'single_open',
+        'copy_from_user', 'get_random_u32', 'pr_alert', 'offsetof',
+        'lockdep_assert_held', 'late_initcall', 'ARRAY_SIZE',
+        'MODULE_DESCRIPTION', 'MODULE_AUTHOR', 'MODULE_LICENSE',
+        'device_initcall', 'sizeof',
+    }
+
+    called = set()
+    for index, token in enumerate(tokens):
+        after = tokens[index + 1].value if index + 1 < len(tokens) else ''
+        before = tokens[index - 1].value if index else ''
+        if after == '(' and before not in ('.', '->') and IDENTIFIER.match(token.value):
+            called.add(token.value)
+
+    #   Its own functions, and the C that is not a call at all.
+    outside = called - own - KERNEL - {'if', 'for', 'while', 'switch', 'return',
+                                       'sizeof', 'struct', 'unsigned', 'char',
+                                       'int', 'void', 'bool', 'const', 'static'}
+    for name in sorted(outside):
+        check(False, 'floodlight.c reaches for %s, which is not on its list of '
+                     'kernel facilities -- add it there deliberately or do without'
+              % name)
+    check(not outside, 'floodlight.c reaches into the kernel for %d named '
+                       'facilities and no others' % len(called & KERNEL))
+
+    #   The shell carries its own copy of what floodlight refuses, for when the
+    #   register cannot be read -- so that removing the device is not a way of
+    #   removing the policy. Two copies is two things that can drift, and this
+    #   is what stops them.
+    shell = (ROOT / 'src/sh/builtin.c').read_text()
+    fallback = re.search(r'static string_address const floodlight_denied\[\] = \{(.*?)null\}',
+                         shell, re.S)
+    check(bool(fallback), 'the shell carries a built-in copy of what is refused')
+
+    #   The reader's buffer against the biggest report the writer can produce.
+    #   Worked out from both files rather than asserted, so growing either one
+    #   without the other is what fails.
+    room = re.search(r'#define FLOODLIGHT_REPORT (\d+)', shell)
+    subject = int(re.search(r'#define SUBJECT (\d+)', text).group(1))
+    detail = int(re.search(r'#define DETAIL (\d+)', text).group(1))
+    slots = int(re.search(r'#define CHANGES (\d+)', text).group(1))
+    rows = len(declared) + slots
+    widest = (subject - 1) + 1 + 8 + 1 + (detail - 1) + 1 + 5 + 1 + \
+        len('changed 18446744073709551615s ago by uid 4294967295\n')
+    check(bool(room) and int(room.group(1)) > rows * widest,
+          'the reader has room for the largest report the register can make '
+          '(%d rows of %d bytes needs more than %s)'
+          % (rows, widest, room.group(1) if room else '?'))
+    if fallback:
+        carried = set(re.findall(r'"([^"]+)"', fallback.group(1)))
+        refused = {name for name, state in declared.items() if state == '0'}
+        for name in sorted(refused - carried):
+            check(False, 'floodlight.c refuses %s and the shell does not know it' % name)
+        for name in sorted(carried - refused):
+            check(False, 'the shell refuses %s and floodlight.c does not' % name)
+        check(carried == refused,
+              'the shell refuses exactly what floodlight.c is built refusing')
+
+    #   The confinement has to be installed where the applet is named and
+    #   before it has read anything, and it must not be installed in the
+    #   shell's own process -- an irreversible filter there would outlive the
+    #   applet and take the shell's next exec with it.
+    #   Against the lexed source, not the text: commenting a call out leaves it
+    #   in the file for a regex to find, and a check that a comment satisfies
+    #   is worse than no check because it reads as a passing one.
+    shell_tokens = [token.value for token in lex(shell)[0]]
+
+    def calls(*sequence):
+        window = len(sequence)
+        return any(shell_tokens[i:i + window] == list(sequence)
+                   for i in range(len(shell_tokens) - window))
+
+    for ok, what in (
+            (calls('if', '(', 'own_process', ')', 'floodlight_apply', '(', 'name', ')', ';'),
+             'the dispatcher confines the applet it is about to run, and only '
+             'when the process exists to run it'),
+            #   A seccomp filter cannot be taken off, so confining a process
+            #   that goes on to do other things takes its next exec with it.
+            #   The build tool includes this file and runs find inside its own
+            #   process; confining it there left the build unable to exec the
+            #   compiler, and a refused exec says EPERM and prints nothing.
+            (calls('return', 'shell_tool_call_in', '(', 'which', ',', 'false', ')', ';'),
+             'a caller that keeps its process is not confined'),
+            (calls('return', 'shell_tool_named_in', '(', 'name', ',', 'false', ')', ';'),
+             'and neither is one that only borrowed the argument vector'),
+            (calls('floodlight_may', '(', 'name', ',', 'FLOODLIGHT_RUN', ',', 'true', ')'),
+             'the dispatcher refuses an applet the register refuses'),
+            (calls('shell_tail_command', '&', '&', '!', 'floodlight_confines', '(', 'name', ')'),
+             "an applet that must be confined never runs in the shell's own process"),
+            (calls('floodlight_may', '(', 'name', ',', 'FLOODLIGHT_SPAWN', ',',
+                   'floodlight_built_in', '(', 'name', ')', ')'),
+             'a register that cannot be read leaves the built-in answers '
+             'standing, so removing the device grants nothing'),
+            (calls('file_look', '(', 'handle', ',', '(', 'string_address', ')',
+                   '""', ',', 'AT_EMPTY_PATH', ',', '&', 'facts', ')'),
+             'the reader checks it is talking to a device and not a file left '
+             'in its place'),
+            (calls('(', 'facts', '.', 'mode', '&', 'MODE_FORMAT', ')',
+                   '!', '=', 'MODE_CHARACTER', '|', '|'),
+             'and that what it opened is a character device'),
+            (calls('facts', '.', 'rdev_major', '!', '=', '10', ')'),
+             'and on the misc major the register is on'),
+            (calls('(', 'positive', ')', 'got', '>', '=', 'sizeof',
+                   '(', 'report', ')', '-', '1'),
+             'a report that filled the buffer is thrown away rather than half '
+             'believed'),
+            (calls('if', '(', '!', 'floodlight_row_count', ')'),
+             'an untouched register costs an applet one comparison, not a walk'),
+            (calls('syscall', '(', 'prctl', ')', ',', 'PR_SET_NO_NEW_PRIVS'),
+             'the filter is installed with no-new-privs'),
+            (calls('syscall', '(', 'seccomp', ')', ',', 'SECCOMP_SET_MODE_FILTER'),
+             'the confinement is a seccomp filter, so it survives exec'),
+            (calls('BPF_JUMP_EQUAL', ',', '1', ',', '0', ',', 'FLOODLIGHT_AUDIT_ARCH'),
+             'the filter checks which architecture the call arrived on')):
+        check(ok, what)
+
+    #   A guard that is correct and not called is not a guard. Testing plain()
+    #   alone passed a file that had stopped using it, so the shape of each
+    #   guard in the write path is asserted here too -- exactly as written, so
+    #   that neutering one (`if (false && ...)`) reads as a change and not as
+    #   a passing test.
+    write = text[text.index('static ssize_t floodlight_write('):]
+    write = write[:write.index('\nstatic int floodlight_open')]
+
+    for guard, what in (
+            (r'if \(!capable\(CAP_SYS_ADMIN\)\)\s*\n\s*return -EPERM;',
+             'the write path refuses anyone but root, before it copies anything'),
+            (r'if \(!plain\(subject\)\)\s*\n\s*goto out;',
+             'the write path refuses a subject that is not plain'),
+            (r'if \(i == FLAG && !plain\(detail\)\)\s*\n\s*goto out;',
+             'the write path refuses a flag that is not plain'),
+            (r'if \(!intact\(\)\) \{\s*\n\s*answer = -EPERM;',
+             'the write path refuses everything once anything has been tampered with'),
+            (r'if \(!guard_intact\(\)\) \{',
+             'the write path checks its own redzone before believing the line'),
+            (r'if \(sealed\) \{\s*\n\s*answer = -EPERM;',
+             'the write path refuses every change once sealed'),):
+        check(bool(re.search(guard, write)), what)
+
+    #   The read path has to refuse just as hard, and the seals have to be
+    #   folded with the boot secret or they are arithmetic anybody who has read
+    #   this file can redo.
+    show = text[text.index('static int floodlight_show('):]
+    show = show[:show.index('\nstatic ')]
+
+    for guard, where, what in (
+            (r'if \(!intact\(\)\) \{\s*\n\s*seq_puts\(seq, "# floodlight: TAMPERED', show,
+             'the report refuses to speak for a machine that has been tampered with'),
+            #   misc_open leaves the miscdevice in private_data and seq_open
+            #   warns on anything found there, so every reader of the register
+            #   put a warning in the kernel log until this was cleared.
+            (r'file->private_data = NULL;\s*\n\s*\n\s*return single_open', text,
+             'the open clears what misc_open left, so seq_open does not warn'),
+            (r'return fold\(secret \^ [0-9]+u, row,', text,
+             'a row seal is folded with the boot secret'),
+            (r'return fold\(secret \^ [0-9]+u, baseline, sizeof\(baseline\)\);', text,
+             'the built-in answers are summed with the boot secret'),
+            (r'secret = get_random_u32\(\);', text,
+             'the secret is drawn fresh at every boot'),
+            (r'late_initcall\(floodlight_start\);', text,
+             'the secret is drawn late enough that the random pool is seeded'),
+            (r'guard_tail = guard_head \^ 0x5a;', text,
+             'the two guard bytes are never zero and never each other'),
+            (r'lockdep_assert_held\(&lock\);', text,
+             'the checks that walk the tables say they need the lock'),):
+        check(bool(re.search(guard, where)), what)
+
+    #   The filter, installed for real.
+    #
+    #   Jump offsets in classic BPF are counted forward from the instruction
+    #   after the jump, which is exactly the kind of arithmetic that is right
+    #   in the head and wrong in the file. So the builder is taken out of the
+    #   shell and run: a child installs the filter it produces, tries the calls
+    #   it is meant to refuse and one it is not, and says what happened.
+    #
+    #   Linux only, because seccomp is. Skipped elsewhere rather than faked.
+    if platform.system() == 'Linux':
+        builder = shell[shell.index('#define BPF_LOAD_WORD'):]
+        builder = builder[:builder.index('\n/*\n        Whether this applet')]
+
+        confine = r"""
+#include <errno.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+typedef void fn;
+typedef unsigned char p8;
+typedef unsigned short p16;
+typedef unsigned int p32;
+typedef unsigned long positive;
+#define address_to *
+#define address_of &
+#define syscall_name_prctl SYS_prctl
+#define syscall_name_seccomp SYS_seccomp
+#define syscall_name_execve SYS_execve
+#define syscall_name_execveat SYS_execveat
+#define syscall_name_socket SYS_socket
+#define syscall_name_connect SYS_connect
+/* Taken before the name is redefined below, or the macro eats the call. */
+static long raw_call(long n, long a, long b, long c, long d, long e)
+{
+        return syscall(n, a, b, c, d, e);
+}
+
+#define syscall(name) syscall_name_##name
+#define system_call_5(n, a, b, c, d, e) raw_call((long)(n), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e))
+#define system_call_3(n, a, b, c) raw_call((long)(n), (long)(a), (long)(b), (long)(c), 0, 0)
+""" + builder + r"""
+int main(void)
+{
+        pid_t child = fork();
+        int status = 0;
+
+        if (child == 0) {
+                p32 refused[2] = {(p32)SYS_execve, (p32)SYS_execveat};
+                char *argv[] = {(char *)"/bin/sh", (char *)"-c",
+                                (char *)"exit 7", NULL};
+
+                floodlight_confine(refused, 2);
+
+                /* A call the filter says nothing about still works, or the
+                   filter has refused the program rather than the exec. */
+                if (getpid() <= 0)
+                        _exit(3);
+
+                errno = 0;
+                execve("/bin/sh", argv, NULL);
+
+                /*
+                        Refused, and refused as an error rather than a signal,
+                        so the program can say it could not run the command.
+
+                        The command the exec would have run exits 7 on purpose.
+                        It used to be /bin/true, and an exec that succeeded
+                        made this child into a program that exits zero -- which
+                        is exactly what a refused exec reports, so a filter
+                        that failed to install scored as a filter that worked.
+                */
+                _exit(errno == EPERM ? 0 : 4);
+        }
+
+        if (child < 0 || waitpid(child, &status, 0) != child)
+                return 5;
+        if (!WIFEXITED(status))
+                return 6;
+
+        printf("%d\n", WEXITSTATUS(status));
+        return 0;
+}
+"""
+        with tempfile.TemporaryDirectory(prefix='floodlight-seccomp-') as work:
+            unit = Path(work) / 'confine.c'
+            unit.write_text(confine)
+            binary = Path(work) / 'confine'
+            built = subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
+                                   ['-std=gnu11', '-O1', '-w', str(unit), '-o', str(binary)],
+                                   capture_output=True, text=True)
+            if built.returncode:
+                check(False, 'the filter builder compiles on its own: ' + built.stderr[-300:])
+            else:
+                ran = subprocess.run([str(binary)], text=True, capture_output=True)
+                said = ran.stdout.strip()
+                check(ran.returncode == 0 and said == '0',
+                      'a confined program is refused the exec and keeps the rest '
+                      '(child said %s, runner %d)' % (said or '-', ran.returncode))
+    else:
+        print('  floodlight: seccomp not exercised here, needs Linux')
+
+    #   The writer and the reader, against each other.
+    #
+    #   Everything else checks one side. This runs both: the module produces a
+    #   report exactly as the kernel would, and the shell's reader is handed
+    #   that text and asked what it made of it. The reader had a bug that no
+    #   amount of reading either side would have found -- string_length on a
+    #   word of the report runs to the end of the whole report, so no setting
+    #   name ever compared equal and not one deviation was ever read. Both
+    #   halves were correct on their own and did not meet.
+    reader = shell[shell.index('static string_address const floodlight_denied[]'):
+                   shell.index('/*\n        A filter that refuses one thing')]
+
+    #   Everything but the device read, which is stubbed: this test hands the
+    #   reader the report the module just produced, so there is no device in
+    #   it and nothing for the open, the statx and the read to talk to.
+    reader = (reader[:reader.index('static fn floodlight_load()')] +
+              'static fn floodlight_load(void) { }\n\n' +
+              reader[reader.index('static bool floodlight_says'):])
+
+    #   The reader is shell code, so it wants the shell's spellings.
+    reader_mock = r"""
+typedef unsigned char p8;
+typedef unsigned long positive;
+typedef long bipolar;
+typedef const char *string_address;
+typedef void fn;
+#define address_to *
+#define address_of &
+#define null ((void *)0)
+static positive string_length(string_address s) { return strlen(s); }
+static int memory_compare(const void *a, const void *b, positive n) { return memcmp(a, b, n); }
+static void memory_copy_apart(void *d, const void *s, positive n) { memcpy(d, s, n); }
+static bool word_is(string_address a, string_address b) { return !strcmp(a, b); }
+"""
+
+    #   And now the module itself, run.
+    #
+    #   Everything above reads the source. This compiles floodlight.c against
+    #   enough mocked kernel to be a process -- every mock a stub or a
+    #   redirection, never a reimplementation, so the code under test is the
+    #   code that ships -- and then tries to break it: forged report lines,
+    #   escapes and newlines in a name, a line longer than any that can mean
+    #   something, a copy that fails, a register filled to its ceiling, a seal,
+    #   and three kinds of write that went behind the register's back.
+    mock = r'''
+/* Enough kernel to run floodlight.c in a process. Nothing here is a
+   reimplementation of what it does: every mock is a stub or a redirection, so
+   the code under test is the code that ships. */
+#include <stdbool.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <stddef.h>
+#include <pthread.h>
+
+typedef uint32_t u32;
+typedef long ssize_t_k;
+#ifndef __linux__ /* glibc already has it */
+typedef long long loff_t;
+#endif
+#define __user
+#define __init
+#define __ro_after_init
+#define THIS_MODULE 0
+#define MISC_DYNAMIC_MINOR 255
+#define CAP_SYS_ADMIN 21
+#define EPERM 1
+#define EINVAL 22
+#define EFAULT 14
+#define ENOSPC 28
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define DEFINE_MUTEX(name) int name
+#define lockdep_assert_held(x) ((void)(x))
+#define late_initcall(fn) int (*mock_init)(void) = fn
+#define MODULE_DESCRIPTION(x)
+#define MODULE_AUTHOR(x)
+#define MODULE_LICENSE(x)
+#define noop_llseek 0
+#define seq_read 0
+#define seq_lseek 0
+#define single_release 0
+#define init_user_ns mock_ns
+
+struct inode;
+struct file { void *private_data; };
+struct file_operations { int owner; void *open, *read, *llseek, *release, *write; };
+struct miscdevice { int minor; const char *name; const struct file_operations *fops; int mode; };
+struct seq_file { char *at; unsigned room; };
+
+static int mock_ns;
+static int mock_lock_depth;
+static bool mock_root = true;
+static unsigned mock_uid = 0;
+static unsigned long long mock_now = 1000;
+static u32 mock_random = 0x11223344;
+static bool mock_copy_fails;
+static char mock_log[16384];
+static unsigned mock_log_length;
+
+static pthread_mutex_t mock_mutex = PTHREAD_MUTEX_INITIALIZER;
+static void mutex_lock(int *m) { (void)m; pthread_mutex_lock(&mock_mutex); mock_lock_depth++; }
+static void mutex_unlock(int *m) { (void)m; mock_lock_depth--; pthread_mutex_unlock(&mock_mutex); }
+static bool capable(int what) { (void)what; return mock_root; }
+static unsigned current_uid(void) { return mock_uid; }
+static unsigned from_kuid(int *ns, unsigned uid) { (void)ns; return uid; }
+static unsigned long long ktime_get_real_seconds(void) { return mock_now; }
+static u32 get_random_u32(void) { return mock_random; }
+static int misc_register(struct miscdevice *d) { (void)d; return 0; }
+static int single_open(struct file *f, void *show, void *p) { (void)f;(void)show;(void)p; return 0; }
+
+static unsigned long copy_from_user(void *to, const void *from, unsigned long n)
+{
+        if (mock_copy_fails) return n;
+        memcpy(to, from, n);
+        return 0;
+}
+
+static ssize_t_k strscpy(char *to, const char *from, unsigned long room)
+{
+        unsigned long length = strlen(from);
+        if (length >= room) { memcpy(to, from, room - 1); to[room-1] = 0; return -7; }
+        memcpy(to, from, length + 1);
+        return (ssize_t_k)length;
+}
+
+/* printk has a ring behind it; this has a wall. Stops at it, because a log
+   that ran out of room is a mock that ran out, never a thing under test. */
+static void mock_say(const char *fmt, va_list args)
+{
+        unsigned room = mock_log_length < sizeof(mock_log) - 1
+                                ? (unsigned)(sizeof(mock_log) - 1 - mock_log_length)
+                                : 0;
+        int wrote;
+
+        if (!room)
+                return;
+
+        wrote = vsnprintf(mock_log + mock_log_length, room, fmt, args);
+        if (wrote > 0)
+                mock_log_length += (unsigned)wrote < room ? (unsigned)wrote : room;
+}
+#define MOCK_PRINT(fmt) do { va_list a; va_start(a, fmt); mock_say(fmt, a); va_end(a); } while (0)
+static void pr_warn(const char *fmt, ...) { MOCK_PRINT(fmt); }
+static void pr_err(const char *fmt, ...) { MOCK_PRINT(fmt); }
+static void pr_alert(const char *fmt, ...) { MOCK_PRINT(fmt); }
+
+/* seq_file grows its own buffer; this one does not, so it stops rather than
+   walking off the end. A report longer than the room here is a mock that ran
+   out, never a thing under test. */
+static char mock_report[16384];
+static unsigned mock_report_length;
+static unsigned mock_report_room(void)
+{
+        return mock_report_length < sizeof(mock_report) - 1
+                       ? (unsigned)(sizeof(mock_report) - 1 - mock_report_length)
+                       : 0;
+}
+static void seq_printf(struct seq_file *s, const char *fmt, ...)
+{
+        va_list a; int wrote; unsigned room = mock_report_room();
+        (void)s;
+        if (!room) return;
+        va_start(a, fmt);
+        wrote = vsnprintf(mock_report + mock_report_length, room, fmt, a);
+        va_end(a);
+        if (wrote > 0) mock_report_length += (unsigned)wrote < room ? (unsigned)wrote : room;
+}
+static void seq_puts(struct seq_file *s, const char *text)
+{
+        unsigned room = mock_report_room();
+        int wrote;
+        (void)s;
+        if (!room) return;
+        wrote = snprintf(mock_report + mock_report_length, room, "%s", text);
+        if (wrote > 0) mock_report_length += (unsigned)wrote < room ? (unsigned)wrote : room;
+}
+'''
+
+    bridge = r'''
+static bool intact_public(void) { mutex_lock(&lock); bool a = intact(); mutex_unlock(&lock); return a; }
+'''
+
+    driver = r'''
+static unsigned checks, failures;
+static void check(int ok, const char *what)
+{
+        checks++;
+        if (!ok) { failures++; printf("  FAIL %s\n", what); }
+}
+
+/* Every test drives the real entry points: the write handler and the show
+   handler, exactly as the kernel would call them. */
+static long put(const char *line)
+{
+        mock_log_length = 0; mock_log[0] = 0;
+        return floodlight_write(NULL, line, strlen(line), NULL);
+}
+
+static const char *report(void)
+{
+        struct seq_file seq = {0};
+        mock_report_length = 0; mock_report[0] = 0;
+        floodlight_show(&seq, NULL);
+        mock_report[mock_report_length] = 0;
+        return mock_report;
+}
+
+static bool shows(const char *needle) { return strstr(report(), needle) != NULL; }
+
+static void reset(u32 random)
+{
+        memset(changed, 0, sizeof(changed));
+        sealed = false; compromised = false;
+        mock_root = true; mock_uid = 0; mock_now = 1000;
+        mock_copy_fails = false;
+        mock_random = random;
+        secret = get_random_u32();
+        baseline_sum = baseline_seal();
+        guard_arm();
+}
+
+/* One writer among several: adds, changes and gives back rows, and reads the
+   report, all through the same entry points the kernel would use. */
+static void *hammer(void *which)
+{
+        unsigned me = (unsigned)(long)which;
+        char line[96];
+        unsigned round;
+
+        for (round = 0; round < 200; round++) {
+                struct seq_file seq = {0};
+
+                mock_report_length = 0;
+                snprintf(line, sizeof line, "prog%u network %s", me % 6,
+                         (round & 1) ? "deny" : "allow");
+                floodlight_write(NULL, line, strlen(line), NULL);
+
+                snprintf(line, sizeof line, "awk spawn %s",
+                         (round & 2) ? "allow" : "deny");
+                floodlight_write(NULL, line, strlen(line), NULL);
+
+                floodlight_show(&seq, NULL);
+        }
+
+        return NULL;
+}
+
+int main(void)
+{
+        reset(0x11223344);
+
+        /* --- it answers at all --------------------------------------- */
+        check(shows("awk") && shows("find") && shows("xargs"),
+              "the report carries the built-in answers");
+        check(strstr(report(), "awk") && strstr(report(), "deny"),
+              "awk is denied out of the box");
+        check(!shows("changed"), "a machine nobody has touched shows no change");
+
+        /* --- an ordinary change -------------------------------------- */
+        mock_uid = 0; mock_now = 2000;
+        check(put("awk spawn allow\n") > 0, "root may change an answer");
+        check(shows("changed"), "the change is in the report");
+        check(strstr(mock_log, "allowed") && strstr(mock_log, "awk"),
+              "the change is said out loud");
+
+        /* --- and undoing it gives the row back ------------------------ */
+        check(put("awk spawn deny\n") > 0, "an answer can be put back");
+        check(!shows("changed"), "back to built in leaves no deviation behind");
+
+        /* --- who may write -------------------------------------------- */
+        mock_root = false;
+        check(put("awk spawn allow") == -EPERM, "a non-root write is refused");
+        check(!shows("changed"), "and changes nothing");
+        mock_root = true;
+
+        /* --- red team: forging the report ------------------------------ */
+        check(put("x\033[2K\033[A spawn allow") == -EINVAL,
+              "a name carrying an escape is refused");
+        check(put("a\nfake spawn allow") == -EINVAL,
+              "a name carrying a newline is refused");
+        check(put("a\rb spawn allow") == -EINVAL, "a name carrying a return is refused");
+        check(put("a\010b spawn allow") == -EINVAL, "a name carrying a backspace is refused");
+        check(put("\033 spawn allow") == -EINVAL, "a bare escape is refused");
+        check(!shows("fake") && !shows("\033"), "and none of them reached the report");
+
+        /* --- red team: the parse --------------------------------------- */
+        check(put("") == -EINVAL, "an empty line is refused");
+        check(put("\n") == -EINVAL, "a bare newline is refused");
+        check(put("awk") == -EINVAL, "a line with no setting is refused");
+        check(put("awk spawn") == -EINVAL, "a line with no state is refused");
+        check(put("awk spawn maybe") == -EINVAL, "a state that is not allow or deny is refused");
+        check(put("awk fly allow") == -EINVAL, "a setting that does not exist is refused");
+        check(put("     ") == -EINVAL, "a line of spaces is refused");
+        check(put("\t\t") == -EINVAL, "a line of tabs is refused");
+        {
+                char big[512];
+                memset(big, 'a', sizeof(big)); big[sizeof(big)-1] = 0;
+                check(floodlight_write(NULL, big, sizeof(big) - 1, NULL) == -EINVAL,
+                      "a line longer than any that can mean something is refused");
+                check(guard_intact(), "and it did not reach the guards");
+        }
+        {
+                char name[SUBJECT + 32];
+                memset(name, 'a', SUBJECT + 2); strcpy(name + SUBJECT + 2, " spawn allow");
+                check(put(name) == -EINVAL, "a name too long for a row is refused");
+        }
+        mock_copy_fails = true;
+        check(put("awk spawn allow") == -EFAULT, "a copy that fails is refused");
+        mock_copy_fails = false;
+
+        /* --- a program this kernel never heard of ---------------------- */
+        check(put("/usr/bin/curl network deny") > 0, "a program not built in can be named");
+        check(shows("/usr/bin/curl"), "and appears in the report");
+        check(put("/usr/bin/tar flag --to-command deny") > 0, "a flag can be refused");
+        check(shows("--to-command"), "and the flag is in the report");
+
+        /* --- the register fills up -------------------------------------- */
+        reset(0x11223344);
+        {
+                char line[64];
+                unsigned made = 0, i;
+                for (i = 0; i < CHANGES + 4; i++) {
+                        snprintf(line, sizeof line, "prog%u network deny", i);
+                        if (put(line) > 0) made++;
+                }
+                check(made == CHANGES, "the register holds exactly what it says it does");
+                snprintf(line, sizeof line, "prog%u network deny", CHANGES + 9);
+                check(put(line) == -ENOSPC, "and refuses the one past it");
+        }
+
+        /* --- sealing ------------------------------------------------------ */
+        reset(0x11223344);
+        check(put("seal") > 0, "the register can be sealed");
+        check(shows("(sealed)"), "and says so");
+        check(put("awk spawn allow") == -EPERM, "a sealed register refuses a change");
+        check(put("seal") > 0, "sealing again is allowed");
+        check(!strstr(mock_log, "sealed"), "but says nothing the second time");
+
+        /* --- red team: tampering ------------------------------------------ */
+        reset(0x11223344);
+        put("awk spawn allow");
+        changed[0].allowed = 0;                    /* a write that missed the seal */
+        check(!intact_public(), "a deviation altered in memory is caught");
+        check(shows("TAMPERED"), "and the report stops answering");
+        check(put("awk spawn deny") == -EPERM, "and no further change is taken");
+
+        reset(0x11223344);
+        {
+                /* The built-in answers are const in the kernel; here we reach
+                   past that to prove the sum is what notices, not the page. */
+                struct rule *writable = baseline;
+                unsigned char was = writable[0].allowed;
+                writable[0].allowed = !was;
+                check(!intact_public(), "a built-in answer altered in memory is caught");
+                check(shows("TAMPERED"), "and the report stops answering");
+                writable[0].allowed = was;
+        }
+
+        reset(0x11223344);
+        parse.after[0] ^= 0xff;                    /* an overrun by one byte */
+        check(!guard_intact(), "one byte past the parse buffer is caught");
+        check(!intact_public(), "and the register stops answering");
+
+        /* --- the guard bytes are never the hole ---------------------------- */
+        {
+                u32 seeds[] = {0, 0x00000000, 0xffffff00, 0x5a, 0x00005a00, 0x1234};
+                unsigned i;
+                for (i = 0; i < ARRAY_SIZE(seeds); i++) {
+                        reset(seeds[i]);
+                        check(guard_head != 0 && guard_tail != 0 && guard_head != guard_tail,
+                              "the guard bytes are never zero and never each other");
+                        memset(parse.before, 0, GUARD);
+                        check(!guard_intact(), "a guard of zeros is not intact");
+                }
+        }
+
+        /* --- red team: a row given back leaves a hole ---------------------- */
+        reset(0x11223344);
+        put("aaa network deny");
+        put("bbb network deny");
+        put("ccc network deny");
+        put("bbb network allow");      /* not built in, so this stays a row */
+        check(put("awk spawn allow") > 0, "a row can still be added");
+        {
+                /* Hand a row back by hand, the way restoring a built-in does,
+                   and then look past the hole it leaves. */
+                memset(&changed[1], 0, sizeof(changed[1]));
+                check(find("ccc", NETWORK, "") != NULL,
+                      "a row past a hole is still found");
+                check(shows("ccc"), "and still in the report");
+        }
+
+        /* --- red team: names that nearly match ----------------------------- */
+        reset(0x11223344);
+        put("aw spawn allow");
+        check(find("awk", SPAWN, "") == NULL,
+              "a shorter name is not a longer one");
+        put("awkk spawn allow");
+        check(find("awk", SPAWN, "") == NULL,
+              "a longer name is not a shorter one");
+        check(find("aw", SPAWN, "") && find("awkk", SPAWN, ""),
+              "and both of them are their own row");
+
+        /* One subject can be refused two different things at once. */
+        reset(0x11223344);
+        put("curl spawn deny");
+        put("curl network deny");
+        check(find("curl", SPAWN, "") && find("curl", NETWORK, ""),
+              "one subject carries a row per setting");
+        check(find("curl", RUN, "") == NULL, "and none for a setting nobody set");
+
+        /* A flag row is told apart by its flag, not just its subject. */
+        reset(0x11223344);
+        put("tar flag --to-command deny");
+        put("tar flag --use-compress-program deny");
+        check(find("tar", FLAG, "--to-command") &&
+              find("tar", FLAG, "--use-compress-program"),
+              "two flags on one program are two rows");
+        check(find("tar", FLAG, "--other") == NULL,
+              "and a flag nobody named is not one of them");
+
+        /* --- red team: the case of a name --------------------------------- */
+        reset(0x11223344);
+        put("AWK spawn allow");
+        check(find("awk", SPAWN, "") == NULL,
+              "a name in capitals is not the applet in lower case");
+
+        /* --- red team: names built to confuse the reader ------------------- */
+        reset(0x11223344);
+        check(put("flag spawn deny") > 0, "a program may be called flag");
+        check(put("allow network deny") > 0, "a program may be called allow");
+        check(put("seal network deny") == -EINVAL,
+              "seal is the command, and the command is the whole line");
+        check(!sealed, "a line that looked like a command did not seal anything");
+        check(shows("flag") && shows("allow"), "and both are in the report");
+
+        /* --- red team: the longest of everything --------------------------- */
+        reset(0x11223344);
+        {
+                char line[SUBJECT + DETAIL + 24];
+                unsigned i;
+                for (i = 0; i < SUBJECT - 1; i++) line[i] = 'n';
+                strcpy(line + SUBJECT - 1, " flag ");
+                for (i = 0; i < DETAIL - 1; i++) line[SUBJECT + 5 + i] = 'f';
+                strcpy(line + SUBJECT + 5 + DETAIL - 1, " deny");
+                check(put(line) > 0, "the longest row that can exist is taken");
+                check(guard_intact(), "and the guards are untouched by it");
+        }
+
+        /* --- red team: two hands at once ----------------------------------- */
+        reset(0x11223344);
+        {
+                /*
+                        The register is one array behind one lock, and a row is
+                        several stores: the name, the setting, the state, then
+                        the seal over all of it. Two writers interleaving there
+                        would leave a row whose seal does not cover what the row
+                        says -- which the next reader would call tampering, on a
+                        machine nobody had tampered with.
+                */
+                pthread_t hands[8];
+                unsigned i;
+
+                for (i = 0; i < 8; i++)
+                        pthread_create(&hands[i], NULL, hammer, (void *)(long)i);
+                for (i = 0; i < 8; i++)
+                        pthread_join(hands[i], NULL);
+
+                check(intact_public(),
+                      "eight writers at once leave every seal covering its row");
+                check(mock_lock_depth == 0, "and the lock as they found it");
+                check(!compromised, "and nothing looking like tampering");
+                check(guard_intact(), "and the guards untouched");
+        }
+
+        /* --- the writer and the reader, against each other ----------------- */
+        reset(0x11223344);
+        {
+                bool said = false;
+
+                reread();
+                check(floodlight_row_count == 0,
+                      "an untouched register gives the reader nothing to carry");
+
+                put("awk spawn allow");
+                reread();
+                check(floodlight_row_count == 1,
+                      "one deviation reaches the reader as one row");
+                check(reader_says("awk", FLOODLIGHT_SPAWN, "", &said) && said,
+                      "and the reader reads back what was written");
+
+                put("env spawn deny");
+                put("curl network deny");
+                put("tar flag --to-command deny");
+                reread();
+                check(floodlight_row_count == 4,
+                      "four deviations reach the reader as four rows");
+
+                said = true;
+                check(reader_says("env", FLOODLIGHT_SPAWN, "", &said) && !said,
+                      "a denial of a built-in allowance is read back");
+                said = true;
+                check(reader_says("curl", FLOODLIGHT_NETWORK, "", &said) && !said,
+                      "a denial for a program this kernel never heard of is read back");
+                said = true;
+                check(reader_says("tar", FLOODLIGHT_FLAG, "--to-command", &said) && !said,
+                      "a refused flag is read back");
+                check(!reader_says("tar", FLOODLIGHT_FLAG, "--other", &said),
+                      "and a flag nobody refused is not");
+                check(!reader_says("find", FLOODLIGHT_SPAWN, "", &said),
+                      "a built-in answer is not carried twice");
+                check(!reader_says("aw", FLOODLIGHT_SPAWN, "", &said) &&
+                      !reader_says("awkk", FLOODLIGHT_SPAWN, "", &said),
+                      "and a name that merely starts the same is not it");
+
+                put("awk spawn deny");   /* back to built in */
+                reread();
+                check(!reader_says("awk", FLOODLIGHT_SPAWN, "", &said),
+                      "a deviation given back stops reaching the reader");
+        }
+
+        /* --- the lock is balanced whatever happened ------------------------ */
+        check(mock_lock_depth == 0, "every path leaves the lock as it found it");
+
+        printf("%u/%u\n", checks - failures, checks);
+        return failures ? 1 : 0;
+}
+'''
+
+    runnable = "\n".join(line for line in text.split("\n")
+                         if not re.match(r'\s*#\s*include\s*<', line))
+
+    #   The shipped file is const and a check above holds it to that. This copy
+    #   is not, so the tamper test can actually alter a built-in answer and
+    #   prove the sum is what notices: writing through a cast to const is
+    #   undefined, and the compiler duly assumed the value could not change.
+    runnable = runnable.replace(
+        "static const struct rule baseline[] = {",
+        "static struct rule baseline[] = {")
+
+    round_trip = r"""
+/* The report the module just wrote, handed to the shell's reader. */
+static void reread(void)
+{
+        struct seq_file seq = {0};
+
+        mock_report_length = 0; mock_report[0] = 0;
+        floodlight_show(&seq, NULL);
+        mock_report[mock_report_length] = 0;
+
+        floodlight_row_count = 0;
+        floodlight_report_read = true;   /* do not go near a device */
+        floodlight_take(mock_report);
+}
+
+static bool reader_says(const char *name, positive setting, const char *detail,
+                        bool *answer)
+{
+        return floodlight_says(name, setting, detail, answer);
+}
+"""
+
+    with tempfile.TemporaryDirectory(prefix='floodlight-run-') as work:
+        unit = Path(work) / 'run.c'
+        unit.write_text(mock + runnable + bridge + reader_mock + reader +
+                        round_trip + driver)
+        binary = Path(work) / 'run'
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
+                       ['-std=gnu11', '-O1', '-g', '-w',
+                        '-fsanitize=address,undefined', str(unit), '-o', str(binary)],
+                       check=True)
+        ran = subprocess.run([str(binary)], text=True, capture_output=True)
+        tally = re.search(r'(\d+)/(\d+)\s*$', ran.stdout.strip())
+        passed = tally and tally.group(1) == tally.group(2)
+        checks += int(tally.group(2)) - 1 if tally else 0
+        if not passed:
+            failures += int(tally.group(2)) - int(tally.group(1)) if tally else 1
+            for line in ran.stdout.splitlines():
+                if line.strip().startswith('FAIL'):
+                    print('  ' + line.strip())
+        check(bool(passed), 'the module runs and refuses everything it should: '
+              + (ran.stdout.strip().splitlines()[-1] if ran.stdout.strip() else ran.stderr[-200:]))
+
+    #   The seal has to notice any change at all to a row, because what it is
+    #   for is a write that did not come through the device -- which will be a
+    #   byte or a bit, not a rewrite. Every single-bit flip in a row-sized
+    #   buffer, exhaustively.
+    fold_body = text[text.index('static u32 fold(u32 hash'):]
+    fold_body = fold_body[:fold_body.index('\n}\n') + 3]
+
+    seal_program = r'''
+#include <stdio.h>
+#include <string.h>
+typedef unsigned int u32;
+''' + fold_body + r'''
+int main(void)
+{
+    unsigned char row[112];
+    u32 secret = 0x9e3779b9, base;
+    int bad = 0;
+    for (unsigned i = 0; i < sizeof row; i++) row[i] = (unsigned char)(i * 7 + 3);
+    base = fold(secret ^ 2166136261u, row, sizeof row);
+    for (unsigned i = 0; i < sizeof row; i++)
+        for (unsigned b = 0; b < 8; b++) {
+            row[i] ^= (unsigned char)(1u << b);
+            if (fold(secret ^ 2166136261u, row, sizeof row) == base) {
+                printf("MISSED byte %u bit %u\n", i, b);
+                bad++;
+            }
+            row[i] ^= (unsigned char)(1u << b);
+        }
+    /* And the secret has to matter, or the seal is arithmetic anybody can redo. */
+    if (fold(0 ^ 2166136261u, row, sizeof row) == base) { printf("SECRET ignored\n"); bad++; }
+    printf("%d\n", bad);
+    return 0;
+}
+'''
+    with tempfile.TemporaryDirectory(prefix='floodlight-seal-') as work:
+        unit = Path(work) / 'seal.c'
+        unit.write_text(seal_program)
+        binary = Path(work) / 'seal'
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
+                       ['-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror',
+                        '-fsanitize=address,undefined', str(unit), '-o', str(binary)],
+                       check=True)
+        ran = subprocess.run([str(binary)], text=True, capture_output=True)
+        check(ran.returncode == 0 and ran.stdout.strip().endswith('0'),
+              'the seal notices every single-bit change to a row: ' +
+              ran.stdout.strip().replace(chr(10), '; '))
+
+    #   plain() is the whole of the anti-forgery property, so it is compiled
+    #   out of the file and run over every byte there is rather than reasoned
+    #   about. A name that reaches the log or the report carrying an escape
+    #   can erase the line above it; one carrying a newline can print a row
+    #   that was never in the array and say anything it likes.
+    body = text[text.index('static bool plain(const char *word)'):]
+    body = body[:body.index('\n}\n') + 3]
+
+    program = r'''
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+''' + body + r'''
+int main(void)
+{
+    int bad = 0;
+    /* Every byte, alone. Accepted exactly when it is one of the marks a
+       program name, a path or a flag is actually made of. */
+    for (int c = 1; c < 256; c++) {
+        char one[2] = {(char)c, 0};
+        bool want = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '.' || c == '_' ||
+                    c == '-' || c == '/' || c == '+' || c == ':';
+        if (plain(one) != want) {
+            printf("BYTE %d want %d\n", c, (int)want);
+            bad++;
+        }
+    }
+    if (plain("")) { printf("EMPTY accepted\n"); bad++; }
+    static const char *refuse[] = {
+        "x\033[2K", "a\nfake spawn allow", "a\rb", "a b", "a\tb",
+        "a\010b", "a\177b", "\033", "quote\"d", "semi;colon", "a$b",
+    };
+    for (unsigned i = 0; i < sizeof refuse / sizeof *refuse; i++)
+        if (plain(refuse[i])) { printf("ACCEPTED %u\n", i); bad++; }
+    static const char *accept[] = {
+        "awk", "find", "/usr/bin/tar", "--to-command", "a.b_c-d",
+        "x:y", "a+b", "libexec/thing.so.1",
+    };
+    for (unsigned i = 0; i < sizeof accept / sizeof *accept; i++)
+        if (!plain(accept[i])) { printf("REFUSED %s\n", accept[i]); bad++; }
+    printf("%d\n", bad);
+    return 0;
+}
+'''
+
+    with tempfile.TemporaryDirectory(prefix='floodlight-') as work:
+        unit = Path(work) / 'plain.c'
+        unit.write_text(program)
+        binary = Path(work) / 'plain'
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
+                       ['-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror',
+                        '-fsanitize=address,undefined', str(unit), '-o', str(binary)],
+                       check=True)
+        ran = subprocess.run([str(binary)], text=True, capture_output=True)
+        check(ran.returncode == 0 and ran.stdout.strip().endswith('0'),
+              'plain() accepts exactly the safe bytes: ' + ran.stdout.strip().replace(chr(10), '; '))
+
+    print('floodlight %d/%d' % (checks - failures, checks))
+    if os.environ.get("TEST_TALLY"):
+        with open(os.environ["TEST_TALLY"], "a") as tally:
+            tally.write("floodlight %d %d\n" % (checks - failures, checks))
+    return 1 if failures else 0
+
+
 HARNESS_CHECKS = {
     "engines": harness_engines_main,
     "core_state": harness_core_state,
@@ -18812,6 +20551,8 @@ HARNESS_CHECKS = {
     "shell_functions": harness_shell_functions,
     "audit_shell_functions": harness_audit_shell_functions,
     "canvas_lifetime": harness_canvas_lifetime,
+    "canvas_view": harness_canvas_view,
+    "floodlight": harness_floodlight,
     "code_map": harness_code_map,
 }
 
@@ -18868,7 +20609,6 @@ REASONS = {
  "r119": "a missing component and an unreadable directory are reported by the reason the resolver reached rather than the one the kernel gave.",
  "r12": "a split() or match() target that is not an array: ours refuses it when parsing (exit 1), gawk when it runs (exit 2)",
  "r120": "-I asks once for many names, --interactive takes a word, and a dot operand is refused by the kernel rather than by name.",
- "r121": "-I and --interactive with a word are a second prompting policy over the one -i asks for, and --preserve-root with a word names a second root.",
  "r122": "a count written in hexadecimal is not read.",
  "r123": "--random-source is refused because kernel randomness is mandatory here, and the filename-wiping removals are refused because a name is not overwritten before it is unlinked.",
  "r124": "kernel randomness is mandatory here, so --random-source is refused; and a name is not overwritten before it is unlinked, so the wiping removals are refused rather than pretended.",
@@ -19056,7 +20796,7 @@ REASONS = {
  "r289": "a range file is not read: ranges are given as operands",
  "r29": "gawk's --exec; refused with usage",
  "r290": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them",
- "r291": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused",
+ "r291": "the mount table is read from mountinfo alone and drawn as a tree or a list: the df layouts, JSON, the fstab and mtab tables, tag evaluation, the path cache, polling, expression filters, forcing the tree back on over a query that turned it off, and another task's namespace are refused",
  "r292": "POSIX message queues, shared memory and semaphores are not created: this build makes the System V objects only",
  "r293": "removing every object at once is not built, and --all is refused with it",
  "r294": "the detail, time, pid, creator, limits and summary modes read fields this census does not keep",
@@ -19089,7 +20829,19 @@ REASONS = {
  "r318": "automatic subid mapping is refused: this build maps only the ranges named outright",
  "r319": "signatures are listed, never erased: every mutating mode, the backup directory and device locking are refused",
  "r32": "gawk's --bignum; numbers are doubles here, refused with usage",
+ "r320": "a name is never overwritten before it is unlinked here, so the removals that wipe one are refused rather than pretended, -u warns that it only unlinks, and --random-source is refused because kernel randomness is mandatory.",
+ "r321": "the operating system name is not in struct utsname and is not ours to claim on another system's behalf: this one answers Moonwater where the reference answers GNU/Linux, in -o and in the last field of -a.",
+ "r323": "-m with a symbolic clause that names the sticky bit gives 1777 here where the reference gives 1755: the shared mode parser and the numeric path agree with it -- chmod o+t on 0777 and mkdir -m 1777 both answer 1777 on either side -- and only mkdir's symbolic clause differs, at every umask and on both file systems.",
+ "r324": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+ "r325": "the reference names itself in these diagnostics by the path it was run from, which a farm of links cannot match, and du writes one line per byte of a character that is not an option where this writes one per character",
+ "r326": "hardlink here compares whole contents where 2.41 takes a sha256 of them, so its report names a different method, and a - operand is a name it stats rather than a path it resolves",
+ "r327": "the compiled dircolors database is deliberately shorter than GNU 9.11's, so anything that prints it differs; whereis keeps a lone - as a name to look up where the reference drops it",
+ "r328": "the target of a symbolic link in a long listing is written as the link holds it: the reference colours it for what it leads to and wraps it in the hyperlink --hyperlink asks for, and this one writes the text alone.",
+ "r329": "a name holding a shell metacharacter is written as it stands where the reference escapes the character with a backslash.",
  "r33": "gawk's --use-lc-numeric; refused with usage",
+ "r330": "under --quoting-style=shell a name holding a byte that does not print is quoted here and written as it stands there, so it begins two columns later.",
+ "r331": "the names -L could not follow are reported with the ./ the walk reached them by, where the reference reports them as they were written.",
+ "r332": "the blank line between a group of files and the directories after it is written here only when the first of those directories opens; the reference writes it before it tries to open one.",
  "r34": "gawk's --optimize; refused with usage",
  "r35": "gawk's --posix; ours is the POSIX awk already and has no modes, refused with usage",
  "r36": "gawk's --sandbox; refused with usage",
@@ -19246,6 +20998,37 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "2308a5610418d794b66a52f30d263cdd541a75a77cb2fab1d1770d07b8ac6d7e"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[%#-12.*c][%+01X]%%\", 12, 0.0001, 1e100 }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "0955aa5b55844e03",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "f520c39d1d75d021b6c5d1be61565f26c72cf4937088a807b8f4a6f075860b23"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
   },
   "case": {
@@ -19369,6 +21152,39 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "6f9dbdc116ae85e0754356d80d9a53d85635cab558702851f94d896d1c94b909"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "u=1e2",
+    "BEGIN { $0 = \"10 abc 2.5\"; x = \"010\"; y = 3; i = 1; a[\"k\"] = 1; print (((- -0) !~ \"^a\")); print ((\"1e2\" / 1e6) (12345678901234567890 ** tolower(atan2(2, 1)))), ((100000 == --i)) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "20cfbd3040ad3f71",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "66b9c363536d87c022bea3a5b73e8b44b4df1ef0c3994735a7019aa295875b93"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
    "effects": "63734cb1d5b2e1d08812be0d992887c46fc4b88fe296c7850661ced6be74f9c3",
    "status": 0,
    "stdout": "ac4fb988efa490cdf217aa0e728e4ad74c4a652b4e70d0ef85b3ec543db36b35"
@@ -19390,6 +21206,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r6",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.2f\"; OFMT = \"%.30g\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "2347980db2df5452",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -19447,6 +21294,37 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%G\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "2b67077cc89ed421",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
   },
   "case": {
@@ -19491,6 +21369,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r2",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "9e9ca8704f37ab7a7d54602e9f4a54b2d9b682881b5e304669ee7d58b5a7e89a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[%12X][% 0.0e]\\n\", 1e300, \" 12 \" }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "38a53d05fe61a9ce",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "3e7f42658c5c8adc1197b02c1b887ce22858c15473575043ee4b510f249881a3"
+  },
   "utility": "awk"
  },
  {
@@ -19599,6 +21508,37 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%G\"; OFMT = \"%.2f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "46a5aa539afca372",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "6218b42da88599cdf8f6206e3f0eaa62da18d61399be18591e120b1e89553afb"
   },
   "case": {
@@ -19669,6 +21609,68 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r2",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.10g\"; OFMT = \"%#.3e\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "511665fda0d77a28",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%e\"; OFMT = \"%5.1f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "523c835f7deef3a7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -19750,6 +21752,99 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%.30g\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "57c841b216f39b15",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%5.1f\"; OFMT = \"%.30g\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "60872569711aac36",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%G\"; OFMT = \"%#.3e\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "610cc20a83602038",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "073b2809b2bd810eb3985ed8154272631aed48c7a0335462fb8af8cd038e9f14"
   },
   "case": {
@@ -19770,6 +21865,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r2",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%5.1f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "6b2bdb413f870dcc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -20028,6 +22154,37 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%5.1f\"; OFMT = \"%g\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "928928ae4a100b9f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -20098,6 +22255,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r4",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "405f393ae33364f028bd3cac5fa48ec5dfffd54008295c74eb892f88ecc788e2"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { s = sprintf(\"[%*.0G][%.3X]\\n\", 0, \"010\", 1e300); print length(s); print s }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "9b8d1c048f9b4a76",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "ee52658cdcc2a54ad478bd9fabe9165dda342b8e6c438739559e265b100ceb49"
+  },
   "utility": "awk"
  },
  {
@@ -20256,6 +22444,133 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "9858258d047ac296dae8b9f71c527b41b3aef5793275049017cddbfbf48993eb"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { s = sprintf(\"[%- .3X]\\n\", 2^64); print length(s); print s }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "ae369578fbe91fca",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "79931b7e2081e0e86525e8d72a45cb137a08a2e2f54d2429d6fde37c352455a7"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.2f\"; OFMT = \"%.0f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "afc642a92f6ef3a1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "db312f48ea46e3c0641c629cc42627713c52d735d80fdf2d3dffc0e39f9ee0b0"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "RS=a?",
+    "{ print NR \"[\" $0 \"]\" }",
+    "mixed"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "b27482d706622981",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "b7240ce812eeb9c4c8d341b97e741453ab6b6ee8d421d7fd55f013fdc637c160"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "122194d6d71c852ea24be3b6bf0c4057889bb36e3deafb804eee80ab1b54f93b"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[%+1.0X][%-+12.3G]\\n\", 2^64, 1e16 }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "b2a11ab2abf58fc6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "da7f79b7665470276d3f6958552113e54c2a4aebf3a7f0f8037faf2731c0415e"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
@@ -20275,6 +22590,68 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r3",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%G\"; OFMT = \"%e\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "b3aa8c60baea5395",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%.0f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "b871cded03c9fcaf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -20383,6 +22760,37 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%e\"; OFMT = \"%.30g\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "c9c1ffd538f9d7a1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "eb13f166bf82612e94404d641d0ff0d98ccc1da7841b9a2e2673f9cbd1611ba5"
   },
   "case": {
@@ -20427,6 +22835,68 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r0",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%.0f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "d5546497188ef8eb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%#.3e\"; OFMT = \"%+.1f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "d58caf9168880daa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
   "utility": "awk"
  },
  {
@@ -20502,6 +22972,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r7",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.2g\"; OFMT = \"%+.1f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "ddf69436aaf89595",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -20583,6 +23084,68 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "880d6b587cc219ea9b11576a2760a8f3991a8db122e4abbc670f3b7c71260870"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[% 0.1o][%- 12.3X]\\n\", 1e-300, 1e300 }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "e485934cb222bf84",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "0362cf09619119389ae7aaf26cdf498f2dbc61eaa7a993245d7b7e1d8759d3ae"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.2g\"; OFMT = \"%.0f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "e49809c8f713b477",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "fc99b27a05eb7ca1581da764a20897b90bf0725f9429609fcc0543876821f860"
   },
   "case": {
@@ -20628,6 +23191,40 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r0",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "acda87158697443a633768a7c49464d62b23ab29313bd9f7ffae7842256c9f11"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "RS=(|a)",
+    "{ print NR \"[\" $0 \"]\" }",
+    "csv"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "e7a84b5e280dd63c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e167304886c4a654eca56ba8f949ea52514bb842b75449faceade9d830b1ff53"
+  },
   "utility": "awk"
  },
  {
@@ -20678,6 +23275,133 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r4",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.0f\"; OFMT = \"%g\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "e99afa716eecd65f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%#.3e\"; OFMT = \"%.0f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "f10b84adf7e5fb7b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "1210e159a552e865dd52dffdf29f8f823668cf6f1ef9ce2fe0a1696b2efc97b9"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[%+ 05.0X]\\n\", 1e100 }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "f8c28dcc732733ac",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "415bba9ba84f62ec916a1db0fbe5285e8fe21d64d3f041641d82e1cb87f3fafa"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "acda87158697443a633768a7c49464d62b23ab29313bd9f7ffae7842256c9f11"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "RS=(a|bc)*",
+    "{ print NR \"[\" $0 \"]\" }",
+    "csv"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "f9c14b0a0c54006d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e167304886c4a654eca56ba8f949ea52514bb842b75449faceade9d830b1ff53"
+  },
   "utility": "awk"
  },
  {
@@ -92192,31 +94916,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    "1000"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "chgrp"
-  },
-  "domain": "files",
-  "id": "135154e8d06b1e4d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r86",
-  "utility": "chgrp"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "1000",
     "dangling"
    ],
@@ -92243,32 +94942,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    "0600",
-    "dangling"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "chmod"
-  },
-  "domain": "files",
-  "id": "1e96a7d3ec395423",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r87",
-  "utility": "chmod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "0600"
    ],
    "domain": "files",
@@ -92285,84 +94958,6 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r87",
   "utility": "chmod"
- },
- {
-  "candidate": {
-   "effects": "d016e9d0b81ffd4a7dee036125f0270cab223d0e4ab32e3e7288a013e0abc3ca",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "0600",
-    "--",
-    "-dash"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "chmod"
-  },
-  "domain": "files",
-  "id": "d714bc6f455714bf",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r87",
-  "utility": "chmod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    ":",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "chown"
-  },
-  "domain": "files",
-  "id": "817638461a6946aa",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r86",
-  "utility": "chown"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "1000"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "chown"
-  },
-  "domain": "files",
-  "id": "e162464499f3beed",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r86",
-  "utility": "chown"
  },
  {
   "candidate": {
@@ -96020,6 +98615,14 @@ PINNED = r"""
   "utility": "csplit"
  },
  {
+  "domain": "files",
+  "kind": "bug",
+  "list": "ledger",
+  "option": "-b",
+  "reason_id": "r91",
+  "utility": "csplit"
+ },
+ {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -97088,7 +99691,7 @@ PINNED = r"""
   "id": "25dc8df95d82301b",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r324",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97119,7 +99722,7 @@ PINNED = r"""
   "id": "2c9aaebab9354560",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r324",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97150,7 +99753,7 @@ PINNED = r"""
   "id": "3caa045682f00a62",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r324",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97181,7 +99784,7 @@ PINNED = r"""
   "id": "48bea336b8f37e49",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r324",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97238,7 +99841,7 @@ PINNED = r"""
   "id": "557857c8d97f20cf",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r324",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97269,73 +99872,11 @@ PINNED = r"""
   "id": "6a15ec37f13c6de7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r324",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
    "stdout": "e96d555d024146db7480d9cd2c593796efb676d7ac3fd0a5130aaac38c293b08"
-  },
-  "utility": "dir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "e11f3097a8c6f91b89cde940dc86cccbe6f4de1e23d61473624e3b429e83278e"
-  },
-  "case": {
-   "argv": [
-    "badwalk"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "dir"
-  },
-  "domain": "files",
-  "id": "8b10f7c159b37c6d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "dir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "616a6a6598c632f5f8b28d06e820abc7ae27d6859296544cc30d4787f103f703"
-  },
-  "case": {
-   "argv": [
-    "--hyperlink=always"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "dir"
-  },
-  "domain": "files",
-  "id": "b3701af9e272279b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "4a38f17bac761ca14fc4d301873ae3b97b3c244d87a38b1f53ebf16c6d45ea44"
   },
   "utility": "dir"
  },
@@ -97362,7 +99903,7 @@ PINNED = r"""
   "id": "c72748944c1da40e",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r324",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97451,6 +99992,873 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "013a8a3011bd8030",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--bourne-shell",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "0262234ca7369d46",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bourne-shell",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "065e7a82208a03d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--bourne-shell",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "0797795ea243ec01",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "08088c6298424a7c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "082d95ed7ec63924",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "--csh",
+    "--bourne-shell",
+    "-b",
+    "-c",
+    "--sh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "0846f161e214724f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bourne-shell",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "0ad970f3f3577bf7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "0c7752f14c10fda4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bourne-shell",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "0dd45f4ef9aa2abf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--bourne-shell",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "0f30d00f2c3e7eb3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "0fb97bd337628796",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "0ff67671510a362a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "142037fbdc7c9120",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "154b9a7f1f7869d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "158f0a5b1e6610d6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "--bourne-shell",
+    "-b"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "1632bc983818e8fe",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "164145ee5bdac2db",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--bourne-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "178c6733dc4fa3da",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "17e6240b8b89eb83",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--c-shell",
+    "--bourne-shell",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "183fdddb9f7a749a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--bourne-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "1a72444f6bb9e348",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--bourne-shell",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "1b0b0ada390f533e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--bourne-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "1b5efad72bb5cfc5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "1b6749a50231cae2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "1dee12351b46ff6c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "dir"
    ],
    "domain": "files",
@@ -97476,6 +100884,212 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--sh",
+    "--bourne-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "206eba7007731780",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "-c",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "222f37573feb2d42",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "23235092693f9bc8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "244d9e8281188824",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--bourne-shell",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "24d878b9a404426f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "24f824cb626616bf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "a.txt"
    ],
    "domain": "files",
@@ -97491,6 +101105,140 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r97",
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--bourne-shell",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "25327dad0b1f1fff",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "26415e76e2b9993c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "26d4f8d2323f385a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bourne-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "28cabc7f1ac5ac30",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
   "utility": "dircolors"
  },
  {
@@ -97547,6 +101295,38 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--bourne-shell",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "2dabd66e57ced708",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
    "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
   },
   "case": {
@@ -97564,6 +101344,139 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r97",
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "32b498c2a49c2c0c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--bourne-shell",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "336ce15fde02743f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c12411d3ccf7a93cdf71c62c47f86270d525a10f5cca422ff22f08479c881b90"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--print-database"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "38d5ca2524c9ab22",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "30ed9b8e0527cce1094022e15baf2be42c18a89df40064f6fd2b0f9356d100c4"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--bourne-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "3a76cb2aeef60baf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
   "utility": "dircolors"
  },
  {
@@ -97595,6 +101508,376 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--bourne-shell",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "3fd89afe1246d5bb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "3fde48bdfd21cffd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "3fe3f0fdde031b2a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--bourne-shell",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "41f90c935adb81a9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "48ca2c441b14b368",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "491ceaf9a432864a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "4f3e1c6f18b95502",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--bourne-shell",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "5125649aa728b6dc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--bourne-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "513ca3b5f6626d0f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--bourne-shell",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "514de6225e568935",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bourne-shell",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "51703a904457cb5b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
    "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
   },
   "case": {
@@ -97614,7 +101897,7 @@ PINNED = r"""
   "id": "524b87eaa42b08e4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the compiled dircolors database is deliberately shorter than GNU 9.11's, so anything that prints it differs; whereis keeps a lone - as a name to look up where the reference drops it",
+  "reason_id": "r327",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -97675,6 +101958,474 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "547df0763c5209d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--bourne-shell",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "5833712a24bf8f1b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "5aeb2cb98c1fbc70",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--bourne-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "5be7e91f189ca67c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "5d41d78d6ec450b2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "5d8576bb7ee9aba5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "5e6f2fc9c3ed4b2f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "5f50ca6991d0fc33",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "6005ebd4666f05b5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "60997ba90f81c03e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "6114cf8d2c052a5d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "622243333058cc4d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "triples",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "640e7cab1ec0e4c3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--bourne-shell",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "689630c7bd02eca0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -97695,6 +102446,442 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r97",
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--bourne-shell",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "69e0daef9d25e4e5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "6a58d1f99854a4af",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "6e2ae7789d53651f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "6f54eb75eab6a911",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--bourne-shell",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "707c67e84e1536d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--bourne-shell",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "76c735e1061405a8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "78982ae225f08eca",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "7c95fccab5ac434a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--bourne-shell",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "7e6413a82116c7b0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--csh",
+    "-b",
+    "--bourne-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "81fb0a5e65a84489",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "83806da3797de8d9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "85fb5a08c1f9b8a0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "8722ee85b5822c72",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
   "utility": "dircolors"
  },
  {
@@ -97730,6 +102917,950 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-c",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "886b7ba6af43e9cb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "8a9f88d6377011ea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "8cce63008d19a707",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "9027ce245feb6d2f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "91e09a70d4b865cf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "triples",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "936d4ebad28a89f0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "9622ca11a5aaf529",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "97b1e2ebc234bc78",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "98e580b2558cea85",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "9cb7d7c8d0f79a7e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "a09d2676a4bee438",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "a0a91669d18001b3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "a293efe733dae6e9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "a2de13ec668d8ddc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bourne-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "a64d420456246d58",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--bourne-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "a93d600f4681aaf5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "acefac6dc71200e7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "aee4c5fd389483c2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--csh",
+    "-b",
+    "-c",
+    "--sh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "b1ccf25f0f76ccfe",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "b31b84c0cd75db71",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "b423b1a2a014e75c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "b43e8859f79edddc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "b4ae8084ff0eea86",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "b748fa838cea64e8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "bd3a7590e85a8731",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "bea65694508db1c4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--bourne-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "c5bb83814502feea",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--csh",
+    "--c-shell",
+    "-c"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "c651d217afef8bcb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
     "--csh"
    ],
    "domain": "files",
@@ -97745,6 +103876,108 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r97",
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "c93235eadb385f12",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--bourne-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "cbc8fa253f411887",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "cc7ca86e1b3e29d8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
   "utility": "dircolors"
  },
  {
@@ -97770,6 +104003,178 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r97",
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "cec241786a96c7d3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "d2b906a8f202cddd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "d2f9d0c1d13b48eb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "--csh",
+    "--c-shell",
+    "-c",
+    "-b"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "d5d19d867f2e34d0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "d911a053ddb7956a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
   "utility": "dircolors"
  },
  {
@@ -97805,6 +104210,38 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-b",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "db349d7fc1d84e16",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
     "-c"
    ],
    "domain": "files",
@@ -97820,6 +104257,39 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r97",
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--bourne-shell",
+    "--sh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "random",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "dd87047017f05609",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
   "utility": "dircolors"
  },
  {
@@ -97855,6 +104325,72 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--print-ls-colors",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "df75313c819cf531",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7cb003818ebebbaaded14256d61b46dfd31aa1caecdacd21f079628160da321c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "e13186e9bdca4a9b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "a.txt"
    ],
    "domain": "files",
@@ -97870,6 +104406,451 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r97",
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "e313ca865cddf82f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "d206a9d0465df2398be47195d2c705bf23814c5153f4b352f77c657d4e74e582"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--bourne-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "e57845a9265fa8f8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a6a07a86c111443511735cbc299b25dd872d997327e72944eb27c114f2cc23d8"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "e7a2bcc07ad31f87",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "--bourne-shell",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "triples",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "eaebf4ffde2b7e67",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--sh",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "eb68b036aee2dbba",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "f145bbab6d4e5443",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "72e5bc9d1efe3688f826e8ba1fbee28c782f502074d6689dcb636a024bceb5b3"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--bourne-shell",
+    "--csh",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "f25d9a81401a76d3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--bourne-shell",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "f6e7bdc78480a5b7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "--sh",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "f87499272ca2c40f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--c-shell"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "fada69028eaeff21",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--csh",
+    "--c-shell",
+    "colors_colon"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "fd67dc8ff56a1211",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c8c057dc9ac82476b91bc475dac9d5128e94a6606be92d790a3e7347a5e7fd72"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "--bourne-shell",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "fddf66a3ec8e9612",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
+  "utility": "dircolors"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a426b2326cd183d22ef53f29de5e467110550ecd3acacc319c53be630efee169"
+  },
+  "case": {
+   "argv": [
+    "-b",
+    "-c",
+    "--sh",
+    "--csh"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "files_colors",
+   "tier": "powerset",
+   "utility": "dircolors"
+  },
+  "domain": "files",
+  "id": "ffd8e04b1744252b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r97",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "99aa0a7e9debcf010f7d781af4f4c2adb41ff9d43fa8f80ddadef2d2011b887c"
+  },
   "utility": "dircolors"
  },
  {
@@ -98228,7 +105209,7 @@ PINNED = r"""
   "id": "9b155b7bb5fc0af7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the reference names itself in these diagnostics by the path it was run from, which a farm of links cannot match, and du writes one line per byte of a character that is not an option where this writes one per character",
+  "reason_id": "r325",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -98441,7 +105422,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "cefc97e5e7dc36144bf71cd40e7e44f93cb93df65cb2abff17727d9ec954117e"
+   "stdout": "34f66d60b90297b95ccbc5364633679f0d286bf12746d3b624ca428bd454256d"
   },
   "case": {
    "argv": [
@@ -98460,6 +105441,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r98",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "du"
  },
  {
@@ -99280,7 +106262,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "b156aaa1937ff0eb2c0e4d8e1e9a5edea733f83344dbc2ee59a463f677fcae3b"
+   "stdout": "dc889d3bed4879423ba64152e3e9714a0eae527250d2394b33362b5074775e5c"
   },
   "case": {
    "argv": [
@@ -99307,6 +106289,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -99522,7 +106505,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "c6dfc7f2add2ad491db5c70d67b3dc44d1d16fac2e0d50ced8d05c338681cd73"
+   "stdout": "290c14df464cc2ca53b40041b44841efb8a8dbebb283301b3136c761f1e7fc60"
   },
   "case": {
    "argv": [
@@ -99554,6 +106537,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -99774,7 +106758,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "1c6f0dc703d7c6c3738ca57f4b5f27fd067b7a709b1883ac9f9e16c0f12c0cd1"
+   "stdout": "3adf4af7f2b77423131883fa7fa717a55493d61673265b98f81d25a19893f6e6"
   },
   "case": {
    "argv": [
@@ -99795,35 +106779,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "43f52689e513b3bd7e3ab9d63ddd97c97c582e72ce987aa414b368fbd47fe016"
-  },
-  "case": {
-   "argv": [
-    "dangling",
-    "-size",
-    "1k",
-    "-printf",
-    "ino=%i dev=%D %p\\n"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "178d2f96b8379724",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -99896,7 +106852,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "a20a8f63164da0ca26890be33ee9167129de8cf5d7aac7e45afc66f1bd98e21e"
+   "stdout": "0a0095ba6874a624faedcc4027c6b03445c88b475034e56f9fd1a1051c0a5253"
   },
   "case": {
    "argv": [
@@ -99923,6 +106879,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -100090,7 +107047,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "35f785c80995e363fc0b7006207a7934090d6a21b8d05f446e75896250e36e0f"
+   "stdout": "43f34e9c210cab48bac800034be4651ede29e07500587f118d9a940c6d56db3d"
   },
   "case": {
    "argv": [
@@ -100119,6 +107076,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -100186,7 +107144,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "db6ffc3752302b233b9671f0e81b75865b8dd9365516ffe0524e367104046b5f"
+   "stdout": "767cb307806881156f3ca88cf2c63b2f096fc977c02bba5ef5ea555f98aba6d9"
   },
   "case": {
    "argv": [
@@ -100212,6 +107170,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -100259,7 +107218,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "5af15c5972bc604c3c13ecf9d9c814b3991c899f3d9c6f3f8bf6f708a5f1a3fc"
+   "stdout": "02e59e3043dbd917799abc988a55fdbacf5b84b15f13b9dae3e95f35c81400c1"
   },
   "case": {
    "argv": [
@@ -100283,6 +107242,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -100355,7 +107315,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "ec19d4055f2ae3bdea19266690bb07f43ae7ebd623ac79fce32801a3e0bff5cf"
+   "stdout": "1a57d75e73d21e0be16d2163f29029d5bfdf06f10d4e5ee164fc06736a7e6599"
   },
   "case": {
    "argv": [
@@ -100376,6 +107336,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -100409,7 +107370,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "eb0fe79be99eea0f8e8ac323e2e6e020f65ee0ed49de3e52010341a187e3f09f"
+   "stdout": "d08991f18c59fea32ec2092da5bb5df71f3ae440714bbb9bbe876e5972d11172"
   },
   "case": {
    "argv": [
@@ -100429,6 +107390,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -100930,7 +107892,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "ec19d4055f2ae3bdea19266690bb07f43ae7ebd623ac79fce32801a3e0bff5cf"
+   "stdout": "1a57d75e73d21e0be16d2163f29029d5bfdf06f10d4e5ee164fc06736a7e6599"
   },
   "case": {
    "argv": [
@@ -100950,6 +107912,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -101023,7 +107986,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "6def75c997708586f085905d298ae10e929410cf1f0fbd2c7c7eddd544464197"
+   "stdout": "15c5b1c8880f16c516bb8943684152617b4f1aa0500cd5c1470d4a69096fa02d"
   },
   "case": {
    "argv": [
@@ -101048,6 +108011,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -101504,7 +108468,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "e5d27177385a54e32876a65cca0f2123a704c12ae7c66cb4aac12069901906dd"
+   "stdout": "08f90ae51d2e9da871fe80614b192d95ff43d9bf5b8886040fa3b8b2a5e65ff4"
   },
   "case": {
    "argv": [
@@ -101527,6 +108491,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -101837,7 +108802,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "9b0b9dda849878f5197492a9a65cbad99b2ebd8e8b4c5c28af04261579622781"
+   "stdout": "fc55864d4189f7c73c15720eeda79ba507ee91d0d9ac27643e610b0166136c87"
   },
   "case": {
    "argv": [
@@ -101868,6 +108833,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -102080,7 +109046,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "845c7d1873b50b307210e9c31d5be56996eba32703e6827727abca6c54cc123e"
+   "stdout": "f00bc208e72b6859b0e85c38ffb6686d85de5fb896b14ce5130dc99c813b87c0"
   },
   "case": {
    "argv": [
@@ -102106,6 +109072,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -102138,7 +109105,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "eb0fe79be99eea0f8e8ac323e2e6e020f65ee0ed49de3e52010341a187e3f09f"
+   "stdout": "d08991f18c59fea32ec2092da5bb5df71f3ae440714bbb9bbe876e5972d11172"
   },
   "case": {
    "argv": [
@@ -102160,6 +109127,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -102435,7 +109403,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "5100c3ee0c71493323875fcf301619e8b3756b665ab69dc18e318ac515cd0516"
+   "stdout": "bfdb7b7504a643c1907519b704f0f098cb668f8c8b70e97ebbecc02558eb9458"
   },
   "case": {
    "argv": [
@@ -102463,6 +109431,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -102668,7 +109637,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "ec19d4055f2ae3bdea19266690bb07f43ae7ebd623ac79fce32801a3e0bff5cf"
+   "stdout": "1a57d75e73d21e0be16d2163f29029d5bfdf06f10d4e5ee164fc06736a7e6599"
   },
   "case": {
    "argv": [
@@ -102688,6 +109657,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -102762,7 +109732,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "1c6f0dc703d7c6c3738ca57f4b5f27fd067b7a709b1883ac9f9e16c0f12c0cd1"
+   "stdout": "3adf4af7f2b77423131883fa7fa717a55493d61673265b98f81d25a19893f6e6"
   },
   "case": {
    "argv": [
@@ -102783,6 +109753,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -103149,7 +110120,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "96415964201857dcfd88ef89476a37d0eddd6ba437b3a1f383db6175125ede97"
+   "stdout": "e6d0e76b56745b8d0a763e4ecefdb49a70538e8769535b88347b72d748566c4e"
   },
   "case": {
    "argv": [
@@ -103169,6 +110140,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -103363,7 +110335,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "4cd4e5a34fa5244e1d77e113e7d6e4ca38a4e95614f480e3caffaf363488ab26"
+   "stdout": "ffb76090bd185fec12b2838b53c9a6396d811c07c1cb28e4f8f3a52656e870d0"
   },
   "case": {
    "argv": [
@@ -103385,37 +110357,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "9b5b32f74291d578c7cc887e1766e1a77311252fa205e8545bdde24950574352"
-  },
-  "case": {
-   "argv": [
-    ".",
-    "-maxdepth",
-    "2",
-    "-perm",
-    "/222",
-    "-printf",
-    "ino=%i dev=%D %p\\n"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "dc39cdf7a069b7c3",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -103547,7 +110489,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "828e77a6d1bd2c0ad86ed1845495e2a45424d789985e357483b86e11aa658ee5"
+   "stdout": "0aee54807e91c57696c0bddcf5e653102b3eb1bbffa8f0de754944bfb1c56fda"
   },
   "case": {
    "argv": [
@@ -103570,6 +110512,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -103603,7 +110546,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "8c472991c587c63daedcec45efc2c8e37e2141ebccd5d4d4b6d0a85cf3705b8e"
+   "stdout": "0ade49d43d1e58970b6b98bf610f9a5b4afcebd0a8126822dae8029c19630754"
   },
   "case": {
    "argv": [
@@ -103631,6 +110574,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -103695,7 +110639,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "d16d487e4b842eb6c0a1c7fb08624bac8646de0bc1f1b751586ed2969275a3ba"
+   "stdout": "21757cbf9702735d41c07b2b9d0cf2fcee56d1a5a822935bd6a33c3ecd66a762"
   },
   "case": {
    "argv": [
@@ -103725,6 +110669,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -104004,7 +110949,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "1c6f0dc703d7c6c3738ca57f4b5f27fd067b7a709b1883ac9f9e16c0f12c0cd1"
+   "stdout": "3adf4af7f2b77423131883fa7fa717a55493d61673265b98f81d25a19893f6e6"
   },
   "case": {
    "argv": [
@@ -104026,6 +110971,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r102",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "find"
  },
  {
@@ -104207,7 +111153,7 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "46105e5c7c3f73160bb47cc1fed903561c9420de80de9a3a539cdc37eeac3b41",
+   "effects": "7567f9c131fecdf77ae6ab1f93d10efebc326547eeec7018c2719cdf48ed1d4a",
    "status": 0,
    "stdout": "55580b2655ba6d116991a8e6818a40c35758e7c30ac9b8ccc29e842c56d02651"
   },
@@ -104229,6 +111175,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r104",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "hardlink"
  },
  {
@@ -104309,7 +111256,7 @@ PINNED = r"""
   "id": "1b325697c9094e88",
   "kind": "bug",
   "list": "ledger",
-  "reason": "hardlink here compares whole contents where 2.41 takes a sha256 of them, so its report names a different method, and a - operand is a name it stats rather than a path it resolves",
+  "reason_id": "r326",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -105080,7 +112027,7 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "46105e5c7c3f73160bb47cc1fed903561c9420de80de9a3a539cdc37eeac3b41",
+   "effects": "7567f9c131fecdf77ae6ab1f93d10efebc326547eeec7018c2719cdf48ed1d4a",
    "status": 0,
    "stdout": "55580b2655ba6d116991a8e6818a40c35758e7c30ac9b8ccc29e842c56d02651"
   },
@@ -105102,6 +112049,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r104",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "hardlink"
  },
  {
@@ -105234,7 +112182,7 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "46105e5c7c3f73160bb47cc1fed903561c9420de80de9a3a539cdc37eeac3b41",
+   "effects": "7567f9c131fecdf77ae6ab1f93d10efebc326547eeec7018c2719cdf48ed1d4a",
    "status": 0,
    "stdout": "55580b2655ba6d116991a8e6818a40c35758e7c30ac9b8ccc29e842c56d02651"
   },
@@ -105256,6 +112204,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r104",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "hardlink"
  },
  {
@@ -105575,7 +112524,7 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "46105e5c7c3f73160bb47cc1fed903561c9420de80de9a3a539cdc37eeac3b41",
+   "effects": "7567f9c131fecdf77ae6ab1f93d10efebc326547eeec7018c2719cdf48ed1d4a",
    "status": 0,
    "stdout": "55580b2655ba6d116991a8e6818a40c35758e7c30ac9b8ccc29e842c56d02651"
   },
@@ -105597,6 +112546,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r104",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "hardlink"
  },
  {
@@ -105727,7 +112677,7 @@ PINNED = r"""
   "id": "c1c61f4470d3365f",
   "kind": "bug",
   "list": "ledger",
-  "reason": "hardlink here compares whole contents where 2.41 takes a sha256 of them, so its report names a different method, and a - operand is a name it stats rather than a path it resolves",
+  "reason_id": "r326",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -107876,57 +114826,6 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "d6b35553348e71456e7ef6f2d6e88cc41b51cc619dee6ad6920d1502ba411e30"
-  },
-  "case": {
-   "argv": [
-    "--hyperlink=always",
-    "-1"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "858479b2fd8c26a7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "d6b35553348e71456e7ef6f2d6e88cc41b51cc619dee6ad6920d1502ba411e30"
-  },
-  "case": {
-   "argv": [
-    "--hyperlink=always"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "ls"
-  },
-  "domain": "files",
-  "id": "bc3c5014709097fb",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
    "stdout": "0ecab159f38415aeb9f3dd438907393fce2761516314e27c245047f51ca4d957"
   },
   "case": {
@@ -108077,7 +114976,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "a93aeb196e03dcf6a84ff9ab2496dd5a4137dead01febc585df2d3f6492e43c4"
+   "stdout": "3a7c0c86cd973c98d877863c8a1fa6070610db4e6849c18c0442b49f7776fc80"
   },
   "case": {
    "argv": [
@@ -108096,14 +114995,14 @@ PINNED = r"""
   "id": "f3d7be22bae3a8b7",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r111",
+  "reason_id": "r328",
   "utility": "ls"
  },
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 2,
-   "stdout": "a34ec37bd892c54e258b466fa370dc2357989211caffeddf0eb1da9a98e77689"
+   "stdout": "7578214a1e3805a12a8c7b45850fc65ffc7788c28667395326df548508db546b"
   },
   "case": {
    "argv": [
@@ -108123,18 +115022,23 @@ PINNED = r"""
   "id": "fc2999e2b60f3470",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r111",
+  "reason_id": "r332",
   "utility": "ls"
  },
  {
   "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "effects": "76f26e98f726f2e5fcabdf1271879a0734b5491569d83d90b24cd9cb68078ea1",
    "status": 0,
-   "stdout": "e11f3097a8c6f91b89cde940dc86cccbe6f4de1e23d61473624e3b429e83278e"
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
    "argv": [
-    "badwalk"
+    "-p",
+    "-Z",
+    "--parents",
+    "--context=x",
+    "-mo+t",
+    "dirlink/new"
    ],
    "domain": "files",
    "family": null,
@@ -108142,24 +115046,37 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
-   "utility": "ls"
+   "tier": "triples",
+   "utility": "mkdir"
   },
   "domain": "files",
-  "id": "fdc8ef94ff954791",
+  "id": "127979c9a8790534",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r111",
-  "utility": "ls"
- },
- {
-  "candidate": {
-   "effects": "2c2fec17e7eaa96be61ef6920035091ff4322e614d13ab735dbe9185675336ad",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "1d4f440029181a4a46f4d381eb0026451fd9f98918c97c4ae78ddcb01a0a6e27",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 0,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
   "case": {
    "argv": [
-    "-ma+X",
+    "-p",
+    "-v",
+    "-Z",
+    "--parents",
+    "--verbose",
+    "--context",
+    "--context=x",
+    "-mo+t",
     "made"
    ],
    "domain": "files",
@@ -108168,24 +115085,69 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
+   "tier": "triples",
    "utility": "mkdir"
   },
   "domain": "files",
-  "id": "2f3ce21657586a3a",
+  "id": "12825db7968e5831",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r112",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 0,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
   "utility": "mkdir"
  },
  {
   "candidate": {
-   "effects": "2c4bc9b1bc2da5990c4b7077a325c0ada9cd6ab142ab2c500462113119ab3dfe",
+   "effects": "76f26e98f726f2e5fcabdf1271879a0734b5491569d83d90b24cd9cb68078ea1",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
    "argv": [
-    "-m-w",
+    "-p",
+    "--parents",
+    "-mo+t",
+    "dirlink/new"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "32252199f26c4d1a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "1d4f440029181a4a46f4d381eb0026451fd9f98918c97c4ae78ddcb01a0a6e27",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 0,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-Z",
+    "--verbose",
+    "--context=x",
+    "-mo+t",
+    "made",
     "made"
    ],
    "domain": "files",
@@ -108194,25 +115156,635 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
+   "tier": "triples",
    "utility": "mkdir"
   },
   "domain": "files",
-  "id": "39c7180fe0c5bda6",
+  "id": "35ec742cfad1be49",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r112",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 0,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
   "utility": "mkdir"
  },
  {
   "candidate": {
-   "effects": "2c2fec17e7eaa96be61ef6920035091ff4322e614d13ab735dbe9185675336ad",
+   "effects": "76f26e98f726f2e5fcabdf1271879a0734b5491569d83d90b24cd9cb68078ea1",
+   "status": 0,
+   "stdout": "49361cef4ea85962859f5482e53f1dd6db4d037a723a24ee318982a0b808a81c"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-m",
+    "o+t",
+    "dir/new"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "3c07de24b5e5b310",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "1d4f440029181a4a46f4d381eb0026451fd9f98918c97c4ae78ddcb01a0a6e27",
+   "status": 0,
+   "stdout": "49361cef4ea85962859f5482e53f1dd6db4d037a723a24ee318982a0b808a81c"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "f1c3d0ec0066d1216fc4577b527fb03a84b469ef4706ffee6b0af3aa88abb8c8",
+   "status": 0,
+   "stdout": "1d63fd4d2718138a5215b3baa258a89f9cacb6df1f42882315302dffa2000918"
+  },
+  "case": {
+   "argv": [
+    "-Z",
+    "--parents",
+    "--verbose",
+    "--context",
+    "--context=x",
+    "-mo+t",
+    "made1",
+    "made2"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "3d9be6067403ff05",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "1684f93349664b9fe63e4321c4efc53a664c5d1fcf3ae5682b24bc4b7d5c6f47",
+   "status": 0,
+   "stdout": "1d63fd4d2718138a5215b3baa258a89f9cacb6df1f42882315302dffa2000918"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 0,
+   "stdout": "9d09cac92277b38629a6e5942e7fe76f5c37b30d1c73d59c9147e591bdfe0849"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-mo+t",
+    "./made/"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "420877b161948ba7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 0,
+   "stdout": "9d09cac92277b38629a6e5942e7fe76f5c37b30d1c73d59c9147e591bdfe0849"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "eed1ffd548a4c00d2b8cfbeb4d0e786ed986d4c22398fb60686edf89166c07cf",
+   "status": 0,
+   "stdout": "f016dfc727db762d3a18c601d58ca1f8e938fcc1a4173294f9d37523c260cde8"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--parents",
+    "--verbose",
+    "--context",
+    "--context=x",
+    "-mo+t",
+    "deep/one/two/three/four/five"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "49f557ea066803be",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "4918b63c35d1adcf97222296a07701529cc2a23b0162d33d335bc0830c7c361a",
+   "status": 0,
+   "stdout": "f016dfc727db762d3a18c601d58ca1f8e938fcc1a4173294f9d37523c260cde8"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "9531c126a5cd8881204513cd9a81d7379abcd612085a3a16e314d6b9024912b0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-Z",
+    "--context",
+    "-mo+t",
+    "two new"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "597939625d39c25d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "7b8da0676757546cb4db33b60a53f4041cd965f5da1cfcc30fb38b2e39d33185",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "9531c126a5cd8881204513cd9a81d7379abcd612085a3a16e314d6b9024912b0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--context=x",
+    "-m",
+    "o+t",
+    "two new"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "6ba6f9e0502ce57a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "7b8da0676757546cb4db33b60a53f4041cd965f5da1cfcc30fb38b2e39d33185",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "76f26e98f726f2e5fcabdf1271879a0734b5491569d83d90b24cd9cb68078ea1",
+   "status": 0,
+   "stdout": "49361cef4ea85962859f5482e53f1dd6db4d037a723a24ee318982a0b808a81c"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-Z",
+    "--parents",
+    "--verbose",
+    "--context",
+    "-mo+t",
+    "dir/new"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "739f9ee2b69e7036",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "1d4f440029181a4a46f4d381eb0026451fd9f98918c97c4ae78ddcb01a0a6e27",
+   "status": 0,
+   "stdout": "49361cef4ea85962859f5482e53f1dd6db4d037a723a24ee318982a0b808a81c"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "92f99ffda687f8741da78bd5a10a01725d5447d6775f5b49397355c29073fc56",
+   "status": 0,
+   "stdout": "9040f1ab9efa526681746d40999fb6f2350dbc6c902603fd80965f3cb08ef737"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-v",
+    "-Z",
+    "--verbose",
+    "--context",
+    "--context=x",
+    "-mo+t",
+    "a/b/c/d"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "790053b317abd66c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b3a74caacf630f8776a214f3167a230899b598a4e0d3014a8d07d7791187f920",
+   "status": 0,
+   "stdout": "9040f1ab9efa526681746d40999fb6f2350dbc6c902603fd80965f3cb08ef737"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 0,
+   "stdout": "9d09cac92277b38629a6e5942e7fe76f5c37b30d1c73d59c9147e591bdfe0849"
+  },
+  "case": {
+   "argv": [
+    "-Z",
+    "--parents",
+    "--verbose",
+    "--context=x",
+    "-m",
+    "o+t",
+    "./made/"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "822dbb4573345ff0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 0,
+   "stdout": "9d09cac92277b38629a6e5942e7fe76f5c37b30d1c73d59c9147e591bdfe0849"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "76f26e98f726f2e5fcabdf1271879a0734b5491569d83d90b24cd9cb68078ea1",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--context=x",
+    "-m",
+    "o+t",
+    "dirlink/new"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "8900ab3c76e2b760",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "1d4f440029181a4a46f4d381eb0026451fd9f98918c97c4ae78ddcb01a0a6e27",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 1,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--context",
+    "--context=x",
+    "-m",
+    "o+t",
+    "made",
+    "made"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "89b5be1911db16a1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 1,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--context=x",
+    "-m",
+    "o+t",
+    "made/"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "8e370f2ed6cf8e50",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 0,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--verbose",
+    "-m",
+    "o+t",
+    "made"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "bbbd22787f3defd2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 0,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 1,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "--mode=0700",
+    "-m",
+    "o+t",
+    "made",
+    "made"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "bf8244b39c942f7e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 1,
+   "stdout": "adc72837dd54f15cb9ac2482fd7d2764671c721112bdeb827c6e7ae540383bfd"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 0,
+   "stdout": "a0c339a623a07f881718b9dc9af47baa26cd7523b2bf74c7f9eaab59a9aeabfb"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-v",
+    "-Z",
+    "--parents",
+    "--context",
+    "--context=x",
+    "-mo+t",
+    "made/"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "dfbfda7c440b3c1d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 0,
+   "stdout": "a0c339a623a07f881718b9dc9af47baa26cd7523b2bf74c7f9eaab59a9aeabfb"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 0,
+   "stdout": "a0c339a623a07f881718b9dc9af47baa26cd7523b2bf74c7f9eaab59a9aeabfb"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-v",
+    "-mo+t",
+    "-Z",
+    "made/"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "e456607f54c8eba5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 0,
+   "stdout": "a0c339a623a07f881718b9dc9af47baa26cd7523b2bf74c7f9eaab59a9aeabfb"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-mo+t",
+    "made"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "mkdir"
+  },
+  "domain": "files",
+  "id": "ed48d096e06e64f8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "mkdir"
+ },
+ {
+  "candidate": {
+   "effects": "b094b0b9f166ec1a36e1ce9727082348a94156170d7652645cc18c1f9495edf1",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
    "argv": [
     "-m",
-    "+w",
+    "o+t",
     "made"
    ],
    "domain": "files",
@@ -108221,53 +115793,39 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
+   "tier": "singles",
    "utility": "mkdir"
   },
   "domain": "files",
-  "id": "562ae11d9f45d5a8",
+  "id": "fb18bdd26681f70c",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r112",
-  "utility": "mkdir"
- },
- {
-  "candidate": {
-   "effects": "2c2fec17e7eaa96be61ef6920035091ff4322e614d13ab735dbe9185675336ad",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "b1c8be693d16264246f26a7edefe2c20549c4890751c1cc14ab62d4d9bf15305",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
-  "case": {
-   "argv": [
-    "-m",
-    "a+X",
-    "made"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkdir"
-  },
-  "domain": "files",
-  "id": "5804355969ea911f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r112",
   "utility": "mkdir"
  },
  {
   "candidate": {
-   "effects": "2fb8ff80b21436b99c1fffe267b943b727c773f8f44a0f63c4fa9f8d5befe697",
+   "effects": "f1c3d0ec0066d1216fc4577b527fb03a84b469ef4706ffee6b0af3aa88abb8c8",
    "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "stdout": "1d63fd4d2718138a5215b3baa258a89f9cacb6df1f42882315302dffa2000918"
   },
   "case": {
    "argv": [
+    "-p",
+    "-v",
+    "-Z",
+    "--parents",
+    "--verbose",
+    "--context",
     "-m",
-    "u+s",
-    "made"
+    "o+t",
+    "made1",
+    "made2"
    ],
    "domain": "files",
    "family": null,
@@ -108275,435 +115833,20 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
+   "tier": "triples",
    "utility": "mkdir"
   },
   "domain": "files",
-  "id": "6145d0b3cc292714",
+  "id": "fba10e78d9f8dc20",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r112",
-  "utility": "mkdir"
- },
- {
-  "candidate": {
-   "effects": "2c4bc9b1bc2da5990c4b7077a325c0ada9cd6ab142ab2c500462113119ab3dfe",
+  "reason_id": "r323",
+  "reference": {
+   "effects": "1684f93349664b9fe63e4321c4efc53a664c5d1fcf3ae5682b24bc4b7d5c6f47",
    "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "stdout": "1d63fd4d2718138a5215b3baa258a89f9cacb6df1f42882315302dffa2000918"
   },
-  "case": {
-   "argv": [
-    "-m",
-    "-w",
-    "made"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkdir"
-  },
-  "domain": "files",
-  "id": "6c551d2079778f4e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r112",
   "utility": "mkdir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-m",
-    "made"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkdir"
-  },
-  "domain": "files",
-  "id": "83c6e57ad55c04eb",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r112",
-  "utility": "mkdir"
- },
- {
-  "candidate": {
-   "effects": "2c2fec17e7eaa96be61ef6920035091ff4322e614d13ab735dbe9185675336ad",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--mode=u=rwx",
-    "made"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkdir"
-  },
-  "domain": "files",
-  "id": "985b86a2b85f4750",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r112",
-  "utility": "mkdir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "new\nline/x"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkdir"
-  },
-  "domain": "files",
-  "id": "dc62c25bd8b44631",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r112",
-  "utility": "mkdir"
- },
- {
-  "candidate": {
-   "effects": "2fb8ff80b21436b99c1fffe267b943b727c773f8f44a0f63c4fa9f8d5befe697",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-mu+s",
-    "made"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkdir"
-  },
-  "domain": "files",
-  "id": "dfc1093778eb8ff5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r112",
-  "utility": "mkdir"
- },
- {
-  "candidate": {
-   "effects": "2c2fec17e7eaa96be61ef6920035091ff4322e614d13ab735dbe9185675336ad",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-m+w",
-    "made"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkdir"
-  },
-  "domain": "files",
-  "id": "e9c3fcbb80212d81",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r112",
-  "utility": "mkdir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-m",
-    "u+s",
-    "pipe"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkfifo"
-  },
-  "domain": "files",
-  "id": "415c20de90c09ac9",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r113",
-  "utility": "mkfifo"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-m",
-    "a+t",
-    "pipe"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkfifo"
-  },
-  "domain": "files",
-  "id": "5b89dbcb9cbb37c8",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r113",
-  "utility": "mkfifo"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-m",
-    "1777",
-    "pipe"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkfifo"
-  },
-  "domain": "files",
-  "id": "939ace132e555650",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r113",
-  "utility": "mkfifo"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-m",
-    "6777",
-    "pipe"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkfifo"
-  },
-  "domain": "files",
-  "id": "9d3a54f36849be1b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r113",
-  "utility": "mkfifo"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-mu+s",
-    "pipe"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkfifo"
-  },
-  "domain": "files",
-  "id": "d1cedde8e19fe23c",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r113",
-  "utility": "mkfifo"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-ma+t",
-    "pipe"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkfifo"
-  },
-  "domain": "files",
-  "id": "e7619168227a2f35",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r113",
-  "utility": "mkfifo"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-m6777",
-    "pipe"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkfifo"
-  },
-  "domain": "files",
-  "id": "e79dd1c9613c0dab",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r113",
-  "utility": "mkfifo"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-m1777",
-    "pipe"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mkfifo"
-  },
-  "domain": "files",
-  "id": "fea63a47eaa0323f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r113",
-  "utility": "mkfifo"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "node",
-    "x"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mknod"
-  },
-  "domain": "files",
-  "id": "00d441ad26052088",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r114",
-  "utility": "mknod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-m1777",
-    "pipe",
-    "p"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mknod"
-  },
-  "domain": "files",
-  "id": "057e477f381ab40c",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r114",
-  "utility": "mknod"
  },
  {
   "candidate": {
@@ -108740,115 +115883,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    "-m",
-    "1777",
-    "pipe",
-    "p"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mknod"
-  },
-  "domain": "files",
-  "id": "3a5066a1cd57199f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r114",
-  "utility": "mknod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "node",
-    "b",
-    "1"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mknod"
-  },
-  "domain": "files",
-  "id": "48c2de623ffd552f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r114",
-  "utility": "mknod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "node",
-    "c"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mknod"
-  },
-  "domain": "files",
-  "id": "529255797026a8a5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r114",
-  "utility": "mknod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "node",
-    "c",
-    "1",
-    "1048576"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mknod"
-  },
-  "domain": "files",
-  "id": "5cfb8928958b29fe",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r114",
-  "utility": "mknod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "-",
     "pipe",
     "p"
@@ -108866,120 +115900,13 @@ PINNED = r"""
   "id": "7a2388ecb87c0ebe",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the reference names itself in these diagnostics by the path it was run from, which a farm of links cannot match, and du writes one line per byte of a character that is not an option where this writes one per character",
+  "reason_id": "r325",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "utility": "mknod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "node",
-    "p",
-    "1",
-    "2"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mknod"
-  },
-  "domain": "files",
-  "id": "8017e333322f8331",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r114",
-  "utility": "mknod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "node"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mknod"
-  },
-  "domain": "files",
-  "id": "a3f3c2aefc879088",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r114",
-  "utility": "mknod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "node",
-    "b",
-    "4096",
-    "0"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mknod"
-  },
-  "domain": "files",
-  "id": "d60215b06bb7c4ca",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r114",
-  "utility": "mknod"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--suffix=/bad",
-    "tmp.XXXXXXXXXX"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "mktemp"
-  },
-  "domain": "files",
-  "id": "930a3f1b1abacc03",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r115",
-  "utility": "mktemp"
  },
  {
   "candidate": {
@@ -109639,31 +116566,6 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": -11,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "missing/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "pathchk"
-  },
-  "domain": "files",
-  "id": "7fe27acd63e4ea08",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r118",
-  "utility": "pathchk"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -110015,58 +116917,6 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--interactive=never",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "rm"
-  },
-  "domain": "files",
-  "id": "09607b16f8c40cb1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r120",
-  "utility": "rm"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--interactive=once",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "rm"
-  },
-  "domain": "files",
-  "id": "2ca0abeec5f4ed06",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r120",
-  "utility": "rm"
- },
- {
-  "candidate": {
    "effects": "6cb2709f762838a37c8d06b2097911f6b78eca02290db6a728dcf710ac2242ef",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -110119,84 +116969,6 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--preserve-root=all",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "rm"
-  },
-  "domain": "files",
-  "id": "5f9153aa4c49ade7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r120",
-  "utility": "rm"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-rI",
-    "dir"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "rm"
-  },
-  "domain": "files",
-  "id": "6c418e72dc7b73de",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r120",
-  "utility": "rm"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--interactive=bogus",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "rm"
-  },
-  "domain": "files",
-  "id": "9131261323f0dc4b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r120",
-  "utility": "rm"
- },
- {
-  "candidate": {
    "effects": "b5be582053b9cdb8bc8850776ad468fafecc497d4ae2a90d107606787d5d7bad",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -110216,32 +116988,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "915e036b4d7d92e1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r120",
-  "utility": "rm"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--interactive=always",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "utility": "rm"
-  },
-  "domain": "files",
-  "id": "b66d39119f96ca2b",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r120",
@@ -110297,14 +117043,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r120",
-  "utility": "rm"
- },
- {
-  "domain": "files",
-  "kind": "bug",
-  "list": "ledger",
-  "option": "-I",
-  "reason_id": "r121",
   "utility": "rm"
  },
  {
@@ -110422,57 +117160,6 @@ PINNED = r"""
   "case": {
    "argv": [
     "1",
-    "nan"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "seq"
-  },
-  "domain": "files",
-  "id": "61eee10e41f31573",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r122",
-  "utility": "seq"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "nan"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "seq"
-  },
-  "domain": "files",
-  "id": "62461931e97f270e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r122",
-  "utility": "seq"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "1",
     "3",
     "0x10"
    ],
@@ -110486,34 +117173,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "86b2b0384c7bf395",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r122",
-  "utility": "seq"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "1",
-    "2",
-    "3",
-    "4"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "seq"
-  },
-  "domain": "files",
-  "id": "9822874149399b4a",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r122",
@@ -110580,21 +117239,1228 @@ PINNED = r"""
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
-   "argv": [],
+   "argv": [
+    "--exact",
+    "--force",
+    "-x",
+    "-u",
+    "--zero",
+    "--iterations=0",
+    "shut/inside"
+   ],
    "domain": "files",
    "family": null,
    "fixture": "files",
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
-   "utility": "seq"
+   "tier": "random",
+   "utility": "shred"
   },
   "domain": "files",
-  "id": "faad4d8bb2e2fe72",
+  "id": "0099a7a969c0bec0",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r122",
-  "utility": "seq"
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "-z",
+    "--zero",
+    "--remove",
+    "-n0",
+    "-s",
+    "1",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "01376f98e3ef170e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "-s",
+    "4K",
+    "--size=3",
+    "-x",
+    "-u",
+    "--force",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "01917e67e4304139",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-z",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "-s",
+    "17",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "03ba7990ec704e58",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "--force",
+    "--exact",
+    "--zero",
+    "-n2",
+    "--iterations=1",
+    "-s0",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "03c5de9dfbec1921",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-x",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "-n",
+    "0",
+    "--iterations=1",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "049fa463044bcae5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--remove=wipesync",
+    "-s",
+    "4K",
+    "--exact",
+    "-x",
+    "--size=3",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "0599e65fe7b747c8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--force",
+    "--remove=wipesync",
+    "-n",
+    "2",
+    "--iterations=0",
+    "-s2",
+    "--size=3",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "06a5fd4ce8f2ec04",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "--exact",
+    "--remove=wipesync",
+    "-n0",
+    "--iterations=1",
+    "-s",
+    "17",
+    "--size=3",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "06ad44d20bb2705e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove",
+    "-x",
+    "--iterations=1",
+    "-z",
+    "--exact",
+    "-v",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "070ae1608f5e1074",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-u",
+    "--force",
+    "--remove",
+    "--verbose",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "087f44b5f4db5ba1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--remove",
+    "--remove=wipe",
+    "-n",
+    "0",
+    "--iterations=1",
+    "-s17",
+    "--size=3",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "09861d7a9032b362",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "-u",
+    "-x",
+    "--iterations=0",
+    "--exact",
+    "--size=3",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "09cf3182000a98ed",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--remove",
+    "--exact",
+    "--iterations=0",
+    "-u",
+    "-f",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "09f2068c473f5a5d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s0",
+    "-z",
+    "-u",
+    "-f",
+    "-v",
+    "--verbose",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "0a127ca50758c9b3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-x",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-s",
+    "17",
+    "--size=3",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "0b3701f80c45705c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-z",
+    "--exact",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "--iterations=0",
+    "-s4K",
+    "--size=3",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "0cbdac0cffee4dd7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-x",
+    "--force",
+    "--remove=wipesync",
+    "-n2",
+    "-s",
+    "0",
+    "--size=3",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "0d4f717d6ae8c267",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n",
+    "0",
+    "--iterations=1",
+    "-s4K",
+    "--size=3",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "0f789cf58b91f9d9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipe",
+    "-n",
+    "1",
+    "--iterations=1",
+    "--size=3",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "111bb63d50e236dc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--verbose",
+    "--remove",
+    "-n1",
+    "--iterations=0",
+    "-s",
+    "2",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "12ee0023994bfaad",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n2",
+    "-x",
+    "--force",
+    "-u",
+    "-v",
+    "-s",
+    "1",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "12fc2664dcacd7aa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-x",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove=wipe",
+    "-n2",
+    "--iterations=0",
+    "-s",
+    "4K",
+    "--size=3",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "141d4097f9206399",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "--force",
+    "--exact",
+    "--remove",
+    "--remove=wipe",
+    "--iterations=0",
+    "-s",
+    "0",
+    "--size=3",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "15044eb9f8be7714",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-x",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipe",
+    "-n2",
+    "--iterations=1",
+    "-s",
+    "4K",
+    "--size=3",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "15ea01ee362aee2d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "-z",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipe",
+    "--iterations=1",
+    "-s",
+    "2",
+    "--size=3",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "172e1623ce04e753",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "--iterations=0",
+    "--size=3",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "19a426ed4cae43e9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-f",
+    "-x",
+    "--force",
+    "--remove",
+    "-z",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "1d60e8b38f428ba9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--force",
+    "--remove",
+    "--remove=wipe",
+    "-n",
+    "0",
+    "--iterations=1",
+    "-s17",
+    "--size=3",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "1f2f91ac4cd8ff4c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--iterations=0",
+    "--verbose",
+    "--remove",
+    "--random-source=a.txt",
+    "-x",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "1f71d6a34954760a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "-x",
+    "-s",
+    "1",
+    "-z",
+    "--size=3",
+    "--remove",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "1fb31feba637177a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
  },
  {
   "candidate": {
@@ -110625,6 +118491,1441 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--remove",
+    "--zero",
+    "--verbose",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "205b8c1a6f2c91da",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--size=3",
+    "-s2",
+    "--remove",
+    "-f",
+    "--force",
+    "-u",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "21e288fb3e27f5ab",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-n",
+    "2",
+    "--iterations=0",
+    "-s",
+    "1",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "229631b3ad38f3bf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n0",
+    "--iterations=1",
+    "-s17",
+    "--size=3",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "23df0bbc3e525e11",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "--force",
+    "--verbose",
+    "--remove",
+    "--remove=wipesync",
+    "-s2",
+    "--size=3",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "2556c8d902f4eb2a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-x",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "-s",
+    "2",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "25d234269cce7ff5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove=wipe",
+    "-n0",
+    "--iterations=0",
+    "-s",
+    "4K",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "277cdeef2fb2b774",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "--force",
+    "--verbose",
+    "--remove",
+    "--remove=wipe",
+    "-n0",
+    "--iterations=0",
+    "-s",
+    "2",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "287d5472d3c4e989",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-z",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "--iterations=1",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "287f2442bf12afbf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "--force",
+    "--remove=wipesync",
+    "-n1",
+    "--iterations=0",
+    "-s1",
+    "--size=3",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "290f801f807a1928",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove=wipesync",
+    "-v",
+    "--remove",
+    "-s4K",
+    "--force",
+    "-x",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "29441d944a26e21c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "-u",
+    "-z",
+    "-n",
+    "0",
+    "--iterations=1",
+    "--verbose",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "294b0f15d017c47c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "-s2",
+    "--remove",
+    "-x",
+    "--verbose",
+    "--force",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "295ba3f715f1abc0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--force",
+    "-x",
+    "--verbose",
+    "--exact",
+    "-u",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "2961b642f6573693",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--zero",
+    "--exact",
+    "--iterations=1",
+    "-s0",
+    "--remove",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "2a0df795778ca9f5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--verbose",
+    "-s4K",
+    "--size=3",
+    "--remove",
+    "-n",
+    "1",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "2cce134e0a7e1ef2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "-f",
+    "--verbose",
+    "--remove",
+    "-z",
+    "-s0",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "2e8392c4f60cdcd0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-z",
+    "--exact",
+    "--remove",
+    "--remove=wipesync",
+    "-n",
+    "0",
+    "--iterations=1",
+    "-s17",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "2f3a9a730330d2e5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--remove",
+    "--verbose",
+    "-f",
+    "-v",
+    "--iterations=0",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "2f4b8d5b2debfca7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "17",
+    "-v",
+    "--force",
+    "--remove",
+    "-u",
+    "-x",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "31af121c0813b7ed",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "--iterations=0",
+    "--size=3",
+    "--zero",
+    "-x",
+    "--remove=wipesync",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "31be8a3d1f706371",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--force",
+    "--iterations=0",
+    "-x",
+    "-z",
+    "-v",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "32f14ac49438dd53",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "-z",
+    "--exact",
+    "-u",
+    "--size=3",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "355078735d051391",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "-s",
+    "17",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "3620c28d7137c5c6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--force",
+    "--verbose",
+    "--remove",
+    "-n",
+    "0",
+    "--iterations=1",
+    "-s",
+    "0",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "36f87b9b390e8910",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove",
+    "-v",
+    "--zero",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "37487bfc396ca57d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "-n",
+    "1",
+    "-z",
+    "--exact",
+    "--iterations=1",
+    "--remove",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "37e1f0587e9338d8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove",
+    "-n",
+    "2",
+    "-u",
+    "-s",
+    "17",
+    "--verbose",
+    "--size=3",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "37ea944d05072384",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-x",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "--remove=wipesync",
+    "-n2",
+    "--iterations=1",
+    "-s1",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "38839c58ff090043",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "-z",
+    "--force",
+    "--exact",
+    "--remove=wipesync",
+    "-n2",
+    "--iterations=0",
+    "-s0",
+    "--size=3",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "38dccb32ad2ccf7e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--force",
+    "-v",
+    "-u",
+    "-z",
+    "-x",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "3982118d0980a576",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-z",
+    "--exact",
+    "--remove",
+    "-n1",
+    "--iterations=1",
+    "-s",
+    "17",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "39be51eeaaaa75f5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-z",
+    "--zero",
+    "--remove",
+    "-n1",
+    "-s0",
+    "--size=3",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "3b91a0f2a7c6223b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-x",
+    "--force",
+    "--exact",
+    "--remove=wipe",
+    "-n",
+    "0",
+    "-s",
+    "1",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "3dbd64d215e13b12",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-s",
+    "4K",
+    "--iterations=0",
+    "-v",
+    "--remove",
+    "-n",
+    "0",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "3df67533947c9def",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-u",
+    "--zero",
+    "--iterations=1",
+    "--size=3",
+    "-f",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4113f7b768c24683",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "--force",
+    "--verbose",
+    "--exact",
+    "-n1",
+    "--iterations=1",
+    "-s",
+    "4K",
+    "--size=3",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "428e533f60118a01",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -110647,6 +119948,516 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r123",
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove",
+    "--verbose",
+    "--zero",
+    "--exact",
+    "-x",
+    "--iterations=0",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4580a63f3f129075",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "-n",
+    "2",
+    "--iterations=1",
+    "-s",
+    "4K",
+    "--size=3",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "45c880079d9f973d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "--verbose",
+    "--exact",
+    "-s0",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "46c6b44699cfa4df",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "--zero",
+    "--remove=wipe",
+    "-n1",
+    "--iterations=1",
+    "-s17",
+    "--size=3",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "473c724bb2a4591e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-x",
+    "-z",
+    "--remove",
+    "--remove=wipesync",
+    "-n0",
+    "-s2",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4795c7012186319e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "--zero",
+    "--remove",
+    "-n",
+    "1",
+    "-s0",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "488041ece672beaf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-z",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "--iterations=0",
+    "-s1",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4897d073085f02d3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "--iterations=0",
+    "--size=3",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4ad99c409bbc29f9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-x",
+    "-z",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove=wipe",
+    "-n2",
+    "--iterations=0",
+    "-s",
+    "1",
+    "--size=3",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4b6a075933fffcc8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--size=3",
+    "-z",
+    "-x",
+    "-u",
+    "--verbose",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4bfa7855468f5dc0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--exact",
+    "--remove",
+    "--remove=wipe",
+    "-n2",
+    "--iterations=0",
+    "-s0",
+    "--size=3",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4c3f393224d945a5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--exact",
+    "--remove=wipe",
+    "--remove",
+    "--size=3",
+    "--iterations=0",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4e516fc2e10b50cd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "--verbose",
+    "--zero",
+    "--remove",
+    "-n",
+    "2",
+    "-s",
+    "1",
+    "--size=3",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "4fd875154cb288d9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "shred"
  },
  {
@@ -110683,6 +120494,823 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "-f",
+    "-v",
+    "-z",
+    "--verbose",
+    "--zero",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "--iterations=0",
+    "-s",
+    "2",
+    "--size=3",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "50b441f27445b3bd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--iterations=1",
+    "--remove",
+    "-u",
+    "-f",
+    "--size=3",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "50f4e6bcd74b9a71",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-z",
+    "--force",
+    "--verbose",
+    "--zero",
+    "-n",
+    "0",
+    "--iterations=1",
+    "-s",
+    "2",
+    "--size=3",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "51686b14098c59c0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--remove",
+    "--remove=wipe",
+    "-f",
+    "--verbose",
+    "-v",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "51984bcbf2d6cfa0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--force",
+    "--zero",
+    "--remove=wipesync",
+    "-n0",
+    "-s",
+    "0",
+    "--size=3",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "51a191e4ea79575a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--remove",
+    "-z",
+    "-n",
+    "1",
+    "--iterations=1",
+    "--exact",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "51a38defe785d7d2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-u",
+    "-x",
+    "--iterations=0",
+    "-z",
+    "--remove",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "52c089087e793c1a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--force",
+    "--size=3",
+    "-s",
+    "4K",
+    "--remove",
+    "-f",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5408253f1a5096d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--size=3",
+    "-f",
+    "-x",
+    "--remove",
+    "--zero",
+    "-v",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "540b028cdb707eb0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--force",
+    "--verbose",
+    "-s0",
+    "--size=3",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "58580b52d90e0700",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "--remove",
+    "--size=3",
+    "-z",
+    "-x",
+    "-f",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "58cb194ec64525e2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-z",
+    "--remove",
+    "--remove=wipesync",
+    "-n",
+    "0",
+    "-s",
+    "2",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "58ec6f6ecab34b3d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-z",
+    "--force",
+    "--verbose",
+    "--zero",
+    "--remove=wipe",
+    "-n1",
+    "--iterations=0",
+    "-s",
+    "17",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5a250a313ccd38cf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-z",
+    "--force",
+    "--remove",
+    "--remove=wipesync",
+    "-n1",
+    "-s",
+    "4K",
+    "--size=3",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5a4d08d58bc644d9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--verbose",
+    "--remove",
+    "--remove=wipesync",
+    "-n1",
+    "--iterations=0",
+    "-s1",
+    "--size=3",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5a6b7cdf97f2f43c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--remove",
+    "-s",
+    "1",
+    "--exact",
+    "-z",
+    "--size=3",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5b18e0924651fb2d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "-s17",
+    "--iterations=0",
+    "--size=3",
+    "--force",
+    "-u",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5b42dd8562e99d78",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "--exact",
+    "--remove=wipe",
+    "--iterations=0",
+    "-s1",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5bb4a47d53c2669f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--force",
+    "--verbose",
+    "--remove",
+    "-n0",
+    "--iterations=1",
+    "-s1",
+    "--size=3",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5bb7556dbe30c4b0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-x",
+    "-z",
+    "--remove",
+    "--iterations=0",
+    "-s",
+    "0",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5bf3588ff77b560f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove",
+    "--exact",
+    "--verbose",
+    "-n",
+    "2",
+    "-x",
+    "--size=3",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5c7af1cadb120805",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-n0"
    ],
    "domain": "files",
@@ -110698,6 +121326,43 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r123",
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-v",
+    "--remove",
+    "-z",
+    "-n1",
+    "-u",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5d40869856132311",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "shred"
  },
  {
@@ -110724,6 +121389,1222 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r123",
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "-x",
+    "--remove",
+    "--force",
+    "--zero",
+    "-v",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5e5755af2ab1e471",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-x",
+    "-z",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n",
+    "0",
+    "-s",
+    "2",
+    "--size=3",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5e66e4e975d29ccc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-z",
+    "--exact",
+    "--zero",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "-s1",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5e890c496e4d94a1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "-u",
+    "-x",
+    "--exact",
+    "--zero",
+    "-s4K",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5e961b69dd277369",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--exact",
+    "--remove=wipe",
+    "-n2",
+    "-s17",
+    "--size=3",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "5ede235011ac00f4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "--force",
+    "--verbose",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "63ad44689d984f53",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-z",
+    "--force",
+    "--verbose",
+    "--remove",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "-s4K",
+    "--size=3",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "681b4295c111445f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "0",
+    "--force",
+    "--zero",
+    "-f",
+    "--remove",
+    "--iterations=1",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "683f1faf3f0388bf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--iterations=0",
+    "--force",
+    "-z",
+    "--verbose",
+    "--size=3",
+    "--remove",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "68556eaad109de26",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "-n",
+    "1",
+    "--iterations=1",
+    "-s0",
+    "--size=3",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "6a03fc04d65edb94",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-z",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipesync",
+    "-n0",
+    "-s",
+    "0",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "6a1a4149ff63344e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exact",
+    "-f",
+    "-z",
+    "--iterations=1",
+    "-v",
+    "-u",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "6c39a01569cf3c1a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-z",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "--iterations=0",
+    "-s",
+    "17",
+    "--size=3",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "6d67b0505ef06146",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-z",
+    "--force",
+    "--exact",
+    "--remove",
+    "--remove=wipesync",
+    "-n1",
+    "--iterations=1",
+    "-s",
+    "0",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "6eeeb803f88ecc34",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--verbose",
+    "--force",
+    "--size=3",
+    "--remove",
+    "-f",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "706bf4646a7ba81c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-z",
+    "--force",
+    "--zero",
+    "--remove",
+    "-n0",
+    "--iterations=1",
+    "-s2",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "7097844550181fd5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-x",
+    "--verbose",
+    "--remove=wipesync",
+    "-n",
+    "2",
+    "-s17",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "72c0b3bdcaa9e703",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--zero",
+    "--remove",
+    "-n",
+    "1",
+    "-s",
+    "0",
+    "--size=3",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "735ab392e5631bdc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "--size=3",
+    "-f",
+    "--remove",
+    "--iterations=0",
+    "--exact",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "74b17cb1ae119dd8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exact",
+    "--remove",
+    "--remove=wipesync",
+    "-n1",
+    "--iterations=1",
+    "-s17",
+    "--size=3",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "74e7aaae84616f1c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "--remove=wipesync",
+    "-n",
+    "2",
+    "-s",
+    "4K",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "753e1cbbe69b099d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "--force",
+    "--exact",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "--iterations=0",
+    "-s2",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "754be45ea1fbc4ef",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--zero",
+    "--remove",
+    "--iterations=0",
+    "-s",
+    "2",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "77f7131cadd0ea3e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "--zero",
+    "-n",
+    "0",
+    "-s",
+    "0",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "7910217d3efbde65",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--force",
+    "--remove",
+    "--remove=wipesync",
+    "-n2",
+    "--iterations=1",
+    "--size=3",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "792a81c65894b998",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove=unlink",
+    "--remove",
+    "-s4K",
+    "--size=3",
+    "-u",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "795829b519739820",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--size=3",
+    "--remove",
+    "--exact",
+    "-v",
+    "--force",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "79a98a8a62002851",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "--exact",
+    "--size=3",
+    "--iterations=1",
+    "--remove=wipe",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "7a13bffc58ee4150",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-x",
+    "--remove",
+    "--remove=wipe",
+    "-n2",
+    "-s",
+    "2",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "7afcab484659825f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-v",
+    "--remove",
+    "-n0",
+    "--size=3",
+    "--exact",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "7bb1dc31cf8e2573",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "--force",
+    "--zero",
+    "--remove=wipesync",
+    "-n",
+    "0",
+    "-s1",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "7bba81b975a05964",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "shred"
  },
  {
@@ -110756,6 +122637,238 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--iterations=1",
+    "--zero",
+    "-s2",
+    "-u",
+    "--exact",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "7db40c922e6c0f3c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove=wipe",
+    "--iterations=1",
+    "-s2",
+    "--size=3",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "7e667510ad5f782f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "--iterations=0",
+    "-u",
+    "-f",
+    "-v",
+    "--exact",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "7fd17575d191fef8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove",
+    "--force",
+    "-f",
+    "--iterations=0",
+    "--verbose",
+    "-s1",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "804a728d82ee69b2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-x",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipesync",
+    "-n1",
+    "--iterations=1",
+    "-s2",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "8250385b81fafed2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--size=3",
+    "--remove",
+    "--zero",
+    "-v",
+    "--remove=wipesync",
+    "--verbose",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "82c3610b2fdcf879",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -110778,6 +122891,3355 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r123",
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--verbose",
+    "--remove",
+    "-n",
+    "2",
+    "--iterations=1",
+    "--size=3",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "848c9bb50d7f13d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove=wipe",
+    "-n",
+    "0",
+    "-s1",
+    "--size=3",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "84a931c51e4faac4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "--remove",
+    "-x",
+    "-z",
+    "--force",
+    "-u",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "861d5cd1dbc9a16e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--iterations=0",
+    "-x",
+    "--remove",
+    "--zero",
+    "-v",
+    "-s",
+    "0",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "874f7dcb23f22803",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove=wipe",
+    "-f",
+    "-z",
+    "--zero",
+    "--verbose",
+    "--size=3",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "87c66d434cac2d0b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-v",
+    "--iterations=1",
+    "--remove",
+    "--exact",
+    "--verbose",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "88b19d6c9a24215a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-x",
+    "-z",
+    "--force",
+    "--verbose",
+    "--remove=wipesync",
+    "-n2",
+    "--iterations=0",
+    "-s",
+    "0",
+    "--size=3",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "8e385cfec0d7f112",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove=unlink",
+    "-x",
+    "--remove",
+    "-u",
+    "--exact",
+    "-z",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "8fc25f6e2da930f3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--force",
+    "--verbose",
+    "--zero",
+    "--remove=wipesync",
+    "-n0",
+    "--iterations=1",
+    "--size=3",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "903fe2b1a84b7b9d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--force",
+    "--verbose",
+    "--zero",
+    "--remove",
+    "-n2",
+    "-s",
+    "17",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "913bd55e00509c54",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exact",
+    "--size=3",
+    "--force",
+    "-z",
+    "--iterations=1",
+    "-u",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9169a10cab1d2e1f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove",
+    "-z",
+    "-s",
+    "0",
+    "-v",
+    "--exact",
+    "--force",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "917e6405c9908763",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-z",
+    "--force",
+    "--zero",
+    "--remove",
+    "-n0",
+    "--iterations=0",
+    "-s2",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "951581b01364d27d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-x",
+    "--size=3",
+    "-n0",
+    "-v",
+    "--verbose",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "956c9c013acebe7f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-x",
+    "-z",
+    "--exact",
+    "--zero",
+    "--remove=wipe",
+    "--iterations=0",
+    "-s",
+    "4K",
+    "--size=3",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "97a680bb0893c4c8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--verbose",
+    "--zero",
+    "--remove=wipesync",
+    "-n",
+    "2",
+    "--size=3",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "98d540e9813cbb6b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--zero",
+    "--remove=wipesync",
+    "-n0",
+    "--iterations=0",
+    "-s2",
+    "--size=3",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "990002d720cde8c2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "--remove=wipesync",
+    "-n1",
+    "--iterations=1",
+    "-s",
+    "4K",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "990074c09ee92da0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove",
+    "-z",
+    "--zero",
+    "--remove=wipe",
+    "--iterations=1",
+    "-s0",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9abaef48fa84465b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-z",
+    "--force",
+    "--remove=wipe",
+    "-n2",
+    "-s",
+    "2",
+    "--size=3",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9b69a5fe90062554",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--remove",
+    "-n0",
+    "--iterations=1",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9bb4695261f29ef9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "--remove=wipesync",
+    "-n1",
+    "-s",
+    "17",
+    "--size=3",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9c0afe686a775367",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "--remove=wipe",
+    "-n",
+    "0",
+    "--iterations=1",
+    "-s",
+    "2",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9c252a720c3cfe61",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "--zero",
+    "--remove=wipe",
+    "-n2",
+    "--iterations=0",
+    "-s4K",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9c7a50777803dbda",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--force",
+    "--remove",
+    "--remove=wipe",
+    "-n1",
+    "-s17",
+    "--size=3",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9dff430d49cb39d6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "--force",
+    "--exact",
+    "--remove=wipe",
+    "--iterations=0",
+    "-s4K",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9e321ea5128f9eff",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "--force",
+    "--verbose",
+    "--zero",
+    "--remove",
+    "-n",
+    "2",
+    "--iterations=0",
+    "-s0",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9e3cc0b5133e866a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "-z",
+    "--iterations=0",
+    "-s",
+    "2",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "9ee7b78c05285066",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--verbose",
+    "-x",
+    "--remove=wipesync",
+    "-v",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "a0c44b9605f77568",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-s4K",
+    "-z",
+    "--verbose",
+    "-x",
+    "-u",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "a0c5ccee39624ddc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "--remove",
+    "--size=3",
+    "--iterations=0",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "a24af67daeb59336",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-x",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove=wipe",
+    "-n1",
+    "--iterations=0",
+    "-s4K",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "a41bd1094b8a485d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--iterations=0",
+    "-u",
+    "--exact",
+    "-v",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "a4d6bf3500cfc331",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--exact",
+    "--remove=wipesync",
+    "-n0",
+    "--iterations=0",
+    "-s",
+    "17",
+    "--size=3",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "a539adef322c19b9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n0",
+    "--remove",
+    "--force",
+    "--remove=wipe",
+    "--exact",
+    "--verbose",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "a5bf3223ab38e803",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--iterations=1",
+    "-z",
+    "-x",
+    "--verbose",
+    "--size=3",
+    "--remove",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "a746620759627c8c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "--remove",
+    "--force",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "a74e3555f155623b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s1",
+    "--size=3",
+    "-z",
+    "--remove",
+    "--force",
+    "-u",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "aa4a88c9e5994587",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "--verbose",
+    "--remove",
+    "--remove=wipe",
+    "-n2",
+    "-s",
+    "1",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ab685acac6d8e7d3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-z",
+    "--exact",
+    "--zero",
+    "-n",
+    "0",
+    "-s1",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "abcc750b847c8314",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-z",
+    "--verbose",
+    "--exact",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "--iterations=1",
+    "-s2",
+    "--size=3",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "abe13f7d43d0d4d0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-x",
+    "--force",
+    "--exact",
+    "--remove=wipe",
+    "-n1",
+    "--iterations=0",
+    "-s17",
+    "--size=3",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ac5f66735d305637",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--verbose",
+    "-u",
+    "-x",
+    "--iterations=1",
+    "--exact",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "acad3cef68b27e61",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-x",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n1",
+    "--iterations=0",
+    "-s",
+    "0",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ace2c7dfc2563dd6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n2",
+    "--iterations=0",
+    "-s0",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ad35f33837024b0e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--size=3",
+    "--iterations=0",
+    "-z",
+    "-f",
+    "--exact",
+    "-u",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ae08ffa988b25134",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--force",
+    "--exact",
+    "--remove",
+    "--remove=wipesync",
+    "-n0",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ae45756825e90f86",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-z",
+    "--force",
+    "--zero",
+    "--remove",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "--iterations=0",
+    "-s",
+    "4K",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "af199b77361591ac",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n",
+    "0",
+    "--iterations=0",
+    "-s",
+    "2",
+    "--size=3",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b0819f2a9690a837",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "-n",
+    "0",
+    "-s1",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b0d63a37558f7d95",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "-f",
+    "--remove=wipesync",
+    "-v",
+    "-u",
+    "-n",
+    "0",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b25a976a3db69f6b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-z",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n",
+    "2",
+    "--iterations=0",
+    "-s",
+    "0",
+    "--size=3",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b2f1f80597f4df0b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-x",
+    "--force",
+    "--verbose",
+    "--remove",
+    "--remove=wipesync",
+    "-n0",
+    "-s17",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b4619319ec1b42e7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-z",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n1",
+    "--iterations=0",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b5f16fb607901ae9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "--verbose",
+    "--zero",
+    "-n1",
+    "--iterations=1",
+    "-s",
+    "17",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b64f8d1b82b564b4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-x",
+    "--verbose",
+    "--zero",
+    "--remove",
+    "-n",
+    "1",
+    "--iterations=0",
+    "-s",
+    "2",
+    "--size=3",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b71bb4cb96427693",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "--remove",
+    "-n1",
+    "--iterations=0",
+    "-s0",
+    "--size=3",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b72d1cc2223d605b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-f",
+    "--verbose",
+    "--remove",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b8160201a8a52c61",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--iterations=1",
+    "--size=3",
+    "--exact",
+    "--remove",
+    "-s",
+    "1",
+    "-x",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "b99b51baf88c9726",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "-s2",
+    "-u",
+    "--iterations=1",
+    "--zero",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ba05a66030ed0b34",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--exact",
+    "--force",
+    "-u",
+    "--size=3",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "bad0d2d62dd7f6f5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "-s2",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "badadd2ac900238f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--iterations=0",
+    "--exact",
+    "--remove=wipe",
+    "-s",
+    "17",
+    "--zero",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "bb7aada595c3d29f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-z",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipe",
+    "--iterations=0",
+    "-s",
+    "17",
+    "--size=3",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "bb7fc195e313c30c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove=wipesync",
+    "--iterations=1",
+    "-s4K",
+    "--size=3",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "be37f616de912afa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "-f",
+    "--size=3",
+    "-x",
+    "-u",
+    "--remove",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "be440ab0067a3fd0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--remove=wipesync",
+    "-n",
+    "0",
+    "-s2",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "be6b027a89de293c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "-s",
+    "0",
+    "-f",
+    "--size=3",
+    "-u",
+    "--force",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "be7b015dc12fc546",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-x",
+    "-z",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n",
+    "0",
+    "-s1",
+    "--size=3",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "bef2900b8819d0b5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--iterations=0",
+    "-v",
+    "-u",
+    "-x",
+    "-z",
+    "-s0",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "bf04d0f4ce405a04",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n1",
+    "--force",
+    "-s",
+    "4K",
+    "-u",
+    "--iterations=0",
+    "-f",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "bfaf93f73a36f731",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "-z",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-n0",
+    "--iterations=0",
+    "-s17",
+    "--size=3",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c029e42ce7698517",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s1",
+    "-x",
+    "--remove",
+    "--zero",
+    "-z",
+    "-v",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c108c1573de8fd7b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--force",
+    "--verbose",
+    "--remove=wipe",
+    "-n2",
+    "-s2",
+    "--size=3",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c19081f3299e4a33",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-x",
+    "--zero",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "--iterations=0",
+    "-s2",
+    "--size=3",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c4ebec1930d16236",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-z",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove=wipesync",
+    "-n2",
+    "--iterations=1",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c4f793f3344ee968",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "--force",
+    "--remove",
+    "--iterations=1",
+    "-s1",
+    "--size=3",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c5cc75ab5194a955",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "-u",
+    "--size=3",
+    "-f",
+    "--verbose",
+    "-x",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c5f871b66b1d646e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-x",
+    "--remove=wipe",
+    "--force",
+    "-f",
+    "--iterations=1",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c5ffbd5cd7cce0cc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "-z",
+    "--verbose",
+    "--remove=wipe",
+    "-s0",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c984f7e0b70feceb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-z",
+    "-x",
+    "--size=3",
+    "-n1",
+    "--exact",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "c9e5470b46331ee4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--verbose",
+    "--remove",
+    "--remove=wipe",
+    "-n",
+    "1",
+    "-s2",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "cc93dd42d5bd7a6e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "-n1",
+    "-u",
+    "-s",
+    "2",
+    "--zero",
+    "--remove",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ccd3dcfbcf73f5c1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-x",
+    "-z",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove=wipe",
+    "-n0",
+    "--iterations=1",
+    "-s",
+    "1",
+    "--size=3",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "cfdee861ccd5b9d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--remove",
+    "-z",
+    "--exact",
+    "-n",
+    "2",
+    "-s2",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "cff14309bbac418b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-z",
+    "--force",
+    "--verbose",
+    "--zero",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "--iterations=1",
+    "-s4K",
+    "--size=3",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "cffabc96f2d6b542",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "shred"
  },
  {
@@ -110814,6 +126276,512 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--iterations=1",
+    "--size=3",
+    "--remove=wipesync",
+    "--zero",
+    "--verbose",
+    "-f",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d154db3ed055de44",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "0",
+    "-z",
+    "--exact",
+    "--zero",
+    "--remove=wipesync",
+    "--iterations=1",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d16df3a952ef1c25",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--force",
+    "--verbose",
+    "--remove",
+    "--remove=wipesync",
+    "-n",
+    "2",
+    "--size=3",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d23961e9aaff971a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exact",
+    "-x",
+    "--force",
+    "-f",
+    "-s",
+    "0",
+    "--remove=wipesync",
+    "many"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d31eb00bff048901",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c906a9012836fb5f7e6b86ceffe1bd858c47c85495f9de672de0ea5ba25d9be0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "-n2",
+    "-s",
+    "17",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d444ad0563dbdbe9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "-z",
+    "--exact",
+    "--remove",
+    "--force",
+    "-u",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d54166d7d01bf184",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "--remove",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "--iterations=1",
+    "-s0",
+    "--size=3",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d635a6f503705e4e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-z",
+    "--verbose",
+    "--remove=wipe",
+    "-n2",
+    "-s0",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d680728aa97883bc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-x",
+    "-z",
+    "--verbose",
+    "--exact",
+    "--remove=wipe",
+    "-n2",
+    "--iterations=1",
+    "-s0",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d984aa2c91dd8c9a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--remove",
+    "--size=3",
+    "-x",
+    "--iterations=1",
+    "--verbose",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "d9c0ca8d81a3422d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "--zero",
+    "--remove=wipe",
+    "-n",
+    "2",
+    "--iterations=1",
+    "-s",
+    "1",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "da32655c63a5a02f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "--exact",
+    "--remove=wipesync",
+    "-n0",
+    "--iterations=1",
+    "-s",
+    "0",
+    "--size=3",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "db25ed5249e7830f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-z",
+    "--force",
+    "--exact",
+    "--remove=wipe",
+    "--iterations=0",
+    "-s0",
+    "link"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "dc372a89918c4898",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "d699c52d75bb5d088475eaa84ca04359b54754e27cb6ea5503eacabe70446ee6",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "-n0",
     "dir"
    ],
@@ -110830,6 +126798,480 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r123",
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove=wipe",
+    "-u",
+    "-f",
+    "--zero",
+    "-x",
+    "-n1",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "dc7d2fd764fc77a9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--verbose",
+    "--remove",
+    "--remove=wipesync",
+    "-n",
+    "2",
+    "--iterations=1",
+    "-s",
+    "2",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ddc8538959066789",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--verbose",
+    "-x",
+    "--size=3",
+    "--exact",
+    "--remove",
+    "--zero",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "de2b907ed536d270",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-x",
+    "-z",
+    "--exact",
+    "--remove",
+    "--remove=wipesync",
+    "--iterations=1",
+    "-s2",
+    "--size=3",
+    "binary"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e01159440528c9df",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "e088d6ba94d2b9b5a4894a1c8284180d1a5eeea92e84c77b569c44bb38762aa0",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-z",
+    "--verbose",
+    "--remove",
+    "--remove=wipesync",
+    "-s",
+    "0",
+    "--size=3",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e013c850e3b36dda",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "-x",
+    "--force",
+    "--remove=wipe",
+    "-n0",
+    "--iterations=0",
+    "-s",
+    "17",
+    "--size=3",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e14659cbb9260a71",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-x",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipe",
+    "-n",
+    "0",
+    "--iterations=0",
+    "-s2",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e2126c0bc8c680bc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "--force",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "-n",
+    "1",
+    "--iterations=1",
+    "-s2",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e3d17a16a94c8d5f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--exact",
+    "--remove=wipe",
+    "--verbose",
+    "-u",
+    "--force",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e45b38c02c361ce2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "--verbose",
+    "--exact",
+    "--remove=wipesync",
+    "-n",
+    "0",
+    "--iterations=1",
+    "-s0",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e4b9990f6f6c3d7b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-x",
+    "-z",
+    "--force",
+    "--verbose",
+    "--zero",
+    "--remove=wipesync",
+    "-n2",
+    "-s1",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e4c439a459d14aa9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "2075036becb3fec345d454bc0716e3f3c58f3a57e3a73733b75570e93e85b4bc",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-z",
+    "--force",
+    "--remove",
+    "-n",
+    "2",
+    "--iterations=1",
+    "-s",
+    "2",
+    "--size=3",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e4d47f32cc03e1a3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "shred"
  },
  {
@@ -110857,6 +127299,235 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r123",
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-u",
+    "--remove",
+    "--iterations=0",
+    "-f",
+    "-z",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "e81fc0284a10ada3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--force",
+    "-z",
+    "--verbose",
+    "--iterations=1",
+    "--remove",
+    "-f",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ea19eae5a4e87402",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-x",
+    "--verbose",
+    "--remove",
+    "--iterations=0",
+    "-s",
+    "1",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ead4c353ca9b0d7f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "4K",
+    "--remove=wipe",
+    "--zero",
+    "--force",
+    "--iterations=1",
+    "-f",
+    "two words"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "eb2a652b10495b0c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "6b3c25d56f24f9bee84b9d8ab5fc08bfd9c868cf4f472536e7c5c26ee241eb05",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "-z",
+    "--remove",
+    "--remove=wipe",
+    "--iterations=1",
+    "-s17",
+    "twin"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "eb34a41c06a43a8b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "3970a3d7982708b4ddd6a3a01cbb19755b514d60537ff2d7f8a2a535c2b57a21",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "-n",
+    "0",
+    "--iterations=0",
+    "-s4K",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "eb61c2120740a0f0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "shred"
  },
  {
@@ -110894,6 +127565,156 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--zero",
+    "--remove",
+    "--random-source=missing",
+    "-u",
+    "-z",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ec8ba6edca9df091",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "--iterations=0",
+    "--exact",
+    "--verbose",
+    "-s17",
+    "exe"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "eccff47f22c37bd1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "c5571f5cbcf6c3ceaf80d5e4ce69dd55e68ef6a92472849ff3ef428006e1d9ed",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-v",
+    "-x",
+    "--zero",
+    "-n1",
+    "-s17",
+    "--size=3",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ecd888cd2af90769",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "--zero",
+    "-s1",
+    "-n",
+    "0",
+    "--verbose",
+    "-v",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "ece69f804b10b46a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
     "--remove=wipesync",
     "-z",
     "a.txt"
@@ -110911,6 +127732,210 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r123",
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-z",
+    "--zero",
+    "--remove=wipesync",
+    "-n",
+    "0",
+    "--iterations=0",
+    "-s",
+    "0",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f0e0371d2f3c7a32",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--zero",
+    "-u",
+    "--force",
+    "-s",
+    "0",
+    "--iterations=1",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f12f368ec26dfbdb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-v",
+    "--exact",
+    "--zero",
+    "--remove=wipesync",
+    "-n0",
+    "--iterations=1",
+    "-s4K",
+    "empty"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f1d38488ac19fa97",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "94137293593b53eef61997ecd39f90d81c976ae2cc0609eeb429d4315d910a48",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-x",
+    "-z",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipesync",
+    "-n",
+    "1",
+    "-s",
+    "4K",
+    "--size=3",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f368a6d9e5e8e130",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-x",
+    "-z",
+    "--force",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipesync",
+    "-s2",
+    "--size=3",
+    "a.txt",
+    "b.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f403ccc5399cdcd2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "350569a7b09769de863bd273b5d53310298b4d0d614eeb329aa0ac7dc935211c",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "shred"
  },
  {
@@ -110942,6 +127967,44 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--size=3",
+    "--force",
+    "-s",
+    "2",
+    "-u",
+    "--remove=wipe",
+    "-v",
+    "shut/inside"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f590abe37809f781",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
    "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
    "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -110965,6 +128028,279 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r123",
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-z",
+    "--verbose",
+    "--exact",
+    "--zero",
+    "--remove",
+    "--remove=wipesync",
+    "-n",
+    "0",
+    "dangling"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f6e8720fdffeb187",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-z",
+    "--exact",
+    "--zero",
+    "--remove",
+    "-s2",
+    "--size=3",
+    "unreadable"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f7cf426f4d2c4f98",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--remove",
+    "--random-source=a.txt",
+    "-n",
+    "1",
+    "-v",
+    "-s",
+    "0",
+    "--size=3",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f8922efc4b77c97d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-z",
+    "--zero",
+    "--remove",
+    "--remove=wipesync",
+    "-s",
+    "1",
+    "hollow"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f8d6bd48ecfd6bfc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-u",
+    "-x",
+    "--zero",
+    "--exact",
+    "--iterations=1",
+    "dir"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f8f73a1f2c45a5f3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "--iterations=1",
+    "-v",
+    "--verbose",
+    "--exact",
+    "-u",
+    "-s2",
+    "missing"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "f9024ae9220feb93",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "utility": "shred"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 1,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "case": {
+   "argv": [
+    "-f",
+    "-u",
+    "-v",
+    "-x",
+    "--verbose",
+    "--exact",
+    "--remove",
+    "--remove=wipe",
+    "-n1",
+    "-s",
+    "2",
+    "--size=3",
+    "a.txt"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "shred"
+  },
+  "domain": "files",
+  "id": "fe763f33df4f34a9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r320",
+  "reference": {
+   "effects": "7dd15589e79dfc8a85da23e466e0cdb5fd1bc1332404508ff640a518a4f1da94",
+   "status": 0,
+   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "utility": "shred"
  },
  {
@@ -113458,13 +130794,17 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "b8f8a73df80f8d3a89a0d19ac0e0911fe14446353de97f2981e0a06c9db95b6e"
   },
   "case": {
    "argv": [
-    "-s1Y",
-    "a.txt"
+    "-s",
+    "-v",
+    "-i",
+    "-p",
+    "-o",
+    "--nodename"
    ],
    "domain": "files",
    "family": null,
@@ -113472,25 +130812,35 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
-   "utility": "truncate"
+   "tier": "random",
+   "utility": "uname"
   },
   "domain": "files",
-  "id": "0ab8ab3a11d8fa8c",
+  "id": "018c076f69ea87ac",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "674bfbeecc9466066f0ee6ba70cc445424a3a67a4db007106abad4b1987778ad"
+  },
+  "utility": "uname"
  },
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
   },
   "case": {
    "argv": [
-    "-rdangling",
-    "a.txt"
+    "--operating-system",
+    "--processor",
+    "--nodename",
+    "-s",
+    "-v",
+    "-a"
    ],
    "domain": "files",
    "family": null,
@@ -113498,25 +130848,35 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
-   "utility": "truncate"
+   "tier": "random",
+   "utility": "uname"
   },
   "domain": "files",
-  "id": "0f638c146e4ae9f0",
+  "id": "02174911a3f4f181",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
  },
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
   },
   "case": {
    "argv": [
-    "-s2R",
-    "a.txt"
+    "--kernel-name",
+    "-a",
+    "-s",
+    "--machine",
+    "-o",
+    "-n"
    ],
    "domain": "files",
    "family": null,
@@ -113524,26 +130884,1058 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
-   "utility": "truncate"
+   "tier": "random",
+   "utility": "uname"
   },
   "domain": "files",
-  "id": "10bfb3706ea7ba63",
+  "id": "03ed28fe59bee294",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
  },
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "-r",
+    "--kernel-name",
+    "-p",
+    "--operating-system",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "04ec100e0c757e84",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "--all",
+    "--nodename",
+    "--hardware-platform",
+    "-m",
+    "-n"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "07be745987cfee84",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-n",
+    "-v",
+    "-m",
+    "-p",
+    "-o",
+    "--kernel-release"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "07fc2f021ead5d27",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "897d77e0ce75577ede2470f0f305828583514e2bfaea37d095b67dce84dd6a07"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "-v",
+    "-s",
+    "-m",
+    "-n"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "08d1b9c0cc1576b4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "e6e0c3bd08b0d12b19859dcb9e033d0a589a7e316df55cbd2665032f4e1ca250"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-n",
+    "--all",
+    "--kernel-version",
+    "-i",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "08db590edff26a8f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-s",
+    "-v",
+    "-i",
+    "--all",
+    "--kernel-name",
+    "--nodename",
+    "--kernel-release",
+    "--kernel-version",
+    "--machine",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "0970998ac34c6460",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--all",
+    "-s",
+    "-a",
+    "-n",
+    "-o"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "0aeae2402af822c1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "745fe3e6dfe2af9e46946f3cc6ebba9a78fad2bf5a9ff3a0041283873d7fabfa"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--kernel-name",
+    "--nodename",
+    "-o",
+    "--processor",
+    "--machine"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "0caae0647ecfc717",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "304021c4bf4915cc63653c5a3524f00733a06dec59170afb5d5fcb9a5a64097b"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-s",
+    "--operating-system",
+    "-m",
+    "--kernel-release",
+    "-v"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "0cf0d650341ba86a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-r",
+    "-v",
+    "-m",
+    "-p",
+    "-i",
+    "--all",
+    "--kernel-name",
+    "--nodename",
+    "--kernel-version",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "0dcaf1801fa8281b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "ed44b7cb17ef755a9b3b1f0b8acb0b0087ac1a36b5756eaa02caf247d5002466"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "--processor",
+    "--kernel-version",
+    "-o",
+    "-r",
+    "--machine"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "0dddec65dbc86bf5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "b127ecfbdfa35d63dda7764ab0ad5fc5fcfbface954691aa258af7d817fb6c3b"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-s",
+    "-n",
+    "-m",
+    "-p",
+    "-i",
+    "-o",
+    "--kernel-version",
+    "--machine",
+    "--processor",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "0e42a9dbc4e83a04",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--kernel-name",
+    "--nodename",
+    "-o",
+    "-r",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "0f75d710ece3cf17",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "9c2ff99148901bdbcef565fa82fc90ff6ae0ba420fb82113b501fe46ff5c480f"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-m",
+    "-o",
+    "--processor",
+    "-n",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "11e20afb3477f51b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "ef06273d250f12b76eb5dc2e4f51d7f93b2616f5f1ba52f963955648ad2f79f1"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "fce7758c3830896c8c5f32d79be2242332c7a2a86795752405b012c8e489fe6a"
+  },
+  "case": {
+   "argv": [
+    "--nodename",
+    "-p",
+    "-n",
+    "--operating-system",
+    "-o",
+    "-s"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "121344bd531dfcb8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "53dc47f11657ef53f11c9ce0bee39f7debe38a5d3211dea6751529aea5699dcb"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--kernel-name",
+    "--kernel-release",
+    "-a",
+    "--kernel-version",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "13d5190e09da3aae",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-o",
+    "-v",
+    "--operating-system",
+    "--processor",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "13dabb18a04c776d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "1f605f047e95d4811b1dd5d730c62b8a393c1d4572e9c348d128bf30f5429058"
+  },
+  "case": {
+   "argv": [
+    "--nodename",
+    "--kernel-release",
+    "-v",
+    "-n",
+    "-o",
+    "-r"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "17100e4aef913c0e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a3a0d75a0c5b13cf5aed4819fa5ff6cd5ee2b56d87691821af54c5da05df79c2"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "745fe3e6dfe2af9e46946f3cc6ebba9a78fad2bf5a9ff3a0041283873d7fabfa"
+  },
+  "case": {
+   "argv": [
+    "--nodename",
+    "-s",
+    "-o",
+    "--machine",
+    "-p",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "1875ca3fdbfca9b5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "304021c4bf4915cc63653c5a3524f00733a06dec59170afb5d5fcb9a5a64097b"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--machine",
+    "--nodename",
+    "-s",
+    "-o",
+    "-a",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "1b6432b16a6c8e43",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--kernel-release",
+    "--processor",
+    "--hardware-platform",
+    "-r",
+    "--kernel-version"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "1be2737f9ebd7e1c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--kernel-version",
+    "--hardware-platform",
+    "-i",
+    "-a",
+    "--machine"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "1cf654d5cffa600b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "f5365dd5ff3ce7d41eb13c1ae57c998de496fede3ef3db72fe9cf3c4c8f39c78"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "-o",
+    "--kernel-version",
+    "--processor",
+    "-v",
+    "--machine"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "1eb2010f54161b2d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "e9080a0273b7a35d0bd5ff31e7ea68464037f7dcd2d8b53dd5ec1c7a90189069"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "65e4f1c786d13653fc313cb1d1ab960b045245cab539bf724577acea1c52876e"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "--kernel-version",
+    "--kernel-name",
+    "-n",
+    "--hardware-platform",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "20c32a0c470b7922",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "5e9e705dbbf539561b3da7f8efa9ec70f700ad93c610c26fa1317ad82b994732"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--hardware-platform",
+    "--kernel-release",
+    "--processor",
+    "--kernel-name",
+    "-n",
+    "--all"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "20e3efd2b94bda4c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-a",
+    "--processor",
+    "--kernel-name",
+    "-p",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "2101e242e451929c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "dfb1ba7db915b8687c1f6027622c0c4fc4d22c173e0f74ab826175433983dea0"
+  },
+  "case": {
+   "argv": [
+    "--hardware-platform",
+    "-p",
+    "-v",
+    "--kernel-name",
+    "-o",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "2361dbb5e65120a5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "3dbd444564609039f611f648298572957247c808587c3163864939e5f2019779"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--hardware-platform",
+    "-m",
+    "-v",
+    "--all",
+    "-i",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "243b159d7b0aa6d5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "65d5859209478ed235eaac3c508d1c71f93b5625959e7eae954d3f92cb74a736"
   },
   "case": {
    "argv": [
     "-r",
-    "dangling",
-    "a.txt"
+    "-m",
+    "-p",
+    "-n",
+    "-o",
+    "--processor"
    ],
    "domain": "files",
    "family": null,
@@ -113551,185 +131943,35 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
-   "utility": "truncate"
+   "tier": "random",
+   "utility": "uname"
   },
   "domain": "files",
-  "id": "1c87f1a3783d3d01",
+  "id": "2560f0d5da128a39",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "f82ab13aa4277e1dec0e3d9e9b9ba3e359c69bd7d635bd686ba10ef3519b757a"
+  },
+  "utility": "uname"
  },
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
   },
   "case": {
    "argv": [
-    "-s%0",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "truncate"
-  },
-  "domain": "files",
-  "id": "4dcb01645d990421",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-s",
-    "1Y",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "truncate"
-  },
-  "domain": "files",
-  "id": "554d5f4ba18894e4",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-s",
-    "%0",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "truncate"
-  },
-  "domain": "files",
-  "id": "565ca752c61dd8cc",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-s/0",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "truncate"
-  },
-  "domain": "files",
-  "id": "5bbe976651f530a7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-rmissing",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "truncate"
-  },
-  "domain": "files",
-  "id": "90e914209ea69231",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-s",
-    "2R",
-    "a.txt"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "truncate"
-  },
-  "domain": "files",
-  "id": "970a737522235252",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
+    "--processor",
+    "-o",
+    "-n",
     "-r",
-    "missing",
-    "a.txt"
+    "--all",
+    "-m"
    ],
    "domain": "files",
    "family": null,
@@ -113737,26 +131979,33 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
-   "utility": "truncate"
+   "tier": "random",
+   "utility": "uname"
   },
   "domain": "files",
-  "id": "f2de239978140404",
+  "id": "28a5285e08190d8f",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
  },
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
   },
   "case": {
    "argv": [
-    "-s",
-    "/0",
-    "a.txt"
+    "--kernel-release",
+    "--kernel-name",
+    "--all",
+    "--operating-system"
    ],
    "domain": "files",
    "family": null,
@@ -113764,14 +132013,1031 @@ PINNED = r"""
    "input_kind": "command",
    "mode": null,
    "stdin": "empty",
-   "utility": "truncate"
+   "tier": "random",
+   "utility": "uname"
   },
   "domain": "files",
-  "id": "f45697b044f82076",
+  "id": "28f6f1903dc61fd3",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r133",
-  "utility": "truncate"
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "--operating-system",
+    "-o",
+    "--all",
+    "-p",
+    "-v"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "296c07bb0911b9ad",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "-p",
+    "--processor",
+    "-a",
+    "-o",
+    "--kernel-version"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "2c4aeaf33d865d28",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--kernel-name",
+    "-a",
+    "-o",
+    "--machine",
+    "-n",
+    "--kernel-version"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "2c672f8f9d560b4e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-name",
+    "--kernel-version",
+    "--hardware-platform",
+    "-a",
+    "-v",
+    "-n"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "2c90bdf1a3704fda",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-version",
+    "-r",
+    "-p",
+    "--machine",
+    "-a",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "2e8cc9b80c24bc76",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-m",
+    "-o",
+    "--all",
+    "--kernel-name",
+    "--nodename",
+    "--kernel-release",
+    "--processor",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "2f8c47fdb342ad58",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "-v",
+    "-m",
+    "-r",
+    "-n",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "32de88eac6da65fd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--hardware-platform",
+    "--operating-system",
+    "-a",
+    "--kernel-release",
+    "--kernel-version",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "335339db53ce353a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--hardware-platform",
+    "--operating-system",
+    "--kernel-release",
+    "-m",
+    "--kernel-version",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "33d49600741736ec",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "--hardware-platform",
+    "-m",
+    "-n",
+    "--kernel-name",
+    "-r"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "3678cc0fe238506a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-m",
+    "--operating-system",
+    "--all",
+    "-p",
+    "-i"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "37350e1dd2ab3a19",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--nodename",
+    "-m",
+    "--machine",
+    "--all",
+    "-o",
+    "-i"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "3b1e2fb30137ae12",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--hardware-platform",
+    "--all",
+    "-a",
+    "--machine",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "3c3ac20c23a5e259",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--nodename",
+    "-r",
+    "--hardware-platform",
+    "--kernel-release",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "3e30f36b5f1da24d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--kernel-name",
+    "-a",
+    "--nodename",
+    "-n",
+    "-r",
+    "-o"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "3ef7aebec10ad275",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-v",
+    "--operating-system",
+    "--kernel-version",
+    "-a",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "44f940f4d15611a5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "-i",
+    "--kernel-version",
+    "--kernel-name",
+    "-o",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "48a882616a1b4d2e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-version",
+    "-n",
+    "-r",
+    "--processor",
+    "-v",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "49a8763e1f17be1e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "04335cdb2475b0243c37f546d687b6d3a6c733db45a3282d260c7ae1e762874c"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "-i",
+    "-n",
+    "--operating-system",
+    "--kernel-version",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "4a86c03e851ba7c2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "8ff214a46d549607fbf1752b1a31ed6d58e29caeb61f47675bb86cb0033b40ff"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--nodename",
+    "--all",
+    "--hardware-platform",
+    "-m",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "4e738fba840dce35",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "dbf49cda0cde3eb21b96adbc6aadbf143f8932c16ed96af549c94aa0010feadf"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "--kernel-name",
+    "--kernel-release",
+    "-i",
+    "-s",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "4eaf1fb256ee2298",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "8c1231abd7a19bd048bf5afc75d896ccdf115b362358f1aa85e0fbfe88818397"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-release",
+    "--all",
+    "--processor",
+    "--machine",
+    "-r",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "4eb1a6e8e3f37d9c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--operating-system",
+    "--hardware-platform",
+    "-a",
+    "-o",
+    "--kernel-release",
+    "--machine"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "4fc302cde6332c28",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--kernel-version",
+    "--kernel-name",
+    "-o",
+    "--all",
+    "--operating-system",
+    "-s"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "4fe298f16c385172",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-m",
+    "--hardware-platform",
+    "-p",
+    "--kernel-release",
+    "--kernel-version"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "50c850b9db3495d6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-i",
+    "--operating-system",
+    "-o",
+    "--machine",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "521895de8a971af0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-i",
+    "-s",
+    "--hardware-platform",
+    "--processor",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "5398cdd0c9fb3cac",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--kernel-version",
+    "--nodename",
+    "--kernel-release",
+    "-n",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "54bf13bf595d0e14",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
  },
  {
   "candidate": {
@@ -113796,6 +133062,1524 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r134",
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--all",
+    "--machine",
+    "--processor",
+    "--hardware-platform",
+    "-r"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "5789ab2095be5257",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--all",
+    "--operating-system",
+    "-s",
+    "-o",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "596024c72e70ca8f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-p",
+    "-r",
+    "--kernel-release",
+    "--all",
+    "-n"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "59ebe678d6e1963c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-r",
+    "-i",
+    "-o",
+    "--all",
+    "--machine"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "5a04bccc87a8d6a0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "10def519729a6a28ef5e7ebca0c7fb1be8f8b144eaf5ac004307d781129bf1f9"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--processor",
+    "-o",
+    "--kernel-name",
+    "-r",
+    "--kernel-release"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "5a411db42f26459d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "71a7c75a31bf1047ae5211e1577077888eae54d83ac9f1b9dda6fc701fad0cde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "--hardware-platform",
+    "--processor",
+    "-i",
+    "-n",
+    "--all"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "5b5c047e5e41e13b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "-o",
+    "--all",
+    "-v",
+    "--kernel-version",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "5d24e9f44c5bbc8f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "--machine",
+    "-p",
+    "--operating-system",
+    "--kernel-name",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "5e03197231a01c58",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--machine",
+    "--hardware-platform",
+    "-n",
+    "--all",
+    "--processor",
+    "-s"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "5e68f92baaafd26e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "937c7131cd9522775d247c12beef2a248d9f229f9eea38af8b9bec35aaefe2d2"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "--hardware-platform",
+    "--machine",
+    "--kernel-version",
+    "--processor",
+    "-o"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "62577f820e4977f4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "e01b5855d86c7116cbb46208f2a81f576b583773852bb504f2e1ad2f965e288d"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "-s",
+    "--all",
+    "--operating-system",
+    "-m",
+    "--machine"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "649bab1ef2d7758d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-a",
+    "-o",
+    "--hardware-platform",
+    "-v",
+    "--kernel-version"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6577ddfaaba41a2e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "10def519729a6a28ef5e7ebca0c7fb1be8f8b144eaf5ac004307d781129bf1f9"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "--operating-system",
+    "-r",
+    "-o",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "661d3185a0ddf528",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "71a7c75a31bf1047ae5211e1577077888eae54d83ac9f1b9dda6fc701fad0cde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-v",
+    "-p",
+    "--machine",
+    "--all",
+    "--kernel-version"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6685b0c34347c6e2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "82a7b5e6a061e694aa96e3d3f892c40d6f567fdca9533a1809d0726c8fb50de1"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "-i",
+    "-s",
+    "--kernel-version",
+    "-m",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "670cec54f38c25cf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "53818dde10af96252c488a84cc6de70da9f48b1a26c7c712526c45330fb1d124"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--kernel-name",
+    "--hardware-platform",
+    "-a",
+    "-o",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "67ab0828dc0b34bf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "b0fb42b72e060afe16c71bf9a848c79dbde313d6fb784b20161ae99ab439e22f"
+  },
+  "case": {
+   "argv": [
+    "--kernel-version",
+    "--hardware-platform",
+    "-m",
+    "--operating-system",
+    "--machine",
+    "--kernel-release"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6aa51443015ae68f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "32442051ad32cfd11107ffbc2599bc9c32e1896a54185e27ab436b3a36d88f2b"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "-p",
+    "-v",
+    "-a",
+    "-o",
+    "-i"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6b89b42d4181a52e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--all",
+    "-a",
+    "--kernel-release",
+    "-s",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6cc78e2aa699cfda",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "745fe3e6dfe2af9e46946f3cc6ebba9a78fad2bf5a9ff3a0041283873d7fabfa"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "-n",
+    "-m",
+    "-s",
+    "-p",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6d3ac94e1c5ca7d9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "304021c4bf4915cc63653c5a3524f00733a06dec59170afb5d5fcb9a5a64097b"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-version",
+    "-s",
+    "--hardware-platform",
+    "-m",
+    "-a",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6d649443402e705a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "fce7758c3830896c8c5f32d79be2242332c7a2a86795752405b012c8e489fe6a"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "--nodename",
+    "--hardware-platform",
+    "--kernel-name",
+    "-i",
+    "-o"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6f5ee9ca91e82f28",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "53dc47f11657ef53f11c9ce0bee39f7debe38a5d3211dea6751529aea5699dcb"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-v",
+    "--kernel-version",
+    "-i",
+    "--all",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6f8eea08b7004b68",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "-s",
+    "--kernel-name",
+    "--nodename",
+    "-r",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6ff086ac0e013088",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "--kernel-name",
+    "--operating-system",
+    "-p",
+    "--all"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "6ff7ee5b03750b41",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "-a",
+    "--all",
+    "-s",
+    "--nodename",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "70f285cfc9fab6bc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-s",
+    "-n",
+    "-r",
+    "-v",
+    "--all",
+    "--kernel-name",
+    "--machine",
+    "--processor",
+    "--hardware-platform",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "7119e1c953431a9f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--all",
+    "--kernel-name",
+    "-a",
+    "-r",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "719b93ad15e2911d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-p",
+    "--all",
+    "--kernel-name",
+    "--kernel-release",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "7423080312d62cf3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-r",
+    "--kernel-name",
+    "--kernel-version",
+    "--all",
+    "-i"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "7459bbae4f1d051e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "dfb1ba7db915b8687c1f6027622c0c4fc4d22c173e0f74ab826175433983dea0"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--operating-system",
+    "-o",
+    "-v",
+    "--kernel-name",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "74aca4d9eb0cf901",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "3dbd444564609039f611f648298572957247c808587c3163864939e5f2019779"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "--processor",
+    "--hardware-platform",
+    "-p",
+    "-n",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "76a79cfa8d07e0d6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "--kernel-release",
+    "-a",
+    "--nodename",
+    "-s",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "76fc7b2f2ff71dca",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "--processor",
+    "-m",
+    "--machine",
+    "--kernel-version",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "78e70a0cfc791ddf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "fce7758c3830896c8c5f32d79be2242332c7a2a86795752405b012c8e489fe6a"
+  },
+  "case": {
+   "argv": [
+    "--operating-system",
+    "-p",
+    "-o",
+    "-n",
+    "-s",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "7aad443ad488be25",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "53dc47f11657ef53f11c9ce0bee39f7debe38a5d3211dea6751529aea5699dcb"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "6ab3743307aa8d08baff22663fb2158766e063862a063c05f47197c296a3beda"
+  },
+  "case": {
+   "argv": [
+    "--kernel-name",
+    "--kernel-version",
+    "--kernel-release",
+    "--processor",
+    "--operating-system",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "7b07bddccdf28956",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "febc1c25c0c7ab26ffc4b92373744da6488cb6ccefe09cfc8fe2b3471456ee83"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "65e4f1c786d13653fc313cb1d1ab960b045245cab539bf724577acea1c52876e"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-i",
+    "--kernel-name",
+    "-n",
+    "--machine",
+    "-o"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "7e093dae93c48190",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "5e9e705dbbf539561b3da7f8efa9ec70f700ad93c610c26fa1317ad82b994732"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "1a0b685f24af92f7c12abbc086fd68392a26ac2d7a4b83657e9bba2ce0bf21e2"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--kernel-release",
+    "--kernel-name",
+    "-s",
+    "-i",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "7e6e41a405b3bbeb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "314ab82c1f226d69b328e4f4526bff82908f17784f2e6b6bad239b5aa40d04ee"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--hardware-platform",
+    "--processor",
+    "-a",
+    "-o",
+    "--machine",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "7f948b59cdf0bbcd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-n",
+    "-r",
+    "-p",
+    "-i",
+    "--kernel-name",
+    "--nodename",
+    "--kernel-release",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "80962565025dd19a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "--hardware-platform",
+    "-v",
+    "-i",
+    "-r",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "8371f3586d2965d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "dbf49cda0cde3eb21b96adbc6aadbf143f8932c16ed96af549c94aa0010feadf"
+  },
+  "case": {
+   "argv": [
+    "--operating-system",
+    "-s",
+    "-p",
+    "--kernel-release",
+    "-m",
+    "-r"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "85218be111951429",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "8c1231abd7a19bd048bf5afc75d896ccdf115b362358f1aa85e0fbfe88818397"
+  },
   "utility": "uname"
  },
  {
@@ -113831,6 +134615,2356 @@ PINNED = r"""
   },
   "case": {
    "argv": [
+    "--all",
+    "-r",
+    "--nodename",
+    "-s",
+    "-a",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "8b94383e74f12dc7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--all",
+    "--kernel-version",
+    "-n",
+    "--hardware-platform",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "8c73da7f56e23dc1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--machine",
+    "-r",
+    "-s",
+    "--all",
+    "--kernel-version",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "8cf8b9f261d498ae",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "--kernel-name",
+    "--all",
+    "-m",
+    "--machine",
+    "--kernel-release"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "8f25d281fb9c97b2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--kernel-release",
+    "-v",
+    "-s",
+    "--machine",
+    "-o",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "8fbbe554345f29ec",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-o",
+    "--operating-system",
+    "-a",
+    "-s",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "9052ee3e12eef53d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "04335cdb2475b0243c37f546d687b6d3a6c733db45a3282d260c7ae1e762874c"
+  },
+  "case": {
+   "argv": [
+    "--machine",
+    "-i",
+    "-v",
+    "--nodename",
+    "--operating-system",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "90c3f65a3b33d52e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "8ff214a46d549607fbf1752b1a31ed6d58e29caeb61f47675bb86cb0033b40ff"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "-p",
+    "--all",
+    "-o",
+    "--kernel-version",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "90e1711336fb0de7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "a68fa9db949db29fd2c8292d68c4fa026be211325341788d0e499f2d0d7130b3"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "-i",
+    "--kernel-version",
+    "--kernel-release",
+    "-r",
+    "-v"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "91b236a698ae9705",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "5640177fc7a637a4f13e65e1ab01586223521796ee9e89b9bb0419ccb10be4fd"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "--all",
+    "-s",
+    "-m",
+    "-o",
+    "-i"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "93a620fed71d471b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--kernel-release",
+    "-a",
+    "-n",
+    "-o",
+    "-s",
+    "-v"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "96e39c508fe65d35",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "-a",
+    "--kernel-version",
+    "--all",
+    "-o",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "985c6a96c65eb96a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-r",
+    "-v",
+    "-i",
+    "--nodename",
+    "--kernel-version",
+    "--machine",
+    "--processor",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "9b203cb9955ce0e3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-o",
+    "-p",
+    "--kernel-name",
+    "-r",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "9dbdae9b793f7ad9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "b0fb42b72e060afe16c71bf9a848c79dbde313d6fb784b20161ae99ab439e22f"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "-p",
+    "-o",
+    "-r",
+    "--kernel-version",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "9e1f4866225d71b8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "32442051ad32cfd11107ffbc2599bc9c32e1896a54185e27ab436b3a36d88f2b"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--nodename",
+    "-v",
+    "-a",
+    "--kernel-name",
+    "--processor",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "9f66a0d5eeae7c09",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--operating-system",
+    "--kernel-name",
+    "-v",
+    "-a",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a043b01edab50dc4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-s",
+    "-r",
+    "-m",
+    "-p",
+    "-o",
+    "--all",
+    "--nodename",
+    "--kernel-release",
+    "--kernel-version",
+    "--processor",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a15e738bb72caa61",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--hardware-platform",
+    "-a",
+    "--operating-system",
+    "--kernel-version",
+    "--nodename",
+    "-v"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a205578d7113474b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "869dbdebc5be00ae53d5cea40287d5347bc9e3939fcfd1dd6b847217564f15b5"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--nodename",
+    "--operating-system",
+    "-s",
+    "-r",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a2ed2b214ba70449",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "4303e6d2518c7b19c344bfb1569268677009f200613eabe9944468b48c6a13da"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--nodename",
+    "--operating-system",
+    "-r",
+    "-o",
+    "-i"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a342248ca825b564",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--operating-system",
+    "-v",
+    "-a",
+    "--processor",
+    "--hardware-platform",
+    "-o"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a3ac6b30f6a6fcfd",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-version",
+    "--all",
+    "-p",
+    "-v",
+    "--processor",
+    "-r"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a4099032ed74bbf4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--operating-system",
+    "--kernel-name",
+    "--all",
+    "--nodename",
+    "--kernel-version"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a42c19829020ff6e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "65d5859209478ed235eaac3c508d1c71f93b5625959e7eae954d3f92cb74a736"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-i",
+    "-o",
+    "--machine",
+    "--kernel-release",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a4b2ba0147e43e56",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "f82ab13aa4277e1dec0e3d9e9b9ba3e359c69bd7d635bd686ba10ef3519b757a"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-name",
+    "--hardware-platform",
+    "-r",
+    "-a",
+    "--kernel-release",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a546685b156aa828",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--operating-system",
+    "--kernel-version",
+    "--hardware-platform",
+    "--nodename",
+    "-a",
+    "-r"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a5fe65c704c5f428",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "-v",
+    "-i",
+    "--kernel-version",
+    "-n",
+    "-r"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a71c57b4c6d5c1a8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "329b525734420d26890498717df43bd5e9095b0577c8dfcdaaec84a7851fe3ed"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--kernel-version",
+    "--hardware-platform",
+    "--operating-system",
+    "--nodename",
+    "-r"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a81cc27bb89fa967",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "19f0e94f7209aa69aec58502d17e3b0bc74b4e3f2dc9dc916400833c2cdd8a75"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "c2b7ff9365b163d7fed76003952d5b5e1e34031fc0364bfc39b227a6db9e07ae"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--kernel-name",
+    "--machine",
+    "--operating-system",
+    "-r",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "a8552596b5d5a1fc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "8fbfccc3b83b519c6c18a3402884975e1c119f711d70a9ef481592b002d60931"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-a",
+    "--kernel-release",
+    "-o",
+    "--operating-system",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "ac085f132e8201bb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "--processor",
+    "--nodename",
+    "--machine",
+    "-a",
+    "--all"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "acc6bad49898eaa9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--machine",
+    "-r",
+    "-a",
+    "--kernel-name",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "ae2173221ca003fc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "dbf49cda0cde3eb21b96adbc6aadbf143f8932c16ed96af549c94aa0010feadf"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "-r",
+    "--operating-system",
+    "--machine",
+    "--kernel-name",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "b0d1ada6301ee085",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "8c1231abd7a19bd048bf5afc75d896ccdf115b362358f1aa85e0fbfe88818397"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "04335cdb2475b0243c37f546d687b6d3a6c733db45a3282d260c7ae1e762874c"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-i",
+    "-o",
+    "--machine",
+    "--operating-system",
+    "-n"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "b5d08e3e2ad5d3e7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "8ff214a46d549607fbf1752b1a31ed6d58e29caeb61f47675bb86cb0033b40ff"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--machine",
+    "--kernel-name",
+    "-a",
+    "--processor",
+    "-p",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "b74b77c32b93e26d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--nodename",
+    "-a",
+    "-v",
+    "--hardware-platform",
+    "-m",
+    "--kernel-release"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "b9b9abe27e080203",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "306985fa5546c0ab05817905eb1d489b0cbae6ada35326ffb5ba028c7cc1ed05"
+  },
+  "case": {
+   "argv": [
+    "--kernel-name",
+    "-m",
+    "--operating-system",
+    "--machine",
+    "-p",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "bae8ec54caca1267",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "9b33dac426f6a7051df62b1af2187087927fad9b4e47b6c0834b86a4a06c11f7"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-r",
+    "--all",
+    "-v",
+    "--kernel-name",
+    "-a",
+    "-o"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "bc971324666d37d3",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "-v",
+    "-m",
+    "-i",
+    "-r",
+    "--kernel-release"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "c019ae1c3d4a907e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-s",
+    "--kernel-version",
+    "--hardware-platform",
+    "--operating-system",
+    "--all"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "c15ffb5308a2dfa5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--nodename",
+    "--kernel-version",
+    "-v",
+    "-s",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "c24cf240e690319e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "--machine",
+    "--kernel-version",
+    "-m",
+    "--kernel-release",
+    "-v"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "c37022ed27d9f753",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-release",
+    "--all",
+    "--machine",
+    "-a",
+    "--kernel-name",
+    "-s"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "c370d3fc3881c208",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "-a",
+    "--all",
+    "-s",
+    "--processor",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "c3acf628786d8aaa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-name",
+    "--kernel-version",
+    "-p",
+    "-a",
+    "-n",
+    "--processor"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "c4714f8dd7f234bb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--nodename",
+    "--all",
+    "--hardware-platform",
+    "-n",
+    "-v",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "c8fd6f19e8fb92ba",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--all",
+    "--kernel-release",
+    "--kernel-name",
+    "-n",
+    "-r"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "c9f5a1090343e70a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "--kernel-release",
+    "-i",
+    "--processor",
+    "-m",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "cc643970d5c63a1e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-release",
+    "-a",
+    "--kernel-version",
+    "-m",
+    "--nodename",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "ce4a083376e55ddc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "-s",
+    "-i",
+    "-n",
+    "-p",
+    "--all"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "cf4b0d77d458d88c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "--kernel-release",
+    "-v",
+    "-m",
+    "--hardware-platform",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "cfd0964a2140e064",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "--kernel-release",
+    "--nodename",
+    "-m",
+    "--operating-system",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "cfe86f15221b4a67",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "-r",
+    "-s",
+    "--kernel-release",
+    "-o",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "d51d63859b963688",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "ac8247ba68fe2a24577406aa3f6a8cb870bcf5813ab1691a2c9af0e6bdee79c1"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "--hardware-platform",
+    "-r",
+    "--nodename",
+    "--operating-system",
+    "-i"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "d530e95bd6a37a8a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "0a47827c3095f8629e520cc0d9d420cec62fb3d9618dc45743e9b386ab8f7090"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "--all",
+    "-a",
+    "-r",
+    "--operating-system",
+    "-i"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "d88b0a73577f4344",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--nodename",
+    "--all",
+    "-p",
+    "--machine",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "d8d5c69f87d44f19",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "65e4f1c786d13653fc313cb1d1ab960b045245cab539bf724577acea1c52876e"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-o",
+    "--kernel-name",
+    "--nodename",
+    "--kernel-version",
+    "--machine",
+    "--processor",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "triples",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "d910da783255486b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "5e9e705dbbf539561b3da7f8efa9ec70f700ad93c610c26fa1317ad82b994732"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--hardware-platform",
+    "-v",
+    "-r",
+    "-m",
+    "--all",
+    "--machine"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "de363fcd31ea37ae",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "--kernel-version",
+    "-m",
+    "--machine",
+    "--processor",
+    "-a"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "e20c907d9e874f4c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "--kernel-name",
+    "--all",
+    "--processor",
+    "-p",
+    "--machine"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "e2921967a1c264d4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-i",
+    "--processor",
+    "--all",
+    "--nodename",
+    "--machine",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "e37957b663fe5053",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "fce7758c3830896c8c5f32d79be2242332c7a2a86795752405b012c8e489fe6a"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-i",
+    "--operating-system",
+    "--hardware-platform",
+    "--nodename",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "e47826928688ce33",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "53dc47f11657ef53f11c9ce0bee39f7debe38a5d3211dea6751529aea5699dcb"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--kernel-release",
+    "--nodename",
+    "--machine",
+    "--all",
+    "--processor",
+    "-v"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "e7a0d1d85e3eac0d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--processor",
+    "-r",
+    "--all",
+    "--kernel-name",
+    "--hardware-platform"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "e9fc94fa508f576d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
     "-a"
    ],
    "domain": "files",
@@ -113846,6 +136980,221 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r134",
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "09d914bf90dd778b5bbe9e67c008b65cd1eacc16fa5f41e278d4c3af88e24a74"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "--kernel-version",
+    "--operating-system",
+    "--processor",
+    "-o",
+    "-i"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "ebd653533b2248a1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "4938e1d57ed6d64d54b95794820fb84b2d4e86637dc69e90c657428cc8490991"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "869dbdebc5be00ae53d5cea40287d5347bc9e3939fcfd1dd6b847217564f15b5"
+  },
+  "case": {
+   "argv": [
+    "--operating-system",
+    "--kernel-release",
+    "-v",
+    "-s",
+    "--kernel-name",
+    "-n"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "ed5428cbf3ce6b6f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "4303e6d2518c7b19c344bfb1569268677009f200613eabe9944468b48c6a13da"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-o",
+    "-m",
+    "-a",
+    "-r",
+    "-s",
+    "-n"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "ed68fd6c52717f03",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "465bc27c55d67f78d2603ae281e6f7e3f0dd6937c016de18e2661f0edc825229"
+  },
+  "case": {
+   "argv": [
+    "--operating-system",
+    "--kernel-version",
+    "-r",
+    "-i",
+    "--nodename"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "ee3464bf2be8e313",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "4c105776bd6ef52ab885e33dabaaad943011ab7a460b2df953f3802583464921"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--all",
+    "-o",
+    "-p",
+    "-m",
+    "-v",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "ef6f7bece85366e5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-a",
+    "--processor",
+    "-i",
+    "--all",
+    "--hardware-platform",
+    "-o"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "f265726aadc637a8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
   "utility": "uname"
  },
  {
@@ -113871,6 +137220,330 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r134",
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "--operating-system",
+    "-a",
+    "--all",
+    "--nodename",
+    "--processor",
+    "-p"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "f530e0d5fb423a25",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "ca8737bff089d09e637be9f930ea5873fe648cec5d05a978512fc2786cc23b3c"
+  },
+  "case": {
+   "argv": [
+    "-n",
+    "-p",
+    "--kernel-version",
+    "-r",
+    "-o",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "f5658127141f7b95",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "70fea3526077205e65fc60b87278a990ac615c50318f9ffc6e8b6a7d9712663c"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "b0fb42b72e060afe16c71bf9a848c79dbde313d6fb784b20161ae99ab439e22f"
+  },
+  "case": {
+   "argv": [
+    "--kernel-release",
+    "-r",
+    "--machine",
+    "--processor",
+    "-o",
+    "-v"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "f59a744e744f0a8d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "32442051ad32cfd11107ffbc2599bc9c32e1896a54185e27ab436b3a36d88f2b"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-p",
+    "-a",
+    "-o",
+    "-s",
+    "--nodename",
+    "-n"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "f60ec3f936452e49",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "223f1019fd9b41d0eab5b24c9234d17bc56fcdef794290973a7880b2fb9a60e0"
+  },
+  "case": {
+   "argv": [
+    "--kernel-version",
+    "-v",
+    "-m",
+    "-n",
+    "--kernel-release",
+    "--operating-system"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "f9217aa3e4f7667b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "b86d0113db6d0b747282470b2806457e48c4d92d58b5b91dd5d6c113fa55cb18"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "84dd5420e80f0ceb686b9baab41354ed44a91ab7b70b4d8c5c50d24f30f5c226"
+  },
+  "case": {
+   "argv": [
+    "--kernel-name",
+    "--operating-system",
+    "-i",
+    "-v",
+    "-s",
+    "-m"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "fb93e154c1ef3076",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "0f83b75f7e5e06c4dc3870dee0e0f8808c6356507d2f039753d74e81310bc060"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "-s",
+    "-a",
+    "--machine",
+    "-i",
+    "--hardware-platform",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "fbd3fb7d043c5b62",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"
+  },
+  "case": {
+   "argv": [
+    "-m",
+    "-o",
+    "-v",
+    "--all",
+    "--kernel-release",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "fc09743378b9d0d1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
+  "utility": "uname"
+ },
+ {
+  "candidate": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "55f38b19c44012536a4c4ca49c56f93439e87a352028b752fbbf7218858ab880"
+  },
+  "case": {
+   "argv": [
+    "--processor",
+    "-v",
+    "-a",
+    "-p",
+    "--kernel-release",
+    "--kernel-name"
+   ],
+   "domain": "files",
+   "family": null,
+   "fixture": "files",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "empty",
+   "tier": "random",
+   "utility": "uname"
+  },
+  "domain": "files",
+  "id": "fe71dd6d45047e5e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason_id": "r321",
+  "reference": {
+   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
+   "status": 0,
+   "stdout": "7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"
+  },
   "utility": "uname"
  },
  {
@@ -113909,7 +137582,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "e7cdca5c8665a7b59d3da5e37652f34b2e6614aedad4f7fe5f76a3b3f1a3441a"
+   "stdout": "b9579847c370681df39418d162844d4f11ca647d9dc88b4a20112067592e3c2f"
   },
   "case": {
    "argv": [
@@ -113928,7 +137601,7 @@ PINNED = r"""
   "id": "08f50fbd935092b9",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r328",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -113959,7 +137632,7 @@ PINNED = r"""
   "id": "0e3841aea81556e4",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r324",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -113971,7 +137644,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "e7cdca5c8665a7b59d3da5e37652f34b2e6614aedad4f7fe5f76a3b3f1a3441a"
+   "stdout": "b9579847c370681df39418d162844d4f11ca647d9dc88b4a20112067592e3c2f"
   },
   "case": {
    "argv": [
@@ -113989,14 +137662,14 @@ PINNED = r"""
   "id": "19ccde8218bb7366",
   "kind": "bug",
   "list": "ledger",
-  "reason_id": "r96",
+  "reason_id": "r328",
   "utility": "vdir"
  },
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "307efba08fa70e841ed638ee00eb33406af157b3f896f8e7ce54666db06b9d07"
+   "stdout": "a27b4104834e55bd504a377659af57b51b86d32c3ed33ea31da6da9e2e40e95c"
   },
   "case": {
    "argv": [
@@ -114015,7 +137688,7 @@ PINNED = r"""
   "id": "1f7761e761ed0a40",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r328",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114027,7 +137700,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "e7cdca5c8665a7b59d3da5e37652f34b2e6614aedad4f7fe5f76a3b3f1a3441a"
+   "stdout": "b9579847c370681df39418d162844d4f11ca647d9dc88b4a20112067592e3c2f"
   },
   "case": {
    "argv": [
@@ -114046,7 +137719,7 @@ PINNED = r"""
   "id": "63cc2e331e210c59",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r328",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114083,7 +137756,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "1e570c919f6c198084b623dc4e54aa4bbaf5e56bafc628bcf9c0b0f2cf6ac4fd"
+   "stdout": "b02baa7323445b0545e62fc8c965f173443433ce46afe2ed216270ef305408e8"
   },
   "case": {
    "argv": [
@@ -114102,7 +137775,7 @@ PINNED = r"""
   "id": "7b2b3603a8588f32",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r329",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114114,39 +137787,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "3e5c8d3057e66d20e650b96df3bd9d300ea3f24603471982d8c1cf6ec2b87e1d"
-  },
-  "case": {
-   "argv": [
-    ".hidden",
-    "hollow"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "vdir"
-  },
-  "domain": "files",
-  "id": "8ff3fd3231ade8ea",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "64ca8bc7ec45ddb5d033aff5213c5ea08d304256e521d467c7867b2f7b519e55"
-  },
-  "utility": "vdir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "47aef0e2c0a70aa114aa8569ea716db3ecb53b89ae009335503d05266cc4f43f"
+   "stdout": "2050c0a621c9c41fa2ffbaae85122c02688fb6a73e9fb0dc7ed5404c9185b009"
   },
   "case": {
    "argv": [
@@ -114165,7 +137806,7 @@ PINNED = r"""
   "id": "a295c2dc5abbffb6",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r330",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
@@ -114177,7 +137818,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "8b3d0de96e08f2d346d6d867e32229549b24f9de7fee1d30afd434d1cf4f2a61"
+   "stdout": "c022475d0afd268426ef5f464e123e55d365fcb8c1042aaa30285f118a8c1bae"
   },
   "case": {
    "argv": [
@@ -114196,7 +137837,7 @@ PINNED = r"""
   "id": "bebcdab80ce37a0c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r331",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
@@ -114208,69 +137849,7 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
-   "stdout": "512410e5449218709d1d72d7bd8e61fef52cdf9e50217bcd3a23b010c579262e"
-  },
-  "case": {
-   "argv": [
-    "--block-size=1K"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "vdir"
-  },
-  "domain": "files",
-  "id": "d52f4645a9051b91",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "6befa99c8812f6ec1ad94ecb1a1b9f65e3e398070a13378a9df02b921e268c94"
-  },
-  "utility": "vdir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "545b8a547cbbe6cbd09557b629cc38e72051d66ebcbe57300f062ae7da8358f2"
-  },
-  "case": {
-   "argv": [
-    "--zero"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "vdir"
-  },
-  "domain": "files",
-  "id": "df1abdde627a942f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "8135094644afab28d2bbfc7a3c03b2d16db9f00d7e495f76fb0ef901fda7bf2c"
-  },
-  "utility": "vdir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "1e570c919f6c198084b623dc4e54aa4bbaf5e56bafc628bcf9c0b0f2cf6ac4fd"
+   "stdout": "b02baa7323445b0545e62fc8c965f173443433ce46afe2ed216270ef305408e8"
   },
   "case": {
    "argv": [
@@ -114289,495 +137868,13 @@ PINNED = r"""
   "id": "fc7f5f5603d3783c",
   "kind": "bug",
   "list": "ledger",
-  "reason": "dir and vdir are ls's surface under two other default formats, and the listings differ from the reference's where ls's do: an operand that resolves through a name that is not a directory is listed rather than refused, -L reports what it could not follow where the reference in a format that needs no stat says nothing, the diagnostic for an entry under a walked directory carries the ./ the walk built rather than the name as written, and the comma layout and a column width are measured over one listing where the reference measures over all of them",
+  "reason_id": "r329",
   "reference": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 0,
    "stdout": "c6abe108360d42f7b16bf64b135b06ecb903cd9fc9c3518ed53ff3a2ed64e26f"
   },
   "utility": "vdir"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "3ab57dea4c91b113cea6a437a292d12faa51a8e3234eefacb80d4d16018fea61"
-  },
-  "case": {
-   "argv": [
-    "-B/usr/bin",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "07a4edb504edbd8a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "9cc758e063fe98d883a9721b129b7e38b0914a3a12016c58eb973456c11e3775"
-  },
-  "case": {
-   "argv": [
-    "-Bmissing",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "2ead301c4ffad576",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "34a64cc1151faea210c817ae65bcf8821541ded095f5dcc014ccbe9a779b7702"
-  },
-  "case": {
-   "argv": [
-    "ls",
-    "-b"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "3e8817ca3d0c748f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-M",
-    "dir",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "3f10829d13d1a98b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-M",
-    "/usr/share/man/man1",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "4e84c632803e18c7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-S",
-    "dir",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "5cf9a10f40aab845",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "9e613f19cb06355f833761e23572757bd2f2f1ec67280121a7dffb5372b7a81e"
-  },
-  "case": {
-   "argv": [
-    "-",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "66ebe22d0d3dd77a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the compiled dircolors database is deliberately shorter than GNU 9.11's, so anything that prints it differs; whereis keeps a lone - as a name to look up where the reference drops it",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "3ab57dea4c91b113cea6a437a292d12faa51a8e3234eefacb80d4d16018fea61"
-  },
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-B",
-    "/usr/bin",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "7f324ca99c57fbb3",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-B",
-    "dir",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "8249bd89cd308642",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-B",
-    "missing",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "846a09ece22e7e99",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "9cc758e063fe98d883a9721b129b7e38b0914a3a12016c58eb973456c11e3775"
-  },
-  "case": {
-   "argv": [
-    "-Bdir",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "948c0cb347e25489",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-S",
-    "/usr/src",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "96ca98bf613f61bf",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "34a64cc1151faea210c817ae65bcf8821541ded095f5dcc014ccbe9a779b7702"
-  },
-  "case": {
-   "argv": [
-    "-Mdir",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "9c74a36c78ed1ae2",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "3ab57dea4c91b113cea6a437a292d12faa51a8e3234eefacb80d4d16018fea61"
-  },
-  "case": {
-   "argv": [
-    "-B",
-    "/usr/bin",
-    "-f",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "b2fbe262107f5ef3",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "3ab57dea4c91b113cea6a437a292d12faa51a8e3234eefacb80d4d16018fea61"
-  },
-  "case": {
-   "argv": [
-    "-Sdir",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "bad9d6b0760b9db6",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "f3743a0a18e53d13922cc21a70d783d875a12560c22ff8d28bda5f5ca9fe05c3"
-  },
-  "case": {
-   "argv": [
-    ""
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "d72e8f1d79defabd",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "3ab57dea4c91b113cea6a437a292d12faa51a8e3234eefacb80d4d16018fea61"
-  },
-  "case": {
-   "argv": [
-    "-S/usr/src",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "dac59178dc53a9df",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "3ab57dea4c91b113cea6a437a292d12faa51a8e3234eefacb80d4d16018fea61"
-  },
-  "case": {
-   "argv": [
-    "-M/usr/share/man/man1",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "fedc88d12728e533",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r136",
-  "utility": "whereis"
  },
  {
   "candidate": {
@@ -114808,60 +137905,6 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_nul_words",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "0f7a3b1efc936e66",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "nul",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "1818ae2bf0ce4e0c",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -114879,168 +137922,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "205b3c42c376aa76",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "blanks",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "41d00ee9accb3970",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "nonl",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "43acd9f493905167",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "4437b33fcc950b9b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "4a81d59518bb472b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "many_lines",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "66d0197dd478c6cb",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "spaces",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "98f5ee5d2333cfa3",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r137",
@@ -115099,87 +137980,6 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_paths",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "bb7aa88fd40b20fc",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_eof_words",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "c4890ea2e2c4f170",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "edge_65537",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "c62dbb2356d1dea1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -115223,33 +138023,6 @@ PINNED = r"""
   },
   "domain": "files",
   "id": "e1cafd306b9f304d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r137",
-  "utility": "xargs"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 125,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "sh",
-    "-c",
-    "kill -TERM $$"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_words",
-   "utility": "xargs"
-  },
-  "domain": "files",
-  "id": "efc74fc1479db2b5",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r137",
@@ -207306,14 +230079,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "option": "-Q",
-  "reason_id": "r291",
-  "utility": "findmnt"
- },
- {
-  "domain": "util_linux",
-  "kind": "deliberate",
-  "list": "ledger",
-  "option": "-R",
   "reason_id": "r291",
   "utility": "findmnt"
  },

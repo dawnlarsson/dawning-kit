@@ -84,6 +84,18 @@
 /* Keep pane_raise's top + 1 away from overflow on an untrusted shared page. */
 #define WINDOW_Z_MAX (1 << 24)
 
+/*
+        The same rule for where a window says it is.
+
+        A window is allowed off the side of the screen -- that is what dragging
+        one half out of view is -- so this is not a placement policy and is far
+        wider than any desktop. It is only far enough inside the type that the
+        compositor can add a frame, a border and a corner radius to it without
+        the arithmetic wrapping, because every rectangle it cuts, damages and
+        clips is worked out from this number.
+*/
+#define WINDOW_COORD_MAX (1 << 24)
+
 // state
 #define WINDOW_FOCUSED 1u
 

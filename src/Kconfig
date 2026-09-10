@@ -5,6 +5,21 @@ menu "Moonwater"
         help
           Enable the Moonwater core: the spark binary format, /dev/spark and Canvas
 
+    config MOONWATER_FLOODLIGHT
+        bool "Floodlight: the runtime allowance register"
+        default y
+        help
+          Build /dev/floodlight: every runtime allowance on this machine in one
+          array, readable with cat and changed one line at a time until sealed.
+
+          Deliberately depends on nothing. Floodlight is its own trusted base --
+          one file of ordinary kernel C that includes only <linux/...>, names
+          nothing Moonwater defines, exports no symbols and is linked by nothing.
+          Making it depend on MOONWATER_CORE would put the compositor and the
+          terminal emulator inside the trusted base of a policy decision, which
+          is the whole thing it is built to avoid. The floodlight harness in
+          test/differential.py fails the build if that separation ever slips.
+
     config MOONWATER_SHELL
         bool "Bundle the Moonwater shell in the initial filesystem"
         depends on MOONWATER_CORE=y

@@ -18815,7 +18815,6 @@ static b32 text_sort()
         checking_quiet = check_quiet;
         string_address output = file_option_value(address_of taking, 'o');
         string_address said = file_option_value(address_of taking, 'K');
-        positive number;
 
         if (sort_outputs > 1)
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, "multiple output files specified"));

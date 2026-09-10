@@ -16,6 +16,14 @@ ccflags-y += $(if $(MOONWATER_STOCK),-DSTOCK_STRINGS)
 
 moonwater-y := core.o
 
+#       Floodlight is not part of the module and must never become part of it.
+#       It is a separate object with its own initcall, because the whole worth
+#       of the file is that its trusted base is the file: folded into
+#       moonwater.o it would share a translation unit with the compositor.
+#       Nothing links it and it exports nothing, so a separate object here is
+#       the only thing that has to be true for it to run.
+obj-$(CONFIG_MOONWATER_FLOODLIGHT) += floodlight.o
+
 #
 #       Assembly, for every architecture, out of one file each.
 #

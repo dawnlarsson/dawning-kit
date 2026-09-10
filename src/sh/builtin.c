@@ -11678,45 +11678,90 @@ static positive shell_name_index_find(string_address name, address_any table,
         return count;
 }
 
-static shell_tool shell_tools[] = {
+/*
+        Which categories this build keeps, decided once.
+
+        The table below and the key array beside it both expand through
+        SHELL_TOOL_KEEP, so a configuration cannot hand them different sets of
+        tools: there is one cascade and they read it in turn. Spelling the
+        cascade twice is what would let the key array describe a table that is
+        not there.
+*/
 #ifdef SHELL_NO_UTILITIES
 #define SHELL_TOOL_GENERAL(name, function)
 #define SHELL_TOOL_UTIL_BIN(name, function)
 #define SHELL_TOOL_UTIL_SBIN(name, function)
 #define SHELL_TOOL_MONITOR(name, function)
 #else
-#define SHELL_TOOL_GENERAL(name, function) {#name, function},
+#define SHELL_TOOL_GENERAL(name, function) SHELL_TOOL_KEEP(name, function)
 #ifdef SHELL_NO_UTIL_LINUX
 #define SHELL_TOOL_UTIL_BIN(name, function)
 #define SHELL_TOOL_UTIL_SBIN(name, function)
 #else
-#define SHELL_TOOL_UTIL_BIN(name, function) {#name, function},
-#define SHELL_TOOL_UTIL_SBIN(name, function) {#name, function},
+#define SHELL_TOOL_UTIL_BIN(name, function) SHELL_TOOL_KEEP(name, function)
+#define SHELL_TOOL_UTIL_SBIN(name, function) SHELL_TOOL_KEEP(name, function)
 #endif
 #ifdef SHELL_NO_MONITOR
 #define SHELL_TOOL_MONITOR(name, function)
 #else
-#define SHELL_TOOL_MONITOR(name, function) {#name, function},
+#define SHELL_TOOL_MONITOR(name, function) SHELL_TOOL_KEEP(name, function)
 #endif
 #endif
 #ifdef SHELL_UTILITY_PROGRAM
 #define SHELL_TOOL_SYSTEM(name, function)
 #else
-#define SHELL_TOOL_SYSTEM(name, function) {#name, function},
+#define SHELL_TOOL_SYSTEM(name, function) SHELL_TOOL_KEEP(name, function)
 #endif
 #define SHELL_TOOL(category, name, function) \
         SHELL_TOOL_##category(name, function)
+
+static shell_tool shell_tools[] = {
+#define SHELL_TOOL_KEEP(name, function) {#name, function},
 #include "tools.inc"
+#undef SHELL_TOOL_KEEP
+    {null, null},
+};
+
+#define SHELL_TOOLS (array_count(shell_tools) - 1)
+
+/*
+        The first byte and the length of every name, in table order.
+
+        A name is a pointer into the string pool, and the pool is laid out by
+        the compiler in whatever order the literals were emitted, so walking
+        the table to compare names reads a byte here and a byte there across
+        the whole of it. Answering "no" from two bytes held together keeps
+        that walk inside this array: 197 names are 394 bytes, one page that
+        was going to be read anyway, instead of the eleven pages of pool that
+        the string compares used to touch.
+
+        It matters most to the one caller that cannot avoid the walk. Every
+        installed utility name is found by the index below, but argv[0] is
+        asked once per process and init -- what the kernel execs, PID 1 for
+        the life of the machine -- sits near the end of the table, so it used
+        to read almost every name in the image to discover its own.
+
+        Two bytes is the whole key on purpose. It fits 197 entries in one
+        page, and the pair already separates the table into 102 groups of
+        which the largest is six, so what survives the filter is a handful of
+        candidates rather than a shorter list of the same kind.
+*/
+static const p8 shell_tool_key[][2] = {
+#define SHELL_TOOL_KEEP(name, function) \
+        {(p8)(#name)[0], (p8)(sizeof(#name) - 1)},
+#include "tools.inc"
+#undef SHELL_TOOL_KEEP
+};
+
 #undef SHELL_TOOL
 #undef SHELL_TOOL_SYSTEM
 #undef SHELL_TOOL_UTIL_SBIN
 #undef SHELL_TOOL_UTIL_BIN
 #undef SHELL_TOOL_MONITOR
 #undef SHELL_TOOL_GENERAL
-    {null, null},
-};
 
-#define SHELL_TOOLS (array_count(shell_tools) - 1)
+_Static_assert(array_count(shell_tool_key) == SHELL_TOOLS,
+               "the key array and the tool table describe the same tools");
 /*
         Room for every name with slots to spare, because the index is open:
         a full one has nowhere to put the next name and nowhere to stop
@@ -11769,9 +11814,470 @@ static string_address shell_tool_name(string_address path)
         return slash ? slash + 1 : path;
 }
 
-static b32 shell_tool_call(positive which)
+/*
+        Floodlight -- what this program is allowed to do.
+
+        The register itself is floodlight.c, a kernel module of its own that
+        holds the answers and every deviation from them. This is the half that
+        acts on them, and it acts here because this is the one place an applet
+        is named before it has read anything: whatever the awk program says, or
+        the filename find walked to, or the line that arrived on xargs' input,
+        the confinement is already on by the time that data exists.
+
+        Which is the whole point. The applets that matter are the ones whose
+        behaviour is driven by what they read; fixing their identity before the
+        reading starts is what closes them.
+*/
+
+#define FLOODLIGHT_PATH "/dev/floodlight"
+
+/*
+        What is refused when the register cannot be read.
+
+        Not "everything", which would refuse the machine, and not "nothing",
+        which would mean removing the device is a way of removing the policy.
+        These are the six floodlight.c is built refusing -- the three that turn
+        data into a command and the three that start a shell -- so the absence
+        of the register leaves the built-in answers standing and only the
+        deviations unavailable. The floodlight harness fails the build if this
+        list and floodlight.c's disagree.
+*/
+static string_address const floodlight_denied[] = {
+    "awk", "bowl", "find", "script", "setarch", "xargs", null};
+
+/*
+        The register, read once and reduced to what it changes.
+
+        Reading it per applet would put four calls on a path that already costs
+        forty microseconds, so it is read on the first applet a process runs
+        and kept. A deviation made after that reaches the next program started,
+        which is the next thing anybody runs.
+
+        What is kept is not the report. The report is mostly the built-in
+        answers, and this shell already carries those; only the rows that
+        deviate from them say anything it does not already know. So the text is
+        walked once, at load, and what comes out is a handful of rows -- none
+        at all on a machine nobody has changed, which is every machine most of
+        the time. An applet then costs three comparisons against a count of
+        zero rather than three walks over eight kilobytes of text.
+*/
+#define FLOODLIGHT_REPORT 8192
+#define FLOODLIGHT_NAME 64
+#define FLOODLIGHT_DETAIL 32
+#define FLOODLIGHT_ROWS 48
+
+/* The settings, in the order floodlight.c names them. */
+#define FLOODLIGHT_RUN 0
+#define FLOODLIGHT_FLAG 1
+#define FLOODLIGHT_SPAWN 2
+#define FLOODLIGHT_NETWORK 3
+#define FLOODLIGHT_SETTINGS 4
+
+static string_address const floodlight_settings[FLOODLIGHT_SETTINGS] = {
+    "run", "flag", "spawn", "network"};
+
+typedef struct
 {
+        p8 subject[FLOODLIGHT_NAME];
+        p8 detail[FLOODLIGHT_DETAIL];
+        p8 setting;
+        p8 allowed;
+} floodlight_row;
+
+static floodlight_row floodlight_rows[FLOODLIGHT_ROWS];
+static positive floodlight_row_count;
+static bool floodlight_report_read;
+
+/*
+        One word of a report line.
+
+        With its length, because the report is one string and a word in it is
+        not terminated: string_length on a word runs to the end of the whole
+        report, so every comparison against a setting name failed and this
+        shell read no deviation at all. Nothing noticed, because the reader had
+        only ever been checked by reading it.
+*/
+typedef struct
+{
+        string_address at;
+        positive length;
+} floodlight_token;
+
+static floodlight_token floodlight_word(string_address address_to at)
+{
+        floodlight_token word;
+        string_address start = address_to at;
+
+        while (address_to start == ' ')
+                start++;
+
+        address_to at = start;
+        while (address_to(address_to at) && address_to(address_to at) != ' ' &&
+               address_to(address_to at) != '\n')
+                (address_to at)++;
+
+        word.at = start;
+        word.length = (positive)((address_to at) - start);
+        return word;
+}
+
+static bool floodlight_is(floodlight_token word, string_address name)
+{
+        positive named = string_length(name);
+
+        return word.length == named && !memory_compare(word.at, name, named);
+}
+
+/* Everything the register says that this shell does not already know. */
+static fn floodlight_take(string_address text)
+{
+        string_address at = text;
+
+        while (address_to at && floodlight_row_count < FLOODLIGHT_ROWS)
+        {
+                floodlight_token subject, said, state, detail = {null, 0};
+                floodlight_row address_to row;
+                positive i;
+
+                if (address_to at == '#')
+                        goto line;
+
+                subject = floodlight_word(&at);
+                said = floodlight_word(&at);
+                state = floodlight_word(&at);
+
+                if (!subject.length || !said.length || !state.length)
+                        goto line;
+
+                for (i = 0; i < FLOODLIGHT_SETTINGS; i++)
+                        if (floodlight_is(said, floodlight_settings[i]))
+                                break;
+
+                if (i == FLOODLIGHT_SETTINGS)
+                        goto line;
+
+                /* A flag row carries the flag between the setting and the
+                   state, so the state is one word further along. */
+                if (i == FLOODLIGHT_FLAG)
+                {
+                        detail = state;
+                        state = floodlight_word(&at);
+                        if (!state.length)
+                                goto line;
+                }
+
+                /*
+                        Only what deviates. A row this kernel was built with
+                        says what this shell already believes, and keeping it
+                        would be carrying the same answer twice.
+                */
+                if (!floodlight_is(floodlight_word(&at), "changed"))
+                        goto line;
+
+                if (subject.length >= FLOODLIGHT_NAME ||
+                    detail.length >= FLOODLIGHT_DETAIL)
+                        goto line;
+
+                row = address_of floodlight_rows[floodlight_row_count++];
+                memory_copy_apart(row->subject, subject.at, subject.length);
+                row->subject[subject.length] = 0;
+                if (detail.length)
+                        memory_copy_apart(row->detail, detail.at, detail.length);
+                row->detail[detail.length] = 0;
+                row->setting = (p8)i;
+                row->allowed = (p8)floodlight_is(state, "allow");
+
+        line:
+                while (address_to at && address_to at != '\n')
+                        at++;
+                at += address_to at == '\n';
+        }
+}
+
+static fn floodlight_load()
+{
+        p8 report[FLOODLIGHT_REPORT];
+        file_facts facts;
+        bipolar handle;
+        bipolar got;
+
+        if (floodlight_report_read)
+                return;
+
+        floodlight_report_read = true;
+
+        handle = system_open_at(AT_FDCWD, FLOODLIGHT_PATH, FILE_READ);
+
+        if (handle < 0)
+                return;
+
+        /*
+                The register, and not something wearing its name.
+
+                A program that can put a filesystem over /dev -- an unprivileged
+                user namespace is enough on a kernel that allows them -- could
+                leave an ordinary file at this path saying every applet is
+                allowed everything, and be believed. The device is a character
+                device on the misc major; a regular file is not, and neither is
+                a pipe somebody left there. Asked of the open handle rather
+                than the path, so nothing can be swapped between the two.
+        */
+        if (!file_look(handle, (string_address)"", AT_EMPTY_PATH, &facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_CHARACTER ||
+            facts.rdev_major != 10)
+        {
+                system_close(handle);
+                return;
+        }
+
+        got = system_read_once(handle, report, sizeof(report) - 1);
+        system_close(handle);
+
+        if (got <= 0)
+                return;
+
+        /*
+                A report that filled the buffer is one that may have been cut,
+                and half a report is worse than none: the half that is missing
+                is the half that refuses something. Thrown away, so the
+                built-in answers stand.
+        */
+        if ((positive)got >= sizeof(report) - 1)
+                return;
+
+        report[got] = 0;
+        floodlight_take((string_address)report);
+}
+
+/*
+        What the register says about one program and one setting, if anything.
+
+        A count of zero is every machine nobody has changed, and the whole of
+        the work there is the compare that finds it.
+*/
+static bool floodlight_says(string_address name, positive setting,
+                            string_address detail, bool address_to answer)
+{
+        positive i;
+
+        floodlight_load();
+
+        if (!floodlight_row_count)
+                return false;
+
+        for (i = 0; i < floodlight_row_count; i++)
+        {
+                floodlight_row address_to row = address_of floodlight_rows[i];
+                floodlight_token held;
+
+                if (row->setting != setting)
+                        continue;
+
+                held.at = (string_address)row->subject;
+                held.length = string_length((string_address)row->subject);
+
+                if (!floodlight_is(held, name))
+                        continue;
+
+                if (setting == FLOODLIGHT_FLAG)
+                {
+                        held.at = (string_address)row->detail;
+                        held.length = string_length((string_address)row->detail);
+
+                        if (!floodlight_is(held, detail))
+                                continue;
+                }
+
+                *answer = row->allowed != 0;
+                return true;
+        }
+
+        return false;
+}
+
+/* The built-in answer this shell carries, for when the register is silent. */
+static bool floodlight_built_in(string_address name)
+{
+        positive i;
+
+        for (i = 0; floodlight_denied[i]; i++)
+                if (word_is(name, floodlight_denied[i]))
+                        return false;
+
+        return true;
+}
+
+static bool floodlight_may(string_address name, positive setting,
+                           bool otherwise)
+{
+        bool answer;
+
+        return floodlight_says(name, setting, (string_address)"", &answer)
+                   ? answer
+                   : otherwise;
+}
+
+/*
+        A filter that refuses one thing, installed on this process for good.
+
+        Classic BPF, which is what seccomp takes: check the architecture the
+        call arrived on, then the call number, and answer. The architecture
+        check is not decoration -- without it a process could make the same
+        call through a different ABI and arrive at a number that means
+        something else entirely.
+
+        SECCOMP_RET_ERRNO rather than killing: a refused exec should look to
+        the program like a refused exec, so find says it could not run the
+        command and carries on walking rather than dying halfway.
+*/
+#define BPF_LOAD_WORD 0x20
+#define BPF_JUMP_EQUAL 0x15
+#define BPF_RETURN 0x06
+#define SECCOMP_DATA_NR 0
+#define SECCOMP_DATA_ARCH 4
+#define SECCOMP_RET_ERRNO_EPERM 0x00050001u
+#define SECCOMP_RET_ALLOW 0x7fff0000u
+#define SECCOMP_SET_MODE_FILTER 1
+#define PR_SET_NO_NEW_PRIVS 38
+
+#if defined(__x86_64__)
+#define FLOODLIGHT_AUDIT_ARCH 0xc000003eu
+#elif defined(__aarch64__)
+#define FLOODLIGHT_AUDIT_ARCH 0xc00000b7u
+#else
+#define FLOODLIGHT_AUDIT_ARCH 0xc00000f3u
+#endif
+
+/* The kernel's own shapes: struct sock_filter and struct sock_fprog. Both
+   sixteen-bit fields are unsigned there, and a signed short here would be a
+   different structure that happens to be the same size. */
+typedef struct
+{
+        p16 code;
+        p8 jt;
+        p8 jf;
+        p32 k;
+} floodlight_instruction;
+
+typedef struct
+{
+        p16 count;
+        floodlight_instruction address_to filter;
+} floodlight_program;
+
+#define FLOODLIGHT_REFUSED 8
+
+static fn floodlight_confine(const p32 address_to numbers, positive count)
+{
+        floodlight_instruction filter[6 + FLOODLIGHT_REFUSED];
+        floodlight_program program;
+        positive at = 0;
+        positive i;
+
+        if (!count)
+                return;
+
+        /* Clamped before the jumps are worked out, not while they are being
+           written: every jump below is measured from `count`, so a count the
+           loop quietly truncated would leave every one of them pointing past
+           the end of the filter. */
+        if (count > FLOODLIGHT_REFUSED)
+                count = FLOODLIGHT_REFUSED;
+
+        /* Arrived on the architecture this filter was written for, or refused
+           outright: a call through another ABI reaches a different table. */
+        filter[at++] = (floodlight_instruction){BPF_LOAD_WORD, 0, 0, SECCOMP_DATA_ARCH};
+        filter[at++] = (floodlight_instruction){BPF_JUMP_EQUAL, 1, 0, FLOODLIGHT_AUDIT_ARCH};
+        filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ERRNO_EPERM};
+
+        filter[at++] = (floodlight_instruction){BPF_LOAD_WORD, 0, 0, SECCOMP_DATA_NR};
+
+        for (i = 0; i < count; i++)
+                filter[at++] = (floodlight_instruction){
+                    BPF_JUMP_EQUAL, (p8)(count - i), 0, numbers[i]};
+
+        filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ALLOW};
+        filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ERRNO_EPERM};
+
+        program.count = (p16)at;
+        program.filter = filter;
+
+        /* Without this a filter needs privilege to install. With it the
+           kernel also refuses to grant any through this process's execs,
+           which is the property that makes the filter worth installing. */
+        if (system_call_5(syscall(prctl), PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+                return;
+
+        system_call_3(syscall(seccomp), SECCOMP_SET_MODE_FILTER, 0,
+                      (positive)address_of program);
+}
+
+/*
+        Whether this applet has to be confined, asked before the fork that
+        would make confining it safe.
+
+        The shell runs the last command of a -c in its own process rather than
+        forking for it, which is right for a builtin and wrong for one that is
+        about to have a filter locked onto it for good: the filter would outlive
+        the applet and take the shell's own exec with it, including whatever an
+        EXIT trap was going to run. So an applet that needs confining does not
+        take that path.
+*/
+static bool floodlight_confines(string_address name)
+{
+        return !floodlight_may(name, FLOODLIGHT_SPAWN, floodlight_built_in(name)) ||
+               !floodlight_may(name, FLOODLIGHT_NETWORK, true);
+}
+
+/* Everything the register refuses this applet, as one filter. */
+static fn floodlight_apply(string_address name)
+{
+        p32 refused[FLOODLIGHT_REFUSED];
+        positive count = 0;
+
+        if (!floodlight_may(name, FLOODLIGHT_SPAWN, floodlight_built_in(name)))
+        {
+                refused[count++] = (p32)syscall(execve);
+                refused[count++] = (p32)syscall(execveat);
+        }
+
+        if (!floodlight_may(name, FLOODLIGHT_NETWORK, true))
+        {
+                refused[count++] = (p32)syscall(socket);
+                refused[count++] = (p32)syscall(connect);
+        }
+
+        floodlight_confine(refused, count);
+}
+
+/*
+        Running one applet.
+
+        `own_process` says this process exists to run this applet and nothing
+        after it, which is what makes it safe to lock a seccomp filter onto.
+        It is asked for rather than assumed, because a filter cannot be taken
+        off again: the build tool includes this file and runs uname, mkdir and
+        find inside its own process, and confining find there left the tool
+        unable to exec the compiler it was about to run -- a build that failed
+        with no error, because a refused exec says EPERM and prints nothing.
+
+        So the answer is opt-in. A caller that says nothing gets no filter, and
+        the callers that say yes are the three that exit immediately after.
+*/
+static b32 shell_tool_call_in(positive which, bool own_process)
+{
+        string_address name = shell_tools[which].name;
         b32 answered;
+
+        /* Refused outright, before it runs at all. Safe everywhere: it stops
+           the applet rather than changing what this process may do later. */
+        if (!floodlight_may(name, FLOODLIGHT_RUN, true))
+                return string_report(log_error, 126,
+                                     "%s: refused by floodlight\n", name);
+
+        /* And confined, before it reads the data that would drive it. */
+        if (own_process)
+                floodlight_apply(name);
 
         log_failure_reset();
         answered = shell_tools[which].function() & 0xff;
@@ -11783,6 +12289,50 @@ static b32 shell_tool_call(positive which)
         return answered;
 }
 
+/* The ordinary way in: this process goes on to do other things. */
+static b32 shell_tool_call(positive which)
+{
+        return shell_tool_call_in(which, false);
+}
+
+/*
+        The one name in the table, found without reading the rest of them.
+
+        string_table_find compares the name against every entry, and each
+        comparison is a read of a string somewhere else in the image. This
+        asks the two byte key first and only follows the pointer when the key
+        matches, which for a name that is not a tool's -- the ordinary case,
+        since a shell is what this binary usually is -- means the table is
+        walked without leaving this array at all.
+
+        The length is taken once. A name longer than a byte can hold is not
+        any tool's, and stopping on it here keeps the comparison below from
+        having to describe what it would mean.
+*/
+static positive shell_tool_key_find(string_address name)
+{
+        positive length = string_length(name);
+        p8 first = (p8)name[0];
+
+        if (length > 255)
+                return SHELL_TOOLS;
+
+        for (positive at = 0; at < SHELL_TOOLS; at++)
+        {
+                if (shell_tool_key[at][0] != first ||
+                    shell_tool_key[at][1] != (p8)length)
+                        continue;
+
+                /* The key already agreed about the first byte and the
+                   length, so the terminator is what the length says it is
+                   and comparing it again would prove nothing. */
+                if (!memory_compare(name, shell_tools[at].name, length))
+                        return at;
+        }
+
+        return SHELL_TOOLS;
+}
+
 /*
         Run as the tool the binary was called as, if it was called as one.
 
@@ -11790,37 +12340,48 @@ static b32 shell_tool_call(positive which)
         is an ordinary shell after all. Nothing is forked: this process is the
         invocation, and it is about to end.
 */
-static b32 shell_tool_named(string_address name)
+/*
+        The applet a name asks for, run.
+
+        own_process is the caller saying this process exists to run this and
+        nothing after it, which is what makes it safe to lock a seccomp filter
+        on. Both callers reach the same table and only one of them is finished
+        afterwards: the shell's own main is here because the binary was invoked
+        under an applet's name, while the build tool sets an argument vector,
+        asks for a tool, and then carries on to run the compiler. Confining the
+        second left the build unable to exec anything, and a refused exec says
+        EPERM and prints nothing -- so the build failed with no error at all.
+*/
+static b32 shell_tool_named_in(string_address name, bool own_process)
 {
         positive which;
 
         if (!name)
                 return -1;
 
-        /* Installed shell entry names are overwhelmingly more common than a
-           multicall utility entry. Reject their exact short spellings before
-           walking the one-shot tool table; utility lookup remains unchanged. */
-        if ((string_is(name, 's') && string_is(name + 1, 'h') &&
-             !string_get(name + 2)) ||
-            (string_is(name, 's') && string_is(name + 1, 'h') &&
-             string_is(name + 2, 'e') && string_is(name + 3, 'l') &&
-             string_is(name + 4, 'l') && !string_get(name + 5)) ||
-            (string_is(name, 'b') && string_is(name + 1, 'a') &&
-             string_is(name + 2, 's') && string_is(name + 3, 'h') &&
-             !string_get(name + 4)) ||
-            word_is(name, "dash") || word_is(name, "moonwater"))
-                return -1;
-
         /* One lookup in a process is cheaper than constructing the reusable
            index. Ordinary shell dispatch below is where repeated names use
-           the index; argv[0] is asked only once. */
-        which = string_table_find(name, shell_tools, sizeof(shell_tool),
-                                  SHELL_TOOLS);
+           the index; argv[0] is asked only once.
+
+           sh, shell, bash, dash and moonwater used to be spelled out here
+           and rejected before the walk, because the walk compared the name
+           against every tool's and each comparison read a string somewhere
+           else in the image. It reads two bytes out of one array now, so
+           skipping it saved a microsecond of nothing -- measured at 130 us a
+           run against 129 without -- and none of those five is a tool, so
+           the shortcut never decided anything the table would not have. */
+        which = shell_tool_key_find(name);
 
         if (which == SHELL_TOOLS)
                 return -1;
 
-        return shell_tool_call(which);
+        return shell_tool_call_in(which, own_process);
+}
+
+/* Ordinary callers keep the process afterwards, so nothing is locked on. */
+static b32 shell_tool_named(string_address name)
+{
+        return shell_tool_named_in(name, false);
 }
 
 b32 shell_tool_as_called()
@@ -11847,7 +12408,10 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
         if (which == SHELL_TOOLS)
                 return false;
 
-        if (shell_tail_command)
+        /* The tail command runs in the shell's own process. An applet the
+           register confines must not, because the filter would stay on after
+           it and take the shell's own exec with it. */
+        if (shell_tail_command && !floodlight_confines(name))
         {
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 shell_answer(shell_tool_call(which));
@@ -11890,7 +12454,7 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
                 trap_default_all();
 
                 program_arguments_use(shell_argv, (b32)shell_argc);
-                exit(shell_tool_call(which));
+                exit(shell_tool_call_in(which, true));
         }
 
         if (child < 0)
@@ -13792,18 +14356,22 @@ fn shell_which(writer write, string_address input)
                 if (string_not(word, '-') || !string_get(word + 1))
                         break;
 
+                //      The ones that are recognised and do nothing. A list
+                //      rather than ten comparisons written out, because a
+                //      list is all it is: nothing here is decided, only
+                //      spelled.
+                static string_address const accepted[] = {
+                    "-i",           "--read-alias",     "--skip-alias",
+                    "--read-functions", "--skip-functions",
+                    "--skip-dot",   "--skip-tilde",
+                    "--show-dot",   "--show-tilde",     "--tty-only",
+                };
+
                 if (word_is(word, "-a") || word_is(word, "--all"))
                         every = true;
-                else if (!word_is(word, "-i") &&
-                         !word_is(word, "--read-alias") &&
-                         !word_is(word, "--skip-alias") &&
-                         !word_is(word, "--read-functions") &&
-                         !word_is(word, "--skip-functions") &&
-                         !word_is(word, "--skip-dot") &&
-                         !word_is(word, "--skip-tilde") &&
-                         !word_is(word, "--show-dot") &&
-                         !word_is(word, "--show-tilde") &&
-                         !word_is(word, "--tty-only"))
+                else if (string_table_find(word, accepted, sizeof(accepted[0]),
+                                           array_count(accepted)) ==
+                         array_count(accepted))
                         string_format(log_error,
                                       "which: invalid option -- '%s'\n",
                                       word + 1);

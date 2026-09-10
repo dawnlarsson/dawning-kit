@@ -493,8 +493,16 @@ typedef struct
         p8 columns[STORAGE_COLUMN_MAX];
         positive count;
         string_address operand;
+        /*  A relative or symlinked spelling names the same mount as its
+            absolute one: --mountpoint and the bare operand are looked up by
+            both, because the word may equally be a source that is no path
+            at all. */
+        string_address operand_path;
         string_address source;
         string_address target;
+        string_address target_path;
+        string_address second;
+        string_address second_path;
         string_address type;
         string_address option_filter;
         bool path_query;
@@ -505,7 +513,25 @@ typedef struct
         bool pairs;
         bool first_only;
         bool invert;
+        bool list;
+        bool submounts;
+        /*  Set only while a tree is being written: the row being rendered
+            and the shape of the rows around it, which is all the TARGET
+            cell needs to draw its prefix. */
+        const struct storage_findmnt_line address_to lines;
+        positive line;
 } storage_findmnt_options;
+
+/*      One row of the tree: which mount, which row stands above it, how deep
+        that leaves it, and whether it is the last of its parent's children.
+        The prefix is drawn from those three facts alone. */
+struct storage_findmnt_line
+{
+        positive index;
+        positive parent;
+        positive depth;
+        bool last;
+};
 
 static PURE bool storage_rw_opposite(string_address options,
                                      string_address option, positive length)
@@ -696,6 +722,34 @@ static PURE bool storage_source_has_root(storage_mount address_to mount)
                !string_equals(mount->root, "/");
 }
 
+/*      `|-` for a child with siblings after it and "`-" for the last, with
+        one "| " or "  " for every level above -- the ASCII set, which is
+        what the reference draws outside a UTF-8 locale. */
+static positive storage_findmnt_prefix(writer output,
+                                       const struct storage_findmnt_line
+                                           address_to lines,
+                                       positive row)
+{
+        bool stack[64];
+        positive depth = 0;
+        positive at = lines[row].parent;
+
+        if (!lines[row].depth)
+                return 0;
+        while (at != positive_max && lines[at].depth &&
+               depth < array_count(stack))
+        {
+                stack[depth++] = lines[at].last;
+                at = lines[at].parent;
+        }
+        for (positive i = depth; i; i--)
+                if (output)
+                        output((address_any)(stack[i - 1] ? "  " : "| "), 2);
+        if (output)
+                output((address_any)(lines[row].last ? "`-" : "|-"), 2);
+        return (depth + 1) * 2;
+}
+
 static positive storage_findmnt_cell(writer output,
                                      storage_mount address_to mount,
                                      enum storage_column column,
@@ -703,6 +757,10 @@ static positive storage_findmnt_cell(writer output,
 {
         string_address value = storage_column_name(column);
         p8 number[32];
+        positive drawn = 0;
+        if (mount && column == STORAGE_TARGET && options->lines)
+                drawn = storage_findmnt_prefix(output, options->lines,
+                                               options->line);
         if (mount)
         {
                 if (column == STORAGE_OPTIONS)
@@ -718,7 +776,7 @@ static positive storage_findmnt_cell(writer output,
                         value = memory_load_unaligned(string_address,
                             (p8 address_to)mount + storage_column_table[column].offset);
         }
-        positive length = storage_findmnt_value(
+        positive length = drawn + storage_findmnt_value(
             output, value, string_length(value), options->raw, options->pairs);
         if (mount && column == STORAGE_SOURCE && !options->no_fsroot &&
             storage_source_has_root(mount))
@@ -801,11 +859,21 @@ static PURE bool storage_findmnt_match(storage_mount address_to mount,
 
         if (matched && options->operand &&
             string_compare(options->operand, mount->target) &&
+            (!options->operand_path ||
+             string_compare(options->operand_path, mount->target)) &&
             !storage_source_matches(mount, options->operand))
                 matched = false;
 
         if (matched && options->target && !options->path_query &&
-            string_compare(options->target, mount->target))
+            string_compare(options->target, mount->target) &&
+            (!options->target_path ||
+             string_compare(options->target_path, mount->target)))
+                matched = false;
+
+        if (matched && options->second &&
+            string_compare(options->second, mount->target) &&
+            (!options->second_path ||
+             string_compare(options->second_path, mount->target)))
                 matched = false;
 
         if (options->invert &&
@@ -813,6 +881,208 @@ static PURE bool storage_findmnt_match(storage_mount address_to mount,
              options->type || options->option_filter || have_query_id))
                 return !matched;
         return matched;
+}
+
+/*      Defined below, beside mountpoint's own use of it: the absolute
+        spelling of an open handle, read out of /proc/self/fd. */
+static p8 address_to storage_fd_path(bipolar handle, positive address_to room);
+
+/*      The absolute spelling of a word that names something, or null for a
+        word that names nothing -- a source such as `tmpfs` is no path and
+        stays as it was written. */
+static p8 address_to storage_findmnt_path(string_address word,
+                                          positive address_to room)
+{
+        bipolar handle = system_open_at(AT_FDCWD, word,
+                                        STORAGE_OPEN_PATH | O_CLOEXEC);
+        p8 address_to resolved;
+
+        address_to room = 0;
+        if (handle < 0)
+                return null;
+        resolved = storage_fd_path(handle, room);
+        system_close(handle);
+        return resolved;
+}
+
+/*      The rows a tree is written from.
+
+        A mount that answers the query becomes a row; one that does not still
+        lets its children through, attached to the nearest row above them,
+        which is how a filtered tree keeps its shape. A mount the walk never
+        reached -- its parent is outside this table -- starts a row of its
+        own afterwards, so nothing is dropped. --submounts asks the opposite:
+        each answer is a root and everything under it comes along, answer or
+        not. */
+typedef struct
+{
+        struct storage_findmnt_line address_to lines;
+        positive room;
+        positive count;
+        bool failed;
+} storage_findmnt_forest;
+
+static positive storage_findmnt_line_add(storage_findmnt_forest address_to state,
+                                         positive index, positive parent,
+                                         positive depth)
+{
+        if (!array_store_reserve(state->lines, state->room, state->count,
+                                 state->count + 1, 32))
+        {
+                state->failed = true;
+                return positive_max;
+        }
+        /*  The row just added is the last of its parent's children until
+            another arrives, and then it is not. */
+        for (positive at = 0; at < state->count; at++)
+                if (state->lines[at].parent == parent)
+                        state->lines[at].last = false;
+        state->lines[state->count] = (struct storage_findmnt_line){
+            .index = index, .parent = parent, .depth = depth, .last = true};
+        return state->count++;
+}
+
+static fn storage_findmnt_walk(storage_mount_table address_to table,
+                               storage_findmnt_options address_to options,
+                               bool have_query_id, positive query_id,
+                               storage_findmnt_forest address_to state,
+                               p8 address_to done, positive index,
+                               positive parent, positive depth, bool submounts)
+{
+        positive row = parent;
+        positive below = depth;
+
+        if (state->failed || done[index])
+                return;
+        if (submounts || storage_findmnt_match(table->entry + index, options,
+                                               have_query_id, query_id))
+        {
+                done[index] = 1;
+                row = storage_findmnt_line_add(state, index, parent, depth);
+                if (state->failed)
+                        return;
+                below = depth + 1;
+        }
+        /*  Children come in the order they were mounted, which is the order
+            of their ids and not the order of the file: /proc/self/mountinfo
+            lists a mount where its parent put it, and two siblings can be
+            written the other way round. */
+        positive after = 0;
+        bool started = false;
+        for (;;)
+        {
+                positive chosen = positive_max;
+                positive chosen_id = 0;
+
+                for (positive at = 0; at < table->count; at++)
+                {
+                        positive id = table->entry[at].id;
+
+                        if (at == index || table->entry[at].parent_id !=
+                                               table->entry[index].id)
+                                continue;
+                        if (started && id <= after)
+                                continue;
+                        if (chosen == positive_max || id < chosen_id)
+                        {
+                                chosen = at;
+                                chosen_id = id;
+                        }
+                }
+                if (chosen == positive_max)
+                        break;
+                after = chosen_id;
+                started = true;
+                storage_findmnt_walk(table, options, have_query_id, query_id,
+                                     state, done, chosen, row, below, submounts);
+        }
+}
+
+static bool storage_findmnt_rows(storage_mount_table address_to table,
+                                 storage_findmnt_options address_to options,
+                                 bool have_query_id, positive query_id,
+                                 bool submounts,
+                                 struct storage_findmnt_line address_to address_to out,
+                                 positive address_to out_room,
+                                 positive address_to out_count)
+{
+        storage_findmnt_forest state = {0};
+        p8 address_to done = null;
+        positive done_room = 0;
+        positive done_count = 0;
+
+        address_to out = null;
+        address_to out_room = 0;
+        address_to out_count = 0;
+        if (table->count)
+        {
+                if (!array_store_reserve(done, done_room, done_count,
+                                         table->count, 64))
+                        return false;
+                done_count = table->count;
+                for (positive at = 0; at < table->count; at++)
+                        done[at] = 0;
+        }
+
+        if (submounts)
+                for (positive at = 0; at < table->count; at++)
+                {
+                        if (done[at] ||
+                            !storage_findmnt_match(table->entry + at, options,
+                                                   have_query_id, query_id))
+                                continue;
+                        storage_findmnt_walk(table, options, have_query_id,
+                                             query_id, address_of state, done,
+                                             at, positive_max, 0, true);
+                        if (options->first_only)
+                                break;
+                }
+        else
+        {
+                for (positive at = 0; at < table->count; at++)
+                {
+                        bool rooted = true;
+
+                        for (positive other = 0; other < table->count; other++)
+                                if (other != at &&
+                                    table->entry[other].id ==
+                                        table->entry[at].parent_id)
+                                {
+                                        rooted = false;
+                                        break;
+                                }
+                        if (rooted)
+                                storage_findmnt_walk(table, options,
+                                                     have_query_id, query_id,
+                                                     address_of state, done, at,
+                                                     positive_max, 0, false);
+                }
+                for (positive at = 0; at < table->count; at++)
+                        if (!done[at] &&
+                            storage_findmnt_match(table->entry + at, options,
+                                                  have_query_id, query_id))
+                                storage_findmnt_walk(table, options,
+                                                     have_query_id, query_id,
+                                                     address_of state, done, at,
+                                                     positive_max, 0, false);
+        }
+        array_store_release(done, done_room, done_count);
+        address_to out = state.lines;
+        address_to out_room = state.room;
+        address_to out_count = state.count;
+        return !state.failed;
+}
+
+static fn storage_findmnt_release(storage_findmnt_options address_to options,
+                                  positive operand_room, positive target_room,
+                                  positive second_room)
+{
+        if (options->operand_path)
+                memory_free((p8 address_to)options->operand_path, operand_room);
+        if (options->target_path)
+                memory_free((p8 address_to)options->target_path, target_room);
+        if (options->second_path)
+                memory_free((p8 address_to)options->second_path, second_room);
 }
 
 /* Reentrant core used unchanged by builtin and multicall dispatch. */
@@ -827,6 +1097,7 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
             STORAGE_ARGUMENT("pairs", 'P'),
             STORAGE_ARGUMENT("first-only", 'f'),
             STORAGE_ARGUMENT("invert", 'i'),
+            STORAGE_ARGUMENT("submounts", 'R'),
             STORAGE_ARGUMENT("source", 'S'),
             STORAGE_ARGUMENT("target", 'T'),
             STORAGE_ARGUMENT("mountpoint", 'M'),
@@ -852,21 +1123,23 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
         b32 option;
 
         while ((option = storage_argument_next(
-                    address_of taking, (string_address)"nrlvPfiSTMtoO",
+                    address_of taking, (string_address)"nrlvPfiRSTMtoO",
                     (string_address)"STMtoOy", arguments,
                     array_count(arguments), address_of value)) !=
                ARGUMENT_END)
         {
                 if (option == ARGUMENT_OPERAND)
                 {
-                        if (options.operand)
-                        {
-                                if (diagnostic)
-                                        diagnostic(str("findmnt: too many arguments\n"));
-                                return 1;
-                        }
-
-                        options.operand = *value ? value : (string_address) "/";
+                        /*  Two operands: the first names a source or a
+                            mountpoint, the second a mountpoint alone. A
+                            third and any after it are read and ignored, the
+                            way the reference ignores them. */
+                        if (!options.operand)
+                                options.operand = *value ? value
+                                                         : (string_address) "/";
+                        else if (!options.second)
+                                options.second = *value ? value
+                                                        : (string_address) "/";
                         continue;
                 }
 
@@ -884,7 +1157,9 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                 else if (option == 'v')
                         options.no_fsroot = true;
                 else if (option == 'l')
-                        ; /* This implementation is already list-shaped. */
+                        options.list = true;
+                else if (option == 'R')
+                        options.submounts = true;
                 else if (option == 'P')
                 {
                         options.pairs = true;
@@ -964,6 +1239,19 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
         if (!storage_mount_table_load(address_of table, diagnostic))
                 return 1;
 
+        positive operand_room = 0;
+        positive target_room = 0;
+        positive second_room = 0;
+        if (options.operand)
+                options.operand_path = (string_address)storage_findmnt_path(
+                    options.operand, address_of operand_room);
+        if (options.mountpoint_query && options.target)
+                options.target_path = (string_address)storage_findmnt_path(
+                    options.target, address_of target_room);
+        if (options.second)
+                options.second_path = (string_address)storage_findmnt_path(
+                    options.second, address_of second_room);
+
         if (options.path_query)
         {
                 file_facts facts;
@@ -971,6 +1259,8 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                 if (!file_look_at(options.target, address_of facts))
                 {
                         storage_mount_table_release(address_of table);
+                        storage_findmnt_release(address_of options, operand_room,
+                                                target_room, second_room);
                         return 1;
                 }
 
@@ -980,7 +1270,53 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
 
         positive matched = 0;
         bool direct = options.raw || options.pairs;
+        /*      A query names one mount, so the shape a tree would show is
+                already chosen: the reference draws the tree only for the
+                whole table, and --submounts is what asks for the subtree
+                under a query instead. */
+        bool filtered = options.source || options.target || options.operand ||
+                        options.second;
+        bool submounts = options.submounts &&
+                         (filtered || options.type || options.option_filter);
+        bool tree = !direct && !options.list && !options.first_only &&
+                    !filtered && !submounts;
+        struct storage_findmnt_line address_to lines = null;
+        positive line_room = 0;
+        positive line_count = 0;
 
+        if (tree || submounts)
+        {
+                if (!storage_findmnt_rows(address_of table, address_of options,
+                                          have_query_id, query_id, submounts,
+                                          address_of lines, address_of line_room,
+                                          address_of line_count))
+                {
+                        storage_mount_table_release(address_of table);
+                        storage_findmnt_release(address_of options, operand_room,
+                                                target_room, second_room);
+                        return 1;
+                }
+                /*  --list and the export shapes keep the subtree
+                    --submounts reached and drop the drawing of it. */
+                options.lines = direct || options.list ? null : lines;
+                matched = line_count;
+                for (positive row = 0; row < line_count; row++)
+                {
+                        options.line = row;
+                        for (positive column = 0; column < options.count;
+                             column++)
+                        {
+                                positive length = storage_findmnt_cell(
+                                    null, table.entry + lines[row].index,
+                                    options.columns[column],
+                                    address_of options);
+
+                                if (length > widths[column])
+                                        widths[column] = length;
+                        }
+                }
+        }
+        else
         for (positive at = 0; at < table.count; at++)
         {
                 storage_mount address_to mount = table.entry + at;
@@ -1025,11 +1361,19 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                 }
 
                 for (positive at = 0; at < matched; at++)
-                        storage_findmnt_row(output, table.entry + at,
+                {
+                        options.line = at;
+                        storage_findmnt_row(output,
+                                            lines ? table.entry + lines[at].index
+                                                  : table.entry + at,
                                             address_of options, widths);
+                }
         }
 
+        array_store_release(lines, line_room, line_count);
         storage_mount_table_release(address_of table);
+        storage_findmnt_release(address_of options, operand_room, target_room,
+                                second_room);
 
         return matched ? 0 : 1;
 }

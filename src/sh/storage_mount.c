@@ -41,7 +41,6 @@
 #define STORAGE_MNT_FORCE       1
 #define STORAGE_MNT_DETACH      2
 #define STORAGE_MNT_EXPIRE      4
-#define STORAGE_UMOUNT_NOFOLLOW 8
 
 #define STORAGE_ERROR_PERMISSION 1
 #define STORAGE_ERROR_NO_ENTRY  2
@@ -286,6 +285,23 @@ static bool storage_options_merge(storage_mount_options address_to into,
                storage_data_add(into, extra->data.bytes, extra->data.used);
 }
 
+/*      The absolute spelling of a word that names something, and null for
+        one that does not -- `tmpfs` is not a path and stays as it was
+        written, which is how the reference reports both. */
+static p8 address_to storage_mount_canonical(string_address word,
+                                             positive address_to room)
+{
+        bipolar handle = system_open_at(AT_FDCWD, word,
+                                        STORAGE_OPEN_PATH | O_CLOEXEC);
+        p8 address_to resolved;
+
+        if (handle < 0)
+                return null;
+        resolved = storage_fd_path(handle, room);
+        system_close(handle);
+        return resolved;
+}
+
 /*
         Since Linux 2.6.26, an ordinary remount resets unspecified VFS flags.
         A bind remount has the same trap for the subset it can change.  Read
@@ -305,13 +321,25 @@ static bool storage_remount_options(string_address target,
 
         if (loaded)
         {
+                /*      The table spells its targets absolutely, so a word
+                        the caller wrote as `b` finds nothing there and the
+                        remount then asks for flags the kernel locked when
+                        it handed this mount over: EPERM, where the
+                        reference keeps nosuid and nodev and succeeds. */
+                positive room = 0;
+                p8 address_to resolved = storage_mount_canonical(target,
+                                                                 address_of room);
                 storage_mount address_to live =
-                    storage_mount_find_target(address_of table, target);
+                    storage_mount_find_target(address_of table,
+                                              resolved ? (string_address)resolved
+                                                       : target);
 
                 if (live)
                         parsed = storage_options_parse(effective,
                                                        live->options);
 
+                if (resolved)
+                        memory_free(resolved, room);
                 storage_mount_table_release(address_of table);
         }
 
@@ -433,11 +461,18 @@ static bipolar storage_mount_one(string_address source, string_address target,
 }
 
 
+/*      ignored says the record was passed over rather than mounted: noauto,
+        swap, a type the filter excludes. mount -a counts those in neither
+        column, and the difference is the whole exit status -- one failure
+        beside one ignored record is 32, "all failed", not 64. */
+
+
 static b32 storage_mount_fstab_record(string_address program,
                                       storage_fstab address_to record,
                                       storage_mount_options address_to extra,
                                       string_address type_filter, bool explicit,
-                                      writer diagnostic, writer write)
+                                      writer diagnostic, writer write,
+                                      bool address_to ignored)
 {
         storage_mount_options options;
         string_address selected_type = record->type;
@@ -452,7 +487,11 @@ static b32 storage_mount_fstab_record(string_address program,
                 return string_report(diagnostic, 1, "%s: no memory\n", program);
         }
         if (extra)
+        {
                 options.fake = extra->fake;
+                options.verbose = extra->verbose;
+        }
+        address_to ignored = false;
 
         /* With one fstab operand, util-linux treats a single positive -t as
            an override.  Under -a it is a filter. */
@@ -472,6 +511,7 @@ static b32 storage_mount_fstab_record(string_address program,
                 if (options.verbose && write)
                         string_format(write, "%s: ignored\n", record->target);
                 storage_options_free(address_of options);
+                address_to ignored = true;
                 return 0;
         }
 
@@ -527,11 +567,13 @@ static b32 storage_mount_fstab(string_address program, string_address wanted,
                                               record->target);
                         continue;
                 }
+                bool ignored = false;
                 b32 one = storage_mount_fstab_record(program, record, extra,
                                                      type_filter, !all,
-                                                     diagnostic, write);
+                                                     diagnostic, write,
+                                                     address_of ignored);
                 failed |= one;
-                if (!one)
+                if (!one && !ignored)
                         mounted++;
                 if (!all)
                         break;
@@ -827,9 +869,16 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         {
                 /* Propagation changes name only a target and never consult
                    fstab. Remount can infer source/type from mountinfo. */
+                /*  A propagation change stands alone even beside other
+                    options, so long as one of them is the recursion the
+                    change itself asked for: the reference reads the rest as
+                    attributes of that one operation and never looks the
+                    target up in fstab. */
                 if (options.propagation &&
-                    !(options.flags & (STORAGE_MS_BIND | STORAGE_MS_MOVE |
-                                       STORAGE_MS_REMOUNT)))
+                    (!(options.flags & (STORAGE_MS_BIND | STORAGE_MS_MOVE |
+                                        STORAGE_MS_REMOUNT)) ||
+                     ((options.flags | options.propagation) &
+                      STORAGE_MS_REC)))
                 {
                         bipolar answer = storage_mount_one((string_address)"none",
                                                            operand[0], null,
@@ -921,6 +970,55 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                         status = 1;
                         goto done;
                 }
+                /*  --no-canonicalize hands the target to the kernel as it
+                    was written, and the mount API does not follow a trailing
+                    symlink there: the reference refuses such a target where
+                    the canonical spelling would have reached the directory
+                    under it. */
+                if (!canonical && !options.fake)
+                {
+                        file_facts itself;
+
+                        if (file_look(AT_FDCWD, operand[1], AT_SYMLINK_NOFOLLOW,
+                                      address_of itself) &&
+                            (itself.mode & MODE_FORMAT) == MODE_LINK)
+                        {
+                                string_format(diagnostic,
+                                              "mount: %s on %s failed: %s\n",
+                                              operand[0], operand[1],
+                                              strerror(STORAGE_ERROR_INVALID));
+                                status = 32;
+                                goto done;
+                        }
+                }
+                /*  A move and a remount asked for together: the reference
+                    takes the remount, which leaves the move undone, and
+                    calls that a subsequent operation that failed -- the
+                    usage answer 1, not the 32 a refused mount(2) leaves. A
+                    target that is not there at all never gets that far. */
+                if ((options.flags & STORAGE_MS_MOVE) &&
+                    (options.flags & STORAGE_MS_REMOUNT) && !options.fake)
+                {
+                        positive room = 0;
+                        p8 address_to shown = canonical
+                            ? storage_mount_canonical(operand[1],
+                                                      address_of room)
+                            : null;
+
+                        if (shown || !canonical)
+                        {
+                                string_format(diagnostic,
+                                              "mount: %s: filesystem was mounted,"
+                                              " but any subsequent operation"
+                                              " failed: Invalid argument.\n",
+                                              shown ? (string_address)shown
+                                                    : operand[1]);
+                                if (shown)
+                                        memory_free(shown, room);
+                                status = 1;
+                                goto done;
+                        }
+                }
                 answer = storage_mount_one(operand[0], operand[1], type,
                                            address_of options);
                 if (answer)
@@ -930,31 +1028,48 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                       strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
                 else if (options.verbose)
                 {
-                        /*  The reference names the target it actually
-                            mounted on, which is the canonical path and not
-                            the relative word that was written. */
+                        /*  The reference names both words the way it
+                            resolved them: the canonical path where the word
+                            is one, and the word itself where it is not, so
+                            `tmpfs` stays `tmpfs` while `c` becomes its
+                            absolute spelling. --no-canonicalize resolves
+                            neither. And it says which operation it did:
+                            moved, bound, or mounted -- with a propagation
+                            change reported on a line of its own after it. */
                         positive shown_room = 0;
-                        p8 address_to shown = null;
-                        bipolar target_handle = canonical
-                            ? system_open_at(AT_FDCWD, operand[1],
-                                             STORAGE_OPEN_PATH | O_CLOEXEC)
-                            : -1;
+                        positive source_room = 0;
+                        p8 address_to shown = canonical
+                            ? storage_mount_canonical(operand[1],
+                                                      address_of shown_room)
+                            : null;
+                        p8 address_to source_shown = canonical
+                            ? storage_mount_canonical(operand[0],
+                                                      address_of source_room)
+                            : null;
+                        string_address target = shown ? (string_address)shown
+                                                      : operand[1];
+                        string_address source = source_shown
+                            ? (string_address)source_shown : operand[0];
 
-                        if (target_handle >= 0)
-                        {
-                                shown = storage_fd_path(target_handle,
-                                                        address_of shown_room);
-                                system_close(target_handle);
-                        }
-                        string_format(write,
-                                      options.flags & STORAGE_MS_BIND
-                                          ? "mount: %s bound on %s.\n"
-                                          : "mount: %s mounted on %s.\n",
-                                      operand[0],
-                                      shown ? (string_address)shown
-                                            : operand[1]);
+                        if (options.flags & STORAGE_MS_MOVE)
+                                string_format(write, "mount: %s moved to %s.\n",
+                                              source, target);
+                        else if (options.flags & STORAGE_MS_BIND)
+                                string_format(write, "mount: %s bound on %s.\n",
+                                              source, target);
+                        else
+                                string_format(write, "mount: %s mounted on %s.\n",
+                                              source, target);
+                        if (options.propagation &&
+                            !(options.flags & (STORAGE_MS_MOVE |
+                                               STORAGE_MS_BIND)))
+                                string_format(write,
+                                              "mount: %s propagation flags changed.\n",
+                                              target);
                         if (shown)
                                 memory_free(shown, shown_room);
+                        if (source_shown)
+                                memory_free(source_shown, source_room);
                 }
                 status = answer ? 32 : 0;
                 goto done;
@@ -1000,11 +1115,12 @@ static PURE storage_mount address_to storage_umount_target(
         return found;
 }
 
-/* checked says the mount table was consulted and answered for this target.
-   util-linux answers 1 when the table alone can say the path is not a mount
-   point, and 32 when it took umount(2) and the kernel refused: the modes
-   that bypass the table (--no-mtab, --read-only, --force, --types) therefore
-   answer 32 where a plain umount of the same path answers 1. */
+/*      Every operational refusal umount(8) reports is 32; 1 is reserved for
+        usage -- a spelling that was never a mount point under --recursive or
+        --all-targets, which do their own table lookup and say so before any
+        syscall. A plain umount of a path the table does not hold still takes
+        umount(2), which is why "not mounted" and "no mount point specified"
+        both leave 32 behind. */
 /*      util-linux says what went wrong in its own words rather than the
         kernel's: a path that is nothing to the mount table is "not mounted",
         one the kernel refuses to let go is "target is busy", and a path the
@@ -1022,22 +1138,28 @@ static PURE string_address storage_umount_reason(b32 number)
         return null;
 }
 
+/*      --read-only remounts what it could not unmount, and it needs the
+        source to do it: the reference reads that from the mount table, so a
+        spelling the table never answered for -- `--no-canonicalize` naming a
+        symlink, say -- keeps the busy refusal instead of quietly turning the
+        filesystem read-only under the caller. */
 static b32 storage_umount_one(writer diagnostic, string_address program,
                              string_address target, string_address type,
-                             positive flags, bool read_only, bool checked,
+                             string_address source,
+                             positive flags, bool read_only,
                              bool verbose, bool quiet, bool fake)
 {
         bipolar answer = fake ? 0
             : system_call_2(syscall(umount2), (positive)target, flags);
 
-        if (answer && read_only && answer == -STORAGE_ERROR_BUSY)
+        if (answer && read_only && source && answer == -STORAGE_ERROR_BUSY)
         {
                 storage_mount_options remount;
 
                 memory_fill(address_of remount, 0, sizeof(remount));
                 remount.flags = STORAGE_MS_REMOUNT | STORAGE_MS_RDONLY;
                 remount.mentioned = STORAGE_MS_REMOUNT | STORAGE_MS_RDONLY;
-                answer = storage_mount_one((string_address)"none", target,
+                answer = storage_mount_one(source, target,
                                            null, address_of remount);
         }
         if (answer)
@@ -1057,7 +1179,6 @@ static b32 storage_umount_one(writer diagnostic, string_address program,
                                               program, target,
                                               strerror(number));
                 }
-                (void)checked;
                 return 32;
         }
         if (verbose)
@@ -1120,8 +1241,9 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                                 found = true;
                                 failed |= storage_umount_one(diagnostic, program,
                                                              record->target,
-                                                             record->type, flags,
-                                                             read_only, false, verbose,
+                                                             record->type,
+                                                             record->source, flags,
+                                                             read_only, verbose,
                                                              quiet, fake);
                                 record->target = null;
                         }
@@ -1160,7 +1282,11 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
             STORAGE_ARGUMENT("test-opts", 'O'),
             STORAGE_ARGUMENT("fake", 'F'),
         };
-        positive flags = STORAGE_UMOUNT_NOFOLLOW;
+        /*  umount(8) takes no UMOUNT_NOFOLLOW: only its set-user-id path
+            does, and then it chdirs to the parent first. So a symlink named
+            to umount(2) is followed by the kernel, which is how
+            `umount --no-canonicalize clink` reaches the mount under it. */
+        positive flags = 0;
         string_address types = null;
         string_address address_to operand = null;
         positive operand_room = 0;
@@ -1169,10 +1295,10 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         bool all_targets = false;
         bool recursive = false;
         bool read_only = false;
-        bool no_mtab = false;
         bool verbose = false;
         bool canonical = true;
         bool quiet = false;
+        bool loop_detach = false;
         bool fake = false;
         argument_cursor taking = {.argc = argc, .argv = argv, .at = 1};
         string_address value;
@@ -1223,13 +1349,13 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         all_targets = true;
                 else if (option == 'q')
                         quiet = true;
-                else if (option == 'n')
-                        no_mtab = true;
                 else if (option == 'F')
                         fake = true;
-                else if (option == 'd' || option == 'O')
-                        ; /* No loop devices are owned here, and every
-                             mount matches an empty option filter. */
+                else if (option == 'd')
+                        loop_detach = true;
+                else if (option == 'O' || option == 'n')
+                        ; /* Every mount matches an empty option filter, and
+                             there is no mtab to leave alone. */
                 else if (option == 'l')
                         flags |= STORAGE_MNT_DETACH;
                 else if (option == 'f')
@@ -1298,8 +1424,9 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                             storage_type_match(types, record->type))
                                 failed |= storage_umount_one(
                                     diagnostic, (string_address)"umount",
-                                    record->target, record->type, flags,
-                                    read_only, false, verbose, quiet, fake);
+                                    record->target, record->type,
+                                    record->source, flags,
+                                    read_only, verbose, quiet, fake);
                 }
         }
 
@@ -1309,7 +1436,6 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                    relative or symlinked target names the same mount. */
                 positive resolved_room = 0;
                 p8 address_to resolved = null;
-                b32 unreachable = 0;
                 {
                         /* The table holds absolute targets, so a relative
                            word is made absolute even under
@@ -1326,53 +1452,73 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                                                            address_of resolved_room);
                                 system_close(handle);
                         }
-                        else
-                                unreachable = (b32)-handle;
                 }
                 string_address asked = resolved ? (string_address)resolved
                                                 : operand[i];
-                bool bypass = types || no_mtab || read_only ||
-                              (flags & STORAGE_MNT_FORCE) != 0;
+                b32 answer;
                 if (all_targets)
                 {
-                        bool matched = false;
-                        for (positive at = table.count; at; at--)
+                        /*  --all-targets names one filesystem, by any of its
+                            mount points or by its source, and unmounts every
+                            mount of that same device -- the newest record
+                            first, stopping at the first refusal. A spelling
+                            the table does not hold never reaches umount(2),
+                            so it is the usage answer 1 and its sentence ends
+                            without a stop. */
+                        storage_mount address_to chosen =
+                            storage_umount_target(address_of table, asked);
+
+                        if (!chosen && asked != operand[i])
+                                chosen = storage_umount_target(
+                                    address_of table, operand[i]);
+                        if (!chosen)
                         {
-                                storage_mount address_to record = table.entry + at - 1;
-                                if (!record->target ||
-                                    (!storage_word(record->source, asked) &&
-                                     !storage_word(record->source, operand[i])))
-                                        continue;
-                                matched = true;
-                                failed |= storage_umount_one(
-                                    diagnostic, (string_address)"umount",
-                                    record->target, record->type, flags,
-                                    read_only, false, verbose, quiet, fake);
+                                if (!quiet)
+                                        string_format(
+                                            diagnostic, "umount: %s: %s\n",
+                                            operand[i],
+                                            resolved ? "not mounted"
+                                                     : "not found");
+                                answer = 1;
                         }
-                        if (!matched)
+                        else
                         {
-                                /* --all-targets names a source; a word that
-                                   is not one still names a target. */
-                                storage_mount address_to target =
-                                    storage_umount_target(address_of table, asked);
-                                if (!target && asked != operand[i])
-                                        target = storage_umount_target(
-                                            address_of table, operand[i]);
-                                if (target)
+                                string_address device = chosen->device;
+
+                                answer = 0;
+                                for (positive at = table.count; at && !answer;
+                                     at--)
                                 {
-                                        matched = true;
-                                        failed |= storage_umount_one(
-                                            diagnostic, (string_address)"umount",
-                                            target->target, target->type, flags,
-                                            read_only, false, verbose, quiet,
-                                            fake);
+                                        storage_mount address_to record =
+                                            table.entry + at - 1;
+
+                                        if (!record->target ||
+                                            !storage_word(record->device,
+                                                          device))
+                                                continue;
+                                        if (recursive)
+                                                answer = storage_umount_recursive(
+                                                    diagnostic,
+                                                    (string_address)"umount",
+                                                    address_of table,
+                                                    record->target,
+                                                    record->target, types,
+                                                    flags, read_only, verbose,
+                                                    quiet, fake);
+                                        else
+                                        {
+                                                answer = storage_umount_one(
+                                                    diagnostic,
+                                                    (string_address)"umount",
+                                                    record->target,
+                                                    record->type,
+                                                    record->source, flags,
+                                                    read_only, verbose, quiet,
+                                                    fake);
+                                                record->target = null;
+                                        }
                                 }
                         }
-                        if (!matched)
-                                failed |= storage_umount_one(
-                                    diagnostic, (string_address)"umount",
-                                    operand[i], null, flags, read_only, false,
-                                    verbose, quiet, fake);
                 }
                 else
                 {
@@ -1388,42 +1534,42 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         string_address target = found ? found->target
                                                       : operand[i];
                         if (recursive)
-                                failed |= storage_umount_recursive(
+                                answer = storage_umount_recursive(
                                     diagnostic, (string_address)"umount",
                                     address_of table,
                                     found ? found->target : asked, operand[i],
                                     types, flags, read_only, verbose, quiet,
                                     fake);
-                        else if (!found && !bypass && !fake)
-                        {
-                                /*  The table alone can say a path is not a
-                                    mount point, and then umount(2) is never
-                                    reached: that answer is 1 and names the
-                                    path the way canonicalisation left it,
-                                    while a path that could not be reached at
-                                    all is named as it was written, with the
-                                    reason the kernel gave. */
-                                if (!quiet)
-                                {
-                                        if (resolved)
-                                                string_format(
-                                                    diagnostic,
-                                                    "umount: %s: not mounted.\n",
-                                                    asked);
-                                        else
-                                                string_format(
-                                                    diagnostic, "umount: %s: %s\n",
-                                                    operand[i],
-                                                    strerror(unreachable));
-                                }
-                                failed |= 1;
-                        }
                         else
-                                failed |= storage_umount_one(
+                        {
+                                answer = storage_umount_one(
                                     diagnostic, (string_address)"umount", target,
-                                    found ? found->type : null, flags, read_only,
-                                    false, verbose, quiet, fake);
+                                    found ? found->type : null,
+                                    found ? found->source : null, flags, read_only,
+                                    verbose, quiet, fake);
+                                /*  --detach-loop frees the loop device the
+                                    source names once the filesystem is gone,
+                                    and it needs a source to name one. Nothing
+                                    here owns a loop device, so the step is a
+                                    no-op -- but where the table never answered
+                                    for this target there is no source at all,
+                                    and the reference calls that a failure
+                                    after a successful unmount. */
+                                if (!answer && loop_detach && !found && !fake)
+                                {
+                                        string_format(
+                                            diagnostic,
+                                            "umount: %s: filesystem was unmounted,"
+                                            " but any subsequent operation failed:"
+                                            " Invalid argument.\n",
+                                            target);
+                                        answer = 1;
+                                }
+                        }
                 }
+                /*  Every operand contributes its own answer: two refusals of
+                    32 are 64, not 32, and only a total past 255 saturates. */
+                failed = failed + answer > 255 ? 255 : failed + answer;
                 if (resolved)
                         memory_free(resolved, resolved_room);
         }
