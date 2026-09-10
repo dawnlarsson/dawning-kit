@@ -145,20 +145,239 @@ typedef struct
         positive next;
         bool command;
         bool from_stdin;
+        bool finished;
         b32 interactive;
         b32 monitor;
+        b32 status;
 } shell_invocation;
+
+/*
+        The GNU long options, in the order Bash lists them.
+
+        This is one table and it is read twice: the parser accepts these
+        names, and the usage banner below prints them. A name this shell
+        does not take must therefore not be listed, and a name it lists it
+        must take -- the two lists cannot drift apart because there is only
+        one.
+
+        A name marked true takes the following word. Bash reads the whole
+        run of these before it reads any letters, and only the leading run:
+        the first word that is not a long option ends the phase, so
+        `sh -x --posix` never reaches the name and complains about the
+        letter '-' instead. That ordering is observable and is why the
+        phases are separate here rather than folded into one loop.
+*/
+typedef struct
+{
+        string_address name;
+        bool takes_word;
+} shell_long_option;
+
+static const shell_long_option shell_long_options[] = {
+    {"debug", false}, {"debugger", false}, {"dump-po-strings", false},
+    {"dump-strings", false}, {"help", false}, {"init-file", true},
+    {"login", false}, {"noediting", false}, {"noprofile", false},
+    {"norc", false}, {"posix", false}, {"pretty-print", false},
+    {"rcfile", true}, {"restricted", false}, {"verbose", false},
+    {"version", false},
+};
+
+/*
+        What Bash writes when it is handed an option it has not got.
+
+        A whole page, not a line: this is the one place a shell prints its
+        own usage, and the caller reads it on standard error under the
+        complaint. Whoever ran the shell wrote its name, so that name is
+        what the banner says -- `./bash`, `-bash` or a path, whatever
+        argv[0] held.
+
+        The letters are this shell's own set letters and the names are the
+        table above, so the banner cannot advertise a surface the parser
+        refuses.
+*/
+static fn shell_usage_said(writer write, string_address self)
+{
+        string_format(write,
+                      "Usage:\t%s [GNU long option] [option] ...\n"
+                      "\t%s [GNU long option] [option] script-file ...\n"
+                      "GNU long options:\n", self, self);
+
+        for (positive at = 0; at < array_count(shell_long_options); at++)
+                string_format(write, "\t--%s\n", shell_long_options[at].name);
+
+        write(str("Shell options:\n"
+                  "\t-ilrsD or -c command or -O shopt_option"
+                  "\t\t(invocation only)\n"
+                  "\t-abefhkmnptuvxBCEHPT or -o option\n"));
+}
+
+/*
+        The complaint, and what follows it.
+
+        Bash reports an unknown option through the same routine every other
+        error goes through, and that routine leaves at once when errexit is
+        already on -- before the usage is written, and with 1 rather than
+        the 2 a usage error otherwise carries. So `sh -eZ` and `sh -Ze` are
+        the same mistake and end differently, because in one of them the -e
+        was read first. dash says it in its own words, has no banner, and
+        does not have that errexit rule; it also spells a plus as a minus.
+*/
+static b32 shell_invocation_refused(string_address self, p8 sign, p8 letter)
+{
+        p8 said[2] = {letter, end};
+
+        if (!shell_bash_compat)
+                return string_report(log_error, 2, "%s: 0: Illegal option -%s\n",
+                                     self, said);
+
+        string_format(log_error, "%s: %c%s: invalid option\n", self, sign, said);
+        if (shell_options & SHELL_FLAG('e'))
+                return 1;
+        shell_usage_said(log_error, self);
+        return 2;
+}
+
+/*
+        The leading run of GNU long options.
+
+        Returns the index of the first word that is not one. A word that
+        begins with two dashes and is not in the table is refused here and
+        the shell is over; a word that begins with one dash and is not in
+        the table is a letter cluster and simply ends the phase. That is
+        Bash's own asymmetry: `-login` is `--login`, and `-x` is `-x`.
+*/
+static positive shell_start_long_options(string_address address_to arguments,
+                                         positive count,
+                                         shell_invocation *invocation)
+{
+        positive at = 1;
+
+        while (at < count)
+        {
+                string_address word = arguments[at];
+                string_address name = word;
+                bool doubled = false;
+                positive found;
+
+                if (!word || word[0] != '-')
+                        break;
+                if (word[1] == '-' && word[2])
+                {
+                        doubled = true;
+                        name++;
+                }
+                name++;
+
+                for (found = 0; found < array_count(shell_long_options); found++)
+                        if (word_is(name, shell_long_options[found].name))
+                                break;
+
+                if (found == array_count(shell_long_options))
+                {
+                        if (!doubled)
+                                break;
+                        string_format(log_error, "%s: %s: invalid option\n",
+                                      arguments[0], word);
+                        shell_usage_said(log_error, arguments[0]);
+                        invocation->status = 2;
+                        invocation->finished = true;
+                        return at;
+                }
+
+                if (shell_long_options[found].takes_word && at + 1 >= count)
+                {
+                        invocation->status = string_report(log_error, 2,
+                            "%s: %s: option requires an argument\n",
+                            arguments[0], shell_long_options[found].name);
+                        invocation->finished = true;
+                        return at;
+                }
+
+                //      What each name does. The ones with nothing to do
+                //      here are taken all the same: --debug and --debugger
+                //      want a debugger this shell does not carry,
+                //      --pretty-print wants a script file rather than a
+                //      command, --noprofile and --norc opt out of files
+                //      only a login or interactive shell reads, and
+                //      --noediting turns off a line editor this shell does
+                //      not put between a terminal and its reader. Refusing
+                //      a name the banner advertises would be worse than
+                //      taking it and doing nothing, which is what Bash does
+                //      with most of them for a -c command as well.
+                if (word_is(name, "posix"))
+                {
+                        if (!shell_extra_told("posix", true))
+                        {
+                                invocation->status = 2;
+                                invocation->finished = true;
+                                return at;
+                        }
+                }
+                else if (word_is(name, "verbose"))
+                        shell_option_letter_told('v', true);
+                else if (word_is(name, "restricted"))
+                        shell_restricted = true;
+                else if (word_is(name, "login"))
+                        shell_shopt_state |= SHELL_SHOPT(LOGIN_SHELL);
+                else if (word_is(name, "version"))
+                {
+                        string_format(log, "GNU bash, version %s (%s)\n",
+                                      "5.3.15(1)-release", MOONWATER_MACHTYPE);
+                        invocation->status = 0;
+                        invocation->finished = true;
+                        return at;
+                }
+                else if (word_is(name, "help"))
+                {
+                        shell_usage_said(log, arguments[0]);
+                        invocation->status = 0;
+                        invocation->finished = true;
+                        return at;
+                }
+                else if (word_is(name, "dump-strings") ||
+                         word_is(name, "dump-po-strings"))
+                {
+                        //      Every $"..." in the program, and there are
+                        //      none: this shell has no message catalogue, so
+                        //      the dump is empty and the program is not run.
+                        invocation->status = 0;
+                        invocation->finished = true;
+                        return at;
+                }
+
+                at += shell_long_options[found].takes_word ? 2 : 1;
+        }
+
+        return at;
+}
 
 /* The command-line grammar locates the source and operands, while set's
    existing option adapter owns option state. No command string is synthesized
-   and argv bytes never pass through expansion to become startup options. */
+   and argv bytes never pass through expansion to become startup options.
+
+   The long names are read first and separately, over the leading run only,
+   because that is where the two phases part company and it is visible:
+   `--posix -x` turns posix mode on and `-x --posix` is a usage error. */
 static bool shell_start_options(string_address address_to arguments,
                                 positive count, shell_invocation *invocation)
 {
+        string_address self = count && arguments[0] ? arguments[0]
+                                                    : (string_address) "sh";
         positive at = 1;
 
         invocation->interactive = -1;
         invocation->monitor = -1;
+
+        if (shell_bash_compat)
+        {
+                at = shell_start_long_options(arguments, count, invocation);
+                if (invocation->finished)
+                {
+                        invocation->next = at;
+                        return false;
+                }
+        }
+
         while (at < count)
         {
                 string_address word = arguments[at];
@@ -172,22 +391,6 @@ static bool shell_start_options(string_address address_to arguments,
                 if ((word[0] != '-' && word[0] != '+') || !word[1])
                         break;
 
-                if (shell_bash_compat &&
-                    word_is(word, "--posix"))
-                {
-                        if (!shell_extra_told("posix", true))
-                                return false;
-                        at++;
-                        continue;
-                }
-                if (shell_bash_compat &&
-                    (word_is(word, "--noprofile") || word_is(word, "--norc")))
-                {
-                        /* These opt out of interactive/login files, not the
-                           noninteractive BASH_ENV file. */
-                        at++;
-                        continue;
-                }
                 on = word[0] == '-';
                 for (string_address letter = word + 1; *letter; letter++)
                 {
@@ -206,6 +409,18 @@ static bool shell_start_options(string_address address_to arguments,
                                         shell_shopt_state &=
                                             ~SHELL_SHOPT(LOGIN_SHELL);
                         }
+                        else if (value == 'r' && shell_bash_compat)
+                                shell_restricted = on;
+                        else if (value == 'D' && shell_bash_compat)
+                        {
+                                //      Every $"..." in the program, of which
+                                //      this shell has none: the dump is empty
+                                //      and the program is not run.
+                                invocation->status = 0;
+                                invocation->finished = true;
+                                invocation->next = count;
+                                return false;
+                        }
                         else if (value == 'o')
                         {
                                 if (at + 1 == count)
@@ -217,8 +432,23 @@ static bool shell_start_options(string_address address_to arguments,
                                 }
                                 else if (!shell_option_named(arguments[++at],
                                                              on))
-                                        return string_report(log_error, false,
-                                            "sh: invalid option: %s\n", arguments[at]);
+                                {
+                                        //      A name nobody has is a usage
+                                        //      error whatever else was asked
+                                        //      for: unlike a letter nobody
+                                        //      has, this one does not go
+                                        //      through the errexit door and
+                                        //      always leaves 2 behind.
+                                        invocation->status = 2;
+                                        invocation->next = at;
+                                        return shell_bash_compat
+                                            ? string_report(log_error, false,
+                                                  "%s: line 0: %s: %s: invalid option name\n",
+                                                  self, self, arguments[at])
+                                            : string_report(log_error, false,
+                                                  "%s: 0: Illegal option -o %s\n",
+                                                  self, arguments[at]);
+                                }
                         }
                         else if (value == 'O' && shell_bash_compat)
                         {
@@ -233,8 +463,13 @@ static bool shell_start_options(string_address address_to arguments,
                                             shell_shopt_find(arguments[++at]);
 
                                         if (item >= SHELL_SHOPT_NAMES)
+                                        {
+                                                invocation->status = 2;
+                                                invocation->next = at;
                                                 return string_report(log_error, false,
-                                                    "sh: invalid shell option: %s\n", arguments[at]);
+                                                    "%s: line 0: %s: invalid shell option name\n",
+                                                    self, arguments[at]);
+                                        }
                                         if (item == SHELL_SHOPT_EXPAND_ALIASES)
                                                 shell_alias_startup_told = true;
                                         if (on)
@@ -247,9 +482,10 @@ static bool shell_start_options(string_address address_to arguments,
                         }
                         else if (!shell_option_letter_told(value, on))
                         {
-                                p8 said[2] = {value, end};
-                                return string_report(log_error, false,
-                                    "sh: invalid option: %s%s\n", on ? "-" : "+", said);
+                                invocation->status = shell_invocation_refused(
+                                    self, on ? '-' : '+', value);
+                                invocation->next = at;
+                                return false;
                         }
 
                         if (value == 's')
@@ -449,7 +685,7 @@ b32 main()
                                  address_of invocation))
         {
                 log_flush();
-                return 2;
+                return invocation.status;
         }
         command_option = invocation.command;
 

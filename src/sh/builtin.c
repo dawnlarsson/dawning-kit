@@ -5262,7 +5262,7 @@ RETURNS_NONNULL string_address shell_flags_current()
 {
         static p8 flags[32];
         static positive last_options, last_named, last_extra;
-        static bool last_bash, known;
+        static bool last_bash, last_restricted, known;
         static p8 last_source;
         p8 source = string_get(shell_option_flags);
 
@@ -5272,7 +5272,8 @@ RETURNS_NONNULL string_address shell_flags_current()
            these words changed. */
         if (known && last_options == shell_options &&
             last_named == shell_options_named && last_extra == shell_extra_state &&
-            last_bash == shell_bash_compat && last_source == source)
+            last_bash == shell_bash_compat && last_source == source &&
+            last_restricted == shell_restricted)
                 return flags;
 
         last_options = shell_options;
@@ -5280,10 +5281,11 @@ RETURNS_NONNULL string_address shell_flags_current()
         last_extra = shell_extra_state;
         last_bash = shell_bash_compat;
         last_source = source;
+        last_restricted = shell_restricted;
         known = true;
 
         string_address order = shell_bash_compat
-                                   ? (string_address) "abefhiklmnptuvxBCEHPT"
+                                   ? (string_address) "abefhiklmnprtuvxBCEHPT"
                                    : (string_address) "ubaCvxsiImfne";
         positive into = 0;
 
@@ -5291,6 +5293,16 @@ RETURNS_NONNULL string_address shell_flags_current()
         {
                 p8 letter = order[at];
                 positive index;
+
+                //      The one letter with no table entry, in the place
+                //      Bash's own table puts it: between privileged and
+                //      onecmd, so `bash -r` reads back as hrBc.
+                if (letter == 'r')
+                {
+                        if (shell_restricted)
+                                flags[into++] = letter;
+                        continue;
+                }
 
                 for (index = 0; index < SHELL_OPTION_NAMES; index++)
                         if (shell_option_names[index].value == letter)

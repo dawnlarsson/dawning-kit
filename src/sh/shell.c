@@ -171,6 +171,17 @@ b32 shell_is_interactive;
 bool shell_bash_compat;
 bool shell_dash_compat;
 
+/*
+        rbash: a shell started -r or --restricted.
+
+        Not one of the set options, because in Bash it is not one either: it
+        is in $- and `set -r` turns it on, but nothing turns it off again,
+        `set -o` never lists it and there is no -o name for it. A word of
+        its own is what that shape wants; a table entry would have brought
+        the three spellings it does not have with it.
+*/
+bool shell_restricted;
+
 // Whether output that can carry colour does. An interface that draws its own
 // screen turns it off while it holds the terminal.
 bool shell_styles = true;
