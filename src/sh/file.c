@@ -20287,7 +20287,9 @@ enum
         SEQ_FORMAT_GOOD,
         SEQ_FORMAT_MANY,
         SEQ_FORMAT_UNKNOWN,
-        SEQ_FORMAT_ENDS
+        SEQ_FORMAT_ENDS,
+        // A conversion the reference knows and this one cannot compute.
+        SEQ_FORMAT_FLOAT
 };
 
 static p8 seq_format_wrong;
@@ -20346,6 +20348,18 @@ static bool seq_format_read(string_address text, seq_format address_to format)
                 if (!text[at])
                 {
                         seq_format_wrong = SEQ_FORMAT_ENDS;
+                        return false;
+                }
+
+                //      The conversions the reference knows and this one
+                //      cannot compute -- there is no floating point in this
+                //      file -- are read as conversions all the same, so that
+                //      what is said about them is said in the reference's
+                //      order and is about them rather than about the letter.
+                if (string_first_of((string_address) "eEgGaA", text[at]))
+                {
+                        seq_format_wrong = SEQ_FORMAT_FLOAT;
+                        seq_format_letter = text[at];
                         return false;
                 }
 
@@ -20422,14 +20436,25 @@ static b32 file_seq()
 
         positive given = count - index;
 
-        if (given < 1 || given > 3)
-                return string_report(log_error, 1, "seq: needs one, two or three numbers\n");
+        //      Too few or too many numbers, said the way the reference says
+        //      it: nothing at all is a missing operand, and a fourth is the
+        //      extra one, named.
+        if (given < 1)
+                return string_report(log_error, 1, "seq: missing operand\n");
+
+        if (given > 3)
+                return string_report(log_error, 1, "seq: extra operand '%s'\n",
+                                     program_argument((b32)(index + 3)));
 
         seq_format format = {.text = "", .flags = CONVERSION_FLAG_ZERO};
 
-        // A format is read before it is weighed against -w, because the
-        // reference reports a format it cannot read whatever else was asked.
-        if (format_text && !seq_format_read(format_text, address_of format))
+        //      A format is read before it is weighed against -w, because the
+        //      reference reports a format it cannot read whatever else was
+        //      asked -- but a conversion it can read and this one cannot
+        //      compute is weighed against -w first, as the reference does.
+        bool readable = !format_text || seq_format_read(format_text, address_of format);
+
+        if (!readable && seq_format_wrong != SEQ_FORMAT_FLOAT)
         {
                 p8 named[2] = {seq_format_letter, end};
 
@@ -20454,14 +20479,41 @@ static b32 file_seq()
                 return 1;
         }
 
+        if (!readable)
+        {
+                p8 named[2] = {seq_format_letter, end};
+
+                return string_report(log_error, 1,
+                                     "seq: format '%s' asks for the %%%s conversion, which needs "
+                                     "floating point this seq has not got\n",
+                                     format_text, named);
+        }
+
         seq_decimal number[3];
 
         for (positive i = 0; i < given; i++)
                 if (!seq_decimal_number(program_argument((b32)(index + i)),
                                          address_of number[i]))
                 {
+                        string_address text = program_argument((b32)(index + i));
+                        string_address at = text;
+
+                        if (string_is(at, '+') || string_is(at, '-'))
+                                at++;
+
+                        //      A word that spells a number no decimal holds
+                        //      is named for what it spells, which is what the
+                        //      reference calls it.
+                        if ((string_is(at, 'n') || string_is(at, 'N')) &&
+                            (string_is(at + 1, 'a') || string_is(at + 1, 'A')) &&
+                            (string_is(at + 2, 'n') || string_is(at + 2, 'N')) &&
+                            !string_get(at + 3))
+                                return string_report(log_error, 1,
+                                                     "seq: invalid 'not-a-number' argument: '%s'\n",
+                                                     text);
+
                         string_format(log_error, "seq: invalid floating point argument: '%s'\n",
-                                      program_argument((b32)(index + i)));
+                                      text);
                         return 1;
                 }
 
@@ -23439,15 +23491,68 @@ static bool rename_ask(string_address destination)
         return yes;
 }
 
+/*
+        Two pairs that cannot both be asked for, refused where the second of
+        a pair is read.
+
+        The reference keeps the first option of each pair it has seen and
+        complains as soon as another from the same pair arrives, naming the
+        two in the order they were written -- so -o ... -i is "--no-overwrite
+        and --interactive" and -i ... -o is the same two the other way round,
+        and whichever pair is completed first is the one reported.
+*/
+static p8 rename_all_last;
+static p8 rename_ask_keep;
+
+static string_address rename_spelled(p8 letter)
+{
+        return letter == 'a'   ? (string_address) "--all"
+               : letter == 'l' ? (string_address) "--last"
+               : letter == 'i' ? (string_address) "--interactive"
+                               : (string_address) "--no-overwrite";
+}
+
+static bool rename_exclusive(p8 address_to kept, p8 letter)
+{
+        if (!address_to kept)
+        {
+                address_to kept = letter;
+                return true;
+        }
+
+        if (address_to kept == letter)
+                return true;
+
+        string_format(log_error, "rename: options %s and %s cannot be combined\n",
+                      rename_spelled(address_to kept), rename_spelled(letter));
+
+        return false;
+}
+
+static bool rename_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'a' || letter == 'l')
+                return rename_exclusive(address_of rename_all_last, letter);
+
+        if (letter == 'i' || letter == 'o')
+                return rename_exclusive(address_of rename_ask_keep, letter);
+
+        return true;
+}
+
 static b32 file_rename()
 {
         file_operands_begin();
+        rename_all_last = 0;
+        rename_ask_keep = 0;
+
         file_taking taking = {
             .program = (string_address)"rename",
             .allowed = (string_address)"vsnaloihV",
             .valued = (string_address)"",
             .longs = rename_longs,
             .operand = file_operand,
+            .seen = rename_option_seen,
         };
 
         if (!file_take(address_of taking) || file_operand_failed)
@@ -23458,13 +23563,6 @@ static b32 file_rename()
                 return 0;
         if (file_operand_count < 3)
                 return string_report(log_error, 1, "rename: not enough arguments\n");
-        if ((taking.flags & FILE_FLAG('a')) &&
-            (taking.flags & FILE_FLAG('l')))
-        {
-                log_error("rename: options --all and --last cannot be combined\n",
-                          0);
-                return 1;
-        }
         bool symlinks = (taking.flags & FILE_FLAG('s')) != 0;
 
         string_address before = file_operand_at(0);
