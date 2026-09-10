@@ -11600,12 +11600,29 @@ static whereis_match address_to whereis_matches;
 static positive whereis_match_count;
 static positive whereis_match_room;
 
+//      Every directory of one kind leaves the list, so that the ones -B, -M
+//      or -S names go on the end of it. The list's order is the order the
+//      search walks and the order -l prints, which is why it is kept.
+static fn whereis_forget_kind(positive kind)
+{
+        positive kept = 0;
+
+        for (positive i = 0; i < whereis_directory_count; i++)
+                if (whereis_directories[i].kind != kind)
+                        whereis_directories[kept++] = whereis_directories[i];
+
+        whereis_directory_count = kept;
+}
+
 static bool whereis_add_directory(positive kind, string_address path)
 {
         p8 resolved[FILE_PATH_MAX];
         file_facts facts;
 
-        if (!path || !file_real(path, resolved) ||
+        //      The reference asks whether it may read the directory before
+        //      it asks what the directory is, and passes over one it may not.
+        if (!path || system_access_at(AT_FDCWD, path, 4) < 0 ||
+            !file_real(path, resolved) ||
             !file_look(AT_FDCWD, resolved, 0, address_of facts) ||
             (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
                 return true; // Search-list holes and races are not errors.
@@ -11762,14 +11779,16 @@ static bool whereis_name_matches(positive kind, string_address query,
         return whereis_suffix_match(kind, query, candidate);
 }
 
-static bool whereis_scan(positive kind, string_address query, bool glob)
+static bool whereis_scan(positive want, string_address query, bool glob)
 {
         for (positive directory_at = 0;
              directory_at < whereis_directory_count; directory_at++)
         {
                 whereis_directory address_to directory =
                     whereis_directories + directory_at;
-                if (directory->kind != kind)
+                positive kind = directory->kind;
+
+                if (!(want & ((positive)1 << kind)))
                         continue;
 
                 file_walk walk;
@@ -11780,8 +11799,10 @@ static bool whereis_scan(positive kind, string_address query, bool glob)
                 struct linux_dirent64 address_to entry;
                 while ((entry = file_walk_next(address_of walk)))
                 {
-                        if (file_is_dot(entry->d_name) ||
-                            !whereis_name_matches(kind, query, entry->d_name,
+                        //      . and .. are entries like any other here: the
+                        //      reference reads the directory and compares
+                        //      names, so whereis '' answers with every dot.
+                        if (!whereis_name_matches(kind, query, entry->d_name,
                                                   glob))
                                 continue;
                         if (!shell_array_room(whereis_matches,
@@ -11811,179 +11832,229 @@ static bool whereis_long(string_address word, string_address name)
                string_equals(word + 2, name);
 }
 
+/*
+        whereis reads its line the way util-linux reads it, which is not the
+        way anything else here does.
+
+        There is no option parser: the words are walked once, a word that is
+        not an option is a name and is looked up where the walk reaches it, so
+        the categories asked for so far are the ones that name is looked for
+        in and a category named after it belongs to the next name. -B, -M and
+        -S each take every following word that is not an option, which is why
+        they must be written apart from their value and why the walk, not a
+        parser, has to consume them; the reference insists a -f follows and
+        says so at the end of the run, after everything else it was going to
+        do.
+
+        The directories are one list in one order -- the built-in binaries and
+        PATH, then the manuals and MANPATH, then the sources -- and a search
+        walks that list rather than each category in turn. -B empties the
+        binaries out of it and puts the named ones on the end, so what was
+        first is then last, and both the search and -l say so.
+*/
+#define WHEREIS_WANT(kind) ((positive)1 << (kind))
+#define WHEREIS_WANT_ALL (WHEREIS_WANT(WHEREIS_BINARY) | \
+                          WHEREIS_WANT(WHEREIS_MANUAL) | \
+                          WHEREIS_WANT(WHEREIS_SOURCE))
+
+static COLD b32 whereis_bad_usage()
+{
+        log_error("whereis: bad usage\n", 0);
+        log_error("Try 'whereis --help' for more information.\n", 0);
+
+        return 1;
+}
+
+static bool whereis_lookup(string_address name, positive want, bool glob,
+                           bool unusual)
+{
+        string_address query = file_last_component(name);
+
+        whereis_match_count = 0;
+
+        if (!whereis_scan(want, query, glob))
+                return false;
+
+        if (unusual && whereis_match_count <= 1)
+                return true;
+
+        string_format(log, "%s:", query);
+
+        for (positive i = 0; i < whereis_match_count; i++)
+        {
+                whereis_match address_to match = whereis_matches + i;
+
+                string_format(log, " %s/%s",
+                              whereis_directories[match->directory].path,
+                              match->name);
+        }
+
+        string_format(log, "\n");
+
+        return true;
+}
+
 static b32 file_whereis()
 {
         positive count = (positive)program_argument_count();
-        bool selected[WHEREIS_KINDS] = {false, false, false};
-        bool custom[WHEREIS_KINDS] = {false, false, false};
+        positive want = WHEREIS_WANT_ALL;
+        bool resetable = false;
         bool unusual = false;
         bool glob = false;
-        bool list = false;
-        bool names = false;
-        bipolar collecting = -1;
-        b32 status = 0;
+        bool missing_f = false;
 
         whereis_directory_count = 0;
         whereis_match_count = 0;
-        file_operands_begin();
+
+        if (count <= 1)
+        {
+                log_error("whereis: not enough arguments\n", 0);
+                log_error("Try 'whereis --help' for more information.\n", 0);
+
+                return 1;
+        }
+
+        if (whereis_long(program_argument(1), (string_address) "help"))
+        {
+                string_format(log,
+                              "Usage: whereis [options] NAME...\n"
+                              "  -b, -m, -s       search binaries, manuals, sources\n"
+                              "  -B, -M, -S DIR... -f  set category search paths\n"
+                              "  -u unusual  -g glob  -l list paths\n");
+                log_flush();
+                return 0;
+        }
+
+        if (whereis_long(program_argument(1), (string_address) "version"))
+        {
+                string_format(log, "whereis from dawning-kit\n");
+                log_flush();
+                return 0;
+        }
+
+        for (positive kind = 0; kind < WHEREIS_KINDS; kind++)
+                if (!whereis_add_defaults(kind))
+                        return 1;
 
         for (positive i = 1; i < count; i++)
         {
                 string_address word = program_argument((b32)i);
+                positive was = i;
 
-                if (names)
+                if (word[0] != '-')
                 {
-                        file_operand((b32)i);
-                        continue;
-                }
-                if (collecting >= 0 && word[0] != '-')
-                {
-                        if (!whereis_add_directory((positive)collecting, word))
+                        if (!whereis_lookup(word, want, glob, unusual))
                                 return 1;
-                        continue;
-                }
-                collecting = -1;
 
-                //      -f says the names follow. Two dashes are not a
-                //      spelling util-linux gives this program, and fall
-                //      through to the letter loop, which calls a letter it
-                //      does not know bad usage -- as the reference does.
-                if (string_equals(word, (string_address)"-f"))
-                {
-                        names = true;
+                        resetable = true;
                         continue;
                 }
-                if (string_equals(word, (string_address)"-h") ||
-                    whereis_long(word, (string_address)"help"))
+
+                for (positive at = 1; word[at]; at++)
                 {
-                        string_format(
-                            log,
-                            "Usage: whereis [options] NAME...\n"
-                            "  -b, -m, -s       search binaries, manuals, sources\n"
-                            "  -B, -M, -S DIR... -f  set category search paths\n"
-                            "  -u unusual  -g glob  -l list paths\n");
-                        return 0;
-                }
-                if (string_equals(word, (string_address)"-V") ||
-                    whereis_long(word, (string_address)"version"))
-                {
-                        string_format(log, "whereis from dawning-kit\n");
-                        return 0;
-                }
-                if (word[0] == '-' && word[1])
-                {
-                        for (positive at = 1; word[at]; at++)
+                        p8 option = word[at];
+
+                        if (option == 'f')
+                                missing_f = false;
+                        else if (option == 'u')
                         {
-                                p8 option = word[at];
-                                if (option == 'b')
-                                        selected[WHEREIS_BINARY] = true;
-                                else if (option == 'm')
-                                        selected[WHEREIS_MANUAL] = true;
-                                else if (option == 's')
-                                        selected[WHEREIS_SOURCE] = true;
-                                else if (option == 'u')
-                                        unusual = true;
-                                else if (option == 'g')
-                                        glob = true;
-                                else if (option == 'l')
-                                        list = true;
-                                else if (option == 'B' || option == 'M' ||
-                                         option == 'S')
-                                {
-                                        collecting = option == 'B'
-                                                         ? WHEREIS_BINARY
-                                                         : option == 'M'
-                                                               ? WHEREIS_MANUAL
-                                                               : WHEREIS_SOURCE;
-                                        custom[collecting] = true;
-                                        if (word[at + 1])
-                                        {
-                                                if (!whereis_add_directory(
-                                                        (positive)collecting,
-                                                        word + at + 1))
-                                                        return 1;
-                                                collecting = -1;
-                                        }
-                                        break;
-                                }
-                                else
-                                {
-                                        // util-linux answers every option
-                                        // it does not know with the same two
-                                        // words, whichever letter it was,
-                                        // and then says where to look next.
-                                        log_error("whereis: bad usage\n", 0);
-                                        log_error("Try 'whereis --help' for "
-                                                  "more information.\n", 0);
-                                        return 1;
-                                }
+                                unusual = true;
+                                missing_f = false;
                         }
-                }
-                else
-                        file_operand((b32)i);
-        }
+                        else if (option == 'B' || option == 'M' || option == 'S')
+                        {
+                                if (word[at + 1])
+                                        return whereis_bad_usage();
 
-        if (file_operand_failed)
-                return string_report(log_error, 1, "whereis: out of memory\n");
+                                positive kind = option == 'B' ? WHEREIS_BINARY
+                                                : option == 'M' ? WHEREIS_MANUAL
+                                                                : WHEREIS_SOURCE;
 
-        if (!selected[0] && !selected[1] && !selected[2])
-                selected[0] = selected[1] = selected[2] = true;
+                                whereis_forget_kind(kind);
 
-        for (positive kind = 0; kind < WHEREIS_KINDS; kind++)
-                if ((selected[kind] && !custom[kind]) || list)
-                        if (!whereis_add_defaults(kind))
-                                return 1;
+                                for (positive next = ++i; next < count; next++)
+                                {
+                                        string_address dir =
+                                            program_argument((b32)next);
 
-        if (list)
-        {
-                static const string_address label[] = {
-                    (string_address)"bin", (string_address)"man",
-                    (string_address)"src"};
-                for (positive kind = 0; kind < WHEREIS_KINDS; kind++)
-                        for (positive i = 0; i < whereis_directory_count; i++)
-                                if (whereis_directories[i].kind == kind)
+                                        if (dir[0] == '-')
+                                                break;
+
+                                        if (!whereis_add_directory(kind, dir))
+                                                return 1;
+
+                                        i = next;
+                                }
+
+                                missing_f = true;
+                        }
+                        else if (option == 'b' || option == 'm' || option == 's')
+                        {
+                                positive kind = option == 'b' ? WHEREIS_BINARY
+                                                : option == 'm' ? WHEREIS_MANUAL
+                                                                : WHEREIS_SOURCE;
+
+                                if (resetable)
+                                {
+                                        want = WHEREIS_WANT_ALL;
+                                        resetable = false;
+                                }
+
+                                want = want == WHEREIS_WANT_ALL
+                                           ? WHEREIS_WANT(kind)
+                                           : want | WHEREIS_WANT(kind);
+                                missing_f = false;
+                        }
+                        else if (option == 'l')
+                        {
+                                static const string_address label[] = {
+                                    (string_address) "bin",
+                                    (string_address) "man",
+                                    (string_address) "src"};
+
+                                for (positive at_dir = 0;
+                                     at_dir < whereis_directory_count; at_dir++)
                                         string_format(log, "%s: %s\n",
-                                                      label[kind],
-                                                      whereis_directories[i].path);
-        }
+                                                      label[whereis_directories[at_dir].kind],
+                                                      whereis_directories[at_dir].path);
+                        }
+                        else if (option == 'g')
+                                glob = true;
+                        else if (option == 'V')
+                        {
+                                string_format(log, "whereis from dawning-kit\n");
+                                log_flush();
+                                return 0;
+                        }
+                        else if (option == 'h')
+                        {
+                                string_format(log,
+                                              "Usage: whereis [options] NAME...\n"
+                                              "  -b, -m, -s       search binaries, manuals, sources\n"
+                                              "  -B, -M, -S DIR... -f  set category search paths\n"
+                                              "  -u unusual  -g glob  -l list paths\n");
+                                log_flush();
+                                return 0;
+                        }
+                        else
+                                return whereis_bad_usage();
 
-        if (!file_operand_count)
-        {
-                if (list)
-                {
-                        log_flush();
-                        return 0;
+                        //      A letter that ate words of its own ends the
+                        //      cluster it was written in.
+                        if (was < i)
+                                break;
                 }
-                string_format(log_error, "whereis: not enough arguments\n");
-                return 1;
         }
 
-        for (positive operand = 0; operand < file_operand_count; operand++)
-        {
-                string_address query =
-                    file_last_component(file_operand_at(operand));
-                whereis_match_count = 0;
-
-                for (positive kind = 0; kind < WHEREIS_KINDS; kind++)
-                        if (selected[kind] && !whereis_scan(kind, query, glob))
-                                return 1;
-
-                if (unusual && whereis_match_count <= 1)
-                        continue;
-
-                string_format(log, "%s:", query);
-                for (positive i = 0; i < whereis_match_count; i++)
-                {
-                        whereis_match address_to match = whereis_matches + i;
-                        string_format(log, " %s/%s",
-                                      whereis_directories[match->directory].path,
-                                      match->name);
-                }
-                string_format(log, "\n");
-        }
         log_flush();
-        return status;
+
+        //      Said once, at the end, after every name has been answered.
+        if (missing_f)
+                return string_report(log_error, 1, "whereis: option -f is missing\n");
+
+        return 0;
 }
+
 
 // readlink ------------------------------------------------------------
 /*
