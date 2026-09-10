@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        259 routines (249 public, 10 local), 258 of them on all three and 1 local to one.
+        267 routines (257 public, 10 local), 266 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -256,6 +256,7 @@
           socket_shutdown                public  yes     yes     yes
           square_root                    public  yes     yes     yes
           string_append                  public  yes     yes     yes
+          string_append_bounded          public  yes     yes     yes
           string_append_max              public  yes     yes     yes
           string_bipolar                 public  yes     yes     yes
           string_compare                 public  yes     yes     yes
@@ -263,6 +264,7 @@
           string_compare_folded_max      public  yes     yes     yes
           string_compare_max             public  yes     yes     yes
           string_copy                    public  yes     yes     yes
+          string_copy_bounded            public  yes     yes     yes
           string_copy_end                public  yes     yes     yes
           string_copy_max                public  yes     yes     yes
           string_copy_max_end            public  yes     yes     yes
@@ -277,6 +279,8 @@
           string_digits_max              public  yes     yes     yes
           string_digits_octal_escape_max public  yes     yes     yes
           string_digits_octal_max        public  yes     yes     yes
+          string_duplicate               public  yes     yes     yes
+          string_duplicate_max           public  yes     yes     yes
           string_find                    public  yes     yes     yes
           string_first_of                public  yes     yes     yes
           string_first_of_max            public  yes     yes     yes
@@ -292,11 +296,13 @@
           string_replace_all             public  yes     yes     yes
           string_report                  public  yes     yes     yes
           string_search                  public  yes     yes     yes
+          string_search_folded           public  yes     yes     yes
           string_set_add                 public  yes     yes     yes
           string_span                    public  yes     yes     yes
           string_span_max                public  yes     yes     yes
           string_span_of_set             public  yes     yes     yes
           string_span_without_set        public  yes     yes     yes
+          string_split_next              public  yes     yes     yes
           string_table_find              public  yes     yes     yes
           string_to_bipolar              public  yes     yes     yes
           string_to_decimal_short        public  yes     yes     yes
@@ -310,6 +316,8 @@
           string_to_positive             public  yes     yes     yes
           string_to_whole                public  yes     yes     yes
           string_to_whole_wide           public  yes     yes     yes
+          string_token                   public  yes     yes     yes
+          string_token_next              public  yes     yes     yes
           system_call                    public  yes     yes     yes
           system_call_1                  public  yes     yes     yes
           system_call_2                  public  yes     yes     yes
@@ -19952,6 +19960,508 @@ int setjmp(positive address_to state) __attribute__((returns_twice));
 int _setjmp(positive address_to state) __attribute__((returns_twice));
 void longjmp(positive address_to state, int value) DEAD_END;
 void _longjmp(positive address_to state, int value) DEAD_END;
+
+/*
+        THE TEXT FAMILY, FROM src/standard/text.c
+
+        Eight names a C program expects, which this library exported from C
+        until now: strdup, strndup, strtok, strtok_r, strsep, strcasestr,
+        strlcpy and strlcat. Nothing in this tree calls any of them -- they
+        are here for programs that link against it -- so this is a move, and
+        no speed claim is attached to it.
+
+        Each is composition over routines already on the floor, so each keeps
+        a frame and the arithmetic between the calls is what the C did.
+        strdup and strndup allocate, so they are behind the umbrella guard
+        the allocator itself is behind; the other six need only the floor.
+*/
+#ifndef KERNEL_MODE
+
+positive string_copy_bounded(string_address destination, string_address source,
+                             positive capacity);
+positive string_append_bounded(string_address destination,
+                               string_address source, positive capacity);
+string_address string_split_next(string_address address_to holder,
+                                 string_address delimiters);
+string_address string_token_next(string_address source,
+                                 string_address delimiters,
+                                 string_address address_to saved);
+string_address string_token(string_address source, string_address delimiters);
+PURE string_address string_search_folded(string_address haystack,
+                                         string_address needle);
+
+//      strtok's one cursor, which is the whole of its hazard. A freestanding
+//      start may have no thread pointer, so there is no per-thread copy.
+extern string_address text_token_place;
+
+__asm__(
+    ASM_HIDDEN_BSS_OBJECT_BEGIN(text_token_place, 8)
+    ASM_ZERO(8)
+    ASM_OBJECT_END(text_token_place)
+);
+
+#if X64
+__asm__(
+    ASM_SECTION
+    //
+    //   strlcpy. Capacity counts the terminator, unlike the _max names, and
+    //   the answer is the source length whether it fitted or not, which is
+    //   what lets a caller see truncation. Zero capacity writes nothing and
+    //   so permits a null destination.
+    //
+    ASM_FUNC(string_copy_bounded)
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n"
+    "mov %r12, %rdi\n   call string_length\n"
+    "test %r13, %r13\n   jz 1f\n"
+    "lea -1(%r13), %rcx\n   mov %rax, %rdx\n   cmp %rcx, %rdx\n   cmova %rcx, %rdx\n"
+    "push %rax\n   push %rdx\n"
+    "mov %rbx, %rdi\n   mov %r12, %rsi\n   call memory_copy_apart\n"
+    "pop %rdx\n   pop %rax\n"
+    "movb $0, (%rbx,%rdx)\n"
+    "1:  pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_copy_bounded)
+
+    //
+    //   strlcat. The answer is the length it wanted, so a destination that
+    //   is already full answers capacity plus the source length and writes
+    //   nothing -- including a destination with no terminator inside the
+    //   capacity, which is left exactly as it is.
+    //
+    ASM_FUNC(string_append_bounded)
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n"
+    "mov %rbx, %rdi\n   mov %r13, %rsi\n   call string_length_max\n"
+    "cmp %r13, %rax\n   jne 1f\n"
+    "mov %r12, %rdi\n   call string_length\n"
+    "add %r13, %rax\n"
+    "jmp 2f\n"
+    "1:  lea (%rbx,%rax), %rdi\n   mov %r12, %rsi\n"
+    "mov %r13, %rdx\n   sub %rax, %rdx\n"
+    "push %rax\n   push %rax\n"
+    "call string_copy_bounded\n"
+    "pop %rcx\n   pop %rcx\n"
+    "add %rcx, %rax\n"
+    "2:  pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_append_bounded)
+
+    //
+    //   strsep. Empty fields are kept, which is the whole of what separates
+    //   it from strtok: a delimiter run yields one empty field each. With no
+    //   delimiter left it answers the remainder once and clears the holder,
+    //   so an empty delimiter set yields exactly one field.
+    //
+    ASM_FUNC(string_split_next)
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rdi, %rbx\n"
+    "mov (%rbx), %r12\n"
+    "test %r12, %r12\n   jz 3f\n"
+    "mov %r12, %rdi\n   call string_span_without_set\n"
+    "lea (%r12,%rax), %r13\n"
+    "cmpb $0, (%r13)\n   je 1f\n"
+    "movb $0, (%r13)\n   inc %r13\n   jmp 2f\n"
+    "1:  xor %r13d, %r13d\n"
+    "2:  mov %r13, (%rbx)\n   mov %r12, %rax\n"
+    "jmp 4f\n"
+    "3:  xor %eax, %eax\n"
+    "4:  pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_split_next)
+
+    //
+    //   strtok_r. Leading delimiters are skipped, which is what drops the
+    //   empty fields strsep keeps. At exhaustion the saved place is the
+    //   terminator that was found and is not written through.
+    //
+    ASM_FUNC(string_token_next)
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rsi, %r12\n   mov %rdx, %r13\n"
+    "test %rdi, %rdi\n   jnz 1f\n"
+    "mov (%r13), %rdi\n"
+    "1:  test %rdi, %rdi\n   jz 5f\n"
+    "mov %rdi, %rbx\n"
+    "mov %r12, %rsi\n   call string_span_of_set\n"
+    "add %rax, %rbx\n"
+    "cmpb $0, (%rbx)\n   jne 2f\n"
+    "mov %rbx, (%r13)\n   xor %eax, %eax\n   jmp 6f\n"
+    "2:  mov %rbx, %rdi\n   mov %r12, %rsi\n   call string_span_without_set\n"
+    "lea (%rbx,%rax), %rcx\n"
+    "cmpb $0, (%rcx)\n   je 3f\n"
+    "movb $0, (%rcx)\n   inc %rcx\n"
+    "3:  mov %rcx, (%r13)\n   mov %rbx, %rax\n   jmp 6f\n"
+    "5:  xor %eax, %eax\n"
+    "6:  pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_token_next)
+
+    //
+    //   strtok: strtok_r with the one place above standing in for the
+    //   caller's, and every hazard that implies.
+    //
+    ASM_FUNC(string_token)
+    "lea text_token_place(%rip), %rdx\n"
+    "jmp string_token_next\n"
+    ASM_END(string_token)
+
+    //
+    //   strcasestr, ASCII only: high bytes compare unchanged. An empty
+    //   needle answers the haystack. Bounded windows grow so that an early
+    //   match never pays a whole strlen, and they overlap by the needle less
+    //   one so a match across a seam survives. The window starts a kilobyte
+    //   past the needle and doubles to a megabyte, which took an early match
+    //   from 66.7M core cycles to 1.42M and left full misses within 3%.
+    //
+    ASM_FUNC(string_search_folded)
+    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n   sub $8, %rsp\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n"
+    "mov %r12, %rdi\n   call string_length\n"
+    "mov %rax, %r13\n"
+    "test %r13, %r13\n   jnz 1f\n"
+    "mov %rbx, %rax\n   jmp 5f\n"
+    "1:  lea 1024(%r13), %r14\n   xor %r15d, %r15d\n"
+    "2:  lea (%rbx,%r15), %rdi\n   mov %r14, %rsi\n   call string_length_max\n"
+    "mov %rax, %rcx\n"
+    "push %rcx\n   push %rcx\n"
+    "lea (%rbx,%r15), %rdi\n   mov %rcx, %rsi\n   mov %r12, %rdx\n   mov %r13, %rcx\n"
+    "call memory_search_ascii_case\n"
+    "pop %rcx\n   pop %rcx\n"
+    "test %rax, %rax\n   jnz 5f\n"
+    "cmp %r14, %rcx\n   jb 4f\n"
+    "mov %r14, %rax\n   sub %r13, %rax\n   inc %rax\n   add %rax, %r15\n"
+    "mov $1048576, %rax\n   cmp %rax, %r14\n   jae 2b\n"
+    "add %r14, %r14\n   jmp 2b\n"
+    "4:  xor %eax, %eax\n"
+    "5:  add $8, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_search_folded)
+);
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    //      strlcpy; the x86_64 body above carries the reasoning.
+    ASM_FUNC(string_copy_bounded)
+    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n"
+    "mov x0, x20\n   bl string_length\n   mov x22, x0\n"
+    "cbz x21, 1f\n"
+    "sub x2, x21, #1\n   cmp x22, x2\n   csel x21, x2, x22, hi\n"
+    "mov x0, x19\n   mov x1, x20\n   mov x2, x21\n   bl memory_copy_apart\n"
+    "strb wzr, [x19, x21]\n"
+    "1:  mov x0, x22\n"
+    "ldp x21, x22, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
+    ASM_RET
+    ASM_END(string_copy_bounded)
+
+    ASM_FUNC(string_append_bounded)
+    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n"
+    "mov x0, x19\n   mov x1, x21\n   bl string_length_max\n   mov x22, x0\n"
+    "cmp x22, x21\n   b.ne 1f\n"
+    "mov x0, x20\n   bl string_length\n   add x0, x0, x21\n   b 2f\n"
+    "1:  add x0, x19, x22\n   mov x1, x20\n   sub x2, x21, x22\n"
+    "bl string_copy_bounded\n   add x0, x0, x22\n"
+    "2:  ldp x21, x22, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
+    ASM_RET
+    ASM_END(string_append_bounded)
+
+    ASM_FUNC(string_split_next)
+    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x19, x0\n"
+    "ldr x20, [x19]\n   cbz x20, 3f\n"
+    "mov x0, x20\n   bl string_span_without_set\n"
+    "add x21, x20, x0\n"
+    "ldrb w1, [x21]\n   cbz w1, 1f\n"
+    "strb wzr, [x21]\n   add x21, x21, #1\n   b 2f\n"
+    "1:  mov x21, #0\n"
+    "2:  str x21, [x19]\n   mov x0, x20\n   b 4f\n"
+    "3:  mov x0, #0\n"
+    "4:  ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
+    ASM_RET
+    ASM_END(string_split_next)
+
+    ASM_FUNC(string_token_next)
+    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x20, x1\n   mov x21, x2\n"
+    "cbnz x0, 1f\n   ldr x0, [x21]\n"
+    "1:  cbz x0, 5f\n"
+    "mov x19, x0\n   mov x1, x20\n   bl string_span_of_set\n"
+    "add x19, x19, x0\n"
+    "ldrb w1, [x19]\n   cbnz w1, 2f\n"
+    "str x19, [x21]\n   mov x0, #0\n   b 6f\n"
+    "2:  mov x0, x19\n   mov x1, x20\n   bl string_span_without_set\n"
+    "add x2, x19, x0\n"
+    "ldrb w1, [x2]\n   cbz w1, 3f\n"
+    "strb wzr, [x2]\n   add x2, x2, #1\n"
+    "3:  str x2, [x21]\n   mov x0, x19\n   b 6f\n"
+    "5:  mov x0, #0\n"
+    "6:  ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
+    ASM_RET
+    ASM_END(string_token_next)
+
+    ASM_FUNC(string_token)
+    "adrp x2, text_token_place\n   add x2, x2, :lo12:text_token_place\n"
+    "b string_token_next\n"
+    ASM_END(string_token)
+
+    ASM_FUNC(string_search_folded)
+    "stp x29, x30, [sp, #-80]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n"
+    "mov x19, x0\n   mov x20, x1\n"
+    "mov x0, x20\n   bl string_length\n   mov x21, x0\n"
+    "cbnz x21, 1f\n   mov x0, x19\n   b 5f\n"
+    "1:  add x22, x21, #1024\n   mov x23, #0\n"
+    "2:  add x0, x19, x23\n   mov x1, x22\n   bl string_length_max\n   mov x24, x0\n"
+    "add x0, x19, x23\n   mov x1, x24\n   mov x2, x20\n   mov x3, x21\n"
+    "bl memory_search_ascii_case\n"
+    "cbnz x0, 5f\n"
+    "cmp x24, x22\n   b.lo 4f\n"
+    "sub x0, x22, x21\n   add x0, x0, #1\n   add x23, x23, x0\n"
+    "mov x0, #1048576\n   cmp x22, x0\n   b.hs 2b\n"
+    "add x22, x22, x22\n   b 2b\n"
+    "4:  mov x0, #0\n"
+    "5:  ldp x23, x24, [sp, #48]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #80\n"
+    ASM_RET
+    ASM_END(string_search_folded)
+);
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    //      strlcpy; the x86_64 body above carries the reasoning.
+    ASM_FUNC(string_copy_bounded)
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n   sd s1, 24(sp)\n"
+    "sd s2, 16(sp)\n   sd s3, 8(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n"
+    "mv a0, s1\n   call string_length\n   mv s3, a0\n"
+    "beqz s2, 1f\n"
+    "addi a2, s2, -1\n   mv a3, s3\n   bleu a3, a2, 2f\n   mv a3, a2\n"
+    "2:  mv s2, a3\n"
+    "mv a0, s0\n   mv a1, s1\n   mv a2, s2\n   call memory_copy_apart\n"
+    "add a0, s0, s2\n   sb zero, 0(a0)\n"
+    "1:  mv a0, s3\n"
+    "ld s3, 8(sp)\n   ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n"
+    "ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    ASM_RET
+    ASM_END(string_copy_bounded)
+
+    ASM_FUNC(string_append_bounded)
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n   sd s1, 24(sp)\n"
+    "sd s2, 16(sp)\n   sd s3, 8(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n"
+    "mv a0, s0\n   mv a1, s2\n   call string_length_max\n   mv s3, a0\n"
+    "bne s3, s2, 1f\n"
+    "mv a0, s1\n   call string_length\n   add a0, a0, s2\n   j 2f\n"
+    "1:  add a0, s0, s3\n   mv a1, s1\n   sub a2, s2, s3\n"
+    "call string_copy_bounded\n   add a0, a0, s3\n"
+    "2:  ld s3, 8(sp)\n   ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n"
+    "ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    ASM_RET
+    ASM_END(string_append_bounded)
+
+    ASM_FUNC(string_split_next)
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n   sd s1, 24(sp)\n"
+    "sd s2, 16(sp)\n"
+    "mv s0, a0\n"
+    "ld s1, 0(s0)\n   beqz s1, 3f\n"
+    "mv a0, s1\n   call string_span_without_set\n"
+    "add s2, s1, a0\n"
+    "lbu a1, 0(s2)\n   beqz a1, 1f\n"
+    "sb zero, 0(s2)\n   addi s2, s2, 1\n   j 2f\n"
+    "1:  li s2, 0\n"
+    "2:  sd s2, 0(s0)\n   mv a0, s1\n   j 4f\n"
+    "3:  li a0, 0\n"
+    "4:  ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n"
+    "ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    ASM_RET
+    ASM_END(string_split_next)
+
+    ASM_FUNC(string_token_next)
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n   sd s1, 24(sp)\n"
+    "sd s2, 16(sp)\n"
+    "mv s1, a1\n   mv s2, a2\n"
+    "bnez a0, 1f\n   ld a0, 0(s2)\n"
+    "1:  beqz a0, 5f\n"
+    "mv s0, a0\n   mv a1, s1\n   call string_span_of_set\n"
+    "add s0, s0, a0\n"
+    "lbu a1, 0(s0)\n   bnez a1, 2f\n"
+    "sd s0, 0(s2)\n   li a0, 0\n   j 6f\n"
+    "2:  mv a0, s0\n   mv a1, s1\n   call string_span_without_set\n"
+    "add a2, s0, a0\n"
+    "lbu a1, 0(a2)\n   beqz a1, 3f\n"
+    "sb zero, 0(a2)\n   addi a2, a2, 1\n"
+    "3:  sd a2, 0(s2)\n   mv a0, s0\n   j 6f\n"
+    "5:  li a0, 0\n"
+    "6:  ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n"
+    "ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    ASM_RET
+    ASM_END(string_token_next)
+
+    ASM_FUNC(string_token)
+    "lla a2, text_token_place\n"
+    "tail string_token_next\n"
+    ASM_END(string_token)
+
+    ASM_FUNC(string_search_folded)
+    "addi sp, sp, -80\n   sd ra, 72(sp)\n   sd s0, 64(sp)\n   sd s1, 56(sp)\n"
+    "sd s2, 48(sp)\n   sd s3, 40(sp)\n   sd s4, 32(sp)\n   sd s5, 24(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n"
+    "mv a0, s1\n   call string_length\n   mv s2, a0\n"
+    "bnez s2, 1f\n   mv a0, s0\n   j 5f\n"
+    "1:  addi s3, s2, 1024\n   li s4, 0\n"
+    "2:  add a0, s0, s4\n   mv a1, s3\n   call string_length_max\n   mv s5, a0\n"
+    "add a0, s0, s4\n   mv a1, s5\n   mv a2, s1\n   mv a3, s2\n"
+    "call memory_search_ascii_case\n"
+    "bnez a0, 5f\n"
+    "bltu s5, s3, 4f\n"
+    "sub a0, s3, s2\n   addi a0, a0, 1\n   add s4, s4, a0\n"
+    "li a0, 1048576\n   bgeu s3, a0, 2b\n"
+    "add s3, s3, s3\n   j 2b\n"
+    "4:  li a0, 0\n"
+    "5:  ld s5, 24(sp)\n   ld s4, 32(sp)\n   ld s3, 40(sp)\n   ld s2, 48(sp)\n"
+    "ld s1, 56(sp)\n   ld s0, 64(sp)\n   ld ra, 72(sp)\n   addi sp, sp, 80\n"
+    ASM_RET
+    ASM_END(string_search_folded)
+);
+#endif
+
+//      The names C knows the other six by. Imported callers bring their own
+//      char-based prototypes; callers in this tree use the string_address
+//      spellings the routines are written under.
+__asm__(
+    ASM_ALIAS(strtok,     string_token)
+    ASM_ALIAS(strtok_r,   string_token_next)
+    ASM_ALIAS(strsep,     string_split_next)
+    ASM_ALIAS(strcasestr, string_search_folded)
+    ASM_ALIAS(strlcpy,    string_copy_bounded)
+    ASM_ALIAS(strlcat,    string_append_bounded)
+);
+
+/*
+        strdup and strndup allocate, so they are behind the same guard the
+        allocator is: emitted when the umbrella is what is being built, which
+        is exactly when there is a memory_take to call. A failed allocation
+        answers null and writes nothing.
+*/
+#ifdef STANDARD_MODERN_C_COMPILER_MEMORY
+string_address string_duplicate(string_address source);
+string_address string_duplicate_max(string_address source, positive bound);
+
+#if X64
+__asm__(
+    ASM_SECTION
+    //   strdup: measure once, and the terminator rides along in the copy.
+    ASM_FUNC(string_duplicate)
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rdi, %rbx\n"
+    "call string_length\n"
+    "lea 1(%rax), %r12\n"
+    "mov %r12, %rdi\n   call memory_take\n"
+    "test %rax, %rax\n   jz 1f\n"
+    "mov %rax, %r13\n"
+    "mov %rax, %rdi\n   mov %rbx, %rsi\n   mov %r12, %rdx\n   call memory_copy_apart\n"
+    "mov %r13, %rax\n"
+    "1:  pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_duplicate)
+
+    //   strndup: at most bound bytes read, and a terminator always written.
+    ASM_FUNC(string_duplicate_max)
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rdi, %rbx\n"
+    "call string_length_max\n"
+    "mov %rax, %r12\n"
+    "lea 1(%rax), %rdi\n   call memory_take\n"
+    "test %rax, %rax\n   jz 1f\n"
+    "mov %rax, %r13\n"
+    "mov %rax, %rdi\n   mov %rbx, %rsi\n   mov %r12, %rdx\n   call memory_copy_apart\n"
+    "movb $0, (%r13,%r12)\n"
+    "mov %r13, %rax\n"
+    "1:  pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_duplicate_max)
+);
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(string_duplicate)
+    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x19, x0\n"
+    "bl string_length\n   add x20, x0, #1\n"
+    "mov x0, x20\n   bl memory_take\n"
+    "cbz x0, 1f\n   mov x21, x0\n"
+    "mov x1, x19\n   mov x2, x20\n   bl memory_copy_apart\n"
+    "mov x0, x21\n"
+    "1:  ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
+    ASM_RET
+    ASM_END(string_duplicate)
+
+    ASM_FUNC(string_duplicate_max)
+    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x19, x0\n"
+    "bl string_length_max\n   mov x20, x0\n"
+    "add x0, x20, #1\n   bl memory_take\n"
+    "cbz x0, 1f\n   mov x21, x0\n"
+    "mov x1, x19\n   mov x2, x20\n   bl memory_copy_apart\n"
+    "strb wzr, [x21, x20]\n   mov x0, x21\n"
+    "1:  ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
+    ASM_RET
+    ASM_END(string_duplicate_max)
+);
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(string_duplicate)
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n   sd s1, 24(sp)\n"
+    "sd s2, 16(sp)\n"
+    "mv s0, a0\n"
+    "call string_length\n   addi s1, a0, 1\n"
+    "mv a0, s1\n   call memory_take\n"
+    "beqz a0, 1f\n   mv s2, a0\n"
+    "mv a1, s0\n   mv a2, s1\n   call memory_copy_apart\n"
+    "mv a0, s2\n"
+    "1:  ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n"
+    "ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    ASM_RET
+    ASM_END(string_duplicate)
+
+    ASM_FUNC(string_duplicate_max)
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n   sd s1, 24(sp)\n"
+    "sd s2, 16(sp)\n"
+    "mv s0, a0\n"
+    "call string_length_max\n   mv s1, a0\n"
+    "addi a0, s1, 1\n   call memory_take\n"
+    "beqz a0, 1f\n   mv s2, a0\n"
+    "mv a1, s0\n   mv a2, s1\n   call memory_copy_apart\n"
+    "add a0, s2, s1\n   sb zero, 0(a0)\n   mv a0, s2\n"
+    "1:  ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n"
+    "ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    ASM_RET
+    ASM_END(string_duplicate_max)
+);
+#endif
+
+//      The two names C knows the allocating pair by.
+__asm__(
+    ASM_ALIAS(strdup,  string_duplicate)
+    ASM_ALIAS(strndup, string_duplicate_max)
+);
+#endif // STANDARD_MODERN_C_COMPILER_MEMORY
+#endif // KERNEL_MODE
 
 #endif // STANDARD_NO_PLATFORM
 

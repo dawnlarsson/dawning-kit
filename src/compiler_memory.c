@@ -2730,7 +2730,6 @@ static inline INLINE address_any copy_until_known(address_any destination,
 #define STANDARD_NO_UNDERSCORE_EXIT
 #include "standard/allocator.c"
 #include "standard/numbers.c"
-#include "standard/text.c"
 #include "standard/stdlib.c"
 #include "standard/clock.c"
 #include "standard/math.c"

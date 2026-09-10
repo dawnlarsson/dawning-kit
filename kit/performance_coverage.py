@@ -97,6 +97,15 @@ cover('direct_benchmark', 'test/checks.c#BENCH_reserve', 'memory_reserve',
       'fresh-process mapping growth timing and peak resident memory, with '
       'dense and sparse inputs; hardware/RSS claims require native execution')
 
+# The text family: exported for programs that link this library, and called
+# by nothing in the tree, so there is no workload here whose speed they could
+# change and no timing row is claimed for them.
+cover('correctness_only', 'test/checks.c#CHECK_declare', '''
+string_append_bounded string_copy_bounded string_duplicate string_duplicate_max
+string_search_folded string_split_next string_token string_token_next
+''', 'the standard names, compiled twice from two files sharing nothing and '
+     'diffed against the host headers; no caller in this tree, so no timing')
+
 cover('correctness_only', 'test/checks.c#CHECK_number', 'string_to_decimal_short',
       'the short-decimal reader is exercised by every strtod case the ULP '
       'lane runs against glibc, 702,066 a machine; its speed was measured on '

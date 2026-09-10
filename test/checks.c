@@ -21422,6 +21422,13 @@ b32 main(void)
 /*
         The standard names, called by their standard names.
 
+        The text family reaches its assembly through these: strdup is
+        string_duplicate, strndup is string_duplicate_max, strtok is
+        string_token, strtok_r is string_token_next, strsep is
+        string_split_next, strcasestr is string_search_folded, strlcpy is
+        string_copy_bounded and strlcat is string_append_bounded. Calling the
+        standard spelling here is what exercises the routine under it.
+
         This is the freestanding half of a pair. Everything it checks is in
         CHECK_declare, and CHECK_declare_reference builds
         that same file against the host's real headers and glibc. The pair is
