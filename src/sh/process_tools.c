@@ -570,8 +570,13 @@ static b32 process_chroot()
                     !file_look_at((string_address) "/", address_of current) ||
                     !file_same_identity(address_of requested,
                                         address_of current))
-                        return string_report(log_error, 125,
-                            "chroot: option --skip-chdir only permitted if NEWROOT is old '/'\n");
+                {
+                        //      coreutils sends the reader on to --help here,
+                        //      as it does for every usage complaint.
+                        log_error("chroot: option --skip-chdir only permitted if NEWROOT is old '/'\n", 0);
+                        log_error("Try 'chroot --help' for more information.\n", 0);
+                        return 125;
+                }
         }
 
         bipolar changed = system_call_1(syscall(chroot), (positive)root);
@@ -1213,11 +1218,19 @@ static bipolar process_timeout_wait(b32 child, bipolar pidfd, bipolar signal_fd,
                         if (deadline)
                         {
                                 positive now = clock_monotonic_nanoseconds();
-
-                                if (now >= deadline)
-                                        return 0;
-
-                                positive left = deadline - now;
+                                /*      Overdue is not the same as still
+                                        running. A child that ended while this
+                                        was off the processor -- which a busy
+                                        machine can hold it for longer than
+                                        the whole grace period -- has its
+                                        descriptor ready this moment, and
+                                        asking costs a poll that waits for
+                                        nothing. coreutils reaps without
+                                        waiting before it suspends, for the
+                                        same reason, and so never kills a
+                                        command that had already gone. */
+                                positive left = now >= deadline
+                                                    ? 0 : deadline - now;
                                 span = (timespec){left / 1000000000,
                                                   left % 1000000000};
                                 limit = address_of span;
@@ -1471,6 +1484,26 @@ static b32 process_timeout()
 
         if (child == 0)
         {
+                /*
+                        An ignored signal stays ignored through exec, and a
+                        shell that starts something in the background hands it
+                        an ignored interrupt. coreutils puts its own handler on
+                        each of the signals it relays before it forks, and exec
+                        turns a handler back into the default, so the command it
+                        starts always answers them however it was started.
+                        Blocking them and unblocking them again, as this does,
+                        leaves an inherited ignore in place -- and a command
+                        that ignores the signal outlives the very signal this
+                        program exists to send it, to be killed a grace period
+                        later for no reason. So hand the command the default
+                        back, for the signals relayed and for the one asked for.
+                */
+                shell_default(SIGHUP);
+                shell_default(SIGINT);
+                shell_default(SIGQUIT);
+                shell_default(SIGTERM);
+                shell_default(signal);
+
                 system_signal_mask(UL_SIGNAL_SET_MASK,
                                    address_of previous_mask, null, 8);
 
@@ -2014,21 +2047,86 @@ static b32 process_script_record(process_script_state address_to state,
         positive input_at = 0, input_length = 0;
         bool input_end = false, eot = false, master_end = false;
         bool child_done = false, failed = false;
-        /* An end of file on our own input becomes the terminal's end-of-file
-           character, which only means that to a command that has already
-           taken the terminal. Hold it until the session has spoken once, or
-           a command started with its input already exhausted never sees it
-           and waits for a line that cannot come. */
-        bool session_spoke = false;
+        /*      An end of file on our own input becomes the terminal's
+                end-of-file character, which only means that to a command
+                that has already taken the terminal and is waiting on it. So
+                it is not written the moment our input runs out but only
+                after the session has fallen quiet, and again each time it
+                falls quiet after that, a few times over: a shell that reads
+                its line through readline takes the terminal back when it
+                accepts the line and throws away whatever was typed ahead, so
+                one written while the line was still being read is gone.
+                Waiting for the quiet rather than for the first word out is
+                also what keeps the transcript the same from run to run --
+                offering it into the middle of the session's own writing puts
+                the byte in a different place each time. */
+        positive offered = 0;
         positive status = 0;
+
+        /*
+                The first of our input goes into the terminal before the
+                command has finished starting. A terminal echoes what it is
+                given as it is given it, so input handed over after the
+                command's first word is recorded after that word, and which of
+                the two comes first is otherwise left to how the two processes
+                are scheduled -- the same session recorded twice then differs.
+                The read does not wait, so a terminal on the other side of our
+                own input does not hold the recorder here.
+        */
+        {
+                process_timeout_poll first[2] = {
+                    {0, PROCESS_POLL_IN, 0}, {master, PROCESS_POLL_OUT, 0}};
+                timespec none = {0, 0};
+
+                if (system_call_5(syscall(ppoll), (positive)first, 2,
+                                  (positive)address_of none, 0, 8) > 0 &&
+                    first[0].returned)
+                {
+                        bipolar got = system_read_once(0, input, sizeof(input));
+
+                        if (got > 0)
+                        {
+                                input_length = (positive)got;
+
+                                /* Only where the terminal has room for it: a
+                                   command that never reads its input leaves a
+                                   full one, and a write that waits here waits
+                                   before the loop that empties the other side.
+                                   Held back, it goes out on the first pass. */
+                                bipolar wrote = first[1].returned
+                                                    ? system_write_once(
+                                                          (positive)master, input,
+                                                          input_length)
+                                                    : 0;
+
+                                if (wrote > 0)
+                                {
+                                        input_at = (positive)wrote;
+
+                                        if (!process_script_payload(
+                                                state, 'I', input,
+                                                (positive)wrote))
+                                        {
+                                                failed = true;
+                                                master_end = true;
+                                        }
+                                }
+                        }
+                        else if (got != -UL_ERROR_AGAIN &&
+                                 got != UL_ERROR_INTERRUPTED)
+                        {
+                                input_end = true;
+                                eot = true;
+                        }
+                }
+        }
 
         while (!master_end)
         {
                 process_timeout_poll waited[4];
                 positive count = 0;
                 positive master_index = count;
-                bool sending = input_at < input_length &&
-                               (!eot || session_spoke);
+                bool sending = input_at < input_length;
                 waited[count++] = (process_timeout_poll){
                     master, (b16)(PROCESS_POLL_IN |
                                    (sending ? PROCESS_POLL_OUT : 0)), 0};
@@ -2056,8 +2154,11 @@ static b32 process_script_record(process_script_state address_to state,
                 }
 
                 timespec drain = {1, 0};
-                timespec address_to timeout = child_done ? address_of drain
-                                                         : null;
+                timespec quiet = {0, 250000000};
+                bool offering = input_end && !child_done && offered < 4;
+                timespec address_to timeout =
+                    child_done ? address_of drain
+                               : (offering ? address_of quiet : null);
                 bipolar ready = system_call_5(
                     syscall(ppoll), (positive)waited, count,
                     (positive)timeout, 0, 8);
@@ -2070,6 +2171,16 @@ static b32 process_script_record(process_script_state address_to state,
                 }
                 if (!ready)
                 {
+                        if (offering)
+                        {
+                                //      Quiet, and our own input is spent:
+                                //      offer the end-of-file.
+                                input[0] = 4;
+                                input_at = 0;
+                                input_length = 1;
+                                offered++;
+                                continue;
+                        }
                         /* A descendant retaining the slave must not hold the
                            recorder forever after the command is reaped. */
                         process_timeout_signal((b32)child, SIGHUP, false,
@@ -2092,9 +2203,6 @@ static b32 process_script_record(process_script_state address_to state,
                         {
                                 input_end = true;
                                 eot = true;
-                                input[0] = 4;
-                                input_at = 0;
-                                input_length = 1;
                         }
                 }
 
@@ -2116,8 +2224,15 @@ static b32 process_script_record(process_script_state address_to state,
                                         }
                                         input_at += (positive)wrote;
                                 }
-                                else if (wrote != -UL_ERROR_AGAIN &&
+                                else if (wrote && wrote != -UL_ERROR_AGAIN &&
                                          wrote != UL_ERROR_INTERRUPTED)
+                                        //      A write that placed nothing
+                                        //      is a write to try again, not
+                                        //      a session that has ended:
+                                        //      closing the terminal here
+                                        //      hangs up on a command that is
+                                        //      still running and turns its
+                                        //      status into a signal.
                                         master_end = true;
                         }
                 }
@@ -2132,9 +2247,6 @@ static b32 process_script_record(process_script_state address_to state,
                                     (positive)master, output, sizeof(output));
                                 if (got > 0)
                                 {
-                                        //      The session has spoken, so a
-                                        //      held end-of-file may go now.
-                                        session_spoke = true;
                                         if (!process_script_payload(
                                                 state, 'O', output,
                                                 (positive)got))
@@ -2183,7 +2295,6 @@ static b32 process_script_record(process_script_state address_to state,
                 }
         }
 
-        system_close((positive)master);
         if (failed && !child_done)
                 process_timeout_signal((b32)child, SIGKILL, false, false,
                                        command_text);
@@ -2216,6 +2327,13 @@ static b32 process_script_record(process_script_state address_to state,
                                 child_done = true;
                 }
         }
+        /*      The terminal is let go only once the command has been waited
+                for. Closing the master hangs up on whatever is still in the
+                pty's foreground group, and the read that ended the loop can
+                race the command's own last breath: closing first turned a
+                command that exited zero into one that died of the hangup,
+                about once in forty runs. */
+        system_close((positive)master);
         process_timeout_cleanup(pidfd, signal_fd, previous_mask);
 
         if (state->flush)
@@ -2282,42 +2400,38 @@ static b32 process_script()
                         break;
                 }
 
+        /*      The log operand is whatever stands before the separator; a
+                bare -- at the end names no command at all, which is why the
+                reference takes --command beside one. */
+        positive tail = separator < count ? separator : count;
+        positive operands = tail > taking.first ? tail - taking.first : 0;
         string_address command = file_option_value(address_of taking, 'c');
         positive command_first = count;
-        string_address positional = null;
+        string_address positional = operands ? program_argument((b32)taking.first)
+                                             : null;
         if (command)
         {
-                if (separator < count || count - taking.first > 1)
+                if (separator + 1 < count || operands > 1)
                         return string_report(log_error, 1, "%s: %s\n", "script", "--command cannot be combined with -- command");
-                if (taking.first < count)
-                        positional = program_argument((b32)taking.first);
         }
         else if (separator < count)
         {
                 // A bare -- with nothing after it means the shell itself.
-                positive before = separator > taking.first
-                                      ? separator - taking.first : 0;
-                if (before > 1)
+                if (operands > 1)
                         return string_report(log_error, 1, "%s: %s\n", "script", "invalid command operands");
-                if (before)
-                        positional = program_argument((b32)taking.first);
                 command_first = separator + 1;
         }
-        else
-        {
-                if (count - taking.first > 1)
-                        return string_report(log_error, 1, "%s: %s\n", "script", "extra operand");
-                if (taking.first < count)
-                        positional = program_argument((b32)taking.first);
-        }
+        else if (operands > 1)
+                return string_report(log_error, 1, "%s: %s\n", "script", "extra operand");
 
         bool has_io = (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
                                        FILE_FLAG('B'))) != 0;
         if (positional && has_io)
                 return string_report(log_error, 1, "%s: %s\n", "script", "positional log conflicts with explicit log");
-        if ((taking.flags & FILE_FLAG('B')) &&
-            (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O'))))
-                return string_report(log_error, 1, "%s: %s\n", "script", "--log-io conflicts with separate logs");
+        //      --log-timing and --timing name the same file by two spellings,
+        //      and the reference refuses the pair rather than choosing.
+        if ((taking.flags & FILE_FLAG('T')) && (taking.flags & FILE_FLAG('t')))
+                return string_report(log_error, 1, "%s: %s\n", "script", "options --log-timing and --timing cannot be combined");
 
         process_script_state state;
         memory_fill(address_of state, 0, sizeof(state));
@@ -2331,14 +2445,14 @@ static b32 process_script()
 
         string_address format = file_option_value(address_of taking, 'm');
         state.advanced = (taking.flags & (FILE_FLAG('I') | FILE_FLAG('B'))) != 0;
+        bool classic_asked = false;
         if (format)
         {
                 if (string_equals(format, (string_address)"advanced"))
                         state.advanced = true;
                 else if (string_equals(format, (string_address)"classic"))
                 {
-                        if (state.advanced)
-                                return string_report(log_error, 1, "%s: %s\n", "script", "classic timing cannot log input");
+                        classic_asked = true;
                         state.advanced = false;
                 }
                 else
@@ -2387,12 +2501,20 @@ static b32 process_script()
         string_address old_timing = file_option_value(address_of taking, 't');
         if (!timing_path && old_timing)
                 timing_path = old_timing;
-        // util-linux takes the same path for a log and the timing (the
-        // typical case being /dev/null for both); only the two logs are
-        // kept apart, which --log-io exists for.
-        if (!combined_path && output_path && input_path &&
-            string_equals(output_path, input_path))
-                return string_report(log_error, 1, "%s: %s\n", "script", "log paths must be distinct");
+        /*      util-linux takes the same path for a log and the timing, and
+                for both logs -- the typical case being /dev/null everywhere.
+                What it minds is one regular file written from two places,
+                which the check below the opens answers with the objects
+                themselves rather than with the spelling of their names. */
+
+        /*      A classic timing file has one column of byte counts and no
+                column saying which stream they came from, so it cannot time
+                two streams at once. Logging both without asking for a timing
+                file is no conflict, and the reference allows it. */
+        if (classic_asked && output_path && input_path &&
+            (timing_path || (taking.flags & FILE_FLAG('t'))))
+                return string_report(log_error, 1, "%s: %s\n", "script",
+                                     "log multiple streams is mutually exclusive with 'classic' format");
 
         string_address paths[] = {
             output_path, combined_path ? null : input_path, timing_path};
@@ -2618,29 +2740,24 @@ static bipolar process_replay_line(process_replay_reader address_to reader,
 static bool process_replay_skip_header(
     process_replay_reader address_to reader)
 {
-        string_address prefix = (string_address)"Script started on ";
-        bool matches = true;
+        /*      util-linux drops the transcript's opening line whatever it
+                holds -- the "Script started on" banner is only its usual
+                tenant -- and a file with no newline in it is that one line
+                entire.  Matching the banner instead replayed every log whose
+                first line is payload one entry out of step. */
         positive used = 0;
-        while (used < 65536)
+        while (used < (positive)1 << 20)
         {
                 bipolar got = process_replay_fill(reader);
                 if (got <= 0)
-                        return false;
+                        return got == 0;
                 p8 address_to start = reader->bytes + reader->at;
-                positive room = min((positive)got, 65536 - used);
+                positive room = (positive)got;
                 positive take = memory_span_without_byte(start, '\n', room);
-                if (used < 18 && memory_compare(start, prefix + used, min(take, 18 - used)))
-                        matches = false;
                 reader->at += take;
                 used += take;
                 if (take < room)
                 {
-                        if (!matches || used < 18)
-                        {
-                                // No opening line: nothing was consumed.
-                                reader->at -= used;
-                                return true;
-                        }
                         reader->at++;
                         return true;
                 }
@@ -2649,13 +2766,25 @@ static bool process_replay_skip_header(
         return false;
 }
 
-static bool process_replay_timing(string_address line, bool address_to advanced,
-                                  p8 address_to stream,
-                                  positive address_to delay,
-                                  positive address_to count)
+/*      What one timing line said, answered the way the reference's
+        `sscanf("%lf %zu")` answers: nothing converted means this is not a
+        timing file at all, one field converted means it is one and this line
+        is broken. The first tells the opening line from a file of some other
+        shape, which util-linux replays as empty and calls a success; the
+        second is the "timing file error" it refuses on. */
+#define PROCESS_REPLAY_NOT_TIMING 0
+#define PROCESS_REPLAY_LINE_READ 1
+#define PROCESS_REPLAY_LINE_BROKEN 2
+
+static b32 process_replay_timing(string_address line, bool address_to advanced,
+                                 p8 address_to stream,
+                                 positive address_to delay,
+                                 positive address_to count,
+                                 string_address address_to text)
 {
         string_address at = line;
         p8 kind = 0;
+        address_to text = null;
         if (string_get(at + 1) == ' ' &&
             (string_get(at) == 'I' || string_get(at) == 'O' ||
              string_get(at) == 'S' || string_get(at) == 'H'))
@@ -2663,46 +2792,46 @@ static bool process_replay_timing(string_address line, bool address_to advanced,
                 address_to advanced = true;
                 kind = string_get(at);
                 at += 2;
-                if (kind == 'H')
-                {
-                        address_to stream = kind;
-                        address_to delay = 0;
-                        address_to count = 0;
-                        return true;
-                }
         }
 
         while (string_is(at, ' '))
                 at++;
         string_address gap = string_first_of(at, ' ');
         if (!gap)
-                return false;
+                return PROCESS_REPLAY_NOT_TIMING;
         address_to gap = end;
         positive waited;
         bool okay = file_duration_read(at, false, address_of waited);
         address_to gap = ' ';
         if (!okay)
-                return false;
+                return PROCESS_REPLAY_NOT_TIMING;
         at = gap + 1;
-        while (string_is(at, ' '))
-                at++;
 
-        /* Signal rows carry a signal name/number rather than a byte count.
-           The out/in replay engine preserves their delay and consumes no
-           payload; selecting the signal stream itself is rejected below. */
+        /*      Signal and header rows carry a name and its data rather than a
+                byte count: they consume no payload, and the stream that asked
+                for them prints the pair. */
         positive bytes = 0;
-        if (kind != 'S' && !file_unsigned_decimal(at, address_of bytes))
-                return false;
-        address_to stream = kind ? kind : 'O';
+        if (kind == 'S' || kind == 'H')
+                address_to text = at;
+        else
+        {
+                while (string_is(at, ' '))
+                        at++;
+                if (!file_unsigned_decimal(at, address_of bytes))
+                        return PROCESS_REPLAY_LINE_BROKEN;
+        }
+        address_to stream = kind;
         address_to delay = waited;
         address_to count = bytes;
-        return true;
+        return PROCESS_REPLAY_LINE_READ;
 }
 
 static bool process_replay_sleep(positive delay, positive divisor,
                                  bool limited, positive maximum)
 {
-        if (divisor != 1000000000)
+        //      A divisor of zero is taken, as the reference takes it, and
+        //      scales nothing: there is no dividing by it.
+        if (divisor && divisor != 1000000000)
         {
                 positive whole = delay / divisor;
                 positive remainder = delay % divisor;
@@ -2734,7 +2863,7 @@ static bool process_replay_sleep(positive delay, positive divisor,
 }
 
 static bool process_replay_payload(process_replay_reader address_to reader,
-                                   positive length, bool emit, p8 cr_mode)
+                                   positive length, bool emit, bool carriage)
 {
         while (length)
         {
@@ -2746,7 +2875,7 @@ static bool process_replay_payload(process_replay_reader address_to reader,
                 positive chunk = min(length, reader->have - reader->at);
                 if (emit)
                 {
-                        if (cr_mode == 2)
+                        if (carriage)
                                 for (positive at = 0; at < chunk; at++)
                                         if (reader->bytes[reader->at + at] == '\r')
                                                 reader->bytes[reader->at + at] = '\n';
@@ -2759,6 +2888,88 @@ static bool process_replay_payload(process_replay_reader address_to reader,
         }
         return true;
 }
+
+/*      The signal and info streams print the pair a row carries rather than
+        bytes out of a log: `NAME DATA` for a signal, the name in a
+        ten-column field and then `: DATA` for a header. DATA still holds the
+        space that separated it from the name, which is where the reference's
+        second space in `SIGWINCH  ROWS=24 COLS=80` comes from. */
+static bool process_replay_named(string_address name, positive length,
+                                 string_address data, bool padded)
+{
+        p8 room[PROCESS_REPLAY_LINE + 32];
+        positive used = 0;
+        if (padded)
+                while (used + length < 10)
+                        room[used++] = ' ';
+        memory_copy(room + used, name, length);
+        used += length;
+        if (padded)
+                room[used++] = ':';
+        room[used++] = ' ';
+        positive rest = string_length(data);
+        if (used + rest >= sizeof(room))
+                rest = sizeof(room) - used - 1;
+        memory_copy(room + used, data, rest);
+        used += rest;
+        room[used++] = '\n';
+        return system_write_all(1, room, used) == (bipolar)used;
+}
+
+static bool process_replay_say(string_address text, bool padded)
+{
+        string_address gap = string_first_of(text, ' ');
+        positive length = gap ? (positive)(gap - text) : string_length(text);
+        return process_replay_named(text, length, gap ? gap : text + length,
+                                    padded);
+}
+
+/*      Every value scriptreplay reads is read where it is written, the way
+        the reference reads it inside its own option loop: a later good value
+        does not rescue an earlier bad one, so the check cannot wait until
+        the last value of each letter is known. */
+static bool process_replay_number(p8 letter, string_address value)
+{
+        positive scratch;
+        if (!value)
+                return true;
+        if (letter == 'd' || letter == 'm')
+        {
+                if (file_duration_read(value, false, address_of scratch))
+                        return true;
+                string_format(log_error, letter == 'd'
+                                  ? "scriptreplay: failed to parse number: '%s'\n"
+                                  : "scriptreplay: failed to parse maximal delay argument: '%s'\n",
+                              value);
+                return false;
+        }
+        if (letter == 'x')
+        {
+                if (string_equals(value, (string_address)"out") ||
+                    string_equals(value, (string_address)"in") ||
+                    string_equals(value, (string_address)"signal") ||
+                    string_equals(value, (string_address)"info"))
+                        return true;
+                string_format(log_error, "scriptreplay: unsupported stream name: '%s'\n", value);
+                return false;
+        }
+        if (letter == 'c')
+        {
+                if (string_equals(value, (string_address)"auto") ||
+                    string_equals(value, (string_address)"never") ||
+                    string_equals(value, (string_address)"always"))
+                        return true;
+                string_format(log_error, "scriptreplay: unsupported mode name: '%s'\n", value);
+                return false;
+        }
+        return true;
+}
+
+//      -t and -T name the same file, so the last of them written wins.
+static p8 process_replay_timing_letter;
+static const file_supersede process_scriptreplay_supersedes[] = {
+    {(string_address)"tT", address_of process_replay_timing_letter}, {null, null},
+};
 
 static const file_long process_scriptreplay_longs[] = {
     {(string_address)"timing", 't'},
@@ -2784,22 +2995,21 @@ static b32 process_scriptreplay()
             .allowed = (string_address)"tTIOBsdmxcShV",
             .valued = (string_address)"tTIOBsdmxc",
             .longs = process_scriptreplay_longs,
+            .supersedes = process_scriptreplay_supersedes,
+            .seen = process_replay_number,
         };
         positive argument_count = (positive)program_argument_count();
         b32 answer;
+        process_replay_timing_letter = 0;
         if (ul_options_done(address_of taking,
                 "[options] timingfile [typescript [divisor]]", address_of answer))
                 return answer;
         if (taking.flags & FILE_FLAG('S'))
                 return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "summary mode is not supported");
-        if ((taking.flags & FILE_FLAG('B')) &&
-            (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
-                             FILE_FLAG('s'))))
-                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "--log-io conflicts with separate logs");
 
-        string_address timing_path = file_option_value(address_of taking, 't');
-        if (!timing_path)
-                timing_path = file_option_value(address_of taking, 'T');
+        string_address timing_path = process_replay_timing_letter
+            ? file_option_value(address_of taking, process_replay_timing_letter)
+            : null;
         positive operand = taking.first;
         if (!timing_path)
         {
@@ -2808,40 +3018,53 @@ static b32 process_scriptreplay()
                 timing_path = program_argument((b32)operand++);
         }
 
-        string_address out_path = file_option_value(address_of taking, 'O');
-        if (out_path && file_option_value(address_of taking, 's'))
+        /*      --log-io is the fallback for both streams and not a claim on
+                either: --log-in and --log-out name their own log whichever
+                side of it they were written, which is what the reference's
+                per-stream association does. Naming any log at all also fills
+                the transcript's operand slot, so the next operand there is
+                the divisor. */
+        string_address out_option = file_option_value(address_of taking, 'O');
+        if (out_option && file_option_value(address_of taking, 's'))
         {
                 log_error("scriptreplay: options --log-out and --typescript cannot be combined\n",
                           0);
                 return 1;
         }
-        if (!out_path)
-                out_path = file_option_value(address_of taking, 's');
-        string_address in_path = file_option_value(address_of taking, 'I');
+        if (!out_option)
+                out_option = file_option_value(address_of taking, 's');
+        string_address in_option = file_option_value(address_of taking, 'I');
         string_address both_path = file_option_value(address_of taking, 'B');
-        if (both_path)
-                out_path = in_path = both_path;
-        if (!out_path && operand < argument_count)
-                out_path = program_argument((b32)operand++);
+        bool log_named = (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
+                                          FILE_FLAG('s') | FILE_FLAG('B'))) != 0;
+        string_address operand_log = null;
+        if (!log_named && operand < argument_count)
+                operand_log = program_argument((b32)operand++);
+
+        string_address out_path = out_option ? out_option
+                                             : (operand_log ? operand_log : both_path);
+        string_address in_path = in_option ? in_option : both_path;
         if (!out_path && !in_path)
                 out_path = (string_address)"typescript";
+        //      Both streams out of one --log-io read one file position, the
+        //      way the reference's single associated log does.
+        bool shared = both_path && out_path == both_path && in_path == both_path;
 
         // Operands past the divisor are ignored, as util-linux ignores them.
         string_address divisor_text = file_option_value(address_of taking, 'd');
         if (!divisor_text && operand < argument_count)
                 divisor_text = program_argument((b32)operand++);
         positive divisor = 1000000000;
-        if (divisor_text &&
-            (!file_duration_read(divisor_text, false, address_of divisor) || !divisor))
-                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "invalid divisor");
+        if (divisor_text && !file_duration_read(divisor_text, false, address_of divisor))
+                return string_report(log_error, 1, "scriptreplay: failed to parse number: '%s'\n",
+                                     divisor_text);
 
         bool limited = false;
         positive maximum = 0;
         string_address maximum_text = file_option_value(address_of taking, 'm');
         if (maximum_text)
         {
-                if (!file_duration_read(maximum_text, false, address_of maximum))
-                        return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "invalid maximum delay");
+                file_duration_read(maximum_text, false, address_of maximum);
                 limited = true;
         }
 
@@ -2853,14 +3076,18 @@ static b32 process_scriptreplay()
                         selected = 'O';
                 else if (string_equals(stream, (string_address)"in"))
                         selected = 'I';
+                else if (string_equals(stream, (string_address)"signal"))
+                        selected = 'S';
+                else if (string_equals(stream, (string_address)"info"))
+                        selected = 'H';
                 else
-                        return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "only out and in streams are supported");
+                        return string_report(log_error, 1, "scriptreplay: unsupported stream name: '%s'\n", stream);
         }
         else if (!out_path && in_path)
                 selected = 'I';
-        if ((selected == 'O' && !out_path) ||
-            (selected == 'I' && !in_path))
-                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "selected stream has no log file");
+        //      A stream with no log behind it plays nothing and is not an
+        //      error: the reference writes its closing newline and leaves.
+        p8 classic = selected == 'I' ? 'I' : 'O';
 
         p8 cr_mode = 0;
         string_address cr = file_option_value(address_of taking, 'c');
@@ -2886,7 +3113,7 @@ static b32 process_scriptreplay()
                 if (opened < 0 || !process_replay_skip_header(address_of output))
                         goto replay_open_failed;
         }
-        if (in_path && !both_path)
+        if (in_path && !shared)
         {
                 opened = process_replay_open(address_of input, in_path);
                 if (opened < 0 || !process_replay_skip_header(address_of input))
@@ -2895,6 +3122,7 @@ static b32 process_scriptreplay()
 
         bool advanced = false;
         bool failed = false;
+        bool first = true;
         p8 line[PROCESS_REPLAY_LINE];
         bipolar got;
         while ((got = process_replay_line(address_of timing, line,
@@ -2902,37 +3130,64 @@ static b32 process_scriptreplay()
         {
                 p8 kind;
                 positive delay, length;
-                if (!process_replay_timing(line, address_of advanced,
-                                           address_of kind, address_of delay,
-                                           address_of length))
+                string_address text;
+                b32 read = process_replay_timing(line, address_of advanced,
+                                                 address_of kind, address_of delay,
+                                                 address_of length, address_of text);
+                if (read == PROCESS_REPLAY_LINE_BROKEN)
                 {
                         failed = true;
                         break;
                 }
+                if (read == PROCESS_REPLAY_NOT_TIMING)
+                {
+                        /*      Nothing converted on the opening line means
+                                this file is not a timing file, which the
+                                reference replays as empty rather than
+                                refusing; after that the format is settled and
+                                a line it cannot read is an error. */
+                        if (!first)
+                                failed = true;
+                        break;
+                }
+                first = false;
                 if (kind == 'H')
+                {
+                        if (selected == 'H' && !process_replay_say(text, true))
+                                failed = true;
+                        if (failed)
+                                break;
                         continue;
+                }
                 if (!process_replay_sleep(delay, divisor, limited, maximum))
                 {
                         failed = true;
                         break;
                 }
                 if (kind == 'S')
+                {
+                        if (selected == 'S' && !process_replay_say(text, false))
+                                failed = true;
+                        if (failed)
+                                break;
                         continue;
+                }
 
-                // A classic timing file has no stream letters; with only an
-                // input log to play, its entries play that log.
+                //      A classic timing file has no stream letters, so its
+                //      entries belong to whichever stream was asked for.
+                p8 which = kind ? kind : classic;
                 process_replay_reader address_to source =
-                    both_path || (kind == 'O' && output.handle >= 0)
-                        ? address_of output
-                        : address_of input;
+                    shared || which == 'O' ? address_of output
+                                           : address_of input;
                 if (source->handle < 0)
                         continue;
-                if (!process_replay_payload(source, length, kind == selected,
-                                            cr_mode))
-                {
-                        failed = true;
+                //      A log with less left in it than the row asks for ends
+                //      the replay where it runs out, and that is a success:
+                //      the reference stops there and says nothing.
+                if (!process_replay_payload(source, length, which == selected,
+                                            cr_mode == 2 ||
+                                            (!cr_mode && which == 'I')))
                         break;
-                }
         }
         if (got < 0 || timing.failed)
                 failed = true;
@@ -3023,9 +3278,12 @@ static b32 process_ctrlaltdel()
         if (ul_options_done(address_of taking, "hard|soft", address_of answer))
                 return answer;
 
-        /* Without an operand util-linux reports the current setting, which
-           the kernel publishes as 0 (soft) or 1 (hard). */
-        if (taking.first == count)
+        /* With nothing after the program name util-linux reports the current
+           setting, which the kernel publishes as 0 (soft) or 1 (hard). Its
+           operand is the second word of the vector and not the first word
+           the option reader left standing, so a lone -- is an argument to it
+           and not the end of the options. */
+        if (count < 2)
         {
                 string_address knob = (string_address)"/proc/sys/kernel/ctrl-alt-del";
                 p8 setting[16];
@@ -3048,10 +3306,7 @@ static b32 process_ctrlaltdel()
                 log_flush();
                 return 0;
         }
-        if (taking.first + 1 != count)
-                return string_report(log_error, 1, "%s: %s\n", (string_address)"ctrlaltdel", (string_address)"expected hard or soft");
-
-        string_address mode = program_argument((b32)taking.first);
+        string_address mode = program_argument(1);
         positive command;
 
         if (string_equals(mode, (string_address)"hard"))
@@ -3059,7 +3314,7 @@ static b32 process_ctrlaltdel()
         else if (string_equals(mode, (string_address)"soft"))
                 command = PROCESS_REBOOT_CAD_OFF;
         else
-                return string_report(log_error, 1, "%s: %s\n", (string_address)"ctrlaltdel", (string_address)"expected hard or soft");
+                return string_report(log_error, 1, "ctrlaltdel: unknown argument: %s\n", mode);
 
         bipolar changed = system_call_4(syscall(reboot), PROCESS_REBOOT_MAGIC,
                                         PROCESS_REBOOT_MAGIC_SECOND, command,

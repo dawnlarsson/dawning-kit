@@ -415,6 +415,15 @@ static positive logger_timestamp_5424(logger_builder address_to build,
         return length + 13;
 }
 
+/*      One structured-data element, the last --sd-id named, and the
+        parameters written after it. An element nobody gave a parameter is
+        not written at all, and a parameter before any element is refused
+        where it stands. */
+#define LOGGER_SD_PARAMETERS 8
+static string_address logger_seen_sd_id;
+static string_address logger_seen_sd_parameter[LOGGER_SD_PARAMETERS];
+static positive logger_seen_sd_count;
+
 static bool logger_header(logger_control address_to control,
                           p8 address_to into, positive room,
                           positive priority, positive address_to length)
@@ -474,7 +483,19 @@ static bool logger_header(logger_control address_to control,
                                 logger_build_string(address_of build,
                                     "[timeQuality tzKnown=\"1\" isSynced=\"0\"]");
                 }
-                else
+                if (logger_seen_sd_count)
+                {
+                        logger_build_character(address_of build, '[');
+                        logger_build_string(address_of build, logger_seen_sd_id);
+                        for (positive at = 0; at < logger_seen_sd_count; at++)
+                        {
+                                logger_build_character(address_of build, ' ');
+                                logger_build_string(address_of build,
+                                                    logger_seen_sd_parameter[at]);
+                        }
+                        logger_build_character(address_of build, ']');
+                }
+                else if (!control->rfc_quality)
                         logger_build_character(address_of build, '-');
                 logger_build_character(address_of build, ' ');
         }
@@ -521,6 +542,8 @@ typedef struct
         p8 path[LOGGER_UNIX_PATH];
 } logger_unix_address;
 
+static bool logger_port_unknown;
+
 static bipolar logger_connect_kind(logger_control address_to control,
                                    p8 transport)
 {
@@ -553,6 +576,10 @@ static bipolar logger_connect_kind(logger_control address_to control,
                     (!string_digits_exact(control->port, address_of port) ||
                      !port || port > 65535))
                 {
+                        //      A port that is neither a number nor a service
+                        //      name is a lookup that failed, and the
+                        //      reference says so in those words.
+                        logger_port_unknown = true;
                         socket_close((b32)handle);
                         return -ERROR_INVALID;
                 }
@@ -619,13 +646,17 @@ static bool logger_connect(logger_control address_to control)
         if (control->server)
         {
                 text_flush();
-                string_format(writer_stderr,
-                              "logger: failed to connect to %s port %s\n",
+                string_format(writer_stderr, logger_port_unknown
+                    ? (string_address)"logger: failed to resolve name %s port %s: Servname not supported for ai_socktype\n"
+                    : (string_address)"logger: failed to connect to %s port %s\n",
                               control->server,
+                              //      The reference names the port it was
+                              //      given, and what it was given when
+                              //      nobody said is a service name.
                               control->port ? control->port
                               : control->transport == LOGGER_TRANSPORT_STREAM
-                                  ? (string_address)"601"
-                                  : (string_address)"514");
+                                  ? (string_address)"syslog-conn"
+                                  : (string_address)"syslog");
                 return false;
         }
         if (control->socket_errors)
@@ -762,13 +793,14 @@ static bool logger_stream(logger_control address_to control,
         }
 
         bool answer = true;
+        positive base_priority = control->priority;
         positive default_priority = control->priority;
         while (text_line_next(text_line, 0))
         {
                 positive from = 0;
                 positive priority = default_priority;
 
-                if (control->priority_prefix && text_line_length >= 3 &&
+                if (control->priority_prefix && text_line_length &&
                     text_line[0] == '<')
                 {
                         positive at = 1;
@@ -791,6 +823,15 @@ static bool logger_stream(logger_control address_to control,
                                 default_priority = prefixed;
                                 priority = prefixed;
                                 from = at + 1;
+                        }
+                        else
+                        {
+                                /* A line that opened a prefix and did not
+                                   finish one is not a line without a prefix:
+                                   the reference takes the failed reading as
+                                   the priority it was given to start with. */
+                                default_priority = base_priority;
+                                priority = base_priority;
                         }
                 }
 
@@ -887,77 +928,99 @@ static const file_long logger_longs[] = {
 };
 
 static bool logger_journald(logger_control address_to control,
-                            string_address path)
+                            string_address path, bool named)
 {
 #if defined(LINUX) && !defined(KERNEL_MODE)
         text_arena_used = 0;
 
-        /* The reference names this open itself rather than leaving it to
-           the reader's own complaint. */
+        /*      The reference names this open itself rather than leaving it
+                to the reader's own complaint -- but only when --journald
+                named the file. A file that arrived through --file stands
+                where the standard input stood, and an input that cannot be
+                read is simply an entry with nothing in it. */
+        positive length = 0;
+        p8 address_to entry = (p8 address_to)"";
         {
                 bipolar handle = path ? text_open_handle(path, FILE_READ, 0) : 0;
 
-                if (handle < 0)
+                if (handle < 0 && named)
                 {
                         text_flush();
                         string_format(writer_stderr, "logger: cannot open %s: %s\n",
                                       path, file_reason(handle));
                         return false;
                 }
-                if (path)
+                if (path && handle >= 0)
                         system_close((positive)handle);
+                if (handle >= 0)
+                {
+                        if (!text_open(path))
+                                return false;
+
+                        bool failed;
+                        entry = text_arena_read_all(text_input.handle, 65536,
+                                                    address_of length,
+                                                    address_of failed);
+                        text_close();
+                        if (!entry || failed)
+                        {
+                                entry = (p8 address_to)"";
+                                length = 0;
+                        }
+                }
         }
 
-        if (!text_open(path))
-                return false;
+        /*      The reference collects lines until one is blank or the input
+                ends, taking the blank space off the end of each, and what it
+                echoes and what it sends are that collection. A field with no
+                equals sign in it, or none before it, is one the journal
+                refuses, and then the whole entry could not be written.
+        */
+        positive fields = 0;
+        positive collected = 0;
+        bool malformed = false;
+        for (positive at = 0; at < length;)
+        {
+                positive stop = at + memory_span_without_byte(entry + at, '\n',
+                                                              length - at);
+                positive trimmed = stop;
 
-        positive length;
-        bool failed;
-        p8 address_to entry = text_arena_read_all(text_input.handle, 65536,
-                                                   address_of length,
-                                                   address_of failed);
-        text_close();
-        if (!entry || failed)
-                return false;
+                while (trimmed > at && byte_is_space(entry[trimmed - 1]))
+                        trimmed--;
+                if (trimmed == at)
+                        break;
+                positive name = memory_span_without_byte(entry + at, '=',
+                                                         trimmed - at);
+                if (!name || name == trimmed - at)
+                        malformed = true;
+                fields++;
+                collected = trimmed;
+                at = stop < length ? stop + 1 : length;
+        }
 
-        /* An entry with nothing in it is nothing to write. */
-        if (!length)
+        if (control->standard_error && collected)
+        {
+                text_out_to(2);
+                text_put(entry, collected);
+                text_put_character('\n');
+                text_flush();
+                text_out_to(1);
+        }
+
+        /*      --no-act stops before the write, and the complaint about an
+                entry that cannot be written is the write's and not the
+                entry's: the reference reads and echoes whatever it was
+                handed and then says nothing at all. */
+        if (control->no_action)
+                return true;
+
+        if (!fields || malformed)
         {
                 text_flush();
                 string_format(writer_stderr,
                     "logger: journald entry could not be written\n");
                 return false;
         }
-
-        for (positive at = 0; at < length;)
-        {
-                positive stop = at + memory_span_without_byte(entry + at, '\n',
-                                                              length - at);
-                positive name = memory_span_without_byte(entry + at, '=',
-                                                         stop - at);
-
-                if (stop > at && (name == stop - at || !name))
-                {
-                        text_flush();
-                        string_format(writer_stderr,
-                            "logger: journald entry could not be written\n");
-                        return false;
-                }
-                at = stop < length ? stop + 1 : length;
-        }
-
-        if (control->standard_error)
-        {
-                text_out_to(2);
-                text_put(entry, length);
-                if (!length || entry[length - 1] != '\n')
-                        text_put_character('\n');
-                text_flush();
-                text_out_to(1);
-        }
-
-        if (control->no_action)
-                return true;
 
         control->socket_path = (string_address)"/run/systemd/journal/socket";
         control->transport = LOGGER_TRANSPORT_DGRAM;
@@ -968,6 +1031,7 @@ static bool logger_journald(logger_control address_to control,
 #else
         (void)control;
         (void)path;
+        (void)named;
         return false;
 #endif
 }
@@ -1017,6 +1081,13 @@ static bool logger_option_seen(p8 letter, string_address value)
                 string_format(writer_stderr,
                               "logger: --msgid cannot contain space\n");
                 return false;
+        }
+        //      -i and --id answer the same question, so the last of them
+        //      written is the one that means it.
+        if (letter == 'i')
+        {
+                logger_seen_process_given = true;
+                logger_seen_process = (positive)system_call(syscall(getpid));
         }
         if (letter == 'I')
         {
@@ -1082,9 +1153,40 @@ static bool logger_option_seen(p8 letter, string_address value)
                     "logger: invalid argument: %s: using automatic errors\n",
                     value);
         }
-        if (letter == 'D' || letter == 'X')
-                return string_diagnostic(&text_diagnostic, 0, null,
-                    "structured-data and signature fields are not supported");
+        if (letter == 'J' && value)
+        {
+                //      The reference opens the journald entry where the
+                //      option stands, so a name it cannot read is reported
+                //      before whatever was written after it.
+                bipolar handle = text_open_handle(value, FILE_READ, 0);
+
+                if (handle < 0)
+                {
+                        text_flush();
+                        string_format(writer_stderr, "logger: cannot open %s: %s\n",
+                                      value, file_reason(handle));
+                        return false;
+                }
+                system_close((positive)handle);
+        }
+        if (letter == 'D' && value)
+        {
+                logger_seen_sd_id = value;
+                logger_seen_sd_count = 0;
+        }
+        if (letter == 'X' && value)
+        {
+                if (!logger_seen_sd_id)
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "logger: --sd-id was not specified for --sd-param %s\n",
+                            value);
+                        return false;
+                }
+                if (logger_seen_sd_count < LOGGER_SD_PARAMETERS)
+                        logger_seen_sd_parameter[logger_seen_sd_count++] = value;
+        }
 
         return true;
 }
@@ -1114,6 +1216,9 @@ static b32 tools_logger()
 
         text_begin("logger");
         text_delimiter = '\n';
+        logger_port_unknown = false;
+        logger_seen_sd_id = null;
+        logger_seen_sd_count = 0;
         logger_seen_priority = 13;
         logger_seen_size = LOGGER_DEFAULT_SIZE;
         logger_seen_process = 0;
@@ -1181,8 +1286,6 @@ static b32 tools_logger()
                     address_of journal);
         }
 
-        if (taking.flags & FILE_FLAG('i'))
-                control.process = (positive)system_call(syscall(getpid));
         if (logger_seen_process_given)
                 control.process = logger_seen_process;
 
@@ -1216,8 +1319,18 @@ static b32 tools_logger()
 
         if (taking.flags & FILE_FLAG('J'))
         {
-                bool answer = logger_journald(
-                    address_of control, file_option_value(address_of taking, 'J'));
+                /*      --file puts its file where the standard input was, so
+                        a bare --journald reads that file and not the
+                        terminal -- even when the file was ignored for the
+                        message. And a journald entry goes to the journal's
+                        own socket whatever server was named. */
+                string_address entry = file_option_value(address_of taking, 'J');
+                bool named = entry != null;
+                if (!entry)
+                        entry = file_option_value(address_of taking, 'f');
+                control.server = null;
+                control.port = null;
+                bool answer = logger_journald(address_of control, entry, named);
 #if defined(LINUX) && !defined(KERNEL_MODE)
                 if (control.handle >= 0)
                         socket_close((b32)control.handle);
@@ -3137,6 +3250,20 @@ static const file_long login_last_longs[] = {
     {null, 0},
 };
 
+/*      The line limit is read where it was written, because that is where
+        the reference reads it: -n with a word that is no number ends the run
+        there, and a -3 written after it cannot rescue it. */
+static bool login_last_seen(p8 letter, string_address value)
+{
+        positive scratch;
+
+        if (letter != 'n' || !value || string_digits_exact(value, address_of scratch))
+                return true;
+        text_flush();
+        string_format(writer_stderr, "last: failed to parse number: '%s'\n", value);
+        return false;
+}
+
 static b32 tools_last()
 {
         file_operands_begin();
@@ -3148,6 +3275,7 @@ static b32 tools_last()
             .operand = file_operand,
             // last -3 is the line limit said without its letter.
             .digits = 'n',
+            .seen = login_last_seen,
         };
         text_begin("last");
         if (!file_take(address_of taking) || file_operand_failed)
@@ -3163,7 +3291,14 @@ static b32 tools_last()
         login_last.limit = positive_max;
         string_address limit = file_option_value(address_of taking, 'n');
         if (limit && (!string_digits_exact(limit, address_of login_last.limit)))
-                return text_done(string_diagnostic(&text_diagnostic, 1, limit, "invalid line limit"));
+        {
+                //      The reference names what it could not read, in the
+                //      words its own number parser uses.
+                text_flush();
+                string_format(writer_stderr,
+                              "last: failed to parse number: '%s'\n", limit);
+                return text_done(1);
+        }
         if (!login_last.limit)
                 login_last.limit = positive_max;
 
@@ -3361,6 +3496,11 @@ static b32 tools_last()
         system_close((positive)reader.handle);
         if (login_last.failed)
                 return text_done(string_diagnostic(&text_diagnostic, 1, path, "login database changed while reading"));
+        /*      With no time asked for there is no line to say when the
+                database begins, and the blank line that would have stood
+                above it goes with it. */
+        if (login_last.time_format == LOGIN_LAST_TIME_NONE)
+                return text_done(0);
         text_put_character('\n');
         p8 beginning_text[64];
         positive beginning_length;
@@ -4421,6 +4561,9 @@ typedef struct
         bool fields_given;
         bool failed;
         bool stop;
+        //      Under --debug the reference says at the end that it could not
+        //      convert everything, whatever it did about each one.
+        bool some_invalid;
 } numfmt_options;
 
 static numfmt_options numfmt;
@@ -4987,8 +5130,70 @@ static fn numfmt_body_out(p8 address_to number, positive number_length,
         }
 }
 
+/*      A number too big to print without a scale is named the way the
+        reference names it: six significant digits and an exponent, which is
+        what %Lg gives it. The digits are the ones that were typed, so this
+        is a walk over the decimal string and not any arithmetic -- rounding
+        at the seventh digit, and a carry that can make the mantissa one and
+        the exponent one larger.
+*/
+static fn numfmt_short_form(p8 address_to digits, positive length,
+                            bool negative, p8 address_to into)
+{
+        positive at = 0;
+        while (at < length && digits[at] == '0')
+                at++;
+        p8 kept[8];
+        positive have = 0;
+        positive exponent = length > at ? length - at - 1 : 0;
+
+        for (positive from = at; from < length && have < 7; from++)
+                kept[have++] = digits[from];
+        while (have < 7)
+                kept[have++] = '0';
+        if (kept[6] >= '5')
+        {
+                positive carry = 6;
+                while (carry--)
+                {
+                        if (kept[carry] != '9')
+                        {
+                                kept[carry]++;
+                                break;
+                        }
+                        kept[carry] = '0';
+                        if (!carry)
+                        {
+                                kept[0] = '1';
+                                exponent++;
+                        }
+                }
+        }
+        positive shown = 6;
+        while (shown > 1 && kept[shown - 1] == '0')
+                shown--;
+
+        positive used = 0;
+        if (negative)
+                into[used++] = '-';
+        into[used++] = kept[0];
+        if (shown > 1)
+        {
+                into[used++] = '.';
+                for (positive from = 1; from < shown; from++)
+                        into[used++] = kept[from];
+        }
+        into[used++] = 'e';
+        into[used++] = '+';
+        if (exponent < 10)
+                into[used++] = '0';
+        used += positive_into_base(into + used, exponent, 10, false);
+        into[used] = end;
+}
+
 static fn numfmt_invalid_value(p8 address_to bytes, positive length)
 {
+        numfmt.some_invalid = true;
         if (numfmt.invalid == NUMFMT_INVALID_ABORT ||
             numfmt.invalid == NUMFMT_INVALID_FAIL ||
             numfmt.invalid == NUMFMT_INVALID_WARN)
@@ -5118,6 +5323,31 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
             !numfmt_ratio(address_of number, base, power,
                           address_of numerator, address_of denominator))
         {
+                /*      A number the reference could read and this one cannot
+                        is one whose integer part has passed 1e19, and with
+                        no scale asked for that is what the reference itself
+                        refuses to print. */
+                positive sign = numeric_length && bytes[0] == '-';
+                positive whole = string_span_max(bytes + sign,
+                                                 numeric_length - sign,
+                                                 string_set_digits);
+                positive leading = 0;
+                while (leading < whole && bytes[sign + leading] == '0')
+                        leading++;
+                if (tail == stop && !power && numfmt.to == NUMFMT_SCALE_NONE &&
+                    whole - leading >= 20)
+                {
+                        p8 shown[48];
+
+                        numfmt_short_form(bytes + sign, whole, sign != 0, shown);
+                        text_flush();
+                        string_format(writer_stderr,
+                            "numfmt: value too large to be printed: '%s' (consider using --to)\n",
+                            shown);
+                        numfmt.failed = true;
+                        numfmt.stop = true;
+                        return false;
+                }
                 numfmt_invalid_value(bytes, length);
                 if (!numfmt.stop)
                         text_put(original, original_length);
@@ -5775,6 +6005,12 @@ static b32 tools_numfmt()
                 text_close();
         }
 
+        if (numfmt.debug && numfmt.some_invalid && !numfmt.stop)
+        {
+                text_flush();
+                writer_stderr("numfmt: failed to convert some of the input numbers\n", 0);
+        }
+
         return text_done(numfmt.failed ? 2 : text_status);
 }
 
@@ -6056,8 +6292,16 @@ static bool factor_number(p8 address_to bytes, positive length,
                           bool exponents)
 {
         p8 decimal[32];
-        positive start = length && bytes[0] == '+' ? 1 : 0;
+        /*      The reference walks off leading blanks -- spaces alone, not
+                tabs or newlines -- and then one plus sign, and nothing after
+                the sign. So ' 12' is twelve and '+ 12' is not a number. */
+        positive start = 0;
         positive value;
+
+        while (start < length && bytes[start] == ' ')
+                start++;
+        if (start < length && bytes[start] == '+')
+                start++;
 
         if (start == length || length - start >= sizeof(decimal))
                 goto invalid;
@@ -6172,6 +6416,10 @@ invalid:
                 {
                         p8 byte = bytes[at];
 
+                        //      The reference quotes a C string, so what it
+                        //      shows ends where the first zero byte does.
+                        if (!byte)
+                                break;
                         if (byte_is_printable(byte))
                                 shown[take++] = byte;
                         else
@@ -6855,9 +7103,11 @@ static b32 tools_uuidparse()
                                 text_put_string("\": ");
                                 string_address value =
                                     tools_uuid_cell(address_of record, column);
-                                if ((column == TOOLS_UUID_COLUMN_TIME ||
-                                     column == TOOLS_UUID_COLUMN_TYPE) &&
-                                    record.valid && !string_get(value))
+                                //      An empty cell is no string at all to
+                                //      the reference's table writer, whatever
+                                //      column it stands in -- the uuid of an
+                                //      empty operand included.
+                                if (!string_get(value))
                                         text_put_string("null");
                                 else
                                         writer_json_string(text_put, value);
@@ -7149,7 +7399,11 @@ static b32 tools_mcookie()
 
 #define DD_FULLBLOCK 0x001
 #define DD_COUNT_BYTES 0x002
-#define DD_SKIP_BYTES 0x004
+// Above the shared bits, not among them: at 0x004 this shared a bit with
+// DD_DIRECT, so iflag=skip_bytes opened the input O_DIRECT -- every read of
+// an unaligned buffer failing with an invalid argument -- and iflag=direct
+// counted skip= in bytes rather than in input blocks.
+#define DD_SKIP_BYTES 0x800
 #define DD_APPEND 0x001
 #define DD_SEEK_BYTES 0x002
 #define DD_O_APPEND 02000
@@ -7176,6 +7430,9 @@ static positive dd_out_full;
 static positive dd_out_partial;
 static positive dd_written;
 static positive dd_status_level;
+/* What the output was opened with, for the one thing O_DIRECT cannot do. */
+static bool dd_out_direct;
+static positive dd_out_block;
 static positive dd_started;
 
 // Set in the handler, acted on where a block boundary is, because printing
@@ -7528,16 +7785,89 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
 }
 
 /*
+        coreutils names a file two ways: quoteaf, which quotes whatever it is
+        given, and quotef, which quotes only a name that would not survive a
+        shell as it stands. Every dd message but one uses the first. The two
+        writers below belong to diff, further down this file, and say the same
+        thing about a name.
+*/
+static bool diff_name_special(string_address name);
+fn shell_quoted(writer write, string_address value);
+
+static fn dd_named(string_address name)
+{
+        if (diff_name_special(name))
+                shell_quoted(writer_stderr, name);
+        else
+                writer_stderr(name, 0);
+}
+
+/*
+        O_DIRECT hands the buffer to the device, so the kernel wants it on a
+        page boundary; the arena hands out sixteen-byte alignment. coreutils
+        aligns both its buffers to a page whatever the flags are, and pays a
+        page for it, so this does the same rather than deciding per run.
+*/
+#define DD_PAGE 4096u
+
+static p8 address_to dd_buffer(positive bytes)
+{
+        /* Too large to align is too large to hold: let the arena refuse it
+           and keep its complaint, rather than wrapping the page on. */
+        if (bytes > TEXT_ARENA_BYTES)
+                return (p8 address_to)text_arena_take(bytes);
+
+        p8 address_to raw = (p8 address_to)text_arena_take(bytes + DD_PAGE);
+
+        if (!raw)
+                return null;
+
+        positive at = (positive)raw;
+
+        return (p8 address_to)((at + (DD_PAGE - 1)) & ~(positive)(DD_PAGE - 1));
+}
+
+/*
         Every output path has the same failure contract. Keeping it here
         prevents regrouped blocks, the final partial block and seek padding
         from quietly accepting a short write while the equal-size fast path
         reports it.
 */
 static positive dd_output(positive handle, string_address name,
-                          p8 address_to bytes, positive length, bool copied)
+                          p8 address_to bytes, positive length, bool copied,
+                          bool regrouped)
 {
         positive wrote = 0;
         bipolar code = 0;
+
+        /*
+                O_DIRECT will not take a write shorter than the output block,
+                so the last piece of a copy is unwritable through it. coreutils
+                turns the flag off for that write rather than failing on it,
+                and never turns it back on.
+        */
+        if (dd_out_direct && length < dd_out_block)
+        {
+                bipolar flags = system_call_3(syscall(fcntl), handle,
+                                              FILE_F_GETFL, 0);
+                bipolar set = flags < 0
+                                  ? flags
+                                  : system_call_3(syscall(fcntl), handle,
+                                                  FILE_F_SETFL,
+                                                  (positive)flags &
+                                                      ~(positive)DD_O_DIRECT);
+
+                dd_out_direct = false;
+
+                if (set < 0 && dd_status_level != DD_STATUS_NONE)
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "dd: failed to turn off O_DIRECT: '%s': %s\n",
+                            name ? name : (string_address)"standard output",
+                            file_reason(set));
+                }
+        }
 
         // Written a piece at a time so the kernel's reason for a refusal
         // reaches the complaint, as coreutils' does.
@@ -7562,12 +7892,20 @@ static positive dd_output(positive handle, string_address name,
         if (wrote != length)
         {
                 text_flush();
+                /* A short write of a whole output block is coreutils'
+                   write_output, which names the file it was writing to; a
+                   short write of the last piece, or of an input block passed
+                   straight through, is its error writing. */
                 if (code < 0)
-                        string_format(writer_stderr, "dd: error writing '%s': %s\n",
+                        string_format(writer_stderr,
+                                      regrouped ? (string_address)"dd: writing to '%s': %s\n"
+                                                : (string_address)"dd: error writing '%s': %s\n",
                                       name ? name : (string_address)"standard output",
                                       file_reason(code));
                 else
-                        string_format(writer_stderr, "dd: error writing '%s'\n",
+                        string_format(writer_stderr,
+                                      regrouped ? (string_address)"dd: writing to '%s'\n"
+                                                : (string_address)"dd: error writing '%s'\n",
                                       name ? name : (string_address)"standard output");
         }
 
@@ -7926,13 +8264,21 @@ static b32 tools_dd(void)
                 out_handle = (positive)opened;
         }
 
-        p8 address_to ibuf = (p8 address_to)text_arena_take(ibs + 16);
-        p8 address_to obuf = ibs == obs && !(conv & DD_SWAB)
-                                 ? ibuf
-                                 : (p8 address_to)text_arena_take(obs + 16);
-        p8 address_to converted = conv & DD_SWAB
-                                      ? (p8 address_to)text_arena_take(ibs + 16)
-                                      : ibuf;
+        /*
+                One buffer or two, which is coreutils' rule and not a size
+                comparison: bs= asks for the input block to be passed straight
+                through, and everything else -- ibs= and obs= named apart, or
+                a conversion that rewrites the block -- gathers partial reads
+                into whole output blocks first. The two differ on a short read
+                and on which complaint a refused write gets.
+        */
+        bool two_buffers = !bs_set || (conv & (DD_SWAB | DD_LCASE | DD_UCASE));
+        p8 address_to ibuf = dd_buffer(ibs + 16);
+        p8 address_to obuf = two_buffers ? dd_buffer(obs + 16) : ibuf;
+        p8 address_to converted = conv & DD_SWAB ? dd_buffer(ibs + 16) : ibuf;
+
+        dd_out_direct = (oflags & DD_DIRECT) != 0;
+        dd_out_block = obs;
 
         if (!ibuf || !obuf || !converted)
                 return 1;
@@ -7989,10 +8335,10 @@ static b32 tools_dd(void)
                 if (short_of_it && dd_status_level != DD_STATUS_NONE)
                 {
                         text_flush();
-                        string_format(writer_stderr,
-                            input ? (string_address)"dd: %s: cannot skip to specified offset\n"
-                                  : (string_address)"dd: '%s': cannot skip to specified offset\n",
-                                      input ? input : (string_address)"standard input");
+                        writer_stderr("dd: ", 4);
+                        dd_named(input ? input
+                                       : (string_address)"standard input");
+                        writer_stderr(": cannot skip to specified offset\n", 0);
                 }
         }
 
@@ -8093,10 +8439,19 @@ static b32 tools_dd(void)
 
                 if (got < 0)
                 {
-                        text_flush();
-                        string_format(writer_stderr, "dd: error reading '%s': %s\n",
-                                      input ? input : (string_address)"standard input",
-                                      file_reason(got));
+                        /* The one place coreutils keeps quiet about a read it
+                           could not do: conv=noerror says go on past it and
+                           status=none says say nothing, and only the two
+                           together silence the complaint itself. */
+                        if (!(conv & DD_NOERROR) ||
+                            dd_status_level != DD_STATUS_NONE)
+                        {
+                                text_flush();
+                                string_format(writer_stderr,
+                                    "dd: error reading '%s': %s\n",
+                                    input ? input : (string_address)"standard input",
+                                    file_reason(got));
+                        }
 
                         if (!(conv & DD_NOERROR))
                         {
@@ -8154,7 +8509,7 @@ static b32 tools_dd(void)
                 if (ibuf == obuf)
                 {
                         positive wrote = dd_output(out_handle, output, obuf,
-                                                   read_bytes, true);
+                                                   read_bytes, true, false);
 
                         if (wrote != read_bytes)
                         {
@@ -8190,7 +8545,7 @@ static b32 tools_dd(void)
                                 continue;
 
                         positive wrote = dd_output(out_handle, output, obuf, obs,
-                                                   true);
+                                                   true, true);
                         held = 0;
 
                         if (wrote != obs)
@@ -8214,7 +8569,7 @@ static b32 tools_dd(void)
 
         if (held)
         {
-                positive wrote = dd_output(out_handle, output, obuf, held, true);
+                positive wrote = dd_output(out_handle, output, obuf, held, true, false);
 
                 if (wrote)
                 {
@@ -8820,6 +9175,23 @@ static const file_long dump_od_longs[] = {
    the least common multiple of the sizes, or the multiple itself when it is
    wider. A requested width that is not such a multiple is a warning and
    the multiple is used instead. */
+/*      The width complaint waits for a file to open. The reference computes
+        its block length after the first input is in hand, so a run whose
+        only input cannot be read says what it could not read and nothing
+        about the width it would have used. */
+static positive dump_od_warn_width;
+static positive dump_od_warn_unit;
+
+static fn dump_od_width_warning()
+{
+        if (!dump_od_warn_unit)
+                return;
+        string_format(writer_stderr,
+                      "od: warning: invalid width %p; using %p instead\n",
+                      dump_od_warn_width, dump_od_warn_unit);
+        dump_od_warn_unit = 0;
+}
+
 static bool dump_od_row_width()
 {
         positive unit = 1;
@@ -8836,20 +9208,11 @@ static bool dump_od_row_width()
                 return true;
         }
 
-        if (dump_arguments.width > DUMP_BLOCK)
+        if (dump_arguments.width > DUMP_BLOCK ||
+            dump_arguments.width % unit)
         {
-                string_format(writer_stderr,
-                              "od: warning: invalid width %p; using %p instead\n",
-                              dump_arguments.width, unit);
-                dump_arguments.width = unit;
-                return true;
-        }
-
-        if (dump_arguments.width % unit)
-        {
-                string_format(writer_stderr,
-                              "od: warning: invalid width %p; using %p instead\n",
-                              dump_arguments.width, unit);
+                dump_od_warn_width = dump_arguments.width;
+                dump_od_warn_unit = unit;
                 dump_arguments.width = unit;
         }
 
@@ -9451,6 +9814,12 @@ static b32 dump_run(positive first, positive count)
                         continue;
 
                 opened = true;
+                //      The reference computes its block length once an input
+                //      is in hand and the skip it was given has been taken,
+                //      so a run that cannot open anything, or cannot skip as
+                //      far as it was asked to, says nothing about the width.
+                if (!skip)
+                        dump_od_width_warning();
 
                 if (dump_input_is_directory(name))
                 {
@@ -9483,6 +9852,8 @@ static b32 dump_run(positive first, positive count)
                         // takes the offset as its own and reads nothing.
                         offset += dump_arguments.od ? taken : skip;
                         skip -= dump_arguments.od ? taken : skip;
+                        if (!skip)
+                                dump_od_width_warning();
                 }
 
                 if (!left)
@@ -9720,6 +10091,7 @@ static b32 tools_od(void)
         dump_arguments.od = true;
         dump_od_strings = 3;
         dump_od_type_failed = false;
+        dump_od_warn_unit = 0;
 
         if (!file_take(address_of taking) || dump_od_type_failed)
                 return text_done(1);
@@ -9760,23 +10132,38 @@ static b32 tools_od(void)
         positive operands = stop - taking.first;
 
         bool traditional = (taking.flags & FILE_FLAG('T')) != 0;
+        /*      The options POSIX never gave od turn the traditional operand
+                shape off: after any of them the last word is a file name and
+                nothing else, which is what the reference's `modern` flag
+                says. --traditional asks for the old shape back. */
+        bool modern = (taking.flags & (FILE_FLAG('A') | FILE_FLAG('j') |
+                                       FILE_FLAG('N') | FILE_FLAG('S') |
+                                       FILE_FLAG('t') | FILE_FLAG('v') |
+                                       FILE_FLAG('w'))) != 0;
 
-        if (operands >= 1 && operands <= 2)
+        if ((!modern || traditional) && operands >= 1 && operands <= 2)
         {
                 string_address last = program_argument((b32)(stop - 1));
+                positive offset;
 
-                if (string_is(last, '+') ||
-                    (traditional && operands == 2 &&
-                     byte_is_digit(string_get(last))))
+                if (string_is(last, '+'))
                 {
-                        positive offset;
-
                         if (!dump_od_offset(last, address_of offset))
                         {
                                 string_format(writer_stderr,
                                               "od: invalid offset '%s'\n", last);
                                 return text_done(1);
                         }
+                        dump_arguments.skip = offset;
+                        stop--;
+                        operands--;
+                }
+                else if (operands == 2 &&
+                         dump_od_offset(last, address_of offset))
+                {
+                        //      Two operands and the second reads as an
+                        //      offset: `od FILE OFFSET`, in octal unless it
+                        //      says otherwise.
                         dump_arguments.skip = offset;
                         stop--;
                         operands--;
@@ -9807,6 +10194,11 @@ static b32 tools_od(void)
 
 static b32 tools_hexdump(void)
 {
+        //      The width complaint is od's alone, and both applets share the
+        //      dump runner that speaks it: a hexdump after an od that never
+        //      opened a file must not inherit the complaint od left armed.
+        dump_od_warn_unit = 0;
+
         file_taking taking = {
             .program = (string_address) "hexdump",
             .allowed = (string_address) "bcCdoxXnsvL",
@@ -11550,8 +11942,15 @@ static b32 diff_directories(string_address left, string_address right, positive 
 
                 if (left_directory && right_directory && !diff_recursive)
                 {
-                        diff_announce("Common subdirectories: ", one_left,
-                                      one_right, "\n");
+                        //      A label renames the file that was compared,
+                        //      and a directory nobody looked inside was not
+                        //      compared: the reference names it as it stands.
+                        text_put_string("Common subdirectories: ");
+                        text_put_string(one_left);
+                        text_put_string(" and ");
+                        text_put_string(one_right);
+                        text_put_string("\n");
+                        text_flush();
                 }
                 else
                 {
@@ -11915,7 +12314,13 @@ static b32 tools_diff(void)
 #define PS_FIELD_PGID 15
 #define PS_FIELD_NLWP 16
 #define PS_FIELD_ETIMES 17
-#define PS_FIELD_COUNT 18
+#define PS_FIELD_NICE 18
+#define PS_FIELD_PRI 19
+#define PS_FIELD_PCPU 20
+#define PS_FIELD_RUSER 21
+#define PS_FIELD_LSTART 22
+#define PS_FIELD_START 23
+#define PS_FIELD_COUNT 24
 
 typedef struct
 {
@@ -11934,7 +12339,10 @@ static ps_column ps_columns[PS_FIELD_COUNT] = {
     {"tty", "TT", 2, false},        {"uid", "UID", 5, true},
     {"c", "C", 2, true},            {"stime", "STIME", 5, false},
     {"sid", "SID", 7, true},         {"pgid", "PGID", 7, true},
-    {"nlwp", "NLWP", 4, true},       {"etimes", "ELAPSED", 7, true}};
+    {"nlwp", "NLWP", 4, true},       {"etimes", "ELAPSED", 7, true},
+    {"nice", "NI", 3, true},         {"pri", "PRI", 3, true},
+    {"pcpu", "%CPU", 4, true},       {"ruser", "RUSER", 8, false},
+    {"lstart", "STARTED", 24, true}, {"start", "STARTED", 8, true}};
 
 typedef struct
 {
@@ -12264,6 +12672,95 @@ static fn ps_draw(struct snapshot_process address_to process,
                 ps_digits(ps_now > began ? ps_now - began : 0);
                 break;
         }
+        case PS_FIELD_NICE:
+                if (process->nice < 0)
+                {
+                        ps_byte('-');
+                        ps_digits((positive)(-(bipolar)process->nice));
+                }
+                else
+                        ps_digits((positive)process->nice);
+                break;
+        case PS_FIELD_PRI:
+                //      The scheduling priority the way POSIX asks for it,
+                //      counted down from the nice value the kernel reports.
+                ps_digits(process->nice < 39 - 20
+                              ? (positive)(19 - (bipolar)process->nice) : 0);
+                break;
+        case PS_FIELD_PCPU:
+        {
+                positive began = process->start_ns / SYSTEM_NANOSECONDS;
+                positive lived = ps_now > began ? ps_now - began : 0;
+                positive tenths = lived
+                    ? system_saturating_add(process->user_ns,
+                                            process->system_ns) /
+                          SYSTEM_NANOSECONDS * 1000 / lived
+                    : 0;
+
+                ps_digits(tenths / 10);
+                ps_byte('.');
+                ps_digits(tenths % 10);
+                break;
+        }
+        case PS_FIELD_RUSER:
+                if (!detail->user &&
+                    !(detail->user = ps_name_of(process->uid)))
+                        ps_failed = true;
+                ps_text(detail->user);
+                break;
+        case PS_FIELD_LSTART:
+        case PS_FIELD_START:
+        {
+                b64 began = ps_boot +
+                            (b64)(process->start_ns / SYSTEM_NANOSECONDS);
+                b64 year;
+                positive month, day, hour, minute, second;
+
+                file_split_moment(began, address_of year, address_of month,
+                                  address_of day, address_of hour,
+                                  address_of minute, address_of second);
+                if (field == PS_FIELD_LSTART)
+                {
+                        //      The whole moment, spelled as the reference
+                        //      spells it: weekday, month, day, clock, year.
+                        ps_text(file_weekday_names[
+                            (positive)(((began / 86400) + 4) % 7)]);
+                        ps_byte(' ');
+                        file_month_short(ps_bytes, month);
+                        ps_byte(' ');
+                        if (day < 10)
+                                ps_byte(' ');
+                        ps_digits(day);
+                        ps_byte(' ');
+                        file_two(ps_bytes, hour);
+                        ps_byte(':');
+                        file_two(ps_bytes, minute);
+                        ps_byte(':');
+                        file_two(ps_bytes, second);
+                        ps_byte(' ');
+                        ps_digits((positive)year);
+                        break;
+                }
+                //      Within the day the clock, otherwise the date: the
+                //      column is eight wide and both fit it.
+                if (ps_wall - (positive)began < 86400)
+                {
+                        file_two(ps_bytes, hour);
+                        ps_byte(':');
+                        file_two(ps_bytes, minute);
+                        ps_byte(':');
+                        file_two(ps_bytes, second);
+                }
+                else
+                {
+                        file_month_short(ps_bytes, month);
+                        ps_byte(' ');
+                        if (day < 10)
+                                ps_byte(' ');
+                        ps_digits(day);
+                }
+                break;
+        }
         default: break;
         }
 
@@ -12505,7 +13002,8 @@ static bool ps_command_selected(string_address address_to values,
         return false;
 }
 
-static bool ps_sort_pid(string_address list, bool address_to reverse)
+static bool ps_sort_pid(string_address list, bool address_to reverse,
+                        bool address_to by_command)
 {
         ps_list_cursor item = {.at = list};
         bool any = false;
@@ -12526,9 +13024,16 @@ static bool ps_sort_pid(string_address list, bool address_to reverse)
                         length--;
                 }
 
-                if (length != 3 || string_compare_max(from,
-                                                       (string_address)"pid", 3))
+                //      The two keys this listing can be put in order by.
+                bool named = length == 4 &&
+                             !string_compare_max(from, (string_address)"comm", 4);
+
+                if (!named &&
+                    (length != 3 ||
+                     string_compare_max(from, (string_address)"pid", 3)))
                         return false;
+                if (named)
+                        address_to by_command = true;
 
                 if (!any)
                         address_to reverse = descending;
@@ -12667,6 +13172,12 @@ static b32 tools_ps(void)
         bool force_headers = false;
         bool reverse = false;
         bool sorted = false;
+        bool by_command = false;
+        /*      -H asks for the listing in hierarchy order, which for a set
+                of processes that all answer to the same parent is the order
+                by identifier -- and it is that order whatever --sort said,
+                because the hierarchy is not a key one can sort against. */
+        bool hierarchy = false;
         positive heading_options = 0;
 
         text_begin("ps");
@@ -12719,7 +13230,7 @@ static b32 tools_ps(void)
                               option == 's' || option == 'C';
                 if (!option || (long_option && cursor.attached && !valued) ||
                     (!long_option && (option > 255 ||
-                     !string_first_of("eAfjwhopC", (p8)option) ||
+                     !string_first_of("eAfjwhopCH", (p8)option) ||
                      (option == 'C' && *cursor.word != '-'))))
                 {
                         // Other BSD personalities also change the display
@@ -12735,6 +13246,11 @@ static b32 tools_ps(void)
                 case 'j': jobs = true; break;
                 case 'w': break;
                 case 'H':
+                        if (!long_option)
+                        {
+                                hierarchy = true;
+                                break;
+                        }
                         force_headers = true;
                         no_headers = false;
                         heading_options++;
@@ -12756,7 +13272,8 @@ static b32 tools_ps(void)
                                 return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid command list"));
                         break;
                 case 's':
-                        if (!value || !ps_sort_pid(value, &reverse))
+                        if (!value || !ps_sort_pid(value, &reverse,
+                                                   &by_command))
                                 return text_done(string_diagnostic(&text_diagnostic, 1, value, "unsupported sort key"));
                         sorted = true;
                         break;
@@ -12782,6 +13299,12 @@ static b32 tools_ps(void)
                 string_diagnostic(&text_diagnostic, 0, null, "only one heading option may be specified");
                 return text_done(1);
         }
+
+        //      Neither the hierarchy nor a name is an order this listing can
+        //      walk backwards, so the descending sense of --sort goes away
+        //      with either of them.
+        if (hierarchy || by_command)
+                reverse = false;
 
         /*
                 The two listings ps has of its own are not -o spelled out:
