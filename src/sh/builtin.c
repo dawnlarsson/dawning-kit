@@ -13014,6 +13014,17 @@ fn shell_hash(writer write, string_address input)
         {
                 positive at = 0;
 
+                //      Bash says so rather than saying nothing, on standard
+                //      output and with nothing wrong: an empty table is an
+                //      answer to "what have you remembered". dash writes
+                //      nothing, and the listing spelled as commands writes
+                //      nothing to replay.
+                if (!hash_count && shell_bash_compat && !as_commands)
+                {
+                        write(str("hash: hash table empty\n"));
+                        return shell_answer(0);
+                }
+
                 while (at < hash_count)
                 {
                         if (as_commands)
