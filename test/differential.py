@@ -213291,6 +213291,671 @@ PINNED = r"""
   "list": "unstable",
   "reason": "answers differently when the same case is asked again",
   "utility": "trap-in-pipeline"
+ },
+ {
+  "domain": "util_linux",
+  "id": "050062cdbe2715ad",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "09245b84988cb14f",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0ba05771c4bb5a40",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0c9e154cad7061ab",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0dde143c13caa395",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "10960345ea03e9ab",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1216001ac2395905",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1b0a8d3b151e7578",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1ec4c284eb91ca5c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1f0449447075993e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "25b1c0b71524b866",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2d93d632336d52bc",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3085dee941e9cc2f",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "30dc56717dac52a6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "37134285c4301223",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3fca36b36683284a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "41b0a22e08ec6568",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "458c225429810b4b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "47d0a02867de272c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4d827a10b8c34789",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "54de5a8f10816177",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "599b6387a2fc21d3",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "5de0f679d13da636",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "5e44e6d55039ff19",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "60186aa3903afe49",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "64c08e3b0939e868",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6ca10f70ebdef1d7",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6f99b3568500139d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "718ba50cbecb2468",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "78a6760bccb1dfc9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7c52fa916c138ecb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "87ae8b2831b2b7a9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "90934a7eb02a2ab5",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "997663263e58a64e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "a58b863eb9f8ebaa",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b0764c55a3516ae4",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b27698c014aeea99",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b63a34f6df6bf552",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b9656fee20197a29",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c3a1a975ffeba5eb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c946740401f2848a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "cc7d3e84be877d9c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "cf596d3f46720944",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d5f7be2785645fd0",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d8e165d94032f0a5",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "da45ab2e0f726e47",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ebe2e3331599ad5c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ee3faecd56c4fbfe",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f8b703bdda452db1",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "fcf05f016ed212ad",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "chrt"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1fa6fe3ecc289445",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsclocks"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4ee5bdd96337cdcd",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsclocks"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6715bf55c090e9d8",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsclocks"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bdc918b46db65088",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsclocks"
+ },
+ {
+  "domain": "util_linux",
+  "id": "047f88af8eab4557",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0d35f98dba6da7c9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1c0a1170f4ab751b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "26678dc19d31c8bf",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "32d6b48b714ba6e1",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "46b62e6c8ad90eb6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4a9e4b37c39da334",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "510aa3f7a59857f0",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "5dbf1ecd3ed21cf3",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6c1b4464be04759d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "7dce4117de45b364",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "8592ec2916d218d1",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "86d8010a15d8a36e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "94cdf4afc7d75840",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "96d844ffd94efb63",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9ca959473b93bac9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bb35fd921b0da7e6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "be140fe560ba3cf6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c270ec5d5171c11d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "ddfc8c76061ece55",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "f4f1047b933aae2c",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b058db0bd523ab5a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns"
+ },
+ {
+  "domain": "util_linux",
+  "id": "c5ff2555c1e9b60d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns"
+ },
+ {
+  "domain": "util_linux",
+  "id": "acef3efbf6620f8b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "d3ac63174e926400",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "3896ef6657b15ff6",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "renice"
+ },
+ {
+  "domain": "util_linux",
+  "id": "08c23cfb453ee652",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1952e84d4bb5d07a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "2022a117cf6bfbaf",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "205f5183104291ba",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "35518d7d06b1a6b7",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4bfed58f3d30fb66",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "5acf0dfc2a44123d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "91904050396f2815",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "94669c24735f1dfe",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "9cfab561ad7cdc72",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b18bc13d43fc784b",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bb1def30eb4085cb",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "bca8ee5e6e75ea15",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "dcfd3d9c012cb912",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "03bd60736ace79d9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "unshare"
  }
 ]
 """
