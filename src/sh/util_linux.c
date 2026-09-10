@@ -2454,6 +2454,11 @@ static b32 util_linux_flock()
 
         if (no_fork)
         {
+                /*      --no-fork replaces this process without flushing, and
+                        the reference's progress lines are sitting in a fully
+                        buffered stream when it does: they are lost, whether
+                        the command runs or the exec fails. */
+                log_writer_buffer_length = 0;
                 answer = ul_flock_exec(words);
                 system_close(handle);
                 return answer;
