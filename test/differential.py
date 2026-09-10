@@ -3460,18 +3460,23 @@ def awk_extra():
     names, so adding one does not reshuffle another."""
     rows = []
     for name, generator, count in (
-            ("expressions", awk_gen_expressions, 180),
-            ("printf", awk_gen_printf, 180),
-            ("fields", awk_gen_fields, 200),
-            ("strings", awk_gen_strings, 200),
-            ("control", awk_gen_control, 160),
-            ("getline", awk_gen_getline, 70),
-            ("redirect", awk_gen_redirect, 70),
-            ("cmdline", awk_gen_cmdline, 90),
-            ("regex", awk_gen_regex, 180),
-            ("syntax", awk_gen_syntax, 100),
-            ("numbers", awk_gen_numbers, 120),
-            ("records", awk_gen_records, 30)):
+            #       The seed is the generator's name, so a larger count
+            #       carries the same sequence further rather than dealing a
+            #       new one: every program these made before, they still
+            #       make. This is awk's budget dial, and the language has
+            #       more surface than the first count reached.
+            ("expressions", awk_gen_expressions, 900),
+            ("printf", awk_gen_printf, 900),
+            ("fields", awk_gen_fields, 1000),
+            ("strings", awk_gen_strings, 1000),
+            ("control", awk_gen_control, 800),
+            ("getline", awk_gen_getline, 350),
+            ("redirect", awk_gen_redirect, 350),
+            ("cmdline", awk_gen_cmdline, 450),
+            ("regex", awk_gen_regex, 900),
+            ("syntax", awk_gen_syntax, 500),
+            ("numbers", awk_gen_numbers, 600),
+            ("records", awk_gen_records, 150)):
         rows.extend(generator(awk_seeded(name), count))
     rows.extend(awk_audit())
     rows.extend(awk_refusals())
@@ -19205,6 +19210,37 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "2308a5610418d794b66a52f30d263cdd541a75a77cb2fab1d1770d07b8ac6d7e"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[%#-12.*c][%+01X]%%\", 12, 0.0001, 1e100 }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "0955aa5b55844e03",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "f520c39d1d75d021b6c5d1be61565f26c72cf4937088a807b8f4a6f075860b23"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
   },
   "case": {
@@ -19328,6 +19364,39 @@ PINNED = r"""
  },
  {
   "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "6f9dbdc116ae85e0754356d80d9a53d85635cab558702851f94d896d1c94b909"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "u=1e2",
+    "BEGIN { $0 = \"10 abc 2.5\"; x = \"010\"; y = 3; i = 1; a[\"k\"] = 1; print (((- -0) !~ \"^a\")); print ((\"1e2\" / 1e6) (12345678901234567890 ** tolower(atan2(2, 1)))), ((100000 == --i)) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "20cfbd3040ad3f71",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "66b9c363536d87c022bea3a5b73e8b44b4df1ef0c3994735a7019aa295875b93"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
    "effects": "63734cb1d5b2e1d08812be0d992887c46fc4b88fe296c7850661ced6be74f9c3",
    "status": 0,
    "stdout": "ac4fb988efa490cdf217aa0e728e4ad74c4a652b4e70d0ef85b3ec543db36b35"
@@ -19349,6 +19418,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r6",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.2f\"; OFMT = \"%.30g\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "2347980db2df5452",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -19406,6 +19506,37 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%G\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "2b67077cc89ed421",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
   },
   "case": {
@@ -19450,6 +19581,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r2",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "9e9ca8704f37ab7a7d54602e9f4a54b2d9b682881b5e304669ee7d58b5a7e89a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[%12X][% 0.0e]\\n\", 1e300, \" 12 \" }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "38a53d05fe61a9ce",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "3e7f42658c5c8adc1197b02c1b887ce22858c15473575043ee4b510f249881a3"
+  },
   "utility": "awk"
  },
  {
@@ -19558,6 +19720,37 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%G\"; OFMT = \"%.2f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "46a5aa539afca372",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "6218b42da88599cdf8f6206e3f0eaa62da18d61399be18591e120b1e89553afb"
   },
   "case": {
@@ -19628,6 +19821,68 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r2",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.10g\"; OFMT = \"%#.3e\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "511665fda0d77a28",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%e\"; OFMT = \"%5.1f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "523c835f7deef3a7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -19709,6 +19964,99 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%.30g\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "57c841b216f39b15",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%5.1f\"; OFMT = \"%.30g\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "60872569711aac36",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%G\"; OFMT = \"%#.3e\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "610cc20a83602038",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "073b2809b2bd810eb3985ed8154272631aed48c7a0335462fb8af8cd038e9f14"
   },
   "case": {
@@ -19729,6 +20077,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r2",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%5.1f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "6b2bdb413f870dcc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -19987,6 +20366,37 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%5.1f\"; OFMT = \"%g\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "928928ae4a100b9f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 2,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -20057,6 +20467,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r4",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "405f393ae33364f028bd3cac5fa48ec5dfffd54008295c74eb892f88ecc788e2"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { s = sprintf(\"[%*.0G][%.3X]\\n\", 0, \"010\", 1e300); print length(s); print s }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "9b8d1c048f9b4a76",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "ee52658cdcc2a54ad478bd9fabe9165dda342b8e6c438739559e265b100ceb49"
+  },
   "utility": "awk"
  },
  {
@@ -20215,6 +20656,133 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "9858258d047ac296dae8b9f71c527b41b3aef5793275049017cddbfbf48993eb"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { s = sprintf(\"[%- .3X]\\n\", 2^64); print length(s); print s }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "ae369578fbe91fca",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "79931b7e2081e0e86525e8d72a45cb137a08a2e2f54d2429d6fde37c352455a7"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.2f\"; OFMT = \"%.0f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "afc642a92f6ef3a1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "db312f48ea46e3c0641c629cc42627713c52d735d80fdf2d3dffc0e39f9ee0b0"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "RS=a?",
+    "{ print NR \"[\" $0 \"]\" }",
+    "mixed"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "b27482d706622981",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "b7240ce812eeb9c4c8d341b97e741453ab6b6ee8d421d7fd55f013fdc637c160"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "122194d6d71c852ea24be3b6bf0c4057889bb36e3deafb804eee80ab1b54f93b"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[%+1.0X][%-+12.3G]\\n\", 2^64, 1e16 }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "b2a11ab2abf58fc6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "da7f79b7665470276d3f6958552113e54c2a4aebf3a7f0f8037faf2731c0415e"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "case": {
@@ -20234,6 +20802,68 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r3",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%G\"; OFMT = \"%e\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "b3aa8c60baea5395",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%.0f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "b871cded03c9fcaf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -20342,6 +20972,37 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%e\"; OFMT = \"%.30g\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "c9c1ffd538f9d7a1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "eb13f166bf82612e94404d641d0ff0d98ccc1da7841b9a2e2673f9cbd1611ba5"
   },
   "case": {
@@ -20386,6 +21047,68 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r0",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%+.1f\"; OFMT = \"%.0f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "d5546497188ef8eb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%#.3e\"; OFMT = \"%+.1f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "d58caf9168880daa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
   "utility": "awk"
  },
  {
@@ -20461,6 +21184,37 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r7",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.2g\"; OFMT = \"%+.1f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "ddf69436aaf89595",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
   "utility": "awk"
  },
  {
@@ -20542,6 +21296,68 @@ PINNED = r"""
   "candidate": {
    "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
    "status": 0,
+   "stdout": "880d6b587cc219ea9b11576a2760a8f3991a8db122e4abbc670f3b7c71260870"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[% 0.1o][%- 12.3X]\\n\", 1e-300, 1e300 }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "e485934cb222bf84",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "0362cf09619119389ae7aaf26cdf498f2dbc61eaa7a993245d7b7e1d8759d3ae"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "566ee6966e1f82ee1abf16782d566e967a15f54481d979e331bd44c6424a145a"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.2g\"; OFMT = \"%.0f\"; x = 1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "e49809c8f713b477",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "4fce5c030ea2ade433a5b81d76b7035b58a1dab1d9164390bbf0eb00e7db3c87"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
    "stdout": "fc99b27a05eb7ca1581da764a20897b90bf0725f9429609fcc0543876821f860"
   },
   "case": {
@@ -20587,6 +21403,40 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r0",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "acda87158697443a633768a7c49464d62b23ab29313bd9f7ffae7842256c9f11"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "RS=(|a)",
+    "{ print NR \"[\" $0 \"]\" }",
+    "csv"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "e7a84b5e280dd63c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e167304886c4a654eca56ba8f949ea52514bb842b75449faceade9d830b1ff53"
+  },
   "utility": "awk"
  },
  {
@@ -20637,6 +21487,133 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r4",
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%.0f\"; OFMT = \"%g\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "e99afa716eecd65f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e6c06876672c538907f5f4ea6295ea22667344d2d50a0c397078e2ba312dfa68"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { CONVFMT = \"%#.3e\"; OFMT = \"%.0f\"; x = -1e300*1e300; print x; print x \"\"; a[x] = 1; for (k in a) print k; print (x \"\" == x) }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "f10b84adf7e5fb7b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "5742735e9f15a04891606a87dd459552545a40ab84d1dfbafb3ba79943c21f2d"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "1210e159a552e865dd52dffdf29f8f823668cf6f1ef9ce2fe0a1696b2efc97b9"
+  },
+  "case": {
+   "argv": [
+    "BEGIN { printf \"[%+ 05.0X]\\n\", 1e100 }"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "f8c28dcc732733ac",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "415bba9ba84f62ec916a1db0fbe5285e8fe21d64d3f041641d82e1cb87f3fafa"
+  },
+  "utility": "awk"
+ },
+ {
+  "candidate": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "acda87158697443a633768a7c49464d62b23ab29313bd9f7ffae7842256c9f11"
+  },
+  "case": {
+   "argv": [
+    "-v",
+    "RS=(a|bc)*",
+    "{ print NR \"[\" $0 \"]\" }",
+    "csv"
+   ],
+   "domain": "awk",
+   "family": null,
+   "fixture": "awk",
+   "input_kind": "command",
+   "mode": null,
+   "stdin": "text",
+   "tier": "extra",
+   "utility": "awk"
+  },
+  "domain": "awk",
+  "id": "f9c14b0a0c54006d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "a fractional power differs from glibc in the last place. Rendering is not the difference -- 0.1, 1/3, 1e-4 and an integer past a double all print byte for byte to thirty digits -- and an integer exponent is exact, because it is done by repeated multiplication. What is left is power() against glibc pow(): 2**0.5 gives the double below the correctly rounded one where glibc gives the one above. It shows only where the program sets CONVFMT or OFMT to ask for more digits than a double carries, and closing it means matching glibc ulp for ulp, which is a numerical library of its own",
+  "reference": {
+   "effects": "ac80a12e5956ccdc0e8296cef4f01dfd69c9c8d1beb39d0d11fd9e2d7996f525",
+   "status": 0,
+   "stdout": "e167304886c4a654eca56ba8f949ea52514bb842b75449faceade9d830b1ff53"
+  },
   "utility": "awk"
  },
  {
