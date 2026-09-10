@@ -15417,11 +15417,15 @@ static struct output *output_by_index(unsigned index) { return index ? NULL : &s
 static int point_in_rect(int x,int y,int w,int h,int px,int py) {
     return px>=x && px<x+w && py>=y && py<y+h;
 }
-static unsigned regrids,wakes;
+static unsigned regrids,wakes,view_clamps;
 static void console_regrid(struct pane *p) { (void)p;regrids++; }
+// The ring lives on the real struct pane, not this geometry mock; what this
+// harness can say is that a reshape asks the view whether it still fits.
+static _Bool pane_view_clamp(struct pane *p) { (void)p;view_clamps++;return 0; }
 static void wake_up_interruptible(int *wait) { (void)wait;wakes++; }
 '''
-    source += section(pane, "static void pane_regrid", "static void pane_refresh")
+    source += section(pane, "/*\n        The size a window of cells will actually be given",
+                      "static void pane_refresh")
     source += r'''
 static void pane_limits(struct pane *p,int *w,int *h) { *w=p->max_width; *h=p->max_height; }
 static void pane_reshape(struct pane *p,int x,int y,int w,int h) {
@@ -15562,6 +15566,15 @@ static struct {
     struct window_key key_ring[WINDOW_KEYS];
     int input_lock;
     u64 accel_stamp,motion_stamp,shake_window;
+    /*
+            What a resize measures from. struct pane is declared further down
+            with the geometry it belongs to, so the pane being resized is held
+            as void * here -- resize_move's own first line is what gives it a
+            type, and this mock has no business having an opinion about it.
+    */
+    unsigned resize_edges;
+    int resize_x,resize_y,resize_w,resize_h,press_x,press_y;
+    void *resizing;
 } desktop;
 static unsigned long pointer_counts,pointer_moved;
 static unsigned wakes,wheel_cas,drain_race;
@@ -15625,11 +15638,27 @@ static unsigned long int_sqrt(unsigned long value) {
     source += section(drag, "#define WHEEL_LINES", "static void wheel_deliver")
     source += section(pointer, "#define ACCEL_ONE", "static void desktop_confine_cursor")
     source += section(pointer, "static void pointer_commit", "#define POINTER_OPEN_TRIES")
+    # Here rather than beside the geometry it reshapes: resize_move reads the
+    # drag state off desktop, and desktop is the mock declared just above.
+    source += r'''
+#define EDGE_LEFT 1u
+#define EDGE_RIGHT 2u
+#define EDGE_TOP 4u
+#define EDGE_BOTTOM 8u
+#define WINDOW_MIN_WIDTH 96
+#define WINDOW_MIN_HEIGHT 48
+'''
+    source += section(drag, "static void resize_move", "/*\n        The bar under the hand, in rows.")
     # Run the real owned-pane release after printk has drained its callbacks.
     source += r'''
 struct console_test_pane { int link; unsigned long bytes; void *mapping; };
 static struct console_test_pane *console_pane;
-static struct { int lock; } console_desktop;
+// pane_free untangles the desktop's pointers to the pane it is freeing, so
+// the mock carries them and the teardown check below can watch them clear.
+static struct {
+    int lock;
+    struct console_test_pane *dragging,*resizing,*barring,*press_pane,*focused;
+} console_desktop;
 static int console_registered,canvas_console,console_callbacks,console_listed,console_frees;
 static unsigned long canvas_pane_bytes;
 static void unregister_console(int *console) {
@@ -15661,9 +15690,18 @@ static void check_console_teardown(void) {
         *console_pane=(struct console_test_pane){1,4096,malloc(4096)};
         assert(console_pane->mapping);
         console_registered=console_callbacks=console_listed=1;canvas_pane_bytes=4096;
+        // A console that had been clicked, dragged and scrolled is exactly
+        // the one whose release used to leave the desktop pointing at it.
+        console_desktop.dragging=console_desktop.resizing=console_pane;
+        console_desktop.barring=console_desktop.press_pane=console_pane;
+        console_desktop.focused=console_pane;
         console_stop();
         check(!console_pane && !canvas_pane_bytes && console_frees==(int)run+1,
               "console release returns its owned pane and ring budget");
+        check(!console_desktop.dragging && !console_desktop.resizing &&
+              !console_desktop.barring && !console_desktop.press_pane &&
+              !console_desktop.focused,
+              "console release leaves the desktop pointing at no freed pane");
         console_stop();
         check(console_frees==(int)run+1 && !console_desktop.lock,
               "console release is idempotent");
@@ -15680,6 +15718,48 @@ static void keyboard_send(struct pointer_handle *p,unsigned code,int value) {
     mutex_lock(&desktop.input_lock);
     pointer_event_locked(&p->handle,EV_KEY,code,value);
     mutex_unlock(&desktop.input_lock);
+}
+/*
+        The edge a hand is not holding stays where it is.
+
+        A window of cells is only ever a whole number of them, so the size a
+        drag settles on is not the size it asked for -- and the corner it pins
+        has to be worked out from the size it will actually be given. Worked
+        out from the size it asked for instead, dragging one edge walked the
+        opposite one in and out by up to a cell as the rounding changed.
+*/
+static void check_resize_anchor(void) {
+    static const unsigned held[]={EDGE_LEFT,EDGE_RIGHT,EDGE_TOP,EDGE_BOTTOM,
+                                  EDGE_TOP|EDGE_LEFT,EDGE_BOTTOM|EDGE_RIGHT,
+                                  EDGE_TOP|EDGE_RIGHT,EDGE_BOTTOM|EDGE_LEFT};
+    for(unsigned scale=1;scale<=3;scale++)
+    for(unsigned e=0;e<sizeof held/sizeof*held;e++)
+    for(int step=-60;step<=60;step++) {
+        canvas_cell_w=8*scale;canvas_cell_h=16*scale;canvas_bar=10*scale;
+        struct pane page={0},p={.cells=&page,.shared=&page,
+            .max_columns=80,.max_rows=24,.max_width=4000,.max_height=4000};
+        p.x=100;p.y=60;
+        p.width=40*canvas_cell_w+canvas_bar;p.height=10*canvas_cell_h;
+        pane_regrid(&p);
+        int right=p.x+p.width,bottom=p.y+p.height;
+        desktop.resizing=&p;desktop.resize_edges=held[e];
+        desktop.resize_x=p.x;desktop.resize_y=p.y;
+        desktop.resize_w=p.width;desktop.resize_h=p.height;
+        desktop.press_x=200;desktop.press_y=200;
+        resize_move(200+step,200+step);
+        // A whole number of cells however the drag came out.
+        check((p.width-canvas_bar)%canvas_cell_w==0 && p.height%canvas_cell_h==0,
+              "a resized window of cells is a whole number of them");
+        if(held[e]&EDGE_LEFT)
+            check(p.x+p.width==right,"a left-edge drag leaves the right edge where it was");
+        if(held[e]&EDGE_RIGHT)
+            check(p.x==desktop.resize_x,"a right-edge drag leaves the left edge where it was");
+        if(held[e]&EDGE_TOP)
+            check(p.y+p.height==bottom,"a top-edge drag leaves the bottom where it was");
+        if(held[e]&EDGE_BOTTOM)
+            check(p.y==desktop.resize_y,"a bottom-edge drag leaves the top where it was");
+    }
+    desktop.resizing=NULL;desktop.resize_edges=0;
 }
 // What keys_deliver reads to decide whether the focused window is snapped
 // back to the end of its scrollback. Only a key that reaches the program as
@@ -16004,9 +16084,10 @@ int main(void) {
         struct pane page={0},p={.width=widths[w],.height=99,.cells=&page,
             .max_columns=80,.max_rows=24,.shared=shared?&page:NULL};
         unsigned columns=max(min(max(widths[w]-canvas_bar,0)/canvas_cell_w,80),1);
-        regrids=wakes=0;pane_regrid(&p);
+        regrids=wakes=view_clamps=0;pane_regrid(&p);
         check(p.columns==columns && p.width==(int)columns*canvas_cell_w+canvas_bar,
               "grid reserves gutter before rounding and clamps tiny widths");
+        check(view_clamps==1,"a reshaped grid re-tests the view against it");
         check(shared ? page.columns==columns && page.width==p.width && wakes==1 :
             p.grid_columns==columns && p.grid_rows==p.rows && regrids==1,
             "resized grid reaches client or owned console");
@@ -16118,6 +16199,7 @@ int main(void) {
               desktop.abs_have==(high>low?(1u<<axis):0),"absolute axis range and ownership");
     }
     check_pointer_state(&handle);
+    check_resize_anchor();
     check_key_typed();
     check_keyboard_state();
     free(output);
@@ -18763,6 +18845,617 @@ def harness_code_map(argv):
     return 0 if unittest.TextTestRunner(verbosity=verbosity).run(suite).wasSuccessful() else 1
 
 
+
+def harness_canvas_view(argv):
+    """The scrollback view arithmetic in src/canvas/pane.c, as properties.
+
+    The wheel, the scrollbar and the snap-to-end all move one number: which
+    line of the ring is at the top of the window. Everything drawn is measured
+    from it, and the rules it has to obey are not local to any one of the
+    functions that move it -- so they are asserted here over generated rings
+    rather than re-derived per function.
+    """
+    ROOT = HARNESS_ROOT
+    parser = argparse.ArgumentParser(description=harness_canvas_view.__doc__)
+    parser.add_argument("--source-root", type=Path, default=ROOT)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args(argv)
+
+    pane = (args.source_root / "src/canvas/pane.c").read_text()
+    first = "// One line of the ring"
+    following = "/*\n        A window, of pixels or of cells."
+    if first not in pane or following not in pane:
+        raise ValueError("pane.c no longer carries the view section markers")
+    section = pane[pane.index(first):pane.index(following)]
+
+    prefix = r'''
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define PURE
+#define true 1
+#define false 0
+#define PANE_LIVE ((unsigned int)-1)
+#define min(a,b) ((a)<(b)?(a):(b))
+#define max(a,b) ((a)>(b)?(a):(b))
+#define clamp(v,lo,hi) max(lo,min(v,hi))
+#define max_t(type,a,b) ((type)(a)>(type)(b)?(type)(a):(type)(b))
+static unsigned checks, failures;
+static void check(const char *what, int ok) {
+    checks++;
+    if (!ok) { failures++; if (failures<=20) printf("  FAIL %s\n", what); }
+}
+/*
+        Only the fields the view arithmetic reads. Everything else a pane
+        carries -- its frame, its place on the desktop, the page a program
+        shares -- is not reachable from any of these functions, and putting it
+        here would only invite a test to depend on it.
+*/
+struct pane {
+    unsigned int columns, rows, grid_columns, grid_rows;
+    unsigned int stride, history, head;
+    unsigned int view, view_skip;
+    _Bool view_moved;
+    unsigned int *lengths;
+    void *cells;
+};
+'''
+
+    runner = r'''
+/*
+        How many drawn rows there are between the view and the end of the ring,
+        counted the way compose_cells walks it. Short of the window's rows is
+        exactly the band of blank rows a reader sees under the last line.
+*/
+static unsigned int rows_from(struct pane *p, unsigned int view)
+{
+    unsigned int skip, at = pane_view_at(p, view, &skip), n = 0;
+    while (at != p->head) { n += pane_line_rows(p, at); at++; }
+    return n > skip ? n - skip : 0;
+}
+
+// Every row the ring still holds, which is the most a window could ever show.
+static unsigned int rows_held(struct pane *p)
+{
+    unsigned int at = pane_oldest(p), n = 0;
+    while (at != p->head) { n += pane_line_rows(p, at); at++; }
+    return n;
+}
+
+/*
+        The rule pane_view_set applies when it places the view, restated as a
+        question about where the view is now: is it earlier in the ring than
+        following the end would put it?
+*/
+static int before_live(struct pane *p)
+{
+    unsigned int live_skip, live = pane_view_at(p, PANE_LIVE, &live_skip);
+    return p->view < live || (p->view == live && p->view_skip < live_skip);
+}
+
+int main(void)
+{
+    static unsigned int lengths[64]; // history is at most 13 * 2 + 1
+    static char cells[1];
+    unsigned int seed = 2463534242u;
+
+    for (unsigned int trial = 0; trial < 40000; trial++) {
+        struct pane p;
+        /*
+                The shape a ring is actually cut for, because pane_oldest
+                counts backwards past what the ring holds otherwise.
+
+                pane_ring gives every window a history of at least twice the
+                tallest grid it could ever be given plus one, and pane_regrid
+                and pane_refresh both clamp the rows to that same ceiling. So
+                pane_rows is always below history in a real window, and the
+                generator that let it be above spent its time on a shape no
+                compositor can build.
+        */
+        unsigned int max_rows = 1 + trial % 13;
+        unsigned int max_columns = 1 + (trial / 13) % 23;
+        unsigned int history = max_rows * 2 + 1;
+        unsigned int width = 1 + (trial / 299) % max_columns;
+        unsigned int rows = 1 + (trial / 3887) % max_rows;
+        unsigned int i;
+
+        for (i = 0; i < history; i++) {
+            seed = seed * 1664525u + 1013904223u;
+            // Empty, short, exactly one row, and long enough to fold several
+            // times -- a line's fold count is what every walk here counts in.
+            lengths[i] = (seed >> 9) % 5 == 0 ? 0 : (seed >> 13) % (max_columns + 1);
+        }
+
+        memset(&p, 0, sizeof(p));
+        p.history = history;
+        p.stride = max_columns;
+        p.grid_columns = width;
+        p.columns = width;
+        p.grid_rows = rows;
+        p.rows = rows;
+        p.lengths = lengths;
+        p.cells = cells;
+        // head is a program's own number, so the ring may be part full or
+        // long since wrapped. Never below history: pane_refresh holds that.
+        p.head = history + trial % (history * 3 + 1);
+        p.view = PANE_LIVE;
+        p.view_skip = 0;
+
+        {
+            unsigned int held = rows_held(&p);
+            unsigned int want = min(pane_rows(&p), held);
+
+            check("following the end fills the window",
+                  rows_from(&p, PANE_LIVE) >= want);
+
+            /*
+                    The wheel, over the whole range that can reach anywhere
+                    plus a margin past both ends, so the clamps are exercised
+                    rather than only the middle.
+            */
+            for (int lines = -(int)held - 2; lines <= (int)held + 2; lines++) {
+                p.view = PANE_LIVE;
+                p.view_skip = 0;
+                p.view_moved = 0;
+                pane_scroll(&p, lines);
+
+                check("a scrolled view is never past the end",
+                      p.view == PANE_LIVE || before_live(&p));
+                check("a scrolled view still fills the window",
+                      rows_from(&p, p.view) >= want);
+                check("scrolling towards the end arrives at following it",
+                      lines > 0 || p.view == PANE_LIVE);
+                check("a view that did not move is not reported as moved",
+                      p.view_moved || (p.view == PANE_LIVE && !p.view_skip));
+            }
+
+            /*
+                    The bar. Where pane_extent says the view sits has to be
+                    where pane_view_set puts it back, or the thumb and the
+                    hand disagree about what a row of bar means.
+            */
+            for (unsigned int above = 0; above <= held + 1; above++) {
+                unsigned int at, shown, total;
+
+                p.view = PANE_LIVE;
+                p.view_skip = 0;
+                pane_view_set(&p, above);
+                pane_extent(&p, &at, &shown, &total);
+
+                check("the bar puts the view where it says it is",
+                      p.view == PANE_LIVE || at == above);
+                check("a view placed by the bar still fills the window",
+                      rows_from(&p, p.view) >= want);
+                check("the extent counts every row the ring holds",
+                      total == held);
+            }
+
+            /*
+                    A window made taller or wider pulls the last screenful
+                    earlier in the ring, which is what leaves a view chosen
+                    against the old shape sitting past the end of the new one.
+                    pane_view_clamp is what puts it back.
+            */
+            for (unsigned int grown = 1; grown <= 3; grown++) {
+                // Never past the ceiling: a window cannot be given a grid
+                // larger than the ring was cut for.
+                unsigned int wider = min(width * grown, max_columns);
+                unsigned int taller = min(rows * grown, max_rows);
+
+                p.view = PANE_LIVE;
+                p.view_skip = 0;
+                pane_scroll(&p, (int)held);
+
+                p.grid_rows = taller;
+                p.rows = taller;
+                p.grid_columns = wider;
+                p.columns = wider;
+
+                pane_view_clamp(&p);
+
+                check("a reshaped window's view still fills it",
+                      rows_from(&p, p.view) >=
+                          min(pane_rows(&p), rows_held(&p)));
+                check("a reshaped view is never past the end",
+                      p.view == PANE_LIVE || before_live(&p));
+
+                p.grid_rows = rows;
+                p.rows = rows;
+                p.grid_columns = width;
+                p.columns = width;
+            }
+
+            // Already at the end is nothing to put back, and saying otherwise
+            // costs a full repaint of the window every pass.
+            p.view = PANE_LIVE;
+            p.view_skip = 0;
+            p.view_moved = 0;
+            check("following the end is already clamped",
+                  !pane_view_clamp(&p) && !p.view_moved);
+            check("following the end is already live",
+                  !pane_view_live(&p) && !p.view_moved);
+        }
+    }
+
+    printf("canvas-view %u/%u\n", checks - failures, checks);
+    return failures ? 1 : 0;
+}
+'''
+
+    def run(out):
+        out.mkdir(parents=True, exist_ok=True)
+        unit = out / "canvas-view.c"
+        unit.write_text(prefix + section + runner)
+        binary = out / "canvas-view"
+        command = shlex.split(os.environ.get("CC", "cc")) + [
+            "-std=gnu11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+            "-Wno-unused-function", "-fsanitize=address,undefined",
+            str(unit), "-o", str(binary)]
+        subprocess.run(command, check=True)
+        result = subprocess.run([str(binary)], text=True, capture_output=True)
+        tally = re.search(r"canvas-view (\d+)/(\d+)", result.stdout)
+        if tally and os.environ.get("TEST_TALLY"):
+            with open(os.environ["TEST_TALLY"], "a") as stream:
+                stream.write("canvas-view " + " ".join(tally.groups()) + "\n")
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        return result.returncode
+
+    if args.output:
+        return run(args.output.resolve())
+    with tempfile.TemporaryDirectory(prefix="canvas-view-") as work:
+        return run(Path(work))
+
+
+
+def harness_floodlight(argv):
+    """floodlight.c is the whole policy, and this is what keeps it the whole policy.
+
+    Two questions, both answered from the source rather than from a list some-
+    body maintains:
+
+      Does the array still describe the machine?  Every applet that can start
+      another program must have a row, and every row must name an applet that
+      can.  Both directions, because a list that only grows becomes a list of
+      things that used to be true.
+
+      Is the file still on its own?  It may include <linux/...> and nothing
+      else, and it may name nothing that Moonwater's library defines.  The
+      compiler already refuses an undeclared call; what this catches is the
+      next step, where somebody makes that error go away by adding an include.
+    """
+    ROOT = HARNESS_ROOT
+    sys.path.insert(0, str(ROOT / 'kit/compact'))
+    from inventory import c_bodies, lex
+    from collections import defaultdict
+
+    FILE = ROOT / 'floodlight.c'
+    IDENTIFIER = re.compile(r'^[A-Za-z_]\w*$')
+    checks = failures = 0
+
+    def check(ok, what):
+        nonlocal checks, failures
+        checks += 1
+        if not ok:
+            failures += 1
+            print('  FAIL ' + what)
+
+    def bodies(path):
+        """Top-level function bodies, and every name inside each."""
+        tokens, _ = lex(path.read_text(encoding='utf-8', errors='replace'))
+        found, depth, header, name, seen = defaultdict(set), 0, [], None, set()
+        for token in tokens:
+            value = token.value
+            if value == '{':
+                if depth == 0:
+                    name, seen = None, set()
+                    for i in range(len(header) - 1, -1, -1):
+                        if header[i].value != '(':
+                            continue
+                        for j in range(i - 1, -1, -1):
+                            if IDENTIFIER.match(header[j].value):
+                                name = header[j].value
+                                break
+                        break
+                depth += 1
+            elif value == '}':
+                depth -= 1
+                if depth == 0:
+                    if name:
+                        found[name] |= seen
+                    header, name, seen = [], None, set()
+            elif depth == 0:
+                header = [] if value == ';' else header + [token]
+            elif IDENTIFIER.match(value):
+                seen.add(value)
+        return found
+
+    #   Which applets can start a program, transitively, through any helper.
+    graph = defaultdict(set)
+    for pattern in ('src/sh/*.c', 'src/core.c', 'src/bowl/runtime.c',
+                    'src/library.common.c'):
+        for path in sorted(ROOT.glob(pattern)):
+            for name, seen in bodies(path).items():
+                graph[name] |= seen
+
+    reaches, edge = {'system_execute'}, {'system_execute'}
+    while edge:
+        step = {n for n, seen in graph.items() if n not in reaches and seen & edge}
+        reaches |= step
+        edge = step
+
+    applets = {}
+    for line in (ROOT / 'src/sh/tools.inc').read_text().splitlines():
+        row = re.search(r'SHELL_TOOL\(\s*(\w+)\s*,\s*([^,\s]+)\s*,\s*(\w+)\s*\)', line)
+        if row:
+            applets[row.group(2)] = row.group(3)
+
+    can_spawn = {name for name, entry in applets.items() if entry in reaches}
+
+    #   What the array says. The rows are the policy and the declaration at once.
+    text = FILE.read_text()
+
+    #   const, so the built-in answers live in .rodata and the machine
+    #   write-protects them. Without it a stray write flips a row and leaves
+    #   the timestamp at zero, so the report goes on calling the flipped value
+    #   the one this kernel was compiled with.
+    check('static const struct rule baseline[] = {' in text,
+          'the built-in answers are const, and so cannot be written at runtime')
+
+    array = text[text.index('static const struct rule baseline[]'):]
+    array = array[:array.index('\n};')]
+    declared = {row.group(1): row.group(2)
+                for row in re.finditer(r'\{\s*"([^"]+)"\s*,\s*SPAWN\s*,\s*([01])\s*\}',
+                                       array)}
+
+    for name in sorted(can_spawn - set(declared)):
+        check(False, '%s can start a program and floodlight.c has no row for it' % name)
+    for name in sorted(set(declared) - can_spawn):
+        check(False, '%s has a row in floodlight.c but can no longer start a program' % name)
+    check(can_spawn == set(declared),
+          'the array describes exactly the applets that can start a program')
+
+    #   Refusing the ones that turn data into execution is the whole reason the
+    #   array exists; an edit that quietly allows them again should be loud.
+    for name in ('awk', 'find', 'xargs'):
+        check(declared.get(name) == '0',
+              '%s builds a command out of what it reads and must be denied by default' % name)
+
+    #   Isolation.
+    allowed = re.compile(r'^\s*#\s*include\s*<(linux|asm|asm-generic|uapi)/[\w/.-]+>\s*$')
+    for number, line in enumerate(text.splitlines(), 1):
+        if re.match(r'^\s*#\s*include\s', line):
+            check(bool(allowed.match(line)),
+                  'floodlight.c:%d includes something that is not the kernel: %s'
+                  % (number, line.strip()))
+
+    forbidden = set()
+    for pattern in ('src/**/*.c', 'src/**/*.inc', 'src/**/*.h', 'programs/**/*.c'):
+        for path in sorted(ROOT.glob(pattern)):
+            if 'test' in path.parts:
+                continue
+            body = path.read_text(encoding='utf-8', errors='replace')
+            forbidden |= {item.name for item in c_bodies(str(path), body)}
+            forbidden |= set(re.findall(r'^\s*#\s*define\s+([A-Za-z_]\w*)', body, re.M))
+            forbidden |= set(re.findall(r'ASM_FUNC\(\s*([A-Za-z_]\w*)', body))
+
+    #   A shouted name is a constant, and constants are where the two
+    #   vocabularies genuinely collide: EPERM is the kernel's and Moonwater
+    #   spells its copy the same way because there is only one spelling for it.
+    forbidden = {n for n in forbidden if n.upper() != n}
+    forbidden -= {'bool', 'true', 'false', 'null', 'min', 'max', 'container_of'}
+    own = {item.name for item in c_bodies(str(FILE), text)}
+
+    #   In call position only. A local named `start` is this file's own word,
+    #   not a reference to somebody else's function that happens to share it,
+    #   and the thing worth refusing is calling Moonwater's code -- which is
+    #   always a name with a bracket after it, macros included. A Moonwater
+    #   TYPE would slip past this, and the include rule above is what catches
+    #   that: a type cannot arrive without a header either.
+    tokens, _ = lex(text)
+    for index, token in enumerate(tokens):
+        after = tokens[index + 1].value if index + 1 < len(tokens) else ''
+        before = tokens[index - 1].value if index else ''
+
+        if after != '(' or before in ('.', '->'):
+            continue
+        if not IDENTIFIER.match(token.value):
+            continue
+        if token.value in forbidden and token.value not in own:
+            check(False, 'floodlight.c:%d calls %s, which belongs to Moonwater'
+                  % (token.line, token.value))
+
+    check(True, 'floodlight.c is ordinary kernel C')
+
+    #   The whole of what this module can reach into the kernel for.
+    #
+    #   Enumerated rather than described, because "minimal trusted base" is a
+    #   claim and this is the thing that makes it checkable: every kernel
+    #   facility floodlight uses is on this line, and adding a fourteenth has
+    #   to be a deliberate edit here rather than a call that slipped in.
+    KERNEL = {
+        'strcmp', 'strlen', 'strscpy', 'memset',
+        'pr_warn', 'pr_err', 'seq_printf', 'seq_puts',
+        'mutex_lock', 'mutex_unlock', 'DEFINE_MUTEX',
+        'capable', 'from_kuid', 'current_uid',
+        'ktime_get_real_seconds', 'misc_register', 'single_open',
+        'copy_from_user', 'get_random_u32', 'pr_alert', 'offsetof',
+        'ARRAY_SIZE',
+        'MODULE_DESCRIPTION', 'MODULE_AUTHOR', 'MODULE_LICENSE',
+        'device_initcall', 'sizeof',
+    }
+
+    called = set()
+    for index, token in enumerate(tokens):
+        after = tokens[index + 1].value if index + 1 < len(tokens) else ''
+        before = tokens[index - 1].value if index else ''
+        if after == '(' and before not in ('.', '->') and IDENTIFIER.match(token.value):
+            called.add(token.value)
+
+    #   Its own functions, and the C that is not a call at all.
+    outside = called - own - KERNEL - {'if', 'for', 'while', 'switch', 'return',
+                                       'sizeof', 'struct', 'unsigned', 'char',
+                                       'int', 'void', 'bool', 'const', 'static'}
+    for name in sorted(outside):
+        check(False, 'floodlight.c reaches for %s, which is not on its list of '
+                     'kernel facilities -- add it there deliberately or do without'
+              % name)
+    check(not outside, 'floodlight.c reaches into the kernel for %d named '
+                       'facilities and no others' % len(called & KERNEL))
+
+    #   A guard that is correct and not called is not a guard. Testing plain()
+    #   alone passed a file that had stopped using it, so the shape of each
+    #   guard in the write path is asserted here too -- exactly as written, so
+    #   that neutering one (`if (false && ...)`) reads as a change and not as
+    #   a passing test.
+    write = text[text.index('static ssize_t floodlight_write('):]
+    write = write[:write.index('\nstatic int floodlight_open')]
+
+    for guard, what in (
+            (r'if \(!capable\(CAP_SYS_ADMIN\)\)\s*\n\s*return -EPERM;',
+             'the write path refuses anyone but root, before it copies anything'),
+            (r'if \(!plain\(subject\)\)\s*\n\s*goto out;',
+             'the write path refuses a subject that is not plain'),
+            (r'if \(i == FLAG && !plain\(detail\)\)\s*\n\s*goto out;',
+             'the write path refuses a flag that is not plain'),
+            (r'if \(!intact\(\)\) \{\s*\n\s*answer = -EPERM;',
+             'the write path refuses everything once anything has been tampered with'),
+            (r'if \(!guard_intact\(\)\) \{',
+             'the write path checks its own redzone before believing the line'),
+            (r'if \(sealed\) \{\s*\n\s*answer = -EPERM;',
+             'the write path refuses every change once sealed'),):
+        check(bool(re.search(guard, write)), what)
+
+    #   The read path has to refuse just as hard, and the seals have to be
+    #   folded with the boot secret or they are arithmetic anybody who has read
+    #   this file can redo.
+    show = text[text.index('static int floodlight_show('):]
+    show = show[:show.index('\nstatic ')]
+
+    for guard, where, what in (
+            (r'if \(!intact\(\)\) \{\s*\n\s*seq_puts\(seq, "# floodlight: TAMPERED', show,
+             'the report refuses to speak for a machine that has been tampered with'),
+            (r'return fold\(secret \^ [0-9]+u, row,', text,
+             'a row seal is folded with the boot secret'),
+            (r'return fold\(secret \^ [0-9]+u, baseline, sizeof\(baseline\)\);', text,
+             'the built-in answers are summed with the boot secret'),
+            (r'secret = get_random_u32\(\);', text,
+             'the secret is drawn fresh at every boot'),):
+        check(bool(re.search(guard, where)), what)
+
+    #   The seal has to notice any change at all to a row, because what it is
+    #   for is a write that did not come through the device -- which will be a
+    #   byte or a bit, not a rewrite. Every single-bit flip in a row-sized
+    #   buffer, exhaustively.
+    fold_body = text[text.index('static u32 fold(u32 hash'):]
+    fold_body = fold_body[:fold_body.index('\n}\n') + 3]
+
+    seal_program = r'''
+#include <stdio.h>
+#include <string.h>
+typedef unsigned int u32;
+''' + fold_body + r'''
+int main(void)
+{
+    unsigned char row[112];
+    u32 secret = 0x9e3779b9, base;
+    int bad = 0;
+    for (unsigned i = 0; i < sizeof row; i++) row[i] = (unsigned char)(i * 7 + 3);
+    base = fold(secret ^ 2166136261u, row, sizeof row);
+    for (unsigned i = 0; i < sizeof row; i++)
+        for (unsigned b = 0; b < 8; b++) {
+            row[i] ^= (unsigned char)(1u << b);
+            if (fold(secret ^ 2166136261u, row, sizeof row) == base) {
+                printf("MISSED byte %u bit %u\n", i, b);
+                bad++;
+            }
+            row[i] ^= (unsigned char)(1u << b);
+        }
+    /* And the secret has to matter, or the seal is arithmetic anybody can redo. */
+    if (fold(0 ^ 2166136261u, row, sizeof row) == base) { printf("SECRET ignored\n"); bad++; }
+    printf("%d\n", bad);
+    return 0;
+}
+'''
+    with tempfile.TemporaryDirectory(prefix='floodlight-seal-') as work:
+        unit = Path(work) / 'seal.c'
+        unit.write_text(seal_program)
+        binary = Path(work) / 'seal'
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
+                       ['-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror',
+                        '-fsanitize=address,undefined', str(unit), '-o', str(binary)],
+                       check=True)
+        ran = subprocess.run([str(binary)], text=True, capture_output=True)
+        check(ran.returncode == 0 and ran.stdout.strip().endswith('0'),
+              'the seal notices every single-bit change to a row: ' +
+              ran.stdout.strip().replace(chr(10), '; '))
+
+    #   plain() is the whole of the anti-forgery property, so it is compiled
+    #   out of the file and run over every byte there is rather than reasoned
+    #   about. A name that reaches the log or the report carrying an escape
+    #   can erase the line above it; one carrying a newline can print a row
+    #   that was never in the array and say anything it likes.
+    body = text[text.index('static bool plain(const char *word)'):]
+    body = body[:body.index('\n}\n') + 3]
+
+    program = r'''
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+''' + body + r'''
+int main(void)
+{
+    int bad = 0;
+    /* Every byte, alone. Accepted exactly when it is one of the marks a
+       program name, a path or a flag is actually made of. */
+    for (int c = 1; c < 256; c++) {
+        char one[2] = {(char)c, 0};
+        bool want = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '.' || c == '_' ||
+                    c == '-' || c == '/' || c == '+' || c == ':';
+        if (plain(one) != want) {
+            printf("BYTE %d want %d\n", c, (int)want);
+            bad++;
+        }
+    }
+    if (plain("")) { printf("EMPTY accepted\n"); bad++; }
+    static const char *refuse[] = {
+        "x\033[2K", "a\nfake spawn allow", "a\rb", "a b", "a\tb",
+        "a\010b", "a\177b", "\033", "quote\"d", "semi;colon", "a$b",
+    };
+    for (unsigned i = 0; i < sizeof refuse / sizeof *refuse; i++)
+        if (plain(refuse[i])) { printf("ACCEPTED %u\n", i); bad++; }
+    static const char *accept[] = {
+        "awk", "find", "/usr/bin/tar", "--to-command", "a.b_c-d",
+        "x:y", "a+b", "libexec/thing.so.1",
+    };
+    for (unsigned i = 0; i < sizeof accept / sizeof *accept; i++)
+        if (!plain(accept[i])) { printf("REFUSED %s\n", accept[i]); bad++; }
+    printf("%d\n", bad);
+    return 0;
+}
+'''
+
+    with tempfile.TemporaryDirectory(prefix='floodlight-') as work:
+        unit = Path(work) / 'plain.c'
+        unit.write_text(program)
+        binary = Path(work) / 'plain'
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
+                       ['-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror',
+                        '-fsanitize=address,undefined', str(unit), '-o', str(binary)],
+                       check=True)
+        ran = subprocess.run([str(binary)], text=True, capture_output=True)
+        check(ran.returncode == 0 and ran.stdout.strip().endswith('0'),
+              'plain() accepts exactly the safe bytes: ' + ran.stdout.strip().replace(chr(10), '; '))
+
+    print('floodlight %d/%d' % (checks - failures, checks))
+    if os.environ.get("TEST_TALLY"):
+        with open(os.environ["TEST_TALLY"], "a") as tally:
+            tally.write("floodlight %d %d\n" % (checks - failures, checks))
+    return 1 if failures else 0
+
+
 HARNESS_CHECKS = {
     "engines": harness_engines_main,
     "core_state": harness_core_state,
@@ -18776,6 +19469,8 @@ HARNESS_CHECKS = {
     "shell_functions": harness_shell_functions,
     "audit_shell_functions": harness_audit_shell_functions,
     "canvas_lifetime": harness_canvas_lifetime,
+    "canvas_view": harness_canvas_view,
+    "floodlight": harness_floodlight,
     "code_map": harness_code_map,
 }
 
