@@ -12,6 +12,34 @@
 */
 
 /*
+        The screen a point is on, and which number it is.
+
+        The pointer is confined to an output, so a press or a drag always ends
+        on one. Which one matters: arranging against the bounding box of every
+        monitor puts a maximized window across all of them.
+*/
+static struct output *output_at(int x, int y, unsigned int *index)
+{
+        struct output *candidate;
+        unsigned int at = 0;
+
+        list_for_each_entry(candidate, &desktop.outputs, link)
+        {
+                if (point_in_rect(candidate->x, candidate->y,
+                                  (int)candidate->width,
+                                  (int)candidate->height, x, y))
+                {
+                        *index = at;
+                        return candidate;
+                }
+
+                at++;
+        }
+
+        return NULL;
+}
+
+/*
         The window the pointer is over, and which of its edges it has hold of.
 
         A window blocks over all of itself, not only over the parts that
@@ -137,6 +165,22 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
         desktop.drawn_scale = desktop.cursor_scale;
 }
 
+// Back to the rectangle the program last had, wherever it was put since.
+static void pane_float(struct pane *pane)
+{
+        if (pane->arranged == PANE_FLOATING)
+                return;
+
+        pane->arranged = PANE_FLOATING;
+        pane->display = pane->saved_display;
+
+        if (pane->shared)
+                WRITE_ONCE(pane->shared->display, pane->display);
+
+        pane_reshape(pane, pane->saved_x, pane->saved_y,
+                     pane->saved_w, pane->saved_h);
+}
+
 static void drag_move(int x, int y)
 {
         struct pane *pane = desktop.dragging;
@@ -234,50 +278,6 @@ static void bar_move(struct pane *pane, int y,
 
         atomic_set(&desktop.frame_pending, 1);
         canvas_thread_wake();
-}
-
-/*
-        The screen a point is on, and which number it is.
-
-        The pointer is confined to an output, so a press or a drag always ends
-        on one. Which one matters: arranging against the bounding box of every
-        monitor puts a maximized window across all of them.
-*/
-static struct output *output_at(int x, int y, unsigned int *index)
-{
-        struct output *candidate;
-        unsigned int at = 0;
-
-        list_for_each_entry(candidate, &desktop.outputs, link)
-        {
-                if (point_in_rect(candidate->x, candidate->y,
-                                  (int)candidate->width,
-                                  (int)candidate->height, x, y))
-                {
-                        *index = at;
-                        return candidate;
-                }
-
-                at++;
-        }
-
-        return NULL;
-}
-
-// Back to the rectangle the program last had, wherever it was put since.
-static void pane_float(struct pane *pane)
-{
-        if (pane->arranged == PANE_FLOATING)
-                return;
-
-        pane->arranged = PANE_FLOATING;
-        pane->display = pane->saved_display;
-
-        if (pane->shared)
-                WRITE_ONCE(pane->shared->display, pane->display);
-
-        pane_reshape(pane, pane->saved_x, pane->saved_y,
-                     pane->saved_w, pane->saved_h);
 }
 
 /*

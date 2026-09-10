@@ -497,6 +497,28 @@ static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)
 }
 
 /*
+        How a window came to be the shape it is.
+
+        Floating is the program's own rectangle. The rest are the
+        compositor's, share one saved rectangle to go back to, and are all
+        the same operation with different arithmetic.
+*/
+#define PANE_FLOATING 0u
+#define PANE_MAXIMIZED 1u
+#define PANE_LEFT 2u
+#define PANE_RIGHT 3u
+
+// How close to the edge of a screen a drag has to end to snap to it.
+#define SNAP_MARGIN (8 * (int)desktop.scale)
+
+// Which edges of a window's frame a point is close enough to take hold of.
+#define EDGE_LEFT 1u
+#define EDGE_RIGHT 2u
+#define EDGE_TOP 4u
+#define EDGE_BOTTOM 8u
+#define EDGE_GRIP 6
+
+/*
         The close button, in desktop coordinates.
 
         One function and not two, because two drift: the square that is drawn
@@ -534,28 +556,6 @@ static _Bool pane_close_box(struct pane *pane, int *x, int *y, int *side)
 static const unsigned char close_bits[8] = {
     0xc3, 0xe7, 0x7e, 0x3c, 0x3c, 0x7e, 0xe7, 0xc3,
 };
-
-/*
-        How a window came to be the shape it is.
-
-        Floating is the program's own rectangle. The rest are the
-        compositor's, share one saved rectangle to go back to, and are all
-        the same operation with different arithmetic.
-*/
-#define PANE_FLOATING 0u
-#define PANE_MAXIMIZED 1u
-#define PANE_LEFT 2u
-#define PANE_RIGHT 3u
-
-// How close to the edge of a screen a drag has to end to snap to it.
-#define SNAP_MARGIN (8 * (int)desktop.scale)
-
-// Which edges of a window's frame a point is close enough to take hold of.
-#define EDGE_LEFT 1u
-#define EDGE_RIGHT 2u
-#define EDGE_TOP 4u
-#define EDGE_BOTTOM 8u
-#define EDGE_GRIP 6
 
 // The first format in the plane's own order that is one of the two wanted.
 static PURE u32 canvas_plane_pick_format(struct drm_plane *plane, u32 first, u32 second)

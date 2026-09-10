@@ -15467,6 +15467,15 @@ def harness_core_state(argv):
         geometry += section(canvas, "static void pane_frame", "// Which edges")
         geometry += "#define compose_cells compose_cells_pixels\n"
         geometry += section(compose, "static void compose_cells", "/*\n        A pane, in target coordinates.")
+        #   The close button is not this harness's subject, and asking for
+        #   its square needs a shared page the pane mocked here does not
+        #   have. Saying there is never one leaves the titlebar drawn exactly
+        #   as it was before there was a button to draw -- which is the thing
+        #   these checks are about.
+        geometry += ("static _Bool pane_close_box(struct pane *p,int *x,"
+                     "int *y,int *side)\n"
+                     "{ (void)p;(void)x;(void)y;(void)side; return 0; }\n"
+                     "static const unsigned char close_bits[8] = {0};\n")
         geometry += section(compose, "struct pane_bar_geometry", "/*\n        The desktop, everywhere")
         geometry += "#undef compose_cells\n"
         geometry += section(drag, "static void bar_move", "/*\n        Filling the screen")
@@ -15581,7 +15590,7 @@ static void snapshot_networks(struct snapshot_builder *build, struct snapshot_he
 #define WRITE_ONCE(a,b) ((a)=(b))
 static int canvas_title=24, canvas_border=2, canvas_cell_w=8, canvas_cell_h=16, canvas_bar=10;
 struct pane { unsigned display,style,max_width,max_height; int width,height,x,y,edge;
-    int saved_x,saved_y,saved_w,saved_h; unsigned saved_display; _Bool maximized;
+    int saved_x,saved_y,saved_w,saved_h; unsigned saved_display; unsigned arranged;
     unsigned columns,rows,max_columns,max_rows,grid_columns,grid_rows,damage_row,damage_rows;
     void *cells; int wait;
     struct pane *shared;
@@ -15607,6 +15616,10 @@ static void wake_up_interruptible(int *wait) { (void)wait;wakes++; }
     source += section(pane, "/*\n        The size a window of cells will actually be given",
                       "static void pane_refresh")
     source += r'''
+#define PANE_FLOATING 0u
+#define PANE_MAXIMIZED 1u
+#define PANE_LEFT 2u
+#define PANE_RIGHT 3u
 static void pane_limits(struct pane *p,int *w,int *h) { *w=p->max_width; *h=p->max_height; }
 static void pane_reshape(struct pane *p,int x,int y,int w,int h) {
     p->x=x; p->y=y; p->width=w; p->height=h;
@@ -15615,8 +15628,23 @@ static void pane_reshape(struct pane *p,int x,int y,int w,int h) {
 '''
     source += section(pane, "static void pane_size", "static void pane_raise")
     source += section(pane, "static void desktop_grid(", "/*\n        The grid a window")
-    source += section(drag, "static void pane_maximize", "/*\n        Taking a maximized")
+    #   The whole arrangement family, not just the double-click on top of it.
+    #   Maximize used to be the only thing that gave a window a rectangle it
+    #   had not asked for; now it is one of four, they share the saved
+    #   rectangle and the grid rounding, and slicing the last of them alone
+    #   would leave the three that do the work untested.
+    source += section(drag, "static struct output *output_at",
+                      "/*\n        The window the pointer is over")
+    source += section(drag, "// Back to the rectangle the program last had",
+                      "static void drag_move")
+    source += section(drag, "/*\n        Filling the screen",
+                      "/*\n        Taking an arranged titlebar")
     source += section(canvas, "static void pane_frame", "// Which edges")
+    #   The close button, which lives below the edge defines rather than
+    #   beside pane_frame: the range from pane_frame is cut for the pixel
+    #   geometry checks too, and those have no shared page to ask about.
+    source += section(canvas, "/*\n        The close button, in desktop",
+                      "// The first format in the plane's own order")
     source += r'''
 struct drm_rect { int x1,y1,x2,y2; };
 struct target { u32 *pixels; unsigned pitch; int x,y; const u32 *ink; };
@@ -15832,6 +15860,7 @@ static void check_spawn_dispatch(void) {
 #define KEY_RIGHTALT 100
 #define KEY_TAB 15
 #define KEY_F9 67
+#define KEY_T 20
 #define WINDOW_KEYS 64
 #define WINDOW_KEY_DOWN 1u
 #define WINDOW_KEY_SHIFT 2u
@@ -15874,6 +15903,7 @@ static struct {
     unsigned resize_edges;
     int resize_x,resize_y,resize_w,resize_h,press_x,press_y;
     void *resizing;
+    atomic_t spawn;
 } desktop;
 static unsigned long pointer_counts,pointer_moved;
 static unsigned wakes,wheel_cas,drain_race;
@@ -16372,8 +16402,98 @@ int main(void) {
         check(p.width==max((int)w-(framed?4*(int)scale:0),0) &&
               p.height==max((int)h-(framed?26*(int)scale:0),0),"maximize body bounds");
         pane_maximize(&p,0,0);
-        check(!p.maximized && p.width==123 && p.height==99 && p.x==17 && p.y==19,
-              "maximize restoration");
+        check(p.arranged==PANE_FLOATING && p.width==123 && p.height==99 &&
+              p.x==17 && p.y==19, "maximize restoration");
+
+        /*
+            The halves, over every screen this loop can make.
+
+            A window thrown at a side is flush with that side and stops at
+            the middle, and the two of them together are the screen. What is
+            asserted is the outer edge each one was thrown at: the other edge
+            carries whatever the window's own limits and the cell grid leave
+            over, and at these sizes -- eighty pixels and less, with a cap of
+            640 -- that is most of it.
+        */
+        int border=framed?2*(int)scale:0;
+        struct pane q={.style=framed?WINDOW_FRAME:0u,.max_width=640,
+                       .max_height=480,.width=123,.height=99,.x=17,.y=19};
+
+        pane_arrange(&q,PANE_LEFT,0,0);
+        check(q.arranged==PANE_LEFT && q.x-border==0,
+              "a window thrown left is flush with the left of the screen");
+        check(q.x+q.width+border<=(int)max((int)w,(int)(2*border)),
+              "and does not reach past the middle by more than the border");
+
+        pane_arrange(&q,PANE_RIGHT,0,0);
+        check(q.arranged==PANE_RIGHT &&
+              (q.x+q.width+border==(int)w || q.width==(int)q.max_width ||
+               q.width==0),
+              "a window thrown right is flush with the right of the screen");
+
+        pane_float(&q);
+        check(q.arranged==PANE_FLOATING && q.width==123 && q.height==99 &&
+              q.x==17 && q.y==19,
+              "and the rectangle it goes back to is the one it started with, "
+              "not the half it was in between");
+
+        /*
+            And again with cells, which is where the flush edge is actually
+            decided.
+
+            A window of pixels lands on the arithmetic exactly, so it is flush
+            whichever way the sum is written and proves nothing about the
+            rounding. A window of text cannot be half a screen wide -- the
+            leftover has to go somewhere -- and the whole point is that it
+            goes to the edge the window was not thrown at. Both are checked
+            because it was the pixel one that made the bug look fixed.
+        */
+        struct pane sheet={0};
+        struct pane c={.style=framed?WINDOW_FRAME:0u,.max_width=640,
+                       .max_height=480,.width=123,.height=99,.x=17,.y=19,
+                       .cells=&sheet,.max_columns=80,.max_rows=24};
+
+        pane_arrange(&c,PANE_LEFT,0,0);
+        check(c.x-border==0,
+              "a grid thrown left is flush with the left of the screen");
+
+        pane_arrange(&c,PANE_RIGHT,0,0);
+        check(c.x+c.width+border==(int)w || (int)w<=2*border,
+              "a grid thrown right is flush with the right of the screen, "
+              "the cell rounding coming off its other side");
+
+        /*
+            The close button, over the same screens.
+
+            It has to be inside the window it belongs to and inside the
+            titlebar that holds it, at every scale, or it is drawn over the
+            body or off the frame -- and it must not exist at all where there
+            is no titlebar to hold it, no program to ask, or no room left for
+            a title beside it.
+        */
+        int bx,by,side;
+        struct pane page2={0};
+        struct pane d={.style=WINDOW_FRAME,.width=(int)w,.height=99,
+                       .x=17,.y=19,.shared=&page2};
+
+        if (pane_close_box(&d,&bx,&by,&side)) {
+            check(side>0 && bx>=d.x && bx+side<=d.x+d.width,
+                  "the close button is inside the window it closes");
+            check(by>=d.y && by+side<=d.y+canvas_title,
+                  "and inside the titlebar that holds it");
+            check(d.width>=side+2*canvas_cell_w,
+                  "and only where there is a title's worth of room beside it");
+        }
+
+        d.shared=NULL;
+        check(!pane_close_box(&d,&bx,&by,&side),
+              "a pane the compositor owns has no close button: "
+              "there is no program to ask");
+        d.shared=&page2; d.style=0;
+        check(!pane_close_box(&d,&bx,&by,&side),
+              "and neither has a window with no titlebar to put one in");
+        check(close_bits[0]==0xc3 && close_bits[3]==0x3c,
+              "the X is still an X");
     }
     const int widths[]={0,1,9,10,17,18,19,25,26,27,639,640,641,3840};
     for (unsigned scale=1;scale<=3;scale++)
