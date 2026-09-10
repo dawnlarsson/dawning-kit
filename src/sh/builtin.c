@@ -11687,18 +11687,29 @@ static string_address const floodlight_denied[] = {
 /*
         The register, read once.
 
-        A page is more than the report can be, and reading it per applet would
-        put an open, a read and a close on a path that already costs forty
-        microseconds. Read on the first applet this process runs and kept: a
-        deviation made after that reaches the next program started, which is
-        the next thing anybody runs.
+        Reading it per applet would put an open, a read and a close on a path
+        that already costs forty microseconds. Read on the first applet this
+        process runs and kept: a deviation made after that reaches the next
+        program started, which is the next thing anybody runs.
+
+        Large enough for the largest report the register can produce, worked
+        out rather than guessed: twenty-eight built-in answers and sixteen
+        deviations, each at most a sixty-three character subject, a setting, a
+        thirty-one character flag, a state and a sentence about who changed it
+        and when -- a hundred and sixty-three bytes a row, seven thousand two
+        hundred in all. This was a page, and a page is not enough: a report cut
+        off at four thousand and ninety-six loses the rows past the cut, and a
+        row that is lost is a refusal that never arrives.
 */
-static p8 floodlight_report[4096];
+#define FLOODLIGHT_REPORT 8192
+
+static p8 floodlight_report[FLOODLIGHT_REPORT];
 static positive floodlight_report_length;
 static bool floodlight_report_read;
 
 static fn floodlight_load()
 {
+        file_facts facts;
         bipolar handle;
         bipolar got;
 
@@ -11712,12 +11723,40 @@ static fn floodlight_load()
         if (handle < 0)
                 return;
 
+        /*
+                The register, and not something wearing its name.
+
+                A program that can put a filesystem over /dev -- an unprivileged
+                user namespace is enough on a kernel that allows them -- could
+                leave an ordinary file at this path saying every applet is
+                allowed everything, and be believed. The device is a character
+                device on the misc major; a regular file is not, and neither is
+                a pipe somebody left there. Asked of the open handle rather
+                than the path, so nothing can be swapped between the two.
+        */
+        if (!file_look(handle, (string_address)"", AT_EMPTY_PATH, &facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_CHARACTER ||
+            facts.rdev_major != 10)
+        {
+                system_close(handle);
+                return;
+        }
+
         got = system_read_once(handle, floodlight_report,
                                sizeof(floodlight_report) - 1);
         system_close(handle);
 
         if (got > 0)
                 floodlight_report_length = (positive)got;
+
+        /*
+                A report that filled the buffer is one that may have been cut,
+                and half a report is worse than none: the half that is missing
+                is the half that refuses something. Thrown away, so the
+                built-in answers stand.
+        */
+        if (floodlight_report_length >= sizeof(floodlight_report) - 1)
+                floodlight_report_length = 0;
 
         floodlight_report[floodlight_report_length] = 0;
 }

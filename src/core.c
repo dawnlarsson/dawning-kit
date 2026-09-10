@@ -111,10 +111,6 @@ struct device_context
 // cannot be included into this translation unit the way display.c is
 // -- so the compiler is told its shape here, in the file that calls it.
 //
-// the free running counter, in library.c
-u64 get_cpu_time(void);
-
-
 
 int path_mount(const char *dev_name, struct path *path,
                const char *type_page, unsigned long flags, void *data_page);
@@ -195,6 +191,15 @@ static void __init spark_cpu_features_start(void)
         }
 }
 #endif
+
+/*
+        The top of the address space belongs to the stack, and an image may
+        not be mapped into it. Generous on purpose: this only has to be larger
+        than any stack setup_arg_pages will build, and being larger costs an
+        image nothing -- there is no machine where a flat binary wants to live
+        within a gigabyte of STACK_TOP.
+*/
+#define SPARK_STACK_ROOM (1UL << 30)
 
 static struct linux_binfmt format = {
     .module = THIS_MODULE,
@@ -332,6 +337,38 @@ int execute_spark(struct linux_binprm *bprm)
         // the address space the process will actually have.
         if (header->base > TASK_SIZE || span > TASK_SIZE - header->base)
                 return -ENOEXEC;
+
+        /*
+                And not where the stack is about to be.
+
+                setup_arg_pages builds the stack below, before the three
+                regions go up, and those are MAP_FIXED: an image based high
+                enough is mapped straight over the stack that was just built
+                for it. Text landing there is caught by accident, because
+                put_user then faults against a read-only mapping and the task
+                dies. Data landing there is not caught at all -- that region
+                is writable, so the argument vector is written into the
+                program's own data and the program is started on a stack
+                pointer inside its own image.
+
+                Every other field is checked against something; this was the
+                one piece of geometry taken on trust. Refused here rather than
+                after begin_new_exec, because here there is still a caller to
+                return -ENOEXEC to.
+
+                A fixed reserve rather than RLIMIT_STACK: the limit is what
+                the stack may grow to, and reading it here would tie this
+                check to a value the caller chooses. Any initial stack fits
+                far inside a gigabyte, and growth past it is the guard gap's
+                job rather than this one's.
+        */
+        if (STACK_TOP > SPARK_STACK_ROOM)
+        {
+                unsigned long floor = STACK_TOP - SPARK_STACK_ROOM;
+
+                if (header->base >= floor || span > floor - header->base)
+                        return -ENOEXEC;
+        }
 
         if (header->entry < header->base ||
             header->entry - header->base >= header->text_size)
@@ -1227,10 +1264,14 @@ static fn init_mount()
                 ret = path_mount(mount->filesystem, &path, mount->filesystem, mount->mount_flags, null);
                 path_put(&path);
 
+                //      Only the failures. Three lines saying a mount that
+                //      was always going to work did work is three console
+                //      writes on the boot path of every machine, at
+                //      KERN_ALERT so no loglevel can turn them off, and
+                //      nothing reads them -- the evidence that /proc mounted
+                //      is /proc.
                 if (ret)
                         pr_alert("[moonwater] " "Mounting %s on %s failed with error: %d\n", mount->filesystem, mount->path, ret);
-                else
-                        pr_alert("[moonwater] " "Mounted %s to %s\n", mount->filesystem, mount->path);
 
                 mount++;
         }
@@ -1249,20 +1290,6 @@ static fn init_mount()
         Two reads and no delay. The delta is printed rather than the value,
         because a raw counter says nothing and a delta says it is counting.
 */
-static void __init check_ticks(void)
-{
-        u64 first = get_cpu_time();
-        u64 second;
-
-        barrier();
-        second = get_cpu_time();
-
-        if (second > first)
-                pr_alert("[moonwater] " "ticks: counting, %llu between two reads\n", (unsigned long long)(second - first));
-        else
-                pr_alert("[moonwater] " "ticks: did not advance (%llu then %llu)\n", (unsigned long long)first, (unsigned long long)second);
-}
-
 // Likewise: an initcall does not need external linkage.
 static b32 __init start()
 {
@@ -1295,7 +1322,6 @@ static b32 __init start()
 #ifdef CONFIG_X86_64
         spark_cpu_features_start();
 #endif
-        check_ticks();
         init_mount();
 
         register_binfmt(&format);

@@ -19316,6 +19316,21 @@ def harness_floodlight(argv):
     fallback = re.search(r'static string_address const floodlight_denied\[\] = \{(.*?)null\}',
                          shell, re.S)
     check(bool(fallback), 'the shell carries a built-in copy of what is refused')
+
+    #   The reader's buffer against the biggest report the writer can produce.
+    #   Worked out from both files rather than asserted, so growing either one
+    #   without the other is what fails.
+    room = re.search(r'#define FLOODLIGHT_REPORT (\d+)', shell)
+    subject = int(re.search(r'#define SUBJECT (\d+)', text).group(1))
+    detail = int(re.search(r'#define DETAIL (\d+)', text).group(1))
+    slots = int(re.search(r'#define CHANGES (\d+)', text).group(1))
+    rows = len(declared) + slots
+    widest = (subject - 1) + 1 + 8 + 1 + (detail - 1) + 1 + 5 + 1 + \
+        len('changed 18446744073709551615s ago by uid 4294967295\n')
+    check(bool(room) and int(room.group(1)) > rows * widest,
+          'the reader has room for the largest report the register can make '
+          '(%d rows of %d bytes needs more than %s)'
+          % (rows, widest, room.group(1) if room else '?'))
     if fallback:
         carried = set(re.findall(r'"([^"]+)"', fallback.group(1)))
         refused = {name for name, state in declared.items() if state == '0'}
@@ -19351,6 +19366,19 @@ def harness_floodlight(argv):
                    'floodlight_built_in', '(', 'name', ')', ')'),
              'a register that cannot be read leaves the built-in answers '
              'standing, so removing the device grants nothing'),
+            (calls('file_look', '(', 'handle', ',', '(', 'string_address', ')',
+                   '""', ',', 'AT_EMPTY_PATH', ',', '&', 'facts', ')'),
+             'the reader checks it is talking to a device and not a file left '
+             'in its place'),
+            (calls('(', 'facts', '.', 'mode', '&', 'MODE_FORMAT', ')',
+                   '!', '=', 'MODE_CHARACTER', '|', '|'),
+             'and that what it opened is a character device'),
+            (calls('facts', '.', 'rdev_major', '!', '=', '10', ')'),
+             'and on the misc major the register is on'),
+            (calls('floodlight_report_length', '>', '=', 'sizeof',
+                   '(', 'floodlight_report', ')', '-', '1'),
+             'a report that filled the buffer is thrown away rather than half '
+             'believed'),
             (calls('syscall', '(', 'prctl', ')', ',', 'PR_SET_NO_NEW_PRIVS'),
              'the filter is installed with no-new-privs'),
             (calls('syscall', '(', 'seccomp', ')', ',', 'SECCOMP_SET_MODE_FILTER'),
@@ -19532,6 +19560,7 @@ int main(void)
 #include <stdint.h>
 #include <unistd.h>
 #include <stddef.h>
+#include <pthread.h>
 
 typedef uint32_t u32;
 typedef long ssize_t_k;
@@ -19577,8 +19606,9 @@ static bool mock_copy_fails;
 static char mock_log[16384];
 static unsigned mock_log_length;
 
-static void mutex_lock(int *m) { (void)m; mock_lock_depth++; }
-static void mutex_unlock(int *m) { (void)m; mock_lock_depth--; }
+static pthread_mutex_t mock_mutex = PTHREAD_MUTEX_INITIALIZER;
+static void mutex_lock(int *m) { (void)m; pthread_mutex_lock(&mock_mutex); mock_lock_depth++; }
+static void mutex_unlock(int *m) { (void)m; mock_lock_depth--; pthread_mutex_unlock(&mock_mutex); }
 static bool capable(int what) { (void)what; return mock_root; }
 static unsigned current_uid(void) { return mock_uid; }
 static unsigned from_kuid(int *ns, unsigned uid) { (void)ns; return uid; }
@@ -19602,32 +19632,57 @@ static ssize_t_k strscpy(char *to, const char *from, unsigned long room)
         return (ssize_t_k)length;
 }
 
+/* printk has a ring behind it; this has a wall. Stops at it, because a log
+   that ran out of room is a mock that ran out, never a thing under test. */
 static void mock_say(const char *fmt, va_list args)
 {
-        int wrote = vsnprintf(mock_log + mock_log_length,
-                              sizeof(mock_log) - mock_log_length, fmt, args);
-        if (wrote > 0) mock_log_length += (unsigned)wrote;
+        unsigned room = mock_log_length < sizeof(mock_log) - 1
+                                ? (unsigned)(sizeof(mock_log) - 1 - mock_log_length)
+                                : 0;
+        int wrote;
+
+        if (!room)
+                return;
+
+        wrote = vsnprintf(mock_log + mock_log_length, room, fmt, args);
+        if (wrote > 0)
+                mock_log_length += (unsigned)wrote < room ? (unsigned)wrote : room;
 }
 #define MOCK_PRINT(fmt) do { va_list a; va_start(a, fmt); mock_say(fmt, a); va_end(a); } while (0)
 static void pr_warn(const char *fmt, ...) { MOCK_PRINT(fmt); }
 static void pr_err(const char *fmt, ...) { MOCK_PRINT(fmt); }
 static void pr_alert(const char *fmt, ...) { MOCK_PRINT(fmt); }
 
+/* seq_file grows its own buffer; this one does not, so it stops rather than
+   walking off the end. A report longer than the room here is a mock that ran
+   out, never a thing under test. */
 static char mock_report[16384];
 static unsigned mock_report_length;
+static unsigned mock_report_room(void)
+{
+        return mock_report_length < sizeof(mock_report) - 1
+                       ? (unsigned)(sizeof(mock_report) - 1 - mock_report_length)
+                       : 0;
+}
 static void seq_printf(struct seq_file *s, const char *fmt, ...)
 {
-        va_list a; int wrote;
+        va_list a; int wrote; unsigned room = mock_report_room();
         (void)s;
+        if (!room) return;
         va_start(a, fmt);
-        wrote = vsnprintf(mock_report + mock_report_length,
-                          sizeof(mock_report) - mock_report_length, fmt, a);
+        wrote = vsnprintf(mock_report + mock_report_length, room, fmt, a);
         va_end(a);
-        if (wrote > 0) mock_report_length += (unsigned)wrote;
+        if (wrote > 0) mock_report_length += (unsigned)wrote < room ? (unsigned)wrote : room;
 }
 static void seq_puts(struct seq_file *s, const char *text)
-{ (void)s; mock_report_length += (unsigned)snprintf(mock_report + mock_report_length,
-        sizeof(mock_report) - mock_report_length, "%s", text); }
+{
+        unsigned room = mock_report_room();
+        int wrote;
+        (void)s;
+        if (!room) return;
+        wrote = snprintf(mock_report + mock_report_length, room, "%s", text);
+        if (wrote > 0) mock_report_length += (unsigned)wrote < room ? (unsigned)wrote : room;
+}
 '''
 
     bridge = r'''
@@ -19671,6 +19726,32 @@ static void reset(u32 random)
         secret = get_random_u32();
         baseline_sum = baseline_seal();
         guard_arm();
+}
+
+/* One writer among several: adds, changes and gives back rows, and reads the
+   report, all through the same entry points the kernel would use. */
+static void *hammer(void *which)
+{
+        unsigned me = (unsigned)(long)which;
+        char line[96];
+        unsigned round;
+
+        for (round = 0; round < 200; round++) {
+                struct seq_file seq = {0};
+
+                mock_report_length = 0;
+                snprintf(line, sizeof line, "prog%u network %s", me % 6,
+                         (round & 1) ? "deny" : "allow");
+                floodlight_write(NULL, line, strlen(line), NULL);
+
+                snprintf(line, sizeof line, "awk spawn %s",
+                         (round & 2) ? "allow" : "deny");
+                floodlight_write(NULL, line, strlen(line), NULL);
+
+                floodlight_show(&seq, NULL);
+        }
+
+        return NULL;
 }
 
 int main(void)
@@ -19800,6 +19881,105 @@ int main(void)
                         memset(parse.before, 0, GUARD);
                         check(!guard_intact(), "a guard of zeros is not intact");
                 }
+        }
+
+        /* --- red team: a row given back leaves a hole ---------------------- */
+        reset(0x11223344);
+        put("aaa network deny");
+        put("bbb network deny");
+        put("ccc network deny");
+        put("bbb network allow");      /* not built in, so this stays a row */
+        check(put("awk spawn allow") > 0, "a row can still be added");
+        {
+                /* Hand a row back by hand, the way restoring a built-in does,
+                   and then look past the hole it leaves. */
+                memset(&changed[1], 0, sizeof(changed[1]));
+                check(find("ccc", NETWORK, "") != NULL,
+                      "a row past a hole is still found");
+                check(shows("ccc"), "and still in the report");
+        }
+
+        /* --- red team: names that nearly match ----------------------------- */
+        reset(0x11223344);
+        put("aw spawn allow");
+        check(find("awk", SPAWN, "") == NULL,
+              "a shorter name is not a longer one");
+        put("awkk spawn allow");
+        check(find("awk", SPAWN, "") == NULL,
+              "a longer name is not a shorter one");
+        check(find("aw", SPAWN, "") && find("awkk", SPAWN, ""),
+              "and both of them are their own row");
+
+        /* One subject can be refused two different things at once. */
+        reset(0x11223344);
+        put("curl spawn deny");
+        put("curl network deny");
+        check(find("curl", SPAWN, "") && find("curl", NETWORK, ""),
+              "one subject carries a row per setting");
+        check(find("curl", RUN, "") == NULL, "and none for a setting nobody set");
+
+        /* A flag row is told apart by its flag, not just its subject. */
+        reset(0x11223344);
+        put("tar flag --to-command deny");
+        put("tar flag --use-compress-program deny");
+        check(find("tar", FLAG, "--to-command") &&
+              find("tar", FLAG, "--use-compress-program"),
+              "two flags on one program are two rows");
+        check(find("tar", FLAG, "--other") == NULL,
+              "and a flag nobody named is not one of them");
+
+        /* --- red team: the case of a name --------------------------------- */
+        reset(0x11223344);
+        put("AWK spawn allow");
+        check(find("awk", SPAWN, "") == NULL,
+              "a name in capitals is not the applet in lower case");
+
+        /* --- red team: names built to confuse the reader ------------------- */
+        reset(0x11223344);
+        check(put("flag spawn deny") > 0, "a program may be called flag");
+        check(put("allow network deny") > 0, "a program may be called allow");
+        check(put("seal network deny") == -EINVAL,
+              "seal is the command, and the command is the whole line");
+        check(!sealed, "a line that looked like a command did not seal anything");
+        check(shows("flag") && shows("allow"), "and both are in the report");
+
+        /* --- red team: the longest of everything --------------------------- */
+        reset(0x11223344);
+        {
+                char line[SUBJECT + DETAIL + 24];
+                unsigned i;
+                for (i = 0; i < SUBJECT - 1; i++) line[i] = 'n';
+                strcpy(line + SUBJECT - 1, " flag ");
+                for (i = 0; i < DETAIL - 1; i++) line[SUBJECT + 5 + i] = 'f';
+                strcpy(line + SUBJECT + 5 + DETAIL - 1, " deny");
+                check(put(line) > 0, "the longest row that can exist is taken");
+                check(guard_intact(), "and the guards are untouched by it");
+        }
+
+        /* --- red team: two hands at once ----------------------------------- */
+        reset(0x11223344);
+        {
+                /*
+                        The register is one array behind one lock, and a row is
+                        several stores: the name, the setting, the state, then
+                        the seal over all of it. Two writers interleaving there
+                        would leave a row whose seal does not cover what the row
+                        says -- which the next reader would call tampering, on a
+                        machine nobody had tampered with.
+                */
+                pthread_t hands[8];
+                unsigned i;
+
+                for (i = 0; i < 8; i++)
+                        pthread_create(&hands[i], NULL, hammer, (void *)(long)i);
+                for (i = 0; i < 8; i++)
+                        pthread_join(hands[i], NULL);
+
+                check(intact_public(),
+                      "eight writers at once leave every seal covering its row");
+                check(mock_lock_depth == 0, "and the lock as they found it");
+                check(!compromised, "and nothing looking like tampering");
+                check(guard_intact(), "and the guards untouched");
         }
 
         /* --- the lock is balanced whatever happened ------------------------ */

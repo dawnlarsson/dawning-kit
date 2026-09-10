@@ -593,8 +593,23 @@ static ssize_t floodlight_write(struct file *file, const char __user *from,
 	}
 
 	if (!strcmp(subject, "seal")) {
-		bool already = sealed;
+		bool already;
 
+		/*
+			The whole line, or not the command.
+
+			Matched on the first word alone, "seal anything at all"
+			sealed the register and threw the rest away -- so a
+			mistyped line closed the machine to further change, and
+			a deliberate one did it while looking like something
+			else. There is nothing to say after it.
+		*/
+		if (word(&at)) {
+			answer = -EINVAL;
+			goto out;
+		}
+
+		already = sealed;
 		sealed = true;
 
 		/* Only the once. A line that can be repeated is a line that can
