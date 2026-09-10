@@ -2253,10 +2253,8 @@ static COLD b32 file_missing(string_address program)
         does not begin with a y is a no, and so is an input that has ended --
         which is what makes the tools safe to run with no input at all.
 */
-bool file_ask(string_address program, string_address question, string_address subject)
+static bool file_answer_is_yes()
 {
-        string_format(log_error, "%s: %s '%s'? ", program, question, subject);
-
         p8 answer[2];
         bipolar got = system_read_once(0, answer, 1);
 
@@ -2269,6 +2267,13 @@ bool file_ask(string_address program, string_address question, string_address su
                 ;
 
         return yes;
+}
+
+bool file_ask(string_address program, string_address question, string_address subject)
+{
+        string_format(log_error, "%s: %s '%s'? ", program, question, subject);
+
+        return file_answer_is_yes();
 }
 
 /*
@@ -18460,6 +18465,8 @@ static bool rm_force;
 static bool rm_recursive;
 static bool rm_empty_directories;
 static bool rm_ask;
+static bool rm_ask_once;
+static bool rm_preserve_all;
 static bool rm_loud;
 static bool rm_one_system;
 static bool rm_careful;
@@ -18470,8 +18477,11 @@ static p32 rm_device_minor;
 static b32 rm_status;
 static p8 rm_collision_option;
 
+static p8 rm_prompt_option;
+
 static const file_supersede rm_supersedes[] = {
-    {(string_address) "fi", address_of rm_collision_option},
+    {(string_address) "fiI", address_of rm_collision_option},
+    {(string_address) "fiIW", address_of rm_prompt_option},
     {null, null},
 };
 
@@ -18732,7 +18742,11 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
 static const file_long rm_longs[] = {
     {(string_address) "dir", 'd'},
     {(string_address) "force", 'f'},
-    {(string_address) "interactive", 'i'},
+    //      Its own letter, not -i's, because the two are not the same
+    //      option: -i and -f each say what to do about a name that is not
+    //      there as well as whether to ask, and --interactive says only
+    //      the second.
+    {(string_address) "interactive", 'W'},
     {(string_address) "one-file-system", 'o'},
     {(string_address) "no-preserve-root", 'N'},
     {(string_address) "preserve-root", 'P'},
@@ -18741,16 +18755,37 @@ static const file_long rm_longs[] = {
     {null, 0},
 };
 
+/*
+        The three prompting policies, and which option last chose one.
+
+        -f never asks and forgives a name that is not there, -i asks about
+        every name, -I asks once about the whole batch, and --interactive=WHEN
+        chooses one of the three without saying anything about a missing name.
+        Whichever was written last is the one that answers, which is why the
+        letters are read out of a supersede row rather than out of the flags.
+*/
+static const file_word rm_whens[] = {
+    {(string_address) "never", 'f', false},
+    {(string_address) "no", 'f', false},
+    {(string_address) "none", 'f', false},
+    {(string_address) "once", 'I', true},
+    {(string_address) "always", 'i', true},
+    {(string_address) "yes", 'i', false},
+};
+
 static b32 file_rm()
 {
         positive count = (positive)program_argument_count();
         rm_status = 0;
         rm_collision_option = 0;
 
+        rm_prompt_option = 0;
+
         file_taking taking = {
             .program = (string_address) "rm",
-            .allowed = (string_address) "dfirRv",
+            .allowed = (string_address) "dfiIrRv",
             .valued = (string_address) "",
+            .long_optional = (string_address) "WP",
             .longs = rm_longs,
             .supersedes = rm_supersedes,
         };
@@ -18761,8 +18796,53 @@ static b32 file_rm()
         positive flags = taking.flags;
         positive first = taking.first;
 
+        /*
+                --preserve-root takes one word and only one. The plain
+                spelling is the default this tool already keeps; =all adds
+                the refusal to walk off the device an argument's parent is
+                on, which is checked with the arguments below.
+        */
+        rm_preserve_all = false;
+
+        if (flags & FILE_FLAG('P'))
+        {
+                string_address which = file_option_value(address_of taking, 'P');
+
+                if (which && string_compare(which, (string_address) "all"))
+                        return string_report(log_error, 1,
+                                             "rm: unrecognized --preserve-root argument: '%s'\n",
+                                             which);
+
+                rm_preserve_all = which != null;
+        }
+
+        //      --interactive=WHEN names one of the three policies; a bare
+        //      --interactive is the one -i asks for.
+        p8 prompting = rm_prompt_option;
+
+        if (prompting == 'W')
+        {
+                string_address when = file_option_value(address_of taking, 'W');
+
+                if (!when)
+                        prompting = 'i';
+                else
+                {
+                        b32 chosen = file_word_among((string_address) "rm",
+                                                     (string_address) "--interactive",
+                                                     when, rm_whens,
+                                                     sizeof(rm_whens) / sizeof(rm_whens[0]));
+
+                        if (chosen < 0)
+                                return 1;
+
+                        prompting = (p8)chosen;
+                }
+        }
+
         rm_force = rm_collision_option == 'f';
-        rm_ask = rm_collision_option == 'i';
+        rm_ask = prompting == 'i';
+        rm_ask_once = prompting == 'I';
         rm_loud = (flags & FILE_FLAG('v')) != 0;
         rm_one_system = (flags & FILE_FLAG('o')) != 0;
         rm_empty_directories = (flags & FILE_FLAG('d')) != 0;
@@ -18776,6 +18856,28 @@ static b32 file_rm()
                         return 0;
 
                 return string_report(log_error, 1, "%s: missing operand\n", (string_address) "rm");
+        }
+
+        /*
+                -I and --interactive=once ask once about the batch instead of
+                once about each name: over three names, or any name at all
+                under -r. A no here is not a failure, it is the batch not
+                being taken.
+        */
+        if (rm_ask_once)
+        {
+                positive named = count - first;
+
+                if (named > 3 || (rm_recursive && named))
+                {
+                        string_format(log_error, rm_recursive
+                                          ? "rm: remove %p argument%s recursively? "
+                                          : "rm: remove %p argument%s? ",
+                                      named, named == 1 ? "" : "s");
+
+                        if (!file_answer_is_yes())
+                                return 0;
+                }
         }
 
         if (rm_preserve_root)
@@ -18817,6 +18919,31 @@ static b32 file_rm()
                         log_error("rm: use --no-preserve-root to override this failsafe\n", 0);
                         rm_status = 1;
                         continue;
+                }
+
+                /*
+                        =all keeps a named directory that is a mount point
+                        whole: it is on a different device from the directory
+                        it hangs under, and taking it would take a filesystem
+                        rather than a tree.
+                */
+                if (here && rm_preserve_all)
+                {
+                        p8 above[FILE_PATH_MAX];
+                        file_facts parent;
+
+                        if (file_path_join(above, path, "..") &&
+                            file_look_at(above, address_of parent) &&
+                            (parent.device_major != facts.device_major ||
+                             parent.device_minor != facts.device_minor))
+                        {
+                                string_format(log_error,
+                                              "rm: skipping '%s', since it's on a different device\n",
+                                              path);
+                                log_error("rm: and --preserve-root=all is in effect\n", 0);
+                                rm_status = 1;
+                                continue;
+                        }
                 }
 
                 if (here && !rm_recursive && !rm_empty_directories)
