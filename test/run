@@ -2991,11 +2991,14 @@ riscv_default_startup()
 #       look at; a recursive walk turns that number into megabytes of
 #       committed memory, and the first machine with a smaller stack turns it
 #       into a crash. Neither `size`, nor RSS at startup, nor the section
-#       table shows any of it, which is why it went unnoticed: ls_below holds
-#       each level's subdirectory names in an array sized LS_ARENA / 8 --
-#       128 kB of stack per level of nesting, to FILE_MAX_DEPTH -- so `ls -R`
-#       on a tree any user can make with mkdir -p needs between four and six
-#       megabytes where GNU ls needs sixteen kilobytes.
+#       table shows any of it, which is why it went unnoticed for so long:
+#       ls_below held each level's subdirectory names in an array sized
+#       LS_ARENA / 8 -- 128 kB of stack per level of nesting, to
+#       FILE_MAX_DEPTH -- and file_ls_as put another 320 kB under it, so
+#       `ls -R` over a tree anybody can make with mkdir -p walked five
+#       megabytes down the stack. Both are arenas now and the walk needs 320
+#       kB, which is why this lane exists rather than a note somewhere: the
+#       number is only true until somebody puts an array back on the stack.
 #
 #       The ceilings below are pins in the same sense the differential engine
 #       uses the word: they record what a function costs today so that growth
@@ -3017,8 +3020,6 @@ STACK_FRAME_NOTICE=32768
 stack_frame_pins()
 {
         cat <<'PINS'
-file_ls_as 330000
-ls_below 136000
 text_join 133000
 text_comm 133000
 tools_factor 67000
