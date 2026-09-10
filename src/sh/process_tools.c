@@ -2618,29 +2618,24 @@ static bipolar process_replay_line(process_replay_reader address_to reader,
 static bool process_replay_skip_header(
     process_replay_reader address_to reader)
 {
-        string_address prefix = (string_address)"Script started on ";
-        bool matches = true;
+        /*      util-linux drops the transcript's opening line whatever it
+                holds -- the "Script started on" banner is only its usual
+                tenant -- and a file with no newline in it is that one line
+                entire.  Matching the banner instead replayed every log whose
+                first line is payload one entry out of step. */
         positive used = 0;
-        while (used < 65536)
+        while (used < (positive)1 << 20)
         {
                 bipolar got = process_replay_fill(reader);
                 if (got <= 0)
-                        return false;
+                        return got == 0;
                 p8 address_to start = reader->bytes + reader->at;
-                positive room = min((positive)got, 65536 - used);
+                positive room = (positive)got;
                 positive take = memory_span_without_byte(start, '\n', room);
-                if (used < 18 && memory_compare(start, prefix + used, min(take, 18 - used)))
-                        matches = false;
                 reader->at += take;
                 used += take;
                 if (take < room)
                 {
-                        if (!matches || used < 18)
-                        {
-                                // No opening line: nothing was consumed.
-                                reader->at -= used;
-                                return true;
-                        }
                         reader->at++;
                         return true;
                 }
@@ -2649,13 +2644,25 @@ static bool process_replay_skip_header(
         return false;
 }
 
-static bool process_replay_timing(string_address line, bool address_to advanced,
-                                  p8 address_to stream,
-                                  positive address_to delay,
-                                  positive address_to count)
+/*      What one timing line said, answered the way the reference's
+        `sscanf("%lf %zu")` answers: nothing converted means this is not a
+        timing file at all, one field converted means it is one and this line
+        is broken. The first tells the opening line from a file of some other
+        shape, which util-linux replays as empty and calls a success; the
+        second is the "timing file error" it refuses on. */
+#define PROCESS_REPLAY_NOT_TIMING 0
+#define PROCESS_REPLAY_LINE_READ 1
+#define PROCESS_REPLAY_LINE_BROKEN 2
+
+static b32 process_replay_timing(string_address line, bool address_to advanced,
+                                 p8 address_to stream,
+                                 positive address_to delay,
+                                 positive address_to count,
+                                 string_address address_to text)
 {
         string_address at = line;
         p8 kind = 0;
+        address_to text = null;
         if (string_get(at + 1) == ' ' &&
             (string_get(at) == 'I' || string_get(at) == 'O' ||
              string_get(at) == 'S' || string_get(at) == 'H'))
@@ -2663,46 +2670,46 @@ static bool process_replay_timing(string_address line, bool address_to advanced,
                 address_to advanced = true;
                 kind = string_get(at);
                 at += 2;
-                if (kind == 'H')
-                {
-                        address_to stream = kind;
-                        address_to delay = 0;
-                        address_to count = 0;
-                        return true;
-                }
         }
 
         while (string_is(at, ' '))
                 at++;
         string_address gap = string_first_of(at, ' ');
         if (!gap)
-                return false;
+                return PROCESS_REPLAY_NOT_TIMING;
         address_to gap = end;
         positive waited;
         bool okay = file_duration_read(at, false, address_of waited);
         address_to gap = ' ';
         if (!okay)
-                return false;
+                return PROCESS_REPLAY_NOT_TIMING;
         at = gap + 1;
-        while (string_is(at, ' '))
-                at++;
 
-        /* Signal rows carry a signal name/number rather than a byte count.
-           The out/in replay engine preserves their delay and consumes no
-           payload; selecting the signal stream itself is rejected below. */
+        /*      Signal and header rows carry a name and its data rather than a
+                byte count: they consume no payload, and the stream that asked
+                for them prints the pair. */
         positive bytes = 0;
-        if (kind != 'S' && !file_unsigned_decimal(at, address_of bytes))
-                return false;
-        address_to stream = kind ? kind : 'O';
+        if (kind == 'S' || kind == 'H')
+                address_to text = at;
+        else
+        {
+                while (string_is(at, ' '))
+                        at++;
+                if (!file_unsigned_decimal(at, address_of bytes))
+                        return PROCESS_REPLAY_LINE_BROKEN;
+        }
+        address_to stream = kind;
         address_to delay = waited;
         address_to count = bytes;
-        return true;
+        return PROCESS_REPLAY_LINE_READ;
 }
 
 static bool process_replay_sleep(positive delay, positive divisor,
                                  bool limited, positive maximum)
 {
-        if (divisor != 1000000000)
+        //      A divisor of zero is taken, as the reference takes it, and
+        //      scales nothing: there is no dividing by it.
+        if (divisor && divisor != 1000000000)
         {
                 positive whole = delay / divisor;
                 positive remainder = delay % divisor;
@@ -2734,7 +2741,7 @@ static bool process_replay_sleep(positive delay, positive divisor,
 }
 
 static bool process_replay_payload(process_replay_reader address_to reader,
-                                   positive length, bool emit, p8 cr_mode)
+                                   positive length, bool emit, bool carriage)
 {
         while (length)
         {
@@ -2746,7 +2753,7 @@ static bool process_replay_payload(process_replay_reader address_to reader,
                 positive chunk = min(length, reader->have - reader->at);
                 if (emit)
                 {
-                        if (cr_mode == 2)
+                        if (carriage)
                                 for (positive at = 0; at < chunk; at++)
                                         if (reader->bytes[reader->at + at] == '\r')
                                                 reader->bytes[reader->at + at] = '\n';
@@ -2759,6 +2766,88 @@ static bool process_replay_payload(process_replay_reader address_to reader,
         }
         return true;
 }
+
+/*      The signal and info streams print the pair a row carries rather than
+        bytes out of a log: `NAME DATA` for a signal, the name in a
+        ten-column field and then `: DATA` for a header. DATA still holds the
+        space that separated it from the name, which is where the reference's
+        second space in `SIGWINCH  ROWS=24 COLS=80` comes from. */
+static bool process_replay_named(string_address name, positive length,
+                                 string_address data, bool padded)
+{
+        p8 room[PROCESS_REPLAY_LINE + 32];
+        positive used = 0;
+        if (padded)
+                while (used + length < 10)
+                        room[used++] = ' ';
+        memory_copy(room + used, name, length);
+        used += length;
+        if (padded)
+                room[used++] = ':';
+        room[used++] = ' ';
+        positive rest = string_length(data);
+        if (used + rest >= sizeof(room))
+                rest = sizeof(room) - used - 1;
+        memory_copy(room + used, data, rest);
+        used += rest;
+        room[used++] = '\n';
+        return system_write_all(1, room, used) == (bipolar)used;
+}
+
+static bool process_replay_say(string_address text, bool padded)
+{
+        string_address gap = string_first_of(text, ' ');
+        positive length = gap ? (positive)(gap - text) : string_length(text);
+        return process_replay_named(text, length, gap ? gap : text + length,
+                                    padded);
+}
+
+/*      Every value scriptreplay reads is read where it is written, the way
+        the reference reads it inside its own option loop: a later good value
+        does not rescue an earlier bad one, so the check cannot wait until
+        the last value of each letter is known. */
+static bool process_replay_number(p8 letter, string_address value)
+{
+        positive scratch;
+        if (!value)
+                return true;
+        if (letter == 'd' || letter == 'm')
+        {
+                if (file_duration_read(value, false, address_of scratch))
+                        return true;
+                string_format(log_error, letter == 'd'
+                                  ? "scriptreplay: failed to parse number: '%s'\n"
+                                  : "scriptreplay: failed to parse maximal delay argument: '%s'\n",
+                              value);
+                return false;
+        }
+        if (letter == 'x')
+        {
+                if (string_equals(value, (string_address)"out") ||
+                    string_equals(value, (string_address)"in") ||
+                    string_equals(value, (string_address)"signal") ||
+                    string_equals(value, (string_address)"info"))
+                        return true;
+                string_format(log_error, "scriptreplay: unsupported stream name: '%s'\n", value);
+                return false;
+        }
+        if (letter == 'c')
+        {
+                if (string_equals(value, (string_address)"auto") ||
+                    string_equals(value, (string_address)"never") ||
+                    string_equals(value, (string_address)"always"))
+                        return true;
+                string_format(log_error, "scriptreplay: unsupported mode name: '%s'\n", value);
+                return false;
+        }
+        return true;
+}
+
+//      -t and -T name the same file, so the last of them written wins.
+static p8 process_replay_timing_letter;
+static const file_supersede process_scriptreplay_supersedes[] = {
+    {(string_address)"tT", address_of process_replay_timing_letter}, {null, null},
+};
 
 static const file_long process_scriptreplay_longs[] = {
     {(string_address)"timing", 't'},
@@ -2784,22 +2873,21 @@ static b32 process_scriptreplay()
             .allowed = (string_address)"tTIOBsdmxcShV",
             .valued = (string_address)"tTIOBsdmxc",
             .longs = process_scriptreplay_longs,
+            .supersedes = process_scriptreplay_supersedes,
+            .seen = process_replay_number,
         };
         positive argument_count = (positive)program_argument_count();
         b32 answer;
+        process_replay_timing_letter = 0;
         if (ul_options_done(address_of taking,
                 "[options] timingfile [typescript [divisor]]", address_of answer))
                 return answer;
         if (taking.flags & FILE_FLAG('S'))
                 return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "summary mode is not supported");
-        if ((taking.flags & FILE_FLAG('B')) &&
-            (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
-                             FILE_FLAG('s'))))
-                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "--log-io conflicts with separate logs");
 
-        string_address timing_path = file_option_value(address_of taking, 't');
-        if (!timing_path)
-                timing_path = file_option_value(address_of taking, 'T');
+        string_address timing_path = process_replay_timing_letter
+            ? file_option_value(address_of taking, process_replay_timing_letter)
+            : null;
         positive operand = taking.first;
         if (!timing_path)
         {
@@ -2808,40 +2896,53 @@ static b32 process_scriptreplay()
                 timing_path = program_argument((b32)operand++);
         }
 
-        string_address out_path = file_option_value(address_of taking, 'O');
-        if (out_path && file_option_value(address_of taking, 's'))
+        /*      --log-io is the fallback for both streams and not a claim on
+                either: --log-in and --log-out name their own log whichever
+                side of it they were written, which is what the reference's
+                per-stream association does. Naming any log at all also fills
+                the transcript's operand slot, so the next operand there is
+                the divisor. */
+        string_address out_option = file_option_value(address_of taking, 'O');
+        if (out_option && file_option_value(address_of taking, 's'))
         {
                 log_error("scriptreplay: options --log-out and --typescript cannot be combined\n",
                           0);
                 return 1;
         }
-        if (!out_path)
-                out_path = file_option_value(address_of taking, 's');
-        string_address in_path = file_option_value(address_of taking, 'I');
+        if (!out_option)
+                out_option = file_option_value(address_of taking, 's');
+        string_address in_option = file_option_value(address_of taking, 'I');
         string_address both_path = file_option_value(address_of taking, 'B');
-        if (both_path)
-                out_path = in_path = both_path;
-        if (!out_path && operand < argument_count)
-                out_path = program_argument((b32)operand++);
+        bool log_named = (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
+                                          FILE_FLAG('s') | FILE_FLAG('B'))) != 0;
+        string_address operand_log = null;
+        if (!log_named && operand < argument_count)
+                operand_log = program_argument((b32)operand++);
+
+        string_address out_path = out_option ? out_option
+                                             : (operand_log ? operand_log : both_path);
+        string_address in_path = in_option ? in_option : both_path;
         if (!out_path && !in_path)
                 out_path = (string_address)"typescript";
+        //      Both streams out of one --log-io read one file position, the
+        //      way the reference's single associated log does.
+        bool shared = both_path && out_path == both_path && in_path == both_path;
 
         // Operands past the divisor are ignored, as util-linux ignores them.
         string_address divisor_text = file_option_value(address_of taking, 'd');
         if (!divisor_text && operand < argument_count)
                 divisor_text = program_argument((b32)operand++);
         positive divisor = 1000000000;
-        if (divisor_text &&
-            (!file_duration_read(divisor_text, false, address_of divisor) || !divisor))
-                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "invalid divisor");
+        if (divisor_text && !file_duration_read(divisor_text, false, address_of divisor))
+                return string_report(log_error, 1, "scriptreplay: failed to parse number: '%s'\n",
+                                     divisor_text);
 
         bool limited = false;
         positive maximum = 0;
         string_address maximum_text = file_option_value(address_of taking, 'm');
         if (maximum_text)
         {
-                if (!file_duration_read(maximum_text, false, address_of maximum))
-                        return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "invalid maximum delay");
+                file_duration_read(maximum_text, false, address_of maximum);
                 limited = true;
         }
 
@@ -2853,14 +2954,18 @@ static b32 process_scriptreplay()
                         selected = 'O';
                 else if (string_equals(stream, (string_address)"in"))
                         selected = 'I';
+                else if (string_equals(stream, (string_address)"signal"))
+                        selected = 'S';
+                else if (string_equals(stream, (string_address)"info"))
+                        selected = 'H';
                 else
-                        return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "only out and in streams are supported");
+                        return string_report(log_error, 1, "scriptreplay: unsupported stream name: '%s'\n", stream);
         }
         else if (!out_path && in_path)
                 selected = 'I';
-        if ((selected == 'O' && !out_path) ||
-            (selected == 'I' && !in_path))
-                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "selected stream has no log file");
+        //      A stream with no log behind it plays nothing and is not an
+        //      error: the reference writes its closing newline and leaves.
+        p8 classic = selected == 'I' ? 'I' : 'O';
 
         p8 cr_mode = 0;
         string_address cr = file_option_value(address_of taking, 'c');
@@ -2886,7 +2991,7 @@ static b32 process_scriptreplay()
                 if (opened < 0 || !process_replay_skip_header(address_of output))
                         goto replay_open_failed;
         }
-        if (in_path && !both_path)
+        if (in_path && !shared)
         {
                 opened = process_replay_open(address_of input, in_path);
                 if (opened < 0 || !process_replay_skip_header(address_of input))
@@ -2895,6 +3000,7 @@ static b32 process_scriptreplay()
 
         bool advanced = false;
         bool failed = false;
+        bool first = true;
         p8 line[PROCESS_REPLAY_LINE];
         bipolar got;
         while ((got = process_replay_line(address_of timing, line,
@@ -2902,37 +3008,64 @@ static b32 process_scriptreplay()
         {
                 p8 kind;
                 positive delay, length;
-                if (!process_replay_timing(line, address_of advanced,
-                                           address_of kind, address_of delay,
-                                           address_of length))
+                string_address text;
+                b32 read = process_replay_timing(line, address_of advanced,
+                                                 address_of kind, address_of delay,
+                                                 address_of length, address_of text);
+                if (read == PROCESS_REPLAY_LINE_BROKEN)
                 {
                         failed = true;
                         break;
                 }
+                if (read == PROCESS_REPLAY_NOT_TIMING)
+                {
+                        /*      Nothing converted on the opening line means
+                                this file is not a timing file, which the
+                                reference replays as empty rather than
+                                refusing; after that the format is settled and
+                                a line it cannot read is an error. */
+                        if (!first)
+                                failed = true;
+                        break;
+                }
+                first = false;
                 if (kind == 'H')
+                {
+                        if (selected == 'H' && !process_replay_say(text, true))
+                                failed = true;
+                        if (failed)
+                                break;
                         continue;
+                }
                 if (!process_replay_sleep(delay, divisor, limited, maximum))
                 {
                         failed = true;
                         break;
                 }
                 if (kind == 'S')
+                {
+                        if (selected == 'S' && !process_replay_say(text, false))
+                                failed = true;
+                        if (failed)
+                                break;
                         continue;
+                }
 
-                // A classic timing file has no stream letters; with only an
-                // input log to play, its entries play that log.
+                //      A classic timing file has no stream letters, so its
+                //      entries belong to whichever stream was asked for.
+                p8 which = kind ? kind : classic;
                 process_replay_reader address_to source =
-                    both_path || (kind == 'O' && output.handle >= 0)
-                        ? address_of output
-                        : address_of input;
+                    shared || which == 'O' ? address_of output
+                                           : address_of input;
                 if (source->handle < 0)
                         continue;
-                if (!process_replay_payload(source, length, kind == selected,
-                                            cr_mode))
-                {
-                        failed = true;
+                //      A log with less left in it than the row asks for ends
+                //      the replay where it runs out, and that is a success:
+                //      the reference stops there and says nothing.
+                if (!process_replay_payload(source, length, which == selected,
+                                            cr_mode == 2 ||
+                                            (!cr_mode && which == 'I')))
                         break;
-                }
         }
         if (got < 0 || timing.failed)
                 failed = true;
