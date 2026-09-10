@@ -16682,7 +16682,13 @@ static bool shred_one(string_address path, positive iterations,
         //      pass 1/2 random and pass 2/2 of zeroes.
         positive passes = iterations + (zero ? 1 : 0);
 
-        for (positive pass = 0; pass < iterations && good; pass++)
+        //      Nothing to write over is no pass at all: -s0 leaves the file
+        //      alone and the reference says nothing about passes it never
+        //      made.
+        if (!length)
+                passes = 0;
+
+        for (positive pass = 0; pass < iterations && good && length; pass++)
         {
                 if (verbose)
                         string_format(log_error,
@@ -16693,7 +16699,7 @@ static bool shred_one(string_address path, positive iterations,
                                   address_of random);
         }
 
-        if (zero && good)
+        if (zero && good && length)
         {
                 if (verbose)
                         string_format(log_error, "shred: %s: pass %p/%p (000000)...\n",
