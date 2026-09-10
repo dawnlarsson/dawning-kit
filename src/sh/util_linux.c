@@ -2091,23 +2091,33 @@ static fn ul_flock_alarm(b32 number)
 }
 
 static b32 ul_flock_poll(b32 handle, p8 kind, positive timeout, bool fcntl,
-                         positive start, positive length, b32 conflict)
+                         positive start, positive length, b32 conflict,
+                         bool verbose, bool address_to blocked)
 {
         positive began = clock_monotonic_nanoseconds();
 
+        address_to blocked = true;
         for (;;)
         {
                 bipolar answer = ul_flock_try(handle, kind, true, fcntl,
                                               start, length);
                 if (answer >= 0)
+                {
+                        address_to blocked = false;
                         return 0;
+                }
                 if (answer != -UL_ERROR_AGAIN && answer != -ERROR_ACCESS)
                         return string_report(log_error, 1, "flock: cannot lock: %s\n",
                                       file_reason(answer));
                 positive now = clock_monotonic_nanoseconds();
                 positive elapsed = now >= began ? now - began : timeout;
                 if (elapsed >= timeout)
+                {
+                        if (verbose)
+                                string_format(log_error,
+                                              "flock: timeout while waiting to get lock\n");
                         return conflict;
+                }
 
                 positive left = timeout - elapsed;
                 positive nap = left < 10000000 ? left : 10000000;
@@ -2116,13 +2126,19 @@ static b32 ul_flock_poll(b32 handle, p8 kind, positive timeout, bool fcntl,
         }
 }
 
+/*      blocked says the lock was not taken, which the returned status
+        cannot: --conflict-exit-code 0 asks for a refusal to be reported as
+        success, and the command must still not be run. */
 static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                             bool timed, positive timeout, bool fcntl,
                             positive start, positive length,
-                            b32 conflict)
+                            b32 conflict, bool verbose,
+                            bool address_to blocked)
 {
         bipolar answer;
         bool immediate = nonblocking || (timed && !timeout);
+
+        address_to blocked = true;
         if (immediate || !timed)
                 answer = ul_flock_try(handle, kind, immediate, fcntl,
                                       start, length);
@@ -2133,7 +2149,7 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                                   (positive)address_of prior) < 0 ||
                     prior.first_seconds || prior.first_microseconds)
                         return ul_flock_poll(handle, kind, timeout, fcntl, start,
-                                             length, conflict);
+                                             length, conflict, verbose, blocked);
 
                 signal_action wanted;
                 signal_action had;
@@ -2141,7 +2157,7 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                 wanted.handler = ul_flock_alarm;
                 if (signal_action_change(SIGALRM, address_of wanted, address_of had) < 0)
                         return ul_flock_poll(handle, kind, timeout, fcntl, start,
-                                             length, conflict);
+                                             length, conflict, verbose, blocked);
 
                 signal_interval timer = {0, 0, (bipolar)(timeout / 1000000000),
                                          (bipolar)((timeout % 1000000000 + 999) / 1000)};
@@ -2163,10 +2179,21 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
         }
 
         if (answer >= 0)
+        {
+                address_to blocked = false;
                 return 0;
+        }
         if ((immediate && (answer == -UL_ERROR_AGAIN || answer == -ERROR_ACCESS)) ||
             (!immediate && timed && answer == UL_ERROR_INTERRUPTED))
+        {
+                /*  The reference says which of the two ways it did not get
+                    the lock, and says it only when asked to. */
+                if (verbose)
+                        string_format(log_error, immediate
+                            ? "flock: failed to get lock\n"
+                            : "flock: timeout while waiting to get lock\n");
                 return conflict;
+        }
         string_format(log_error, "flock: cannot lock: %s\n",
                       file_reason(answer));
         return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
@@ -2386,15 +2413,13 @@ static b32 util_linux_flock()
         }
 
         bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        bool blocked = false;
         positive began = verbose ? clock_monotonic_nanoseconds() : 0;
         answer = ul_flock_acquire(handle, ul_flock_kind ? ul_flock_kind : 'x',
                                   (taking.flags & FILE_FLAG('n')) != 0,
                                   timed, timeout, fcntl, start, length,
-                                  conflict);
-        if (answer && verbose && timed && answer == conflict)
-                string_format(log_error,
-                              "flock: timeout while waiting to get lock\n");
-        if (!answer && verbose)
+                                  conflict, verbose, address_of blocked);
+        if (!blocked && verbose)
         {
                 positive elapsed = clock_monotonic_nanoseconds() - began;
                 p8 fraction_text[32];
@@ -2405,7 +2430,7 @@ static b32 util_linux_flock()
                 string_to_field(log, fraction_text, 6, '0', false);
                 string_format(log, " seconds\n");
         }
-        if (answer || descriptor)
+        if (blocked || descriptor)
         {
                 if (!descriptor)
                         system_close(handle);
