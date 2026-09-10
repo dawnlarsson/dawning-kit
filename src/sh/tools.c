@@ -6058,8 +6058,16 @@ static bool factor_number(p8 address_to bytes, positive length,
                           bool exponents)
 {
         p8 decimal[32];
-        positive start = length && bytes[0] == '+' ? 1 : 0;
+        /*      The reference walks off leading blanks -- spaces alone, not
+                tabs or newlines -- and then one plus sign, and nothing after
+                the sign. So ' 12' is twelve and '+ 12' is not a number. */
+        positive start = 0;
         positive value;
+
+        while (start < length && bytes[start] == ' ')
+                start++;
+        if (start < length && bytes[start] == '+')
+                start++;
 
         if (start == length || length - start >= sizeof(decimal))
                 goto invalid;
@@ -6174,6 +6182,10 @@ invalid:
                 {
                         p8 byte = bytes[at];
 
+                        //      The reference quotes a C string, so what it
+                        //      shows ends where the first zero byte does.
+                        if (!byte)
+                                break;
                         if (byte_is_printable(byte))
                                 shown[take++] = byte;
                         else
@@ -6857,9 +6869,11 @@ static b32 tools_uuidparse()
                                 text_put_string("\": ");
                                 string_address value =
                                     tools_uuid_cell(address_of record, column);
-                                if ((column == TOOLS_UUID_COLUMN_TIME ||
-                                     column == TOOLS_UUID_COLUMN_TYPE) &&
-                                    record.valid && !string_get(value))
+                                //      An empty cell is no string at all to
+                                //      the reference's table writer, whatever
+                                //      column it stands in -- the uuid of an
+                                //      empty operand included.
+                                if (!string_get(value))
                                         text_put_string("null");
                                 else
                                         writer_json_string(text_put, value);
@@ -8822,6 +8836,23 @@ static const file_long dump_od_longs[] = {
    the least common multiple of the sizes, or the multiple itself when it is
    wider. A requested width that is not such a multiple is a warning and
    the multiple is used instead. */
+/*      The width complaint waits for a file to open. The reference computes
+        its block length after the first input is in hand, so a run whose
+        only input cannot be read says what it could not read and nothing
+        about the width it would have used. */
+static positive dump_od_warn_width;
+static positive dump_od_warn_unit;
+
+static fn dump_od_width_warning()
+{
+        if (!dump_od_warn_unit)
+                return;
+        string_format(writer_stderr,
+                      "od: warning: invalid width %p; using %p instead\n",
+                      dump_od_warn_width, dump_od_warn_unit);
+        dump_od_warn_unit = 0;
+}
+
 static bool dump_od_row_width()
 {
         positive unit = 1;
@@ -8838,20 +8869,11 @@ static bool dump_od_row_width()
                 return true;
         }
 
-        if (dump_arguments.width > DUMP_BLOCK)
+        if (dump_arguments.width > DUMP_BLOCK ||
+            dump_arguments.width % unit)
         {
-                string_format(writer_stderr,
-                              "od: warning: invalid width %p; using %p instead\n",
-                              dump_arguments.width, unit);
-                dump_arguments.width = unit;
-                return true;
-        }
-
-        if (dump_arguments.width % unit)
-        {
-                string_format(writer_stderr,
-                              "od: warning: invalid width %p; using %p instead\n",
-                              dump_arguments.width, unit);
+                dump_od_warn_width = dump_arguments.width;
+                dump_od_warn_unit = unit;
                 dump_arguments.width = unit;
         }
 
@@ -9453,6 +9475,12 @@ static b32 dump_run(positive first, positive count)
                         continue;
 
                 opened = true;
+                //      The reference computes its block length once an input
+                //      is in hand and the skip it was given has been taken,
+                //      so a run that cannot open anything, or cannot skip as
+                //      far as it was asked to, says nothing about the width.
+                if (!skip)
+                        dump_od_width_warning();
 
                 if (dump_input_is_directory(name))
                 {
@@ -9485,6 +9513,8 @@ static b32 dump_run(positive first, positive count)
                         // takes the offset as its own and reads nothing.
                         offset += dump_arguments.od ? taken : skip;
                         skip -= dump_arguments.od ? taken : skip;
+                        if (!skip)
+                                dump_od_width_warning();
                 }
 
                 if (!left)
@@ -9722,6 +9752,7 @@ static b32 tools_od(void)
         dump_arguments.od = true;
         dump_od_strings = 3;
         dump_od_type_failed = false;
+        dump_od_warn_unit = 0;
 
         if (!file_take(address_of taking) || dump_od_type_failed)
                 return text_done(1);
@@ -9762,23 +9793,38 @@ static b32 tools_od(void)
         positive operands = stop - taking.first;
 
         bool traditional = (taking.flags & FILE_FLAG('T')) != 0;
+        /*      The options POSIX never gave od turn the traditional operand
+                shape off: after any of them the last word is a file name and
+                nothing else, which is what the reference's `modern` flag
+                says. --traditional asks for the old shape back. */
+        bool modern = (taking.flags & (FILE_FLAG('A') | FILE_FLAG('j') |
+                                       FILE_FLAG('N') | FILE_FLAG('S') |
+                                       FILE_FLAG('t') | FILE_FLAG('v') |
+                                       FILE_FLAG('w'))) != 0;
 
-        if (operands >= 1 && operands <= 2)
+        if ((!modern || traditional) && operands >= 1 && operands <= 2)
         {
                 string_address last = program_argument((b32)(stop - 1));
+                positive offset;
 
-                if (string_is(last, '+') ||
-                    (traditional && operands == 2 &&
-                     byte_is_digit(string_get(last))))
+                if (string_is(last, '+'))
                 {
-                        positive offset;
-
                         if (!dump_od_offset(last, address_of offset))
                         {
                                 string_format(writer_stderr,
                                               "od: invalid offset '%s'\n", last);
                                 return text_done(1);
                         }
+                        dump_arguments.skip = offset;
+                        stop--;
+                        operands--;
+                }
+                else if (operands == 2 &&
+                         dump_od_offset(last, address_of offset))
+                {
+                        //      Two operands and the second reads as an
+                        //      offset: `od FILE OFFSET`, in octal unless it
+                        //      says otherwise.
                         dump_arguments.skip = offset;
                         stop--;
                         operands--;

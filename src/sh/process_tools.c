@@ -570,8 +570,13 @@ static b32 process_chroot()
                     !file_look_at((string_address) "/", address_of current) ||
                     !file_same_identity(address_of requested,
                                         address_of current))
-                        return string_report(log_error, 125,
-                            "chroot: option --skip-chdir only permitted if NEWROOT is old '/'\n");
+                {
+                        //      coreutils sends the reader on to --help here,
+                        //      as it does for every usage complaint.
+                        log_error("chroot: option --skip-chdir only permitted if NEWROOT is old '/'\n", 0);
+                        log_error("Try 'chroot --help' for more information.\n", 0);
+                        return 125;
+                }
         }
 
         bipolar changed = system_call_1(syscall(chroot), (positive)root);
@@ -3182,9 +3187,12 @@ static b32 process_ctrlaltdel()
         if (ul_options_done(address_of taking, "hard|soft", address_of answer))
                 return answer;
 
-        /* Without an operand util-linux reports the current setting, which
-           the kernel publishes as 0 (soft) or 1 (hard). */
-        if (taking.first == count)
+        /* With nothing after the program name util-linux reports the current
+           setting, which the kernel publishes as 0 (soft) or 1 (hard). Its
+           operand is the second word of the vector and not the first word
+           the option reader left standing, so a lone -- is an argument to it
+           and not the end of the options. */
+        if (count < 2)
         {
                 string_address knob = (string_address)"/proc/sys/kernel/ctrl-alt-del";
                 p8 setting[16];
@@ -3207,10 +3215,7 @@ static b32 process_ctrlaltdel()
                 log_flush();
                 return 0;
         }
-        if (taking.first + 1 != count)
-                return string_report(log_error, 1, "%s: %s\n", (string_address)"ctrlaltdel", (string_address)"expected hard or soft");
-
-        string_address mode = program_argument((b32)taking.first);
+        string_address mode = program_argument(1);
         positive command;
 
         if (string_equals(mode, (string_address)"hard"))
@@ -3218,7 +3223,7 @@ static b32 process_ctrlaltdel()
         else if (string_equals(mode, (string_address)"soft"))
                 command = PROCESS_REBOOT_CAD_OFF;
         else
-                return string_report(log_error, 1, "%s: %s\n", (string_address)"ctrlaltdel", (string_address)"expected hard or soft");
+                return string_report(log_error, 1, "ctrlaltdel: unknown argument: %s\n", mode);
 
         bipolar changed = system_call_4(syscall(reboot), PROCESS_REBOOT_MAGIC,
                                         PROCESS_REBOOT_MAGIC_SECOND, command,

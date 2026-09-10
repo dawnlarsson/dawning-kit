@@ -115745,58 +115745,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "misc_factor",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "04b80d20d3c0f5b5",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-h",
-    "--exponents",
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "blanks",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "0902deec139a60b4",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "18446744073709551617"
    ],
    "domain": "misc",
@@ -115860,56 +115808,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "1c2f8ed0bf4aa4f2",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "blanks",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "207acc25de38a2dc",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "wide_words",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "2a11408ff23ab6a4",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -115987,31 +115885,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "331f3eed711396e2",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "35737aa10d36ea8a",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -116113,56 +115986,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "450e96f074657522",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "many_lines",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "496bb7b7b5e33784",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "high",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "4af115e293434435",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -116305,32 +116128,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    "--exponents",
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "56acc3c9c3241a28",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "-h",
     "--exponents",
     "18446744073709551616"
@@ -116345,31 +116142,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "68de1dbc3b1df2ae",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "6b2b5102d6187cc9",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -116421,33 +116193,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "75f82d58a197f71e",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-h",
-    "--exponents",
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "misc_factor_random",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "766d2b5d7da650d6",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -116577,33 +116322,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "8920c357f21cdf53",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-h",
-    "--exponents",
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "wide_words",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "8934b19fe21d361e",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -116768,32 +116486,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    "--exponents",
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "misc_factor",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "a63481d7d96c99ba",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "18446744073709551616"
    ],
    "domain": "misc",
@@ -116900,31 +116592,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "long",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "b8db777fb1d1fb01",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "18446744073709551616"
    ],
    "domain": "misc",
@@ -116991,31 +116658,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "c5781fa92d308eeb",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "misc_factor_random",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "c5b510786a258d55",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -117105,58 +116747,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    "-h",
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "nonl",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "cf42cc699fd688f1",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--exponents",
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "blanks",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "d3daafbf3e8c96f2",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "18446744073709551616"
    ],
    "domain": "misc",
@@ -117169,31 +116759,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "db0024235b067868",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "nonl",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "dfcad3b86cff8224",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -117221,106 +116786,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "e068bf62f99aef2a",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "nul",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "e655a5c5301e1082",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "numbers",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "ec0eb2d96a210b14",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "nul",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "ed36f2262c538fcb",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-h",
-    "--exponents",
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "long",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "ef28a9b1557d0b18",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -117398,32 +116863,6 @@ PINNED = r"""
   },
   "domain": "misc",
   "id": "fa7145b551ce9018",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r193",
-  "utility": "factor"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "-h",
-    " 12"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "many_lines",
-   "utility": "factor"
-  },
-  "domain": "misc",
-  "id": "fd64857e59c287f9",
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r193",
@@ -117772,32 +117211,6 @@ PINNED = r"""
   "option": "--sd-param",
   "reason_id": "r212",
   "utility": "logger"
- },
- {
-  "candidate": {
-   "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
-   "status": 1,
-   "stdout": "787a6546a3c51622cedb61c5d7c4c1152d02393bc3350033eec8cb4b2325147c"
-  },
-  "case": {
-   "argv": [
-    "binary",
-    "0x10"
-   ],
-   "domain": "misc",
-   "family": null,
-   "fixture": "misc",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "text",
-   "utility": "od"
-  },
-  "domain": "misc",
-  "id": "221e4b12ebd0bc38",
-  "kind": "deliberate",
-  "list": "ledger",
-  "reason_id": "r214",
-  "utility": "od"
  },
  {
   "domain": "misc",
