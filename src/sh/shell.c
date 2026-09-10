@@ -183,6 +183,15 @@ bool shell_dash_compat;
 bool shell_restricted;
 
 /*
+        Whether job listings are written in dash's columns.
+
+        The two shells lay a job line out differently and there is no third
+        answer, so the question is asked once, by name, rather than every
+        caller testing which personality this is and getting it right.
+*/
+#define shell_dash_columns() (!shell_bash_compat)
+
+/*
         How many readers deep this is, and a syntax failure's scope.
 
         The process reader leaves on one, while eval and dot return it to the

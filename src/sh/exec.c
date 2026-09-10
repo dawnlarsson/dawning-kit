@@ -1184,19 +1184,72 @@ static string_address job_mark_of(job_entry address_to entry)
         return (string_address) " ";
 }
 
-/*
-        One job, on one line.
+/* How wide a number is written, so a line can be padded to a column
+   without being built in a buffer first. */
+static CONST positive job_number_width(positive value)
+{
+        positive width = 1;
 
-        An ampersand is not part of what was typed: it is how a listing says
-        the job is still in the background, so it belongs to jobs that are
-        running there and to no others.
+        while (value >= 10)
+        {
+                value /= 10;
+                width++;
+        }
+
+        return width;
+}
+
+/*
+        One job, on one line, in the columns of whichever shell this is.
+
+        Bash writes the mark against the bracket and gives the status a
+        width of its own, so a listing asked for pids puts its commands
+        further right than one that was not. dash writes the mark with a
+        space on each side and pads the whole line to one column instead,
+        so both of its listings put the command in the same place. Under a
+        dash name this shell had been writing bash's columns, which is
+        every line of every job notice a dash session produces.
+
+        An ampersand is not part of what was typed: it is how bash's listing
+        says the job is still in the background, so it belongs to jobs that
+        are running there and to no others. dash does not say it at all.
 */
+#define JOB_DASH_COLUMN 33
+
 static fn job_line(writer write, job_entry address_to entry, bool detailed)
 {
         p8 status[64];
         string_address text = entry->text ? (string_address)entry->text
                                           : (string_address) "";
-        bool ampersand = entry->state == JOB_RUNNING && entry->background;
+        bool ampersand = !shell_dash_columns() &&
+                         entry->state == JOB_RUNNING && entry->background;
+
+        if (shell_dash_columns())
+        {
+                positive column = job_number_width(entry->number) + 5;
+
+                string_format(write, "[%p] %s ", entry->number,
+                              job_mark_of(entry));
+
+                if (detailed)
+                {
+                        positive child = job_first_child(entry);
+
+                        string_format(write, "%b ", child);
+                        column += job_number_width(child) + 1;
+                }
+
+                job_status_text(entry, detailed, status);
+                write(status, string_length(status));
+                column += string_length(status);
+
+                string_to_field(write, (string_address) "",
+                                column < JOB_DASH_COLUMN
+                                    ? JOB_DASH_COLUMN - column : 1,
+                                ' ', true);
+                string_format(write, "%s\n", text);
+                return;
+        }
 
         string_format(write, "[%p]%s", entry->number, job_mark_of(entry));
 
@@ -1688,10 +1741,18 @@ fn shell_bg(writer write, string_address input)
                 job_signal(entry->group > 0 ? -entry->group : entry->last,
                            JOB_SIGNAL_CONTINUE);
 
-                string_format(write, "[%p]%s %s &\n", entry->number,
-                              job_mark_of(entry),
-                              entry->text ? (string_address)entry->text
-                                          : (string_address) "");
+                //      bg names the job it moved. Bash names the mark and
+                //      the ampersand with it; dash writes the number and
+                //      the command and nothing else.
+                if (shell_dash_columns())
+                        string_format(write, "[%p] %s\n", entry->number,
+                                      entry->text ? (string_address)entry->text
+                                                  : (string_address) "");
+                else
+                        string_format(write, "[%p]%s %s &\n", entry->number,
+                                      job_mark_of(entry),
+                                      entry->text ? (string_address)entry->text
+                                                  : (string_address) "");
         } while (++at < shell_argc);
 
         shell_answer(answer);
