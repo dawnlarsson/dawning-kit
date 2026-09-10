@@ -2197,16 +2197,55 @@ typedef struct
         bool alone;
 } file_word;
 
+/*
+        A word is matched by any beginning of it that no other word shares.
+
+        The reference reads these with argmatch, which takes a prefix: --time=at
+        is atime, --sort=si is size, and --time=m is modification because every
+        word it begins answers alike. A prefix that begins words with different
+        answers -- --sort=n, or the empty word, which begins them all -- is
+        ambiguous rather than unknown, and says so.
+*/
+static bool file_word_begins(string_address value, string_address word)
+{
+        while (string_get(value))
+        {
+                if (string_get(value) != string_get(word))
+                        return false;
+
+                value++;
+                word++;
+        }
+
+        return true;
+}
+
 static b32 file_word_among(string_address program, string_address option,
                            string_address value, const file_word address_to words,
                            positive count)
 {
+        b32 answer = -1;
+        bool ambiguous = false;
+
         for (positive i = 0; i < count; i++)
+        {
                 if (!string_compare(value, words[i].word))
                         return words[i].answer;
 
-        string_format(log_error, "%s: invalid argument '%s' for '%s'\nValid arguments are:\n",
-                      program, value, option);
+                if (!file_word_begins(value, words[i].word))
+                        continue;
+
+                if (answer < 0)
+                        answer = words[i].answer;
+                else if (answer != words[i].answer)
+                        ambiguous = true;
+        }
+
+        if (answer >= 0 && !ambiguous)
+                return answer;
+
+        string_format(log_error, "%s: %s argument '%s' for '%s'\nValid arguments are:\n",
+                      program, ambiguous ? "ambiguous" : "invalid", value, option);
 
         for (positive i = 0; i < count; i++)
         {
@@ -5631,12 +5670,28 @@ typedef struct
 static b32 ls_word_among(string_address option, string_address value,
                          const ls_word address_to words, positive count)
 {
+        b32 answer = -1;
+        bool ambiguous = false;
+
         for (positive i = 0; i < count; i++)
+        {
                 if (!string_compare(value, words[i].word))
                         return words[i].answer;
 
-        string_format(log_error, "%s: invalid argument '%s' for '%s'\nValid arguments are:\n",
-                      ls_program, value, option);
+                if (!file_word_begins(value, words[i].word))
+                        continue;
+
+                if (answer < 0)
+                        answer = words[i].answer;
+                else if (answer != words[i].answer)
+                        ambiguous = true;
+        }
+
+        if (answer >= 0 && !ambiguous)
+                return answer;
+
+        string_format(log_error, "%s: %s argument '%s' for '%s'\nValid arguments are:\n",
+                      ls_program, ambiguous ? "ambiguous" : "invalid", value, option);
 
         for (positive i = 0; i < count; i++)
         {
@@ -19504,14 +19559,66 @@ static const file_long touch_longs[] = {
     {null, 0},
 };
 
+/*
+        The words --time answers to, and the stamp -t carries.
+
+        The reference reads both where the option is written: -t is parsed by
+        the getopt loop, so of a bad -t and a bad --time the first one on the
+        line is what is reported, and a -r whose file is not there is not
+        reached until both have been read.
+*/
+static const file_word touch_which_words[] = {
+    {(string_address) "atime", 'a', false},
+    {(string_address) "access", 'a', false},
+    {(string_address) "use", 'a', true},
+    {(string_address) "mtime", 'm', false},
+    {(string_address) "modify", 'm', false},
+};
+
+static b64 touch_stamp_seconds;
+static bool touch_stamp_given;
+static p8 touch_which_letter;
+
+static bool touch_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'T' && value)
+        {
+                b32 which = file_word_among((string_address) "touch",
+                                            (string_address) "--time", value,
+                                            touch_which_words,
+                                            array_count(touch_which_words));
+
+                if (which < 0)
+                        return false;
+
+                touch_which_letter = (p8)which;
+        }
+
+        if (letter == 't' && value)
+        {
+                if (!touch_stamp(value, file_now(), address_of touch_stamp_seconds))
+                        return string_report(log_error, false,
+                                             "touch: invalid date format '%s'\n", value);
+
+                touch_stamp_given = true;
+        }
+
+        return true;
+}
+
 static b32 file_touch()
 {
         positive count = (positive)program_argument_count();
+
+        touch_stamp_given = false;
+        touch_which_letter = 0;
+
         file_taking taking = {
             .program = (string_address) "touch",
             .allowed = (string_address) "acdfhmrt",
             .valued = (string_address) "drtT",
             .longs = touch_longs,
+            .seen = touch_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -19526,29 +19633,19 @@ static b32 file_touch()
         bool through = (flags & FILE_FLAG('h')) == 0;
         p64 times[4] = {0, UTIME_NOW, 0, UTIME_NOW};
 
-        string_address which = file_option_value(address_of taking, 'T');
-
-        if (which)
-        {
-                if (!string_compare(which, "access") || !string_compare(which, "atime") ||
-                    !string_compare(which, "use"))
-                        access = true;
-                else if (!string_compare(which, "modify") ||
-                         !string_compare(which, "mtime"))
-                        modify = true;
-                else
-                {
-                        string_format(log_error,
-                                      "touch: invalid argument '%s' for '--time'\n"
-                                      "Valid arguments are:\n"
-                                      "  - 'atime', 'access', 'use'\n"
-                                      "  - 'mtime', 'modify'\n",
-                                      which);
-                        return 1;
-                }
-        }
+        if (touch_which_letter == 'a')
+                access = true;
+        else if (touch_which_letter == 'm')
+                modify = true;
 
         string_address from = file_option_value(address_of taking, 'r');
+
+        //      -t carries a time of its own, so beside a -r or a -d it is one
+        //      source too many. -r and -d together are not: the reference
+        //      takes the file's times and lets the date move them.
+        if (touch_stamp_given && (from || file_option_value(address_of taking, 'd')))
+                return string_report(log_error, 1,
+                                     "touch: cannot specify times from more than one source\n");
 
         if (from)
         {
@@ -19588,15 +19685,9 @@ static b32 file_touch()
                 }
         }
 
-        string_address older = file_option_value(address_of taking, 't');
-
-        if (older)
+        if (touch_stamp_given)
         {
-                b64 seconds;
-                if (!touch_stamp(older, file_now(), address_of seconds))
-                        return string_report(log_error, 1, "touch: invalid date format '%s'\n", older);
-
-                times[0] = times[2] = (p64)seconds;
+                times[0] = times[2] = (p64)touch_stamp_seconds;
                 times[1] = times[3] = 0;
         }
 
