@@ -9968,6 +9968,11 @@ static b32 tools_od(void)
 
 static b32 tools_hexdump(void)
 {
+        //      The width complaint is od's alone, and both applets share the
+        //      dump runner that speaks it: a hexdump after an od that never
+        //      opened a file must not inherit the complaint od left armed.
+        dump_od_warn_unit = 0;
+
         file_taking taking = {
             .program = (string_address) "hexdump",
             .allowed = (string_address) "bcCdoxXnsvL",

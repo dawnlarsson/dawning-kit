@@ -2019,19 +2019,19 @@ static b32 process_script_record(process_script_state address_to state,
         positive input_at = 0, input_length = 0;
         bool input_end = false, eot = false, master_end = false;
         bool child_done = false, failed = false;
-        /* An end of file on our own input becomes the terminal's end-of-file
-           character, which only means that to a command that has already
-           taken the terminal. Hold it until the session has spoken once, or
-           a command started with its input already exhausted never sees it
-           and waits for a line that cannot come. */
-        bool session_spoke = false;
-        /* One offer of it is not enough either. A shell that reads its line
-           through readline takes the terminal back when it accepts the line
-           and throws away whatever was typed ahead, so an end-of-file written
-           while the line was still being read is gone -- and a command that
-           says nothing at all never lets the first one go. So it is offered
-           again each time the session falls quiet, a few times, and after
-           that the child is simply waited for. */
+        /*      An end of file on our own input becomes the terminal's
+                end-of-file character, which only means that to a command
+                that has already taken the terminal and is waiting on it. So
+                it is not written the moment our input runs out but only
+                after the session has fallen quiet, and again each time it
+                falls quiet after that, a few times over: a shell that reads
+                its line through readline takes the terminal back when it
+                accepts the line and throws away whatever was typed ahead, so
+                one written while the line was still being read is gone.
+                Waiting for the quiet rather than for the first word out is
+                also what keeps the transcript the same from run to run --
+                offering it into the middle of the session's own writing puts
+                the byte in a different place each time. */
         positive offered = 0;
         positive status = 0;
 
@@ -2040,8 +2040,7 @@ static b32 process_script_record(process_script_state address_to state,
                 process_timeout_poll waited[4];
                 positive count = 0;
                 positive master_index = count;
-                bool sending = input_at < input_length &&
-                               (!eot || session_spoke);
+                bool sending = input_at < input_length;
                 waited[count++] = (process_timeout_poll){
                     master, (b16)(PROCESS_POLL_IN |
                                    (sending ? PROCESS_POLL_OUT : 0)), 0};
@@ -2069,7 +2068,7 @@ static b32 process_script_record(process_script_state address_to state,
                 }
 
                 timespec drain = {1, 0};
-                timespec quiet = {0, 100000000};
+                timespec quiet = {0, 250000000};
                 bool offering = input_end && !child_done && offered < 4;
                 timespec address_to timeout =
                     child_done ? address_of drain
@@ -2089,11 +2088,10 @@ static b32 process_script_record(process_script_state address_to state,
                         if (offering)
                         {
                                 //      Quiet, and our own input is spent:
-                                //      offer the end-of-file again.
+                                //      offer the end-of-file.
                                 input[0] = 4;
                                 input_at = 0;
                                 input_length = 1;
-                                session_spoke = true;
                                 offered++;
                                 continue;
                         }
@@ -2119,9 +2117,6 @@ static b32 process_script_record(process_script_state address_to state,
                         {
                                 input_end = true;
                                 eot = true;
-                                input[0] = 4;
-                                input_at = 0;
-                                input_length = 1;
                         }
                 }
 
@@ -2143,8 +2138,15 @@ static b32 process_script_record(process_script_state address_to state,
                                         }
                                         input_at += (positive)wrote;
                                 }
-                                else if (wrote != -UL_ERROR_AGAIN &&
+                                else if (wrote && wrote != -UL_ERROR_AGAIN &&
                                          wrote != UL_ERROR_INTERRUPTED)
+                                        //      A write that placed nothing
+                                        //      is a write to try again, not
+                                        //      a session that has ended:
+                                        //      closing the terminal here
+                                        //      hangs up on a command that is
+                                        //      still running and turns its
+                                        //      status into a signal.
                                         master_end = true;
                         }
                 }
@@ -2159,9 +2161,6 @@ static b32 process_script_record(process_script_state address_to state,
                                     (positive)master, output, sizeof(output));
                                 if (got > 0)
                                 {
-                                        //      The session has spoken, so a
-                                        //      held end-of-file may go now.
-                                        session_spoke = true;
                                         if (!process_script_payload(
                                                 state, 'O', output,
                                                 (positive)got))
@@ -2210,7 +2209,6 @@ static b32 process_script_record(process_script_state address_to state,
                 }
         }
 
-        system_close((positive)master);
         if (failed && !child_done)
                 process_timeout_signal((b32)child, SIGKILL, false, false,
                                        command_text);
@@ -2243,6 +2241,13 @@ static b32 process_script_record(process_script_state address_to state,
                                 child_done = true;
                 }
         }
+        /*      The terminal is let go only once the command has been waited
+                for. Closing the master hangs up on whatever is still in the
+                pty's foreground group, and the read that ended the loop can
+                race the command's own last breath: closing first turned a
+                command that exited zero into one that died of the hangup,
+                about once in forty runs. */
+        system_close((positive)master);
         process_timeout_cleanup(pidfd, signal_fd, previous_mask);
 
         if (state->flush)
