@@ -1827,6 +1827,73 @@ def self_test():
             self.assertEqual([n for n in named if n not in described], [],
                              "a lane nothing says the purpose of")
 
+        def test_every_harness_is_registered_defined_and_invoked(self):
+            """A harness that loses its registration stops running and says
+            nothing, which is the same silence as a lane leaving the list.
+            Three spellings have to agree here too: the key in HARNESS_CHECKS,
+            the function it names, and the --harness word test/run asks for.
+
+            This is not hypothetical. The floodlight harness was reverted whole
+            twice while it was being written, and both times the suite went on
+            printing that everything agreed -- a missing key is not an error,
+            it is simply a check nobody runs.
+
+            The two silences worth guarding are a key that vanishes and a
+            --harness word nothing answers. A renamed function is loud already
+            and needs no help."""
+            import ast
+            import re
+            source = Path(__file__).resolve().read_text()
+            tree = ast.parse(source)
+
+            defined = {node.name for node in tree.body
+                       if isinstance(node, ast.FunctionDef)}
+
+            registered = {}
+            for node in tree.body:
+                if not isinstance(node, ast.Assign):
+                    continue
+                if not any(isinstance(t, ast.Name) and t.id == "HARNESS_CHECKS"
+                           for t in node.targets):
+                    continue
+                self.assertIsInstance(node.value, ast.Dict,
+                                      "HARNESS_CHECKS is not written as a literal")
+                for key, value in zip(node.value.keys, node.value.values):
+                    self.assertIsInstance(key, ast.Constant,
+                                          "a HARNESS_CHECKS key is not a plain name")
+                    self.assertIsInstance(value, ast.Name,
+                                          f"{key.value} is registered to something "
+                                          "other than a named function")
+                    registered[key.value] = value.id
+
+            self.assertTrue(registered, "HARNESS_CHECKS is empty or not a literal")
+
+            #      Python catches this one on its own -- a key naming a
+            #      function that is gone is a NameError before this file
+            #      finishes loading, so nothing runs at all. Kept because it
+            #      costs nothing and stops being free the day this dictionary
+            #      is built from anything but literal names.
+            missing = sorted(name for name, function in registered.items()
+                             if function not in defined)
+            self.assertEqual(missing, [],
+                             "registered to a function this file does not define: "
+                             + ", ".join(missing))
+
+            runner = Path(__file__).resolve().parent / "run"
+            if not runner.is_file():
+                self.skipTest("test/run is not beside this file")
+
+            asked = set(re.findall(r"--harness\s+(\w+)", runner.read_text()))
+            unknown = sorted(asked - set(registered))
+            self.assertEqual(unknown, [],
+                             "test/run asks for a harness HARNESS_CHECKS has no key "
+                             "for: " + ", ".join(unknown))
+
+            #      The other direction is deliberately not an error: a harness
+            #      may be registered for a person to run by hand without any
+            #      lane calling it. Silence is only a fault when something is
+            #      asking and nothing answers.
+
         def test_no_definition_in_this_file_shadows_another(self):
             """The same hazard from the other side. Assembling modules into
             one file lets a name arrive twice, and the later one wins in
@@ -15344,8 +15411,10 @@ typedef int64_t s64;
 #define clamp_t(t,a,b,c) clamp((t)(a),(t)(b),(t)(c))
 static unsigned allocations, fail_allocation, copies, fail_copy, failures, checks;
 static unsigned cpu_records, network_records, growing, captures;
-static void mutex_lock(int *lock) { assert(!*lock); *lock=1; }
-static void mutex_unlock(int *lock) { assert(*lock); *lock=0; }
+/* Takes void * so it serves both a bare int lock and a struct mutex whose
+   first member is one. */
+static void mutex_lock(void *held) { int *lock=held; assert(!*lock); *lock=1; }
+static void mutex_unlock(void *held) { int *lock=held; assert(*lock); *lock=0; }
 static void *kvrealloc(void *old, size_t bytes, int flags) {
     (void)flags;
     return ++allocations == fail_allocation ? NULL : realloc(old, bytes);
@@ -15477,50 +15546,168 @@ typedef unsigned refcount_t;
 #define kvfree free
 #define memory_first_of memchr
 '''
-    source += section(core, "struct spawn_strings", "struct pane;")
-    source += section(core, "static int copy_strings", "static long do_spawn")
     source += r'''
-struct file { int unused; };
-static struct spawn *spawn_request;
-static const char *spawn_path;
-static int spawn_descriptors[3], spawn_shell, spawn_calls;
-static long do_spawn(struct file *file, struct spawn *request, _Bool shell,
-                     const char *path, int input, int output, int error) {
-    (void)file; spawn_calls++; spawn_request=request; spawn_shell=shell; spawn_path=path;
-    spawn_descriptors[0]=input; spawn_descriptors[1]=output; spawn_descriptors[2]=error;
-    return 321;
+#include <stdbool.h>
+struct mutex { int locked; };
+struct pid; struct cred; struct pane;
+#ifndef array_count
+#define array_count(a) (sizeof(a)/sizeof((a)[0]))
+#endif
+#define refcount_dec_and_test(p) (--*(p) == 0)
+'''
+    source += section(core, "struct spawn_strings",
+                      "#ifdef CONFIG_MOONWATER_CANVAS\n#include <linux/workqueue.h>")
+    # The real request path, not a stub: one opcode now carries every launch,
+    # so what used to be decided by the opcode number -- interpretation policy
+    # and the descriptors -- is decided by fields the caller controls, and the
+    # rejection of a flag this kernel does not define is the boundary.
+    source += r'''
+struct file { int references; void *private_data; };
+static struct file open_files[8];
+static struct file *fget(int fd) {
+    if (fd < 0 || fd >= (int)(sizeof(open_files)/sizeof(open_files[0]))) return NULL;
+    open_files[fd].references++; return &open_files[fd];
 }
+static void fput(struct file *file) { file->references--; }
+static void *kzalloc(size_t bytes, int flags) {
+    void *got = kvrealloc(NULL, bytes, flags);
+    if (got) memset(got, 0, bytes);
+    return got;
+}
+#define kfree free
+#undef PATH_MAX
+#define PATH_MAX 4096
+#define IS_ERR(p) ((unsigned long)(void *)(p) >= (unsigned long)-4095)
+#define PTR_ERR(p) ((long)(p))
+static char *strndup_user(const char *from, long limit) {
+    (void)limit;
+    if (++allocations == fail_allocation) return (char *)(long)-ENOMEM;
+    return strdup(from);
+}
+static int current, spawn_pid = 4242;
+static int spawn_entered;
+/* The work the launch was handed. Interpretation policy is decided in the
+   request and only shows up here, on the task that is about to exec. */
+static void *spawn_handed;
+#define task_tgid(t) ((void *)(long)(t))
+#define current_cred() ((const void *)&current)
+#define get_pid(p) (p)
+#define put_pid(p) ((void)(p))
+#define get_cred(c) (c)
+#define put_cred(c) ((void)(c))
+#define refcount_inc(p) (++*(p))
+#undef SIGCHLD
+#define SIGCHLD 17
+#define atomic_long_add(n, p) ((void)(n), (void)(p))
+#define atomic_long_inc(p) ((void)(p))
+static long stat_task_ns, stat_spawns;
+#define user_mode_thread(fn, arg, sig) \
+        ((void)(sig), spawn_handed=(arg), spawn_entered++, spawn_pid)
+'''
+    source += section(core, "struct spawn_work", "/*\n        Starts one program")
+    source += section(core, "static int copy_strings", "static long do_spawn")
+    source += section(core, "static long do_spawn", "static long report_stats")
+    source += r'''
 static long report_stats(struct stats *out) { (void)out; return 322; }
 '''
     source += section(core, "static long device_ioctl", "/*\n        misc_open")
     source += r'''
 static void check_spawn_dispatch(void) {
-    _Static_assert(sizeof(struct spawn)==48 && sizeof(struct spawn_to)==56 &&
-                   sizeof(struct spawn_into)==64, "spawn ioctl encoded sizes");
-    _Static_assert(offsetof(struct spawn_to,output)==sizeof(struct spawn) &&
-                   offsetof(struct spawn_into,input)==sizeof(struct spawn), "spawn descriptor prefix");
-    const unsigned commands[]={SPARK_IOCTL_SPAWN,SPARK_IOCTL_SPAWN_SHELL,
-        SPARK_IOCTL_SPAWN_TOOL,SPARK_IOCTL_SPAWN_SHELL_INTO,SPARK_IOCTL_SPAWN_TOOL_TO};
-    struct spawn_into into={.input=0,.output=INT_MAX,.error=-9};
-    struct spawn_to to={.output=-9,.error=0};
-    for (unsigned i=0;i<5;i++) for (unsigned fail=0;fail<2;fail++) {
-        void *request=i==4?(void *)&to:(void *)&into;
-        int rejected=i>=3 && fail;
-        spawn_calls=0; copies=0; fail_copy=fail;
-        check(device_ioctl(NULL,commands[i],(unsigned long)request)==(rejected?-EFAULT:321),
-              "spawn dispatch and descriptor-copy failure");
-        check(spawn_calls==!rejected && copies==(i>=3),"spawn copies only its descriptor forms");
-        if (!rejected) {
-            check(spawn_request==request && spawn_shell==(i==1 || i==3) &&
-                  (i==2 || i==4 ? spawn_path && !strcmp(spawn_path,"/shell") : !spawn_path),
-                  "spawn entry prefix and interpretation policy");
-            check(spawn_descriptors[0]==(i==3?0:-1) &&
-                  spawn_descriptors[1]==(i==3?INT_MAX:i==4?-9:-1) &&
-                  spawn_descriptors[2]==(i==3?-9:i==4?0:-1),"spawn keeps descriptor order and bits");
+    /* The opcode encodes the request size, so a field added to struct spawn
+       without a matching opcode would leave the two silently disagreeing --
+       the one desync a single-opcode ABI can still suffer. */
+    _Static_assert(sizeof(struct spawn)==64,"spawn request size");
+    _Static_assert(((SPARK_IOCTL_SPAWN>>16)&0x3fffu)==sizeof(struct spawn),
+                   "spawn opcode encodes the request size");
+    _Static_assert(offsetof(struct spawn,flags)==48 &&
+                   offsetof(struct spawn,stdio)==52,
+                   "spawn carries its flags and descriptors in the request");
+    _Static_assert(SPARK_SPAWN_FLAGS==(SPARK_SPAWN_SHELL|SPARK_SPAWN_TOOL),
+                   "the accepted flag set is exactly the defined flags");
+
+    char argv_block[]="/thing\0-v\0";
+    struct device_context context={0};
+    struct file caller={.private_data=&context};
+
+    /* Every flag combination, defined and not. A bit this kernel does not
+       define has to be refused rather than ignored, or a caller built against
+       a later loader would silently get the default policy here. */
+    for (unsigned flags=0;flags<8;flags++) {
+        struct spawn request={.path=(unsigned long)"/thing",
+            .argv=(unsigned long)argv_block,.argv_bytes=sizeof(argv_block)-1,
+            .argv_count=2,.flags=flags,.stdio={-1,-1,-1}};
+        long got;
+        memset(open_files,0,sizeof(open_files));
+        spawn_entered=0; allocations=fail_allocation=0; copies=0; fail_copy=0;
+        got=device_ioctl(&caller,SPARK_IOCTL_SPAWN,(unsigned long)&request);
+        if (flags & ~SPARK_SPAWN_FLAGS) {
+            check(got==-EINVAL,"spawn refuses a flag it does not define");
+            check(!spawn_entered,"a refused flag starts no task");
+        } else {
+            const struct spawn_work *handed=spawn_handed;
+            check(got==spawn_pid && spawn_entered==1,
+                  "every defined flag combination launches");
+            /* Which flag means what: SHELL is the ENOEXEC rule and nothing
+               else, TOOL redirects the launch into the system image and
+               nothing else, and the two are independent. */
+            check(handed->shell_fallback==!!(flags & SPARK_SPAWN_SHELL),
+                  "SHELL alone decides the ENOEXEC fallback");
+            if (flags & SPARK_SPAWN_TOOL)
+                check(!handed->path_owned && !strcmp(handed->path,"/shell"),
+                      "TOOL launches the system image and borrows its path");
+            else
+                check(handed->path_owned && !strcmp(handed->path,"/thing"),
+                      "without TOOL the launch takes the path it was given");
         }
     }
-    check(device_ioctl(NULL,0,0)==-ENOTTY,"unknown device ioctl remains rejected");
-    fail_copy=0;
+
+    /* The descriptors are installed from the request, in order, and -1 is
+       left alone -- a stage at either end of a pipeline keeps the shell's. */
+    {
+        struct spawn request={.path=(unsigned long)"/thing",
+            .argv=(unsigned long)argv_block,.argv_bytes=sizeof(argv_block)-1,
+            .argv_count=2,.flags=SPARK_SPAWN_SHELL,.stdio={3,-1,5}};
+        memset(open_files,0,sizeof(open_files));
+        spawn_entered=0; allocations=fail_allocation=0; copies=0; fail_copy=0;
+        check(device_ioctl(&caller,SPARK_IOCTL_SPAWN,(unsigned long)&request)==spawn_pid,
+              "a launch naming descriptors is accepted");
+        check(open_files[3].references==1 && open_files[5].references==1 &&
+              open_files[4].references==0,
+              "spawn takes exactly the descriptors the request names");
+    }
+
+    /* A descriptor that cannot be resolved fails the whole request, and every
+       reference already taken for it goes back. */
+    {
+        struct spawn request={.path=(unsigned long)"/thing",
+            .argv=(unsigned long)argv_block,.argv_bytes=sizeof(argv_block)-1,
+            .argv_count=2,.stdio={3,99,-1}};
+        memset(open_files,0,sizeof(open_files));
+        spawn_entered=0; allocations=fail_allocation=0; copies=0; fail_copy=0;
+        check(device_ioctl(&caller,SPARK_IOCTL_SPAWN,(unsigned long)&request)==-EBADF,
+              "a descriptor that does not resolve fails the launch");
+        check(!spawn_entered && open_files[3].references==0,
+              "the failed launch starts nothing and keeps no reference");
+    }
+
+    /* One copy in, and a fault in it is the caller's error rather than a
+       half-built request. The second copy the descriptor opcodes used to
+       need is gone with them. */
+    {
+        struct spawn request={.path=(unsigned long)"/thing",
+            .argv=(unsigned long)argv_block,.argv_bytes=sizeof(argv_block)-1,
+            .argv_count=2,.stdio={-1,-1,-1}};
+        memset(open_files,0,sizeof(open_files));
+        spawn_entered=0; allocations=fail_allocation=0; copies=0; fail_copy=1;
+        check(device_ioctl(&caller,SPARK_IOCTL_SPAWN,(unsigned long)&request)==-EFAULT,
+              "a faulting request is refused");
+        check(copies==1 && !spawn_entered,
+              "the request arrives in one copy and a fault starts nothing");
+        fail_copy=0;
+    }
+
+    check(device_ioctl(&caller,0,0)==-ENOTTY,"unknown device ioctl remains rejected");
+    allocations=fail_allocation=0; copies=0; fail_copy=0;
 }
 '''
     source += r'''
