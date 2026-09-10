@@ -21991,6 +21991,16 @@ static const file_long mktemp_longs[] = {
     {null, 0},
 };
 
+//      -p and --tmpdir answer the same question, so the last one written is
+//      the one that answers it; a bare --tmpdir is that answer too, and
+//      means the environment's directory rather than a named one.
+static p8 mktemp_where_option;
+
+static const file_supersede mktemp_supersedes[] = {
+    {(string_address) "pT", address_of mktemp_where_option},
+    {null, null},
+};
+
 static b32 file_mktemp()
 {
         mktemp_template = null;
@@ -22003,7 +22013,10 @@ static b32 file_mktemp()
             .optional = (string_address) "T",
             .longs = mktemp_longs,
             .operand = mktemp_operand,
+            .supersedes = mktemp_supersedes,
         };
+
+        mktemp_where_option = 0;
 
         if (!file_take(address_of taking))
                 return 1;
@@ -22011,18 +22024,19 @@ static b32 file_mktemp()
         bool directory = (taking.flags & FILE_FLAG('d')) != 0;
         bool dry = (taking.flags & FILE_FLAG('u')) != 0;
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
-        bool rooted = (taking.flags & (FILE_FLAG('p') | FILE_FLAG('t') |
-                                       FILE_FLAG('T'))) != 0;
-        string_address base = file_option_value(address_of taking, 'T');
+        bool old_t = (taking.flags & FILE_FLAG('t')) != 0;
+        bool named_where = (taking.flags & (FILE_FLAG('p') | FILE_FLAG('T'))) != 0;
+        string_address base = named_where
+                                  ? file_option_value(address_of taking,
+                                                      mktemp_where_option)
+                                  : null;
         string_address suffix = file_option_value(address_of taking, 'S');
         string_address template = mktemp_template;
         p8 path[FILE_PATH_MAX];
+        p8 whole[FILE_PATH_MAX];
         positive length = 0;
         positive marks_at;
         positive marks = 0;
-
-        if (!base)
-                base = file_option_value(address_of taking, 'p');
 
         if (mktemp_extra_template)
                 return string_report(log_error, 1, "mktemp: too many templates\n");
@@ -22030,12 +22044,91 @@ static b32 file_mktemp()
         if (!template)
         {
                 template = "tmp.XXXXXXXXXX";
-                rooted = true;
+                named_where = true;
         }
 
-        if (rooted && !string_is(template, '/'))
+        /*
+                The template and its suffix, and what the reference refuses
+                about them, in the reference's order: a suffix asked for
+                needs a template that ends in an X and may not name a
+                directory of its own; then there have to be X's to fill in;
+                then the tail after them, which is a suffix whether it was
+                asked for or found, may not name a directory either.
+        */
+        positive template_length = string_length(template);
+
+        if (suffix)
         {
-                if (!base)
+                if (!template_length || template[template_length - 1] != 'X')
+                        return string_report(log_error, 1,
+                                             "mktemp: with --suffix, template '%s' must end in X\n",
+                                             template);
+
+                if (string_first_of(suffix, '/'))
+                        return string_report(log_error, 1,
+                                             "mktemp: invalid suffix '%s', contains directory separator\n",
+                                             suffix);
+        }
+
+        positive run_end = template_length;
+
+        while (run_end && template[run_end - 1] != 'X')
+                run_end--;
+
+        positive run_at = run_end;
+
+        while (run_at && template[run_at - 1] == 'X')
+        {
+                run_at--;
+                marks++;
+        }
+
+        if (marks < MKTEMP_LEAST)
+                return string_report(log_error, 1, "mktemp: too few X's in template '%s'\n",
+                                     template);
+
+        positive suffix_length = suffix ? string_length(suffix) : 0;
+
+        if (template_length + suffix_length >= FILE_PATH_MAX - 1)
+                return string_report(log_error, 1, "mktemp: template too long\n");
+
+        memory_copy_apart(whole, template, template_length);
+
+        if (suffix)
+                memory_copy_apart(whole + template_length, suffix, suffix_length);
+
+        whole[template_length + suffix_length] = end;
+
+        if (!suffix && string_first_of(whole + run_end, '/'))
+                return string_report(log_error, 1,
+                                     "mktemp: invalid suffix '%s', contains directory separator\n",
+                                     whole + run_end);
+
+        /*
+                Where it goes. -t is the deprecated spelling and answers with
+                the environment's directory whatever -p or --tmpdir said, and
+                refuses a template that names a directory of its own; -p and
+                --tmpdir name one, and either of them written bare or empty
+                means the environment's directory too.
+        */
+        if (old_t)
+        {
+                if (string_first_of(whole, '/'))
+                        return string_report(log_error, 1,
+                                             "mktemp: invalid template, '%s', contains directory separator\n",
+                                             whole);
+
+                base = null;
+                named_where = true;
+        }
+        else if (named_where && string_is(whole, '/'))
+                return string_report(log_error, 1,
+                                     "mktemp: invalid template, '%s'; with --tmpdir, it may not be absolute\n",
+                                     whole);
+
+        if (named_where && !string_is(whole, '/'))
+        {
+                if (!base || !string_get(base))
                         base = file_environment("TMPDIR");
 
                 if (!base || !string_get(base))
@@ -22054,54 +22147,16 @@ static b32 file_mktemp()
                 path[length++] = '/';
         }
 
-        p8 address_to stopped = string_copy_max_end(
-            path + length, template, FILE_PATH_MAX - 1 - length);
-        positive added = (positive)(stopped - (path + length));
+        positive whole_length = template_length + suffix_length;
 
-        if (string_get(template + added))
+        if (length + whole_length >= FILE_PATH_MAX)
                 return string_report(log_error, 1, "mktemp: template too long\n");
 
-        length += added;
+        memory_copy_apart(path + length, whole, whole_length);
+        path[length + whole_length] = end;
 
-        marks_at = length;
-
-        if (suffix && (string_first_of(suffix, '/') || !length ||
-                       path[length - 1] != 'X'))
-        {
-                return string_report(log_error, 1, string_first_of(suffix, '/')
-                              ? (string_address)
-                                    "mktemp: suffix may not contain a slash\n"
-                              : (string_address)
-                                    "mktemp: with --suffix, template must end in X\n");
-        }
-
-        // Only the template's own bytes are looked at for the run: a
-        // directory with an X in its name is not a place to put randomness.
-        positive template_at = length - added;
-
-        while (marks_at > template_at && path[marks_at - 1] != 'X')
-                marks_at--;
-
-        while (marks_at > template_at && path[marks_at - 1] == 'X')
-        {
-                marks_at--;
-                marks++;
-        }
-
-        if (suffix)
-        {
-                positive suffix_length = string_length(suffix);
-
-                if (suffix_length > FILE_PATH_MAX - 1 - length)
-                        return string_report(log_error, 1, "mktemp: template too long\n");
-
-                memory_copy_apart_end(path + length, suffix, suffix_length);
-                length += suffix_length;
-        }
-
-        if (marks < MKTEMP_LEAST)
-                return string_report(log_error, 1, "mktemp: too few X's in template '%s'\n",
-                              template);
+        marks_at = length + run_at;
+        length += whole_length;
 
         // The template as the reference names it when nothing can be made:
         // directory, X's and suffix together, before any X was filled in.
@@ -22115,8 +22170,34 @@ static b32 file_mktemp()
 
                 mktemp_letters_into(path + marks_at, marks);
 
+                /*
+                        -u makes nothing, but it does not promise a name
+                        either: the reference asks the same question the
+                        creation would have asked -- is this name free -- and
+                        a question it cannot ask is the same failure it would
+                        have reported.
+                */
                 if (dry)
-                        break;
+                {
+                        file_facts standing;
+                        bipolar looked = file_look_code(AT_FDCWD, path,
+                                                        AT_SYMLINK_NOFOLLOW,
+                                                        address_of standing);
+
+                        if (!looked)
+                                continue;
+
+                        if (looked == -ERROR_NO_ENTRY)
+                                break;
+
+                        if (!quiet)
+                                string_format(log_error,
+                                              "mktemp: failed to create %s via template '%s': %s\n",
+                                              directory ? "directory" : "file",
+                                              shown, file_reason(looked));
+
+                        return 1;
+                }
 
                 if (directory)
                         answer = system_make_directory_at(AT_FDCWD, path, 0700);
