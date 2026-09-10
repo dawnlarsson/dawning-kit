@@ -186,6 +186,19 @@ static void resize_move(int x, int y)
         nw = clamp(nw, min_w, max_w);
         nh = clamp(nh, min_h, max_h);
 
+        /*
+                Rounded to the grid before the corner is worked out, not after.
+
+                pane_regrid rounds a window of cells down to a whole number of
+                them, and it used to do that after this had already decided
+                where the left edge goes -- so dragging the left edge of a
+                terminal moved its right edge as well, by up to a cell, in and
+                out as the rounding changed under the hand. The edge that was
+                not grabbed only stays where it was if the rounding comes off
+                the one that was.
+        */
+        pane_grid_fit(pane, &nw, &nh);
+
         // The edge that was not grabbed stays where it was.
         if (edges & EDGE_LEFT)
                 nx = desktop.resize_x + desktop.resize_w - nw;
