@@ -2063,14 +2063,27 @@ static bool file_walk_pair(file_walk address_to walk, string_address program,
 typedef fn(address_to file_visit)(bipolar directory, string_address name,
                                   string_address shown);
 
+/*
+        Whether a directory is visited before or after what is under it.
+
+        chmod walks a tree from the top: a directory is changed and then read,
+        because the mode it is given is what says whether it can be read at
+        all. chown and chgrp walk it from the bottom, which is what the
+        reference's own -v listing shows, and this is where the two differ.
+*/
+static bool file_change_after_contents;
+
 static fn file_change_walk_as(bipolar directory, string_address name,
                               string_address shown, positive depth,
                               string_address program, b32 address_to status,
                               file_visit visit, bool report_walk_errors)
 {
-        visit(directory, name, shown);
+        bool here = file_is_directory(directory, name);
 
-        if (!file_is_directory(directory, name))
+        if (!here || !file_change_after_contents)
+                visit(directory, name, shown);
+
+        if (!here)
                 return;
 
         if (depth == 0)
@@ -2092,6 +2105,10 @@ static fn file_change_walk_as(bipolar directory, string_address name,
                                       program, shown, file_reason(walk.error));
                         address_to status = 1;
                 }
+
+                if (file_change_after_contents)
+                        visit(directory, name, shown);
+
                 return;
         }
 
@@ -2125,6 +2142,9 @@ static fn file_change_walk_as(bipolar directory, string_address name,
         }
 
         file_walk_close(address_of walk);
+
+        if (file_change_after_contents)
+                visit(directory, name, shown);
 }
 
 // The operand list those three read, which is the same list every time: each
@@ -10475,9 +10495,14 @@ static bipolar chown_from_group = -1;
 
 static p8 chown_traverse_option;
 
+static p8 chown_loudness_option;
+
 static const file_supersede chown_supersedes[] = {
     {(string_address) "dh", address_of chown_dereference_option},
     {(string_address) "HLP", address_of chown_traverse_option},
+    //      How much to say: every change, only the changes, or nothing.
+    //      The last of the two is the one that answers.
+    {(string_address) "cv", address_of chown_loudness_option},
     {null, null},
 };
 
@@ -10511,6 +10536,15 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
 
         if (!changed)
         {
+                //      A spec that names neither half asked for nothing, and
+                //      the reference says so without naming what was kept --
+                //      in chown's words, whichever of the two was called.
+                if (chown_user < 0 && chown_group < 0)
+                {
+                        string_format(log, "ownership of '%s' retained\n", shown);
+                        return;
+                }
+
                 chown_who(was->owner, was->group, who);
                 string_format(log, chown_groups_only ? "group of '%s' retained as %s\n"
                                                      : "ownership of '%s' retained as %s\n",
@@ -10688,8 +10722,10 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
 
 static fn chown_paths(positive first, positive count)
 {
+        file_change_after_contents = true;
         file_change_paths(first, count, (chown_flags & FILE_FLAG('R')) != 0,
                           chown_program, address_of chown_status, chown_one);
+        file_change_after_contents = false;
 }
 
 static b32 file_chown_common(string_address program, bool groups_only)
@@ -10702,6 +10738,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
         chown_status = 0;
         chown_dereference_option = 'd';
         chown_traverse_option = 0;
+        chown_loudness_option = 0;
         chown_program = program;
         chown_groups_only = groups_only;
         chown_spec = (string_address) "";
@@ -10717,6 +10754,15 @@ static b32 file_chown_common(string_address program, bool groups_only)
         if (!file_take(address_of taking))
                 return 1;
 
+        //      --from's spec is read first: the reference is a getopt loop
+        //      and reads the word where the option is, before it asks
+        //      anything about the walk it was told to make.
+        string_address from = file_option_value(address_of taking, 'F');
+
+        if (from && !chown_spec_read(from, address_of chown_from_user,
+                                     address_of chown_from_group))
+                return 1;
+
         //      A recursive walk that was told to follow links has to be
         //      told which ones, and the last of -H, -L and -P is the one
         //      that answers: -P, or none at all, leaves the question open
@@ -10727,20 +10773,27 @@ static b32 file_chown_common(string_address program, bool groups_only)
                                      "%s: -R --dereference requires either -H or -L\n",
                                      program);
 
-        string_address from = file_option_value(address_of taking, 'F');
-
-        if (from && !chown_spec_read(from, address_of chown_from_user,
-                                     address_of chown_from_group))
-                return 1;
-
         positive first = taking.first;
 
         chown_flags = taking.flags;
-        chown_loud = (taking.flags & FILE_FLAG('v')) != 0;
-        chown_changes = (taking.flags & FILE_FLAG('c')) != 0;
+        chown_loud = chown_loudness_option == 'v';
+        chown_changes = chown_loudness_option == 'c';
         chown_quiet = (taking.flags & FILE_FLAG('f')) != 0;
 
         string_address like = file_option_value(address_of taking, 'e');
+
+        //      The operands are counted before the reference file is looked
+        //      at: a line with nothing to change is a missing operand
+        //      whatever --reference named, and one that is a spec and no
+        //      file names the spec it stopped after.
+        if (first >= count || (!like && first + 1 >= count))
+        {
+                if (first >= count)
+                        return string_report(log_error, 1, "%s: missing operand\n", program);
+
+                return string_report(log_error, 1, "%s: missing operand after '%s'\n",
+                                     program, program_argument((b32)(count - 1)));
+        }
 
         if (like)
         {
@@ -10757,9 +10810,6 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
                 chown_group = (bipolar)facts.group;
         }
-
-        if (first >= count || (!like && first + 1 >= count))
-                return string_report(log_error, 1, "%s: missing operand\n", program);
 
         static p8 chown_reference_spec[FILE_PATH_MAX];
 
@@ -10821,8 +10871,9 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
         // "user:" names a group by the user's own login group, which needs a
         // password database this one has not got; the reference refuses a
-        // spec it cannot complete rather than changing only the user.
-        if (group && !string_get(group))
+        // spec it cannot complete rather than changing only the user. A
+        // lone colon names neither half and asks for nothing.
+        if (group && !string_get(group) && length)
         {
                 string_format(log_error, "%s: invalid spec: '%s'\n", program, who);
                 return 1;
@@ -21112,11 +21163,23 @@ static b32 file_id()
         bool zero = (flags & FILE_FLAG('z')) != 0;
         bool one = (flags & (FILE_FLAG('u') | FILE_FLAG('g') | FILE_FLAG('G'))) != 0;
 
+
         // -Z asks for a security context. Nothing here keeps one, and an
         // empty answer would read as a process that has no context rather
         // than as a tool with nothing to say about it.
         if (flags & FILE_FLAG('Z'))
                 return string_report(log_error, 1, "id: --context (-Z) works only on an SELinux-enabled kernel\n");
+
+        //      -u, -g and -G each say the answer is one thing; two of them
+        //      say it is two, which the reference refuses before it looks
+        //      anything up.
+        positive chosen = ((flags & FILE_FLAG('u')) != 0) +
+                          ((flags & FILE_FLAG('g')) != 0) +
+                          ((flags & FILE_FLAG('G')) != 0);
+
+        if (chosen > 1)
+                return string_report(log_error, 1,
+                                     "id: cannot print \"only\" of more than one choice\n");
 
         if ((names || real) && !one)
                 return string_report(log_error, 1, "id: printing only names or real IDs requires -u, -g, or -G\n");
@@ -21167,6 +21230,15 @@ static b32 file_id()
 
                         id_written((positive)user, (positive)group,
                                    file_id_scratch, have, flags, names, zero);
+
+                        //      A group list asked about more than one
+                        //      account with -z ends each account with a
+                        //      second zero byte: the list's own separator is
+                        //      the zero byte too, so the reference closes the
+                        //      list and then the account.
+                        if (zero && (flags & FILE_FLAG('G')) &&
+                            count - taking.first > 1)
+                                log("", 1);
                 }
 
                 log_flush();
