@@ -15665,15 +15665,16 @@ static void check_spawn_dispatch(void) {
             .argv_count=2,.flags=flags,.stdio={-1,-1,-1}};
         long got;
         memset(open_files,0,sizeof(open_files));
-        spawn_entered=0; allocations=fail_allocation=0; copies=0; fail_copy=0;
+        spawn_entered=0; spawn_handed=NULL;
+        allocations=fail_allocation=0; copies=0; fail_copy=0;
         got=device_ioctl(&caller,SPARK_IOCTL_SPAWN,(unsigned long)&request);
         if (flags & ~SPARK_SPAWN_FLAGS) {
             check(got==-EINVAL,"spawn refuses a flag it does not define");
             check(!spawn_entered,"a refused flag starts no task");
-        } else {
+        } else if (got!=spawn_pid || spawn_entered!=1)
+            check(0,"every defined flag combination launches");
+        else {
             const struct spawn_work *handed=spawn_handed;
-            check(got==spawn_pid && spawn_entered==1,
-                  "every defined flag combination launches");
             /* Which flag means what: SHELL is the ENOEXEC rule and nothing
                else, TOOL redirects the launch into the system image and
                nothing else, and the two are independent. */
