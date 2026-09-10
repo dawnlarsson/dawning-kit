@@ -21088,7 +21088,7 @@ REASONS = {
  "r68": "loadable builtins and the special-builtin listing are unsupported",
  "r69": "fc lists only the entries this shell records: the store needs the interactive reader",
  "r7": "gawk special variable or rule (BEGINFILE/ENDFILE, IGNORECASE, RT, FPAT, FIELDWIDTHS, PROCINFO, ARGIND, ERRNO): an ordinary name here, as in gawk --posix",
- "r70": "the hash table is written dash-style: paths, without the hits and command header",
+ "r70": "the hash table is written dash-style -- paths alone, without the hits and command header bash writes -- and in the order the entries were hashed, where both references walk their own buckets and answer the same order however the entries went in: bash aa cc bb dd, dash dd aa cc bb, for aa bb cc dd hashed in either direction. Matching either order means reproducing that shell's hash function and table size, which POSIX does not ask for and which would be imitating an implementation rather than a behaviour",
  "r71": "history -p does not expand: history expansion needs the interactive reader",
  "r72": "kill -l takes only a number here; -s and -n live in exec.c, which this pass does not own",
  "r73": "kill -L is not implemented; kill lives in exec.c, which this pass does not own",
@@ -157841,6 +157841,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "015fc4a3b7e7d86c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "ceeb66b1bcd4f378fb44c5351fb9901a844842436703121e2a8d482f504ff751"
   },
   "case": {
@@ -157861,6 +157893,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_toggle",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "01e9bb2e00d25cf8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
   "utility": "startup"
  },
  {
@@ -157919,6 +157983,134 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "515b950137a9e6ab79ece44b47265c8161da786a95f92b9b93155f421734ea82"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --noprofile -u +e -h +o histexpand -i -p -c 'echo x' --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_compound",
+   "tier": "random",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "04236fc00b634fa7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "0ce2824de4a3be397c15a351c760d9a856469e8ff617b93c530a83ace27422f7"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "044d394fac5317bf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "049e85e219d739aa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_compound",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "0524c762a18ee125",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "68773baa5d2496ce42851f22d1b85b8b9df59253c6d68731ab30583608b41fad"
   },
   "case": {
@@ -157939,6 +158131,70 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_blank",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "06e857f4da784eba",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "075e1ad1d8b1a6ad",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -158075,6 +158331,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_blank",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "0f225dda8e49e889",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "7574f6822b5ad05ca43939aef889225893ec3696bfe69fd179263cde130bd28b"
   },
   "case": {
@@ -158179,6 +158467,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "13431e43ad809f95",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "5a41fd2102073f71d0fbefb056a70f05a9a0bd7fe4a796740aa7cdefe3e92313"
   },
   "case": {
@@ -158231,6 +158551,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "18a457668485b5a8",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "b114d512002b033b180dd447bc1b49c5ddf83530fced764ae9beb00f7059a717"
   },
   "case": {
@@ -158251,6 +158603,70 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_false",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "190213940d1b917f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "1a221dd9cfa76862",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -158649,6 +159065,70 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_compound",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "30b2020b8949b3d6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_compound",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "350ce8fc45560093",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
@@ -158780,6 +159260,70 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_heredoc",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "3a788a2e94c442d2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_heredoc",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "3aeef78cf374d794",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "acfa980d91b8266c0b6c7aaa81a3091d78c54f913c301be2f4dcd64220551b43"
   },
   "case": {
@@ -158826,6 +159370,70 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_compound",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "3ede8b7c3deff4d2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "3f77abe9ea469dc0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -159014,6 +159622,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_compound",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "4aeb84fa8c3664a6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "a3df1cff2299d823bdd3883dfe6757485398e161a20a66207529c224413e8f7c"
   },
   "case": {
@@ -159060,6 +159700,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "4c5c9afdb4c57c2c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -159145,6 +159817,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_toggle",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "50a70eacc248a58d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "68773baa5d2496ce42851f22d1b85b8b9df59253c6d68731ab30583608b41fad"
   },
   "case": {
@@ -159217,6 +159921,198 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "57dce2d9cf847271",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "58c72abf4262505b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_heredoc",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "5a740ff35f464e5f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_heredoc",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "5a7a7be50179d5ff",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_heredoc",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "5acdd6c79204732a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_probe",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "5bf7ce34f035ad20",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -159406,6 +160302,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "65d8475ac726186a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "7574f6822b5ad05ca43939aef889225893ec3696bfe69fd179263cde130bd28b"
   },
   "case": {
@@ -159536,6 +160464,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_false",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "6da8698edc38a27d",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "68773baa5d2496ce42851f22d1b85b8b9df59253c6d68731ab30583608b41fad"
   },
   "case": {
@@ -159582,6 +160542,70 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "720fee227a636d35",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_false",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "73d69ab84f1e1f5f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -159640,6 +160664,70 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "75d2b76e26b5751b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "7752f84baec45bdb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "77eed8393500bc56e0fd8ea3b2db15c992f4b870591f74928e50992588c2525d"
   },
   "case": {
@@ -159660,6 +160748,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "792102ebb82f0c09",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
   "utility": "startup"
  },
  {
@@ -159687,6 +160807,70 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r236",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "7b4720fe95118d1c",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_false",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "7c56627e787c9837",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -159904,6 +161088,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "8232ae64360115e9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
@@ -159931,6 +161147,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "83e0bf62fb1ea4fe",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "7574f6822b5ad05ca43939aef889225893ec3696bfe69fd179263cde130bd28b"
   },
   "case": {
@@ -159951,6 +161199,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_toggle",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "8556da2bc8ef66e2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -160004,6 +161284,38 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r236",
   "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_heredoc",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "868744fecf92ffb2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -160167,6 +161479,70 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "896d6e7231732e84",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_probe",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "8a8e739f4cdbafc4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "ceeb66b1bcd4f378fb44c5351fb9901a844842436703121e2a8d482f504ff751"
   },
   "case": {
@@ -160297,6 +161673,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_toggle",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "911984b6a4b7e06a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "b114d512002b033b180dd447bc1b49c5ddf83530fced764ae9beb00f7059a717"
   },
   "case": {
@@ -160349,6 +161757,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_blank",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "94868edda1b3333e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "acfa980d91b8266c0b6c7aaa81a3091d78c54f913c301be2f4dcd64220551b43"
   },
   "case": {
@@ -160369,6 +161809,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_false",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "972865bfdcf8e332",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -160473,6 +161945,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_blank",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "9cd9c2990cd414dc",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -160609,6 +162113,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_false",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "a1e3069b6a3f25da",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "acfa980d91b8266c0b6c7aaa81a3091d78c54f913c301be2f4dcd64220551b43"
   },
   "case": {
@@ -160629,6 +162165,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_probe",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "a737d824a47ebff7",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
   "utility": "startup"
  },
  {
@@ -160791,6 +162359,70 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_compound",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "b3bb3725b9fefb8e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_toggle",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "b4f74d54cbc96e41",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "1d7283ce79daa32c1243910fe4be804d7137dd29d3409ec29180a39de348c645"
   },
   "case": {
@@ -160844,6 +162476,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "515b950137a9e6ab79ece44b47265c8161da786a95f92b9b93155f421734ea82"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --noprofile -u +e -h +o histexpand -i -p -c 'echo x' --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_compound",
+   "tier": "random",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "b8746efea1b397fa",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "0ce2824de4a3be397c15a351c760d9a856469e8ff617b93c530a83ace27422f7"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "77eed8393500bc56e0fd8ea3b2db15c992f4b870591f74928e50992588c2525d"
   },
   "case": {
@@ -160864,6 +162528,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_false",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "bab35c441a1ed17f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -160922,6 +162618,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_probe",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "bc9307fa9b8f6c63",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "77eed8393500bc56e0fd8ea3b2db15c992f4b870591f74928e50992588c2525d"
   },
   "case": {
@@ -160968,6 +162696,70 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "bf3bdc876077f546",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "bf40cca268b9fc51",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -161157,6 +162949,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_heredoc",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "c88f7c3b658b177a",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "e0fe9b564c1874cc3dce6e0ce8715d561b48eee46d3308041f7e2bef2f375317"
   },
   "case": {
@@ -161255,6 +163079,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_blank",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "cc7c33fa62ccded5",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -161471,6 +163327,70 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_compound",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "d373b7b69fa2ea39",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_probe",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "d731494cf2e1fe8e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "ceeb66b1bcd4f378fb44c5351fb9901a844842436703121e2a8d482f504ff751"
   },
   "case": {
@@ -161523,6 +163443,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_probe",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "db670e269c67fd16",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "11f0d0907039c4d3a4cd896801e9083a10359d9b7b0efae7029bac83deef8b04"
   },
   "case": {
@@ -161543,6 +163495,70 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_probe",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "dc5ade2d9d45b4cf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_blank",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "dc74b9d3d3b85afb",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
   "utility": "startup"
  },
  {
@@ -161575,6 +163591,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "e1c44a5b6d3e3071",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "ceeb66b1bcd4f378fb44c5351fb9901a844842436703121e2a8d482f504ff751"
   },
   "case": {
@@ -161595,6 +163643,70 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_compound",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "e26e431822e0dae6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_probe",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "e2a7482c04d388c2",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -161757,6 +163869,70 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_blank",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "e71e23d09886cd12",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_toggle",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "e8220781b3d48061",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "7574f6822b5ad05ca43939aef889225893ec3696bfe69fd179263cde130bd28b"
   },
   "case": {
@@ -161830,6 +164006,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_toggle",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "ec1c1442a2800353",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
   "utility": "startup"
  },
  {
@@ -161941,6 +164149,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --norc --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_toggle",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "efe7bf7108add81f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "68773baa5d2496ce42851f22d1b85b8b9df59253c6d68731ab30583608b41fad"
   },
   "case": {
@@ -162046,6 +164286,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "text",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "f1a5f2d1b72ccea6",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "7574f6822b5ad05ca43939aef889225893ec3696bfe69fd179263cde130bd28b"
   },
   "case": {
@@ -162098,6 +164370,38 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
+   "stdout": "e9c9a54d6654993e581ecb84b294cd81d8f87786c19e57714ebe1ac03c165819"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --help 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_false",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "f543ac482cee9fbf",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "1b4ae83c040c2c9d4789d71a137695db23023cba26f78cdf03a7f0d1fc5c52c2"
+  },
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
    "stdout": "7574f6822b5ad05ca43939aef889225893ec3696bfe69fd179263cde130bd28b"
   },
   "case": {
@@ -162144,6 +164448,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "shell_onecmd_heredoc",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "f729276bb15d0027",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
@@ -162327,6 +164663,38 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "utility": "startup"
+ },
+ {
+  "candidate": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "14c81fe28ac5ea9c5dda37c3cc0e90b2ee9118146c07d834c3f121279cf63f99"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --version -c 'echo after' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
+   ],
+   "domain": "shell",
+   "family": "startup",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "shell_onecmd_blank",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "fd87d27e63050f45",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "the shell answers for itself rather than as the reference. --version writes what this is and carries bash version number, because a script reading it for a feature test wants the number and the reference writes four lines of Free Software Foundation copyright after its name -- saying the first line without the rest would be neither true nor a copy, and saying the rest would be a copyright statement about somebody elses work. --help writes this shell usage rather than the reference banner and version line",
+  "reference": {
+   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
+   "status": 0,
+   "stdout": "7ce06d7d010fa5ee3291da056cbf2c0d778e8c98396d1d3bdd2c20c56fe0d3b4"
+  },
   "utility": "startup"
  },
  {
