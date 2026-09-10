@@ -2995,7 +2995,7 @@ riscv_default_startup()
 #       each level's subdirectory names in an array sized LS_ARENA / 8 --
 #       128 kB of stack per level of nesting, to FILE_MAX_DEPTH -- so `ls -R`
 #       on a tree any user can make with mkdir -p needs between four and six
-#       megabytes where GNU ls needs under one.
+#       megabytes where GNU ls needs sixteen kilobytes.
 #
 #       The ceilings below are pins in the same sense the differential engine
 #       uses the word: they record what a function costs today so that growth
@@ -3125,7 +3125,7 @@ stack_recursion_check()
         #       expected result of the measurement rather than news, so the
         #       subshell drops its cores and the announcement with them.
         lowest=none
-        for limit in 1024 2048 3072 4096 5120 6144 7168 8192; do
+        for limit in 16 32 64 128 256 384 512 1024 2048 4096 8192; do
                 ( ulimit -c 0 2>/dev/null
                   ulimit -s "$limit" 2>/dev/null || exit 111
                   "$farm/ls" -R "$tree" > /dev/null 2>&1 ) 2>/dev/null
@@ -3138,7 +3138,7 @@ stack_recursion_check()
         if [ "$lowest" = none ]; then
                 note "ls -R survived no stack limit up to ${LS_RECURSION_STACK_KB} kB"
         else
-                note "ls -R over $LS_RECURSION_DEPTH levels needs ${lowest} kB of stack (GNU ls: 1024)"
+                note "ls -R over $LS_RECURSION_DEPTH levels needs ${lowest} kB of stack (GNU ls: 16)"
         fi
 
         ( ulimit -c 0 2>/dev/null

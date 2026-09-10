@@ -19405,6 +19405,442 @@ def harness_floodlight(argv):
              'the checks that walk the tables say they need the lock'),):
         check(bool(re.search(guard, where)), what)
 
+    #   The filter, installed for real.
+    #
+    #   Jump offsets in classic BPF are counted forward from the instruction
+    #   after the jump, which is exactly the kind of arithmetic that is right
+    #   in the head and wrong in the file. So the builder is taken out of the
+    #   shell and run: a child installs the filter it produces, tries the calls
+    #   it is meant to refuse and one it is not, and says what happened.
+    #
+    #   Linux only, because seccomp is. Skipped elsewhere rather than faked.
+    if platform.system() == 'Linux':
+        builder = shell[shell.index('#define BPF_LOAD_WORD'):]
+        builder = builder[:builder.index('\n/*\n        Whether this applet')]
+
+        confine = r"""
+#include <errno.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+typedef void fn;
+typedef unsigned char p8;
+typedef unsigned short p16;
+typedef unsigned int p32;
+typedef unsigned long positive;
+#define address_to *
+#define address_of &
+#define syscall_name_prctl SYS_prctl
+#define syscall_name_seccomp SYS_seccomp
+#define syscall_name_execve SYS_execve
+#define syscall_name_execveat SYS_execveat
+#define syscall_name_socket SYS_socket
+#define syscall_name_connect SYS_connect
+/* Taken before the name is redefined below, or the macro eats the call. */
+static long raw_call(long n, long a, long b, long c, long d, long e)
+{
+        return syscall(n, a, b, c, d, e);
+}
+
+#define syscall(name) syscall_name_##name
+#define system_call_5(n, a, b, c, d, e) raw_call((long)(n), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e))
+#define system_call_3(n, a, b, c) raw_call((long)(n), (long)(a), (long)(b), (long)(c), 0, 0)
+""" + builder + r"""
+int main(void)
+{
+        pid_t child = fork();
+        int status = 0;
+
+        if (child == 0) {
+                p32 refused[2] = {(p32)SYS_execve, (p32)SYS_execveat};
+                char *argv[] = {(char *)"/bin/sh", (char *)"-c",
+                                (char *)"exit 7", NULL};
+
+                floodlight_confine(refused, 2);
+
+                /* A call the filter says nothing about still works, or the
+                   filter has refused the program rather than the exec. */
+                if (getpid() <= 0)
+                        _exit(3);
+
+                errno = 0;
+                execve("/bin/sh", argv, NULL);
+
+                /*
+                        Refused, and refused as an error rather than a signal,
+                        so the program can say it could not run the command.
+
+                        The command the exec would have run exits 7 on purpose.
+                        It used to be /bin/true, and an exec that succeeded
+                        made this child into a program that exits zero -- which
+                        is exactly what a refused exec reports, so a filter
+                        that failed to install scored as a filter that worked.
+                */
+                _exit(errno == EPERM ? 0 : 4);
+        }
+
+        if (child < 0 || waitpid(child, &status, 0) != child)
+                return 5;
+        if (!WIFEXITED(status))
+                return 6;
+
+        printf("%d\n", WEXITSTATUS(status));
+        return 0;
+}
+"""
+        with tempfile.TemporaryDirectory(prefix='floodlight-seccomp-') as work:
+            unit = Path(work) / 'confine.c'
+            unit.write_text(confine)
+            binary = Path(work) / 'confine'
+            built = subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
+                                   ['-std=gnu11', '-O1', '-w', str(unit), '-o', str(binary)],
+                                   capture_output=True, text=True)
+            if built.returncode:
+                check(False, 'the filter builder compiles on its own: ' + built.stderr[-300:])
+            else:
+                ran = subprocess.run([str(binary)], text=True, capture_output=True)
+                said = ran.stdout.strip()
+                check(ran.returncode == 0 and said == '0',
+                      'a confined program is refused the exec and keeps the rest '
+                      '(child said %s, runner %d)' % (said or '-', ran.returncode))
+    else:
+        print('  floodlight: seccomp not exercised here, needs Linux')
+
+    #   And now the module itself, run.
+    #
+    #   Everything above reads the source. This compiles floodlight.c against
+    #   enough mocked kernel to be a process -- every mock a stub or a
+    #   redirection, never a reimplementation, so the code under test is the
+    #   code that ships -- and then tries to break it: forged report lines,
+    #   escapes and newlines in a name, a line longer than any that can mean
+    #   something, a copy that fails, a register filled to its ceiling, a seal,
+    #   and three kinds of write that went behind the register's back.
+    mock = r'''
+/* Enough kernel to run floodlight.c in a process. Nothing here is a
+   reimplementation of what it does: every mock is a stub or a redirection, so
+   the code under test is the code that ships. */
+#include <stdbool.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <stddef.h>
+
+typedef uint32_t u32;
+typedef long ssize_t_k;
+#ifndef __linux__ /* glibc already has it */
+typedef long long loff_t;
+#endif
+#define __user
+#define __init
+#define __ro_after_init
+#define THIS_MODULE 0
+#define MISC_DYNAMIC_MINOR 255
+#define CAP_SYS_ADMIN 21
+#define EPERM 1
+#define EINVAL 22
+#define EFAULT 14
+#define ENOSPC 28
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define DEFINE_MUTEX(name) int name
+#define lockdep_assert_held(x) ((void)(x))
+#define late_initcall(fn) int (*mock_init)(void) = fn
+#define MODULE_DESCRIPTION(x)
+#define MODULE_AUTHOR(x)
+#define MODULE_LICENSE(x)
+#define noop_llseek 0
+#define seq_read 0
+#define seq_lseek 0
+#define single_release 0
+#define init_user_ns mock_ns
+
+struct inode;
+struct file;
+struct file_operations { int owner; void *open, *read, *llseek, *release, *write; };
+struct miscdevice { int minor; const char *name; const struct file_operations *fops; int mode; };
+struct seq_file { char *at; unsigned room; };
+
+static int mock_ns;
+static int mock_lock_depth;
+static bool mock_root = true;
+static unsigned mock_uid = 0;
+static unsigned long long mock_now = 1000;
+static u32 mock_random = 0x11223344;
+static bool mock_copy_fails;
+static char mock_log[16384];
+static unsigned mock_log_length;
+
+static void mutex_lock(int *m) { (void)m; mock_lock_depth++; }
+static void mutex_unlock(int *m) { (void)m; mock_lock_depth--; }
+static bool capable(int what) { (void)what; return mock_root; }
+static unsigned current_uid(void) { return mock_uid; }
+static unsigned from_kuid(int *ns, unsigned uid) { (void)ns; return uid; }
+static unsigned long long ktime_get_real_seconds(void) { return mock_now; }
+static u32 get_random_u32(void) { return mock_random; }
+static int misc_register(struct miscdevice *d) { (void)d; return 0; }
+static int single_open(struct file *f, void *show, void *p) { (void)f;(void)show;(void)p; return 0; }
+
+static unsigned long copy_from_user(void *to, const void *from, unsigned long n)
+{
+        if (mock_copy_fails) return n;
+        memcpy(to, from, n);
+        return 0;
+}
+
+static ssize_t_k strscpy(char *to, const char *from, unsigned long room)
+{
+        unsigned long length = strlen(from);
+        if (length >= room) { memcpy(to, from, room - 1); to[room-1] = 0; return -7; }
+        memcpy(to, from, length + 1);
+        return (ssize_t_k)length;
+}
+
+static void mock_say(const char *fmt, va_list args)
+{
+        int wrote = vsnprintf(mock_log + mock_log_length,
+                              sizeof(mock_log) - mock_log_length, fmt, args);
+        if (wrote > 0) mock_log_length += (unsigned)wrote;
+}
+#define MOCK_PRINT(fmt) do { va_list a; va_start(a, fmt); mock_say(fmt, a); va_end(a); } while (0)
+static void pr_warn(const char *fmt, ...) { MOCK_PRINT(fmt); }
+static void pr_err(const char *fmt, ...) { MOCK_PRINT(fmt); }
+static void pr_alert(const char *fmt, ...) { MOCK_PRINT(fmt); }
+
+static char mock_report[16384];
+static unsigned mock_report_length;
+static void seq_printf(struct seq_file *s, const char *fmt, ...)
+{
+        va_list a; int wrote;
+        (void)s;
+        va_start(a, fmt);
+        wrote = vsnprintf(mock_report + mock_report_length,
+                          sizeof(mock_report) - mock_report_length, fmt, a);
+        va_end(a);
+        if (wrote > 0) mock_report_length += (unsigned)wrote;
+}
+static void seq_puts(struct seq_file *s, const char *text)
+{ (void)s; mock_report_length += (unsigned)snprintf(mock_report + mock_report_length,
+        sizeof(mock_report) - mock_report_length, "%s", text); }
+'''
+
+    bridge = r'''
+static bool intact_public(void) { mutex_lock(&lock); bool a = intact(); mutex_unlock(&lock); return a; }
+'''
+
+    driver = r'''
+static unsigned checks, failures;
+static void check(int ok, const char *what)
+{
+        checks++;
+        if (!ok) { failures++; printf("  FAIL %s\n", what); }
+}
+
+/* Every test drives the real entry points: the write handler and the show
+   handler, exactly as the kernel would call them. */
+static long put(const char *line)
+{
+        mock_log_length = 0; mock_log[0] = 0;
+        return floodlight_write(NULL, line, strlen(line), NULL);
+}
+
+static const char *report(void)
+{
+        struct seq_file seq = {0};
+        mock_report_length = 0; mock_report[0] = 0;
+        floodlight_show(&seq, NULL);
+        mock_report[mock_report_length] = 0;
+        return mock_report;
+}
+
+static bool shows(const char *needle) { return strstr(report(), needle) != NULL; }
+
+static void reset(u32 random)
+{
+        memset(changed, 0, sizeof(changed));
+        sealed = false; compromised = false;
+        mock_root = true; mock_uid = 0; mock_now = 1000;
+        mock_copy_fails = false;
+        mock_random = random;
+        secret = get_random_u32();
+        baseline_sum = baseline_seal();
+        guard_arm();
+}
+
+int main(void)
+{
+        reset(0x11223344);
+
+        /* --- it answers at all --------------------------------------- */
+        check(shows("awk") && shows("find") && shows("xargs"),
+              "the report carries the built-in answers");
+        check(strstr(report(), "awk") && strstr(report(), "deny"),
+              "awk is denied out of the box");
+        check(!shows("changed"), "a machine nobody has touched shows no change");
+
+        /* --- an ordinary change -------------------------------------- */
+        mock_uid = 0; mock_now = 2000;
+        check(put("awk spawn allow\n") > 0, "root may change an answer");
+        check(shows("changed"), "the change is in the report");
+        check(strstr(mock_log, "allowed") && strstr(mock_log, "awk"),
+              "the change is said out loud");
+
+        /* --- and undoing it gives the row back ------------------------ */
+        check(put("awk spawn deny\n") > 0, "an answer can be put back");
+        check(!shows("changed"), "back to built in leaves no deviation behind");
+
+        /* --- who may write -------------------------------------------- */
+        mock_root = false;
+        check(put("awk spawn allow") == -EPERM, "a non-root write is refused");
+        check(!shows("changed"), "and changes nothing");
+        mock_root = true;
+
+        /* --- red team: forging the report ------------------------------ */
+        check(put("x\033[2K\033[A spawn allow") == -EINVAL,
+              "a name carrying an escape is refused");
+        check(put("a\nfake spawn allow") == -EINVAL,
+              "a name carrying a newline is refused");
+        check(put("a\rb spawn allow") == -EINVAL, "a name carrying a return is refused");
+        check(put("a\010b spawn allow") == -EINVAL, "a name carrying a backspace is refused");
+        check(put("\033 spawn allow") == -EINVAL, "a bare escape is refused");
+        check(!shows("fake") && !shows("\033"), "and none of them reached the report");
+
+        /* --- red team: the parse --------------------------------------- */
+        check(put("") == -EINVAL, "an empty line is refused");
+        check(put("\n") == -EINVAL, "a bare newline is refused");
+        check(put("awk") == -EINVAL, "a line with no setting is refused");
+        check(put("awk spawn") == -EINVAL, "a line with no state is refused");
+        check(put("awk spawn maybe") == -EINVAL, "a state that is not allow or deny is refused");
+        check(put("awk fly allow") == -EINVAL, "a setting that does not exist is refused");
+        check(put("     ") == -EINVAL, "a line of spaces is refused");
+        check(put("\t\t") == -EINVAL, "a line of tabs is refused");
+        {
+                char big[512];
+                memset(big, 'a', sizeof(big)); big[sizeof(big)-1] = 0;
+                check(floodlight_write(NULL, big, sizeof(big) - 1, NULL) == -EINVAL,
+                      "a line longer than any that can mean something is refused");
+                check(guard_intact(), "and it did not reach the guards");
+        }
+        {
+                char name[SUBJECT + 32];
+                memset(name, 'a', SUBJECT + 2); strcpy(name + SUBJECT + 2, " spawn allow");
+                check(put(name) == -EINVAL, "a name too long for a row is refused");
+        }
+        mock_copy_fails = true;
+        check(put("awk spawn allow") == -EFAULT, "a copy that fails is refused");
+        mock_copy_fails = false;
+
+        /* --- a program this kernel never heard of ---------------------- */
+        check(put("/usr/bin/curl network deny") > 0, "a program not built in can be named");
+        check(shows("/usr/bin/curl"), "and appears in the report");
+        check(put("/usr/bin/tar flag --to-command deny") > 0, "a flag can be refused");
+        check(shows("--to-command"), "and the flag is in the report");
+
+        /* --- the register fills up -------------------------------------- */
+        reset(0x11223344);
+        {
+                char line[64];
+                unsigned made = 0, i;
+                for (i = 0; i < CHANGES + 4; i++) {
+                        snprintf(line, sizeof line, "prog%u network deny", i);
+                        if (put(line) > 0) made++;
+                }
+                check(made == CHANGES, "the register holds exactly what it says it does");
+                snprintf(line, sizeof line, "prog%u network deny", CHANGES + 9);
+                check(put(line) == -ENOSPC, "and refuses the one past it");
+        }
+
+        /* --- sealing ------------------------------------------------------ */
+        reset(0x11223344);
+        check(put("seal") > 0, "the register can be sealed");
+        check(shows("(sealed)"), "and says so");
+        check(put("awk spawn allow") == -EPERM, "a sealed register refuses a change");
+        check(put("seal") > 0, "sealing again is allowed");
+        check(!strstr(mock_log, "sealed"), "but says nothing the second time");
+
+        /* --- red team: tampering ------------------------------------------ */
+        reset(0x11223344);
+        put("awk spawn allow");
+        changed[0].allowed = 0;                    /* a write that missed the seal */
+        check(!intact_public(), "a deviation altered in memory is caught");
+        check(shows("TAMPERED"), "and the report stops answering");
+        check(put("awk spawn deny") == -EPERM, "and no further change is taken");
+
+        reset(0x11223344);
+        {
+                /* The built-in answers are const in the kernel; here we reach
+                   past that to prove the sum is what notices, not the page. */
+                struct rule *writable = baseline;
+                unsigned char was = writable[0].allowed;
+                writable[0].allowed = !was;
+                check(!intact_public(), "a built-in answer altered in memory is caught");
+                check(shows("TAMPERED"), "and the report stops answering");
+                writable[0].allowed = was;
+        }
+
+        reset(0x11223344);
+        parse.after[0] ^= 0xff;                    /* an overrun by one byte */
+        check(!guard_intact(), "one byte past the parse buffer is caught");
+        check(!intact_public(), "and the register stops answering");
+
+        /* --- the guard bytes are never the hole ---------------------------- */
+        {
+                u32 seeds[] = {0, 0x00000000, 0xffffff00, 0x5a, 0x00005a00, 0x1234};
+                unsigned i;
+                for (i = 0; i < ARRAY_SIZE(seeds); i++) {
+                        reset(seeds[i]);
+                        check(guard_head != 0 && guard_tail != 0 && guard_head != guard_tail,
+                              "the guard bytes are never zero and never each other");
+                        memset(parse.before, 0, GUARD);
+                        check(!guard_intact(), "a guard of zeros is not intact");
+                }
+        }
+
+        /* --- the lock is balanced whatever happened ------------------------ */
+        check(mock_lock_depth == 0, "every path leaves the lock as it found it");
+
+        printf("%u/%u\n", checks - failures, checks);
+        return failures ? 1 : 0;
+}
+'''
+
+    runnable = "\n".join(line for line in text.split("\n")
+                         if not re.match(r'\s*#\s*include\s*<', line))
+
+    #   The shipped file is const and a check above holds it to that. This copy
+    #   is not, so the tamper test can actually alter a built-in answer and
+    #   prove the sum is what notices: writing through a cast to const is
+    #   undefined, and the compiler duly assumed the value could not change.
+    runnable = runnable.replace(
+        "static const struct rule baseline[] = {",
+        "static struct rule baseline[] = {")
+
+    with tempfile.TemporaryDirectory(prefix='floodlight-run-') as work:
+        unit = Path(work) / 'run.c'
+        unit.write_text(mock + runnable + bridge + driver)
+        binary = Path(work) / 'run'
+        subprocess.run(shlex.split(os.environ.get('CC', 'cc')) +
+                       ['-std=gnu11', '-O1', '-g', '-w',
+                        '-fsanitize=address,undefined', str(unit), '-o', str(binary)],
+                       check=True)
+        ran = subprocess.run([str(binary)], text=True, capture_output=True)
+        tally = re.search(r'(\d+)/(\d+)\s*$', ran.stdout.strip())
+        passed = tally and tally.group(1) == tally.group(2)
+        checks += int(tally.group(2)) - 1 if tally else 0
+        if not passed:
+            failures += int(tally.group(2)) - int(tally.group(1)) if tally else 1
+            for line in ran.stdout.splitlines():
+                if line.strip().startswith('FAIL'):
+                    print('  ' + line.strip())
+        check(bool(passed), 'the module runs and refuses everything it should: '
+              + (ran.stdout.strip().splitlines()[-1] if ran.stdout.strip() else ran.stderr[-200:]))
+
     #   The seal has to notice any change at all to a row, because what it is
     #   for is a write that did not come through the device -- which will be a
     #   byte or a bit, not a rewrite. Every single-bit flip in a row-sized

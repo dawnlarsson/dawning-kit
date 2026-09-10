@@ -3342,6 +3342,21 @@ static p8 ls_arena[LS_ARENA];
 #define LS_BELOW_ARENA (1 << 22)
 static p8 ls_below_names[LS_BELOW_ARENA];
 static positive ls_below_used;
+
+/*
+        The operands ls was given, and the order they come out in.
+
+        Both were arrays inside file_ls_as, which put 320 kB on the stack of
+        every ls -- the largest single frame in the whole image, and the reason
+        a recursive listing needed a megabyte of stack after ls_below stopped
+        needing five. file_ls_as is entered once per process, from ls, dir or
+        vdir, and never from itself, so there is nothing a frame was buying:
+        bss holds them just as well and only the pages a run touches are ever
+        real. What is left on the stack for a deep listing is FILE_PATH_MAX a
+        level, which is what the path being built actually needs.
+*/
+static positive ls_operand_order[LS_MAX_ENTRIES];
+static p8 ls_operand_names[LS_ARENA / 4];
 static positive ls_used;
 
 // What was asked for, one letter per question.
@@ -6129,7 +6144,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
         // their order is the sort's, however they were typed.
         ls_sort();
 
-        positive order[LS_MAX_ENTRIES];
+        positive address_to order = ls_operand_order;
         positive have = 0;
         positive files = 0;
 
@@ -6163,7 +6178,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
 
         // The directory names are copied out before the listing buffers are
         // reused for the first of them.
-        p8 names[LS_ARENA / 4];
+        p8 address_to names = ls_operand_names;
         positive kept = 0;
 
         for (positive i = 0; i < have; i++)
@@ -6171,7 +6186,7 @@ static b32 file_ls_as(string_address program, p8 default_format, p8 default_quot
                 string_address name = ls_arena + ls_entries[order[i]].name;
                 positive length = string_length(name);
 
-                if (kept + length + 1 > sizeof(names))
+                if (kept + length + 1 > sizeof(ls_operand_names))
                 {
                         ls_limit((string_address) "too many directory operands");
                         log_flush();

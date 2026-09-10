@@ -11843,9 +11843,12 @@ static bool floodlight_may(string_address name, string_address setting,
 #define FLOODLIGHT_AUDIT_ARCH 0xc00000f3u
 #endif
 
+/* The kernel's own shapes: struct sock_filter and struct sock_fprog. Both
+   sixteen-bit fields are unsigned there, and a signed short here would be a
+   different structure that happens to be the same size. */
 typedef struct
 {
-        b16 code;
+        p16 code;
         p8 jt;
         p8 jf;
         p32 k;
@@ -11853,7 +11856,7 @@ typedef struct
 
 typedef struct
 {
-        b16 count;
+        p16 count;
         floodlight_instruction address_to filter;
 } floodlight_program;
 
