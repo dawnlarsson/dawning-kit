@@ -122899,7 +122899,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ebda210405e12248c09f7d2b1e8eba7f351d19d5e1c765c9de46b5dcf1316aa4"
+   "stdout": "d1c6940eec6e22b9d69e8860f4c51662c430551b765c85fb63087e6b821c4d60"
   },
   "case": {
    "argv": [
@@ -122919,6 +122919,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r233",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "job-control-script-job-number-reuse"
  },
  {
@@ -123445,7 +123446,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -123465,6 +123466,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "names_bash"
  },
  {
@@ -123523,7 +123525,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -123543,6 +123545,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "names_bash"
  },
  {
@@ -125229,7 +125232,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "5acf00f8301b076fcd692d35135c588877e8b004f59bb9f71798c0880847e3fc"
+   "stdout": "75d6cb8e7a6d4be43a284d4b1796e0c0e403fce5ef8a0f16c39cd412766ea69b"
   },
   "case": {
    "argv": [
@@ -125250,6 +125253,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason": "Where the two references answer differently and this shell answers once. Under the dash name it still offers printf %q, type -t and a function name with a slash in it, because one language is implemented once; a return outside a function and a local outside one end a non-interactive shell here, as POSIX asks of a special builtin, where bash abandons only the command; kill -l refuses a number past the signals with this shell's status; and hash with nothing remembered says nothing where bash says its table is empty.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -126613,86 +126617,7 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "6c58b8761b46eafa0b55dc65d2334d6d0f7b6c0673fd948578a81d7701b610df"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o xtrace 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "04a20ddc9844fcab",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "b0f68b29b5491b0484b7a6499d8d23dc30c6e12fa0517c45435b8f2c1f6aa405",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -h 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "063c120d13b07855",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "3965bde0c385e30f772203b2ad00c00aa89c4f4bf022a99ac69a5608e2157d1a",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o errtrace 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "06f7de451a1b63da",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "bca02af134ca9d600d0a54e40af75c7242048a703dfe1e51927a0caca23df70d",
+   "effects": "ddac1935c4bd9fcd14f0a3ef463ee31e3d1ff79ed599b2925ed24e8eebfd1911",
    "status": 2,
    "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
   },
@@ -126714,89 +126639,12 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "set_options"
  },
  {
   "candidate": {
-   "effects": "ce75205cef98ebb6d0e7babe0876f5ea3b8b7b42dcfd7a18eed93c251e1af8ae",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -T 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "1475a3ef39183a51",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "02b6386c77f3e0fb6d8ac90b96fb5858d8843401c93dec247a0d124af03682ec",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o keyword 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "18344f77bfcd2617",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "046144838b1df960b3226879e509596f7b54cd841aa81b1b6e560d007c6cc4d2",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o braceexpand 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "1ac357d345b6522e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "4ebc016fbbe8f102549f42e8569d3aebdf35ba36d80b1647ea0487795b4cc7c3",
+   "effects": "772d0c0f7a0234df101d481f358ad4d59f7dd80f94434a62fabe7f8675ffa15a",
    "status": 2,
    "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
   },
@@ -126818,110 +126666,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "39d897eb624fae81d42ee665474297610c3972bca3569a98826df04b7e2b72a5",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o posix 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "21132a5f089cb315",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "727af99a6cf877e77b3075c89cbf977d5986a41191d9d8a448a53bfd7d36a626"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o verbose 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "271dc397a6fcb2ed",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "ac61aed832e33435351351ee07ac04fde2db823ae3c322d5f439aacb9e0f2dbd",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o onecmd 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "2da65e3f2fe19ce6",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "d598c0db635bbe42c5b1ee520687327e3b4e41aed29a8fbdd534371a25d635e5",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o privileged 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "36852e147ec57d5b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "set_options"
  },
  {
@@ -126945,136 +126690,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "376ff26dc92d40c8",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "3aaaa2cf339d8ec1a9af4d39c37b61f209c1038b8f662ca1656ab4c019bfc3ec",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o functrace 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "38925829222ad75d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "bd9e4e93d59a55981b3cd3731bac19bbb3992920f593fd9e79b9c02c46ae6e59",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o posix 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "38a3f07e7c1832d4",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "6079e66d18994782b0cb4d61cb4385e909dcee0d8a0a7e32dbc7cb58d1c7de75",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -k 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "4609c415708207f5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "37dbb10c5f5416cf2ef55ad64bef7d5404901b5b4d07e2aedbc88affc8c7668c",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o privileged 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "4623d5f6400b9052",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "e0e13aab845367db950ecfcb241379216c8e29d841f2e5be179936b3cca5d16e",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o physical 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "4f843587c59d60f3",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -127108,7 +126723,7 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "61c7bfc6939f77d2f20dfe9bcd883301168f80816e82d5a3b01b9912f1b07bd5",
+   "effects": "772d0c0f7a0234df101d481f358ad4d59f7dd80f94434a62fabe7f8675ffa15a",
    "status": 2,
    "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
   },
@@ -127130,221 +126745,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "bcf2b62aa258b0f5abdc0db03bf0b212cdf413fa38e635938f8f01c495542087",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o history 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "50a46b8f7175a0f0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "5c67e9eaf8b0ca88b798bca9cbef81ab5ce6329ffbd5e6351c67dd8670796c4d",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -p 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "544f4a704b7c4b99",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "1578be3e1f89c884fbdf98f8aa897c97eb2066cbad3c9548b298d79542811dc2",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o interactive-comments 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "594c04181b11ecc6",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "76b4cac9acd783a40bcb3edf5974cefda10afa2156e10519bf89c1be7c5fc964",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -t 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "59958f28e2e5b159",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "17473d73b566db76fd059169861d7b9c2241440d1994af0702d833b9a397dd9a",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +H 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "67c9d7ad57de7cdf",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "set_options"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "7420d0b26939a2cf423522bdb9840796ea01b309cd346bec15a22f92948b01bd"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -v 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "67ee7fb07de17188",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "6c58b8761b46eafa0b55dc65d2334d6d0f7b6c0673fd948578a81d7701b610df"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -x 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "695189e29f416582",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "97551bc0b50b2d59697b86bcc205d169557a0d34d3d0e15862e90a2ba998e057",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o bogus 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "6a5cbe70b8b86dd4",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "5d9dfcb04984278746235c34f07f730005268c66182067febcc6b0c4fd1191d4"
+   "stdout": "05c5591ca2c94b80318b4314d9807487325a32a98b4d6bd658555b6ddd8d3c28"
   },
   "case": {
    "argv": [
@@ -127364,292 +126772,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "ade5210c6fa4b59af15023c168e9462264222c8a56cbdbfe763193cb076d6c23",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o histexpand 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "6c175fdb2a42dc6d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "fbf3f29f5e57bddcae2c3245bc57a3ede35f1de7bf2b5530c499ae3cb4302965",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -Z 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "7063018ef44921ab",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "fbf3f29f5e57bddcae2c3245bc57a3ede35f1de7bf2b5530c499ae3cb4302965",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -Z 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "74f5cf884bea9388",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "391c10526eb9a6585fab145b0f28b36ae3ec8d64078f3f56cccc94b3165e9a7d",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o bogus 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "7585c2ed2d60e733",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "54cc89301d4d8b499537927b607626065c1a238d85dd99af0be74a9ba2286ca7",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -H 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "79f3d7d841f05652",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "59c35a8ddf331cf836f582e69688076420390a4128bac95ae5c84a84cf5f0bd7",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o physical 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "7c804c2ffe208d56",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "6c58b8761b46eafa0b55dc65d2334d6d0f7b6c0673fd948578a81d7701b610df"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -x 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "7f2e5a51809adeff",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "4eedfb203029889edc9e7b1e4b673ec36831ce8e55fcd2bde09f8ece63a424b2",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -B 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "8abc81386c77f1a3",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "7acc48a5aa2ed07f0d9d9254018ac5cd7f725d286af3de3ff0ce2c01b1960a8f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -i 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "9016be47dd332956",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "6c58b8761b46eafa0b55dc65d2334d6d0f7b6c0673fd948578a81d7701b610df"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o xtrace 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "947d8e95addfdb25",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "66603409dd605493c17b6d1235cb4e913d3e06f3c710975ac4c26d53a67d45b9",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +h 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "a8261bf3fb31c344",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "set_options"
  },
  {
@@ -127680,240 +126803,6 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "391c10526eb9a6585fab145b0f28b36ae3ec8d64078f3f56cccc94b3165e9a7d",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o bogus 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "aa684d37fcade799",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "727af99a6cf877e77b3075c89cbf977d5986a41191d9d8a448a53bfd7d36a626"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -v 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "aaa0a36409db1129",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "4fedff5c30fac9d99cde929093a17fc957b8d3743901ae7c743865f695ba5305",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o history 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "abb670a900d03e14",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "dd23d471059e67d7cdcfaade646bc97d396225016a4e68d3c32d1d54201a84ab",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o histexpand 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "adbf4c21667b95fb",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "d243800b08119a08e2688b2215c40c948a935c5251ffb37dfe220eb604732b7c",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +B 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "b4635e682c071cf5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "61c7bfc6939f77d2f20dfe9bcd883301168f80816e82d5a3b01b9912f1b07bd5",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o '' 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "b5868c7108807fd0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "fe7f57a839bdc4f06eada72c52e50946cb1ce08ec7872fa81e7d56a4eb7707cb",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o hashall 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "b640c0144828daf2",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "09185941c502a4d37c37396435a6948378143a4ae1ff0c9baaea059d48dbba46",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o interactive-comments 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "ba4940ede459c18a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "b8177eb8b326bd608e7b6fdfecbadf414500b3b9c46c4c3289dfc1bb5e93bf5e",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o keyword 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "bbf9ad38b93fad8b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "65e3eeaff56c713e50f27360d4609d2722ac53c6a7e479ef1e9c8820868abe05"
@@ -127933,214 +126822,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "bd661bd3c5db0e80",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "8275897f08ed24c85d534e0bd93da437f0178294bd2651e62033f5e2cf1703db",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o onecmd 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "bf8b3c8d7d926e2f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "7acc48a5aa2ed07f0d9d9254018ac5cd7f725d286af3de3ff0ce2c01b1960a8f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -i 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "c1ccc54f962593b0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "727af99a6cf877e77b3075c89cbf977d5986a41191d9d8a448a53bfd7d36a626"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -v 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "c649bd874b430963",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "39b64c9d3e03f3cd6a47ebb094d27314238eda04ecba5928a56649f02bf7edd0",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o errtrace 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "cd3104309222b0d0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "97551bc0b50b2d59697b86bcc205d169557a0d34d3d0e15862e90a2ba998e057",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o bogus 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "cd31ee4cc51095f3",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a69b92d9b8f64f0d6557f8d6cbbbb9a059f8040691c5219d0d0b92bdd54ee3f1",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o braceexpand 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "e46ec29ba2635616",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "727af99a6cf877e77b3075c89cbf977d5986a41191d9d8a448a53bfd7d36a626"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o verbose 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "e55c5af464f33509",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "4ebc016fbbe8f102549f42e8569d3aebdf35ba36d80b1647ea0487795b4cc7c3",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o '' 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "f351db02b3d2addc",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -128219,110 +126900,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "f64241edc8ca562b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "ebe98f678002c555bd95c15de3430465a1cc3ef3d1bacf9c48183533d228a5da",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset +o functrace 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "f723aaca08b45979",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "01f518857bcf5bc6e0c7103c99bee118005c848a2c0e1bebac323d81d2f67ffa",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o hashall 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "f764c4cc6ed50b45",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "b3c200c960c9b5c803b8c4ff20c1f8a2977335e95054e2ac3d37031809ec6958",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -P 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "fc2a46e1f66ee684",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "set_options"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "7420d0b26939a2cf423522bdb9840796ea01b309cd346bec15a22f92948b01bd"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "echo start\nset -o verbose 2>err.txt\necho \"set=$?\"\nPS4='TRACE '\nprintf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo\necho \"probe=$?\"\nexec 2>err2.txt\nprintf 'echo traced\\n' > traced.sh; . ./traced.sh\nexec 2>&1\ncat err.txt err2.txt | grep -v '^[a-zA-Z./_-]*: ' ; rm -f err.txt err2.txt traced.sh\n"
-   ],
-   "domain": "shell",
-   "family": "set_options",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "text",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "fd037e884693ef00",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -128453,32 +127030,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "8dd072807dc15f1d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r239",
-  "utility": "special-builtin-fatality"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "\necho start\nf() { set -e -Z; echo INNER; }; f; echo \"after:$?\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "special-builtin-fatality",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "9f2a31e16187b5b3",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
@@ -129012,32 +127563,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --restricted -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "0823dd7c47256746",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "7574f6822b5ad05ca43939aef889225893ec3696bfe69fd179263cde130bd28b"
   },
   "case": {
@@ -129107,32 +127632,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "0daccb396cfd046c",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --verbose -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "0f1394e809e5ec3b",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -129350,7 +127849,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
+   "stdout": "1d7283ce79daa32c1243910fe4be804d7137dd29d3409ec29180a39de348c645"
   },
   "case": {
    "argv": [
@@ -129370,6 +127869,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -129393,32 +127893,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "1b4f08d74b47b0df",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --rcfile missing -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "1b6bf8c1dd3a29ca",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -129636,32 +128110,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --rcfile missing -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "278b0846763155c1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "ceeb66b1bcd4f378fb44c5351fb9901a844842436703121e2a8d482f504ff751"
   },
   "case": {
@@ -129714,7 +128162,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -129734,6 +128182,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -129766,7 +128215,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -129786,6 +128235,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -130000,32 +128450,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --bogus -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "467b4332c68c7203",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "b114d512002b033b180dd447bc1b49c5ddf83530fced764ae9beb00f7059a717"
   },
   "case": {
@@ -130043,58 +128467,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "47b493cdd243b935",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --bogus -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "47c8648a31488c66",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" -Z -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "47d056480f4f9bab",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -130260,32 +128632,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "03774e91a4d807b5f5ae3d1327aa6af331bcfb3ff812af076b9555ddf4909b27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" -o xtrace -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "4e506949b9c90855",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "f6a707fabb250d44bd575e8bb3857223d79a54984348e349a5ae60ab74a9ac3f"
   },
   "case": {
@@ -130338,7 +128684,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -130358,6 +128704,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -130442,58 +128789,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" -Z -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "57069a0249211eac",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --restricted -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "5a232b23b4a9f337",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "ceeb66b1bcd4f378fb44c5351fb9901a844842436703121e2a8d482f504ff751"
   },
   "case": {
@@ -130520,7 +128815,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -130540,6 +128835,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -130641,32 +128937,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "6364a1d88e244261",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --noediting -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "63669d956af28dbf",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -130884,32 +129154,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "03774e91a4d807b5f5ae3d1327aa6af331bcfb3ff812af076b9555ddf4909b27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" -x -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "70506c07bdb34c6a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "a3df1cff2299d823bdd3883dfe6757485398e161a20a66207529c224413e8f7c"
   },
   "case": {
@@ -130988,7 +129232,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -131008,6 +129252,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -131066,7 +129311,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -131086,6 +129331,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -131118,7 +129364,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -131138,13 +129384,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -131164,6 +129411,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -131222,7 +129470,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -131242,6 +129490,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -131300,7 +129549,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -131320,6 +129569,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -131404,7 +129654,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -131424,6 +129674,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -131551,32 +129802,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "8db4dee9f552f8b7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "03774e91a4d807b5f5ae3d1327aa6af331bcfb3ff812af076b9555ddf4909b27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" -x -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "8dd818578f33209d",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -131716,32 +129941,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --verbose -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "999f6dcd037864e5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "7574f6822b5ad05ca43939aef889225893ec3696bfe69fd179263cde130bd28b"
   },
   "case": {
@@ -131785,32 +129984,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "9a8eb4a1a57804be",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --noediting -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "9abc5accbdf40276",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -132028,32 +130201,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --rcfile rc -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "a25b244cd2b53113",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "ceeb66b1bcd4f378fb44c5351fb9901a844842436703121e2a8d482f504ff751"
   },
   "case": {
@@ -132210,7 +130357,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
+   "stdout": "1d7283ce79daa32c1243910fe4be804d7137dd29d3409ec29180a39de348c645"
   },
   "case": {
    "argv": [
@@ -132230,6 +130377,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -132470,32 +130618,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --init-file rc -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "c3e8aa756a9f705b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "7574f6822b5ad05ca43939aef889225893ec3696bfe69fd179263cde130bd28b"
   },
   "case": {
@@ -132574,7 +130696,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -132594,6 +130716,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -132643,32 +130766,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "c9f833f3a4b64ce4",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" -r -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "cab2c7fed94ab96a",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -132886,7 +130983,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -132906,13 +131003,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -132932,6 +131030,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -133059,32 +131158,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "e25a41d72dc9aa43",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --init-file rc -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "e2e00fe1ca317ada",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -133276,33 +131349,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" -r -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "e8b47b19b64daeeb",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -133322,6 +131369,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -133354,7 +131402,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -133374,6 +131422,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -133484,7 +131533,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -133504,6 +131553,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -133588,32 +131638,6 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "03774e91a4d807b5f5ae3d1327aa6af331bcfb3ff812af076b9555ddf4909b27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" -o xtrace -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "f3bdc171dc87c824",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
    "stdout": "a3df1cff2299d823bdd3883dfe6757485398e161a20a66207529c224413e8f7c"
   },
   "case": {
@@ -133631,32 +131655,6 @@ PINNED = r"""
   },
   "domain": "shell",
   "id": "f4dcbeb671cde12d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r236",
-  "utility": "startup"
- },
- {
-  "candidate": {
-   "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
-   "status": 0,
-   "stdout": "c7703cc4c8aa834eacb6ad49f62517684066e49681361eb6e28b2245ab98d43f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "if [ -n \"${BASH_VERSION+x}\" ]; then shell_me=bash; else shell_me=dash; fi\nln -s /proc/self/exe \"./$shell_me\" 2>/dev/null\nprintf 'echo startup:$0:$#:${1-none}; shell_value=loaded\\n' > start\nprintf 'echo literal-name\\n' > 'start file'; cp 'start file' 'start*'; cp 'start file' '$FILE'\nprintf 'echo startup; exit 7\\n' > exit-start\nprintf 'set -e\\nfalse\\necho forbidden\\n' > errexit-start\nprintf 'echo rc-file\\n' > rc\nprintf '%s\\n' 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' > probe.sh\nprintf 'echo one\\nread shell_line\\nline for read\\necho \"[$shell_line]\"\\n' > reading.sh\nmkdir -p dir\nPS4='TRACE ' \"./$shell_me\" --rcfile rc -c 'printf \"<%s>\" \"$-\" \"$0\" \"$#\" \"$@\"; echo' 2>err.txt\necho \"status=$?\"\ngrep -v '^[a-zA-Z./_-]*: ' err.txt\ngrep -q '^[a-zA-Z./_-]*: ' err.txt && echo diagnostic\nrm -f err.txt \"./$shell_me\"\n"
-   ],
-   "domain": "shell",
-   "family": "startup",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "shell_probe",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "f5fddb4adff69100",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
@@ -133770,7 +131768,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
+   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
   },
   "case": {
    "argv": [
@@ -133790,6 +131788,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r236",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "startup"
  },
  {
@@ -135201,58 +133200,6 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "f9d7d8310adaacd295e77fa033a51de9a6695f5c8c7f622d97b5d8dc415cc2be",
-   "status": 0,
-   "stdout": "db8c31a8da793fb5a75929f853e609fceccb5cd56fc61b430910061f88d6ccfb"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\n. ./sourced\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
-   ],
-   "domain": "shell",
-   "family": "verbose",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "dash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "6c86c6a097f0c4c8",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r231",
-  "utility": "verbose"
- },
- {
-  "candidate": {
-   "effects": "7a62102144b8611b160a6779249563485a9476541c57a1ec57180d089a4b845d",
-   "status": 0,
-   "stdout": "99d64d9c4304d75bdf1204f8bb85931f52ebdff5180b72065f1e75b773d25437"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\n. ./sourced\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
-   ],
-   "domain": "shell",
-   "family": "verbose",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "922ba6b8dc66e1a9",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r231",
-  "utility": "verbose"
- },
- {
-  "candidate": {
    "effects": "4a4e28b6bf3add0a1fe99b899f3a50fd7389289ee3342b068ee6fcd735d31017",
    "status": 0,
    "stdout": "7088ac99550a1b9df0f9c54dec789bc2a82fa1ce2c461221e974f56dfefc88ec"
@@ -135331,32 +133278,6 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "7a62102144b8611b160a6779249563485a9476541c57a1ec57180d089a4b845d",
-   "status": 0,
-   "stdout": "99d64d9c4304d75bdf1204f8bb85931f52ebdff5180b72065f1e75b773d25437"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "printf 'echo sourced\\n' > sourced\nexec 2>verbose\nset -v\n. ./sourced\nexec 2>&1\necho ---\nsed 's/^/|/' verbose\n"
-   ],
-   "domain": "shell",
-   "family": "verbose",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "e99e8e5853e9162f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r231",
-  "utility": "verbose"
- },
- {
-  "candidate": {
    "effects": "3db60b9c41509eb67feb4b25abb56b10cbdc0f2b6c1271f49d7edbca6bd88faa",
    "status": 0,
    "stdout": "e35b7fbe74bef4768602c32d1bdd553f5eb2c18da52aff4ad2a5aaa685485da4"
@@ -135409,9 +133330,9 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "7d711067a73922790b8a05070d01833834a75d2880d7578e580857afd30a7b06",
+   "effects": "b1f90a83f086cfa522c22b299b07fc88fb877083a28fb1defe6c91048745e7dc",
    "status": 0,
-   "stdout": "2513cefbb1ebd5e6980d9b5fdd56c7a18ba6200815f4364ec8ce8daf5967532d"
+   "stdout": "a66455d455ceb7441e4ea4a9e00742b4a3e1885349fbb2a71ab163afbe0e04fb"
   },
   "case": {
    "argv": [
@@ -135431,6 +133352,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
@@ -135461,9 +133383,9 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "aa284d82d2c7b76af366023fda772172763c984a9cbc7076f742a0d69821a7a0",
+   "effects": "b1a944b1ec36e95e67d29060aa813bb36136477f12d84a201e724110e8cb370f",
    "status": 0,
-   "stdout": "a142ddffe95d6ae52c96b7eaa27ff448889076105d3129486102e8d4e39ae41c"
+   "stdout": "1920c12f8e335a0b46132d8b11faf079d9507c97975f8ee8a1d80e6e83e1c797"
   },
   "case": {
    "argv": [
@@ -135483,13 +133405,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
   "candidate": {
-   "effects": "49888ddc4062ce775d4bcdb3ce491e87d920f9fc16409304723dec54d9f5417e",
+   "effects": "b0f9ef52a1d8d81ce6a527f00f74f73c50288dbd5bfc9dc73b39e509abe4a633",
    "status": 0,
-   "stdout": "605e4ea08f55f395a13daa77735a85bc9e5dd3cde7f22656fbe8cde3bf921d95"
+   "stdout": "4db1c4da20281bd42172faa1aa0e4eefb79be4982c56a2a7bd4b2f5e560fbaaa"
   },
   "case": {
    "argv": [
@@ -135509,13 +133432,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
   "candidate": {
-   "effects": "7d711067a73922790b8a05070d01833834a75d2880d7578e580857afd30a7b06",
+   "effects": "b1f90a83f086cfa522c22b299b07fc88fb877083a28fb1defe6c91048745e7dc",
    "status": 0,
-   "stdout": "2513cefbb1ebd5e6980d9b5fdd56c7a18ba6200815f4364ec8ce8daf5967532d"
+   "stdout": "a66455d455ceb7441e4ea4a9e00742b4a3e1885349fbb2a71ab163afbe0e04fb"
   },
   "case": {
    "argv": [
@@ -135535,6 +133459,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
@@ -135643,9 +133568,9 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "bbd8f39fa965e8671b82dc630272377d24cbfad5994f08ed893f7dacc9114eb2",
+   "effects": "e50db67360481964fe4cbb8197e421d09c425d2ca42d16886bbbb5f1d464e9ff",
    "status": 0,
-   "stdout": "41519e6bd8cdf7f9d07eb5f0cc42b217de2a416d307d2ba8d6e6d7e414a5b371"
+   "stdout": "c87f4bcd9a9f175c38b85376f01da2bb8cca8162c45d441e64860f848d682c16"
   },
   "case": {
    "argv": [
@@ -135665,13 +133590,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
   "candidate": {
-   "effects": "b353ba776f197658f5f834a91468caa384eeda6156045817591e7b3acefa7834",
+   "effects": "88e5f5bc415792d396572a6c9565dc8985bd3a887cfadc231c2a96bc4d85e39c",
    "status": 0,
-   "stdout": "7e2f8dd4445537fd1e4d09e65eff58dfda31effe80dfd80c51f1ff3fc10c83bf"
+   "stdout": "934f8fe6122aafb2330398cc69e753993f638ecda489bf828483bc97876656a5"
   },
   "case": {
    "argv": [
@@ -135691,6 +133617,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
@@ -135747,9 +133674,9 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "b353ba776f197658f5f834a91468caa384eeda6156045817591e7b3acefa7834",
+   "effects": "88e5f5bc415792d396572a6c9565dc8985bd3a887cfadc231c2a96bc4d85e39c",
    "status": 0,
-   "stdout": "7e2f8dd4445537fd1e4d09e65eff58dfda31effe80dfd80c51f1ff3fc10c83bf"
+   "stdout": "934f8fe6122aafb2330398cc69e753993f638ecda489bf828483bc97876656a5"
   },
   "case": {
    "argv": [
@@ -135769,13 +133696,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
   "candidate": {
-   "effects": "9af320b1485c2eb0de0ab3668a3b0af990553c18a988704744676a86090bc551",
+   "effects": "0d10f84e16edc6753874e591545b9fcb713715445c7595c3c4fcc0fd1393f627",
    "status": 0,
-   "stdout": "b8a29251eed89e7e8f3f389becde603a5a9978cac9ce1070fb9c49ad929f6d83"
+   "stdout": "b35c38db8496b2819587df5aa3d54f46c19495a9ba178f2c7f4af7e312125cff"
   },
   "case": {
    "argv": [
@@ -135795,13 +133723,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
   "candidate": {
-   "effects": "aa284d82d2c7b76af366023fda772172763c984a9cbc7076f742a0d69821a7a0",
+   "effects": "b1a944b1ec36e95e67d29060aa813bb36136477f12d84a201e724110e8cb370f",
    "status": 0,
-   "stdout": "a142ddffe95d6ae52c96b7eaa27ff448889076105d3129486102e8d4e39ae41c"
+   "stdout": "1920c12f8e335a0b46132d8b11faf079d9507c97975f8ee8a1d80e6e83e1c797"
   },
   "case": {
    "argv": [
@@ -135821,6 +133750,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
@@ -135851,9 +133781,9 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "9af320b1485c2eb0de0ab3668a3b0af990553c18a988704744676a86090bc551",
+   "effects": "0d10f84e16edc6753874e591545b9fcb713715445c7595c3c4fcc0fd1393f627",
    "status": 0,
-   "stdout": "b8a29251eed89e7e8f3f389becde603a5a9978cac9ce1070fb9c49ad929f6d83"
+   "stdout": "b35c38db8496b2819587df5aa3d54f46c19495a9ba178f2c7f4af7e312125cff"
   },
   "case": {
    "argv": [
@@ -135873,6 +133803,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
@@ -135929,9 +133860,9 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "49888ddc4062ce775d4bcdb3ce491e87d920f9fc16409304723dec54d9f5417e",
+   "effects": "b0f9ef52a1d8d81ce6a527f00f74f73c50288dbd5bfc9dc73b39e509abe4a633",
    "status": 0,
-   "stdout": "605e4ea08f55f395a13daa77735a85bc9e5dd3cde7f22656fbe8cde3bf921d95"
+   "stdout": "4db1c4da20281bd42172faa1aa0e4eefb79be4982c56a2a7bd4b2f5e560fbaaa"
   },
   "case": {
    "argv": [
@@ -135951,6 +133882,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
@@ -135981,9 +133913,9 @@ PINNED = r"""
  },
  {
   "candidate": {
-   "effects": "bbd8f39fa965e8671b82dc630272377d24cbfad5994f08ed893f7dacc9114eb2",
+   "effects": "e50db67360481964fe4cbb8197e421d09c425d2ca42d16886bbbb5f1d464e9ff",
    "status": 0,
-   "stdout": "41519e6bd8cdf7f9d07eb5f0cc42b217de2a416d307d2ba8d6e6d7e414a5b371"
+   "stdout": "c87f4bcd9a9f175c38b85376f01da2bb8cca8162c45d441e64860f848d682c16"
   },
   "case": {
    "argv": [
@@ -136003,6 +133935,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r239",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "xtrace-shape"
  },
  {
