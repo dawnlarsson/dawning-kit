@@ -853,6 +853,20 @@ static positive job_started(bipolar address_to children, positive count,
 
         job_mark(entry->number);
 
+        /*
+                Bash names a job the moment it puts one in the background,
+                with the number it will be asked about by and the pid of
+                its last stage: "[1] 4242" and nothing else. It only says
+                so where somebody is watching, so a script sees nothing.
+                dash names it at the prompt afterwards, along with every
+                other change, which is the report below and not this.
+        */
+        if (background && shell_bash_compat && shell_is_interactive)
+        {
+                string_format(log, "[%p] %b\n", entry->number, entry->last);
+                log_flush();
+        }
+
         return entry->number;
 }
 
@@ -1148,6 +1162,25 @@ static fn job_status_text(job_entry address_to entry, bool detailed,
                 }
 
                 string_copy(into, "Stopped");
+
+                /*
+                        POSIX asks for the signal that stopped the job, and
+                        bash writes it only in that mode: Stopped(SIGTSTP),
+                        no space, in the summary a bare `jobs` prints. The
+                        detail `jobs -l` prints says "Stopped (signal)" in
+                        both modes, which is the line above this one.
+                */
+                if (shell_bash_compat && shell_posix_on() && by &&
+                    by < TRAP_NAMES - 1 && trap_names[by])
+                {
+                        positive at = string_length(into);
+
+                        string_copy(into + at, "(SIG");
+                        at += 4;
+                        string_copy(into + at, trap_names[by]);
+                        at += string_length(trap_names[by]);
+                        string_copy(into + at, ")");
+                }
                 return;
         }
 
@@ -1184,19 +1217,72 @@ static string_address job_mark_of(job_entry address_to entry)
         return (string_address) " ";
 }
 
-/*
-        One job, on one line.
+/* How wide a number is written, so a line can be padded to a column
+   without being built in a buffer first. */
+static CONST positive job_number_width(positive value)
+{
+        positive width = 1;
 
-        An ampersand is not part of what was typed: it is how a listing says
-        the job is still in the background, so it belongs to jobs that are
-        running there and to no others.
+        while (value >= 10)
+        {
+                value /= 10;
+                width++;
+        }
+
+        return width;
+}
+
+/*
+        One job, on one line, in the columns of whichever shell this is.
+
+        Bash writes the mark against the bracket and gives the status a
+        width of its own, so a listing asked for pids puts its commands
+        further right than one that was not. dash writes the mark with a
+        space on each side and pads the whole line to one column instead,
+        so both of its listings put the command in the same place. Under a
+        dash name this shell had been writing bash's columns, which is
+        every line of every job notice a dash session produces.
+
+        An ampersand is not part of what was typed: it is how bash's listing
+        says the job is still in the background, so it belongs to jobs that
+        are running there and to no others. dash does not say it at all.
 */
+#define JOB_DASH_COLUMN 33
+
 static fn job_line(writer write, job_entry address_to entry, bool detailed)
 {
         p8 status[64];
         string_address text = entry->text ? (string_address)entry->text
                                           : (string_address) "";
-        bool ampersand = entry->state == JOB_RUNNING && entry->background;
+        bool ampersand = !shell_dash_columns() &&
+                         entry->state == JOB_RUNNING && entry->background;
+
+        if (shell_dash_columns())
+        {
+                positive column = job_number_width(entry->number) + 5;
+
+                string_format(write, "[%p] %s ", entry->number,
+                              job_mark_of(entry));
+
+                if (detailed)
+                {
+                        positive child = job_first_child(entry);
+
+                        string_format(write, "%b ", child);
+                        column += job_number_width(child) + 1;
+                }
+
+                job_status_text(entry, detailed, status);
+                write(status, string_length(status));
+                column += string_length(status);
+
+                string_to_field(write, (string_address) "",
+                                column < JOB_DASH_COLUMN
+                                    ? JOB_DASH_COLUMN - column : 1,
+                                ' ', true);
+                string_format(write, "%s\n", text);
+                return;
+        }
 
         string_format(write, "[%p]%s", entry->number, job_mark_of(entry));
 
@@ -1688,10 +1774,18 @@ fn shell_bg(writer write, string_address input)
                 job_signal(entry->group > 0 ? -entry->group : entry->last,
                            JOB_SIGNAL_CONTINUE);
 
-                string_format(write, "[%p]%s %s &\n", entry->number,
-                              job_mark_of(entry),
-                              entry->text ? (string_address)entry->text
-                                          : (string_address) "");
+                //      bg names the job it moved. Bash names the mark and
+                //      the ampersand with it; dash writes the number and
+                //      the command and nothing else.
+                if (shell_dash_columns())
+                        string_format(write, "[%p] %s\n", entry->number,
+                                      entry->text ? (string_address)entry->text
+                                                  : (string_address) "");
+                else
+                        string_format(write, "[%p]%s %s &\n", entry->number,
+                                      job_mark_of(entry),
+                                      entry->text ? (string_address)entry->text
+                                                  : (string_address) "");
         } while (++at < shell_argc);
 
         shell_answer(answer);
@@ -6237,6 +6331,143 @@ static b32 exec_call(positive slot)
 */
 #define SHELL_XTRACE ((positive)1 << ('x' - 'a'))
 
+/*
+        Whether Bash would have to quote a word to write it back.
+
+        Its list, not a guess at one: the blanks, the quoting characters,
+        everything the parser reads as an operator, the globbing characters,
+        the two expansion characters and a comma. A tilde only counts where
+        it would expand -- at the front, or after the colon or equals sign
+        an assignment puts it behind -- and a hash only where a comment
+        would begin.
+*/
+static COLD PURE bool exec_trace_quoting(string_address word)
+{
+        for (string_address at = word; string_get(at); at++)
+                switch (string_get(at))
+                {
+                case ' ': case '\t': case '\n':
+                case '\'': case '"': case '\\':
+                case '|': case '&': case ';':
+                case '(': case ')': case '<': case '>':
+                case '!': case '{': case '}':
+                case '*': case '[': case '?': case ']':
+                case '^': case '$': case '`':
+                        return true;
+                case '~':
+                        if (at == word || at[-1] == ':' || at[-1] == '=')
+                                return true;
+                        break;
+                case '#':
+                        if (at == word)
+                                return true;
+                        break;
+                default:
+                        break;
+                }
+
+        return false;
+}
+
+/*
+        A byte that cannot be written as itself.
+
+        In the C locale that is every control character and every byte with
+        the high bit set. A word holding one is written in the $'...'
+        spelling, which is the only one that can carry it back.
+*/
+static COLD PURE bool exec_trace_unprintable(string_address word)
+{
+        for (string_address at = word; string_get(at); at++)
+                if ((p8)string_get(at) < ' ' || (p8)string_get(at) >= 127)
+                        return true;
+
+        return false;
+}
+
+/* $'...': the seven named escapes, \E for escape itself, a backslash in
+   front of a quote or a backslash, and three octal digits for every other
+   byte that cannot be written as itself. */
+static COLD fn exec_trace_ansi(string_address word)
+{
+        static const p8 named[] = "abtnvfr";
+
+        log_error(str("$'"));
+        for (string_address at = word; string_get(at); at++)
+        {
+                p8 value = (p8)string_get(at);
+                p8 said[4];
+
+                said[0] = '\\';
+                if (value >= 7 && value <= 13)
+                {
+                        said[1] = named[value - 7];
+                        log_error(said, 2);
+                }
+                else if (value == 27)
+                {
+                        said[1] = 'E';
+                        log_error(said, 2);
+                }
+                else if (value == '\'' || value == '\\')
+                {
+                        said[1] = value;
+                        log_error(said, 2);
+                }
+                else if (value < ' ' || value >= 127)
+                {
+                        said[1] = (p8)('0' + (value >> 6));
+                        said[2] = (p8)('0' + ((value >> 3) & 7));
+                        said[3] = (p8)('0' + (value & 7));
+                        log_error(said, 4);
+                }
+                else
+                        log_error(at, 1);
+        }
+        log_error(str("'"));
+}
+
+/* One word as Bash writes it: bare where it can be, in single quotes where
+   it cannot, in the $'...' spelling where a quote could not carry it, and a
+   bare pair of quotes where the word is empty. A quote inside a single-quoted
+   run closes the run, is written escaped, and opens the next. */
+static COLD fn exec_trace_word(string_address word)
+{
+        string_address run;
+
+        if (!string_get(word))
+        {
+                log_error(str("''"));
+                return;
+        }
+        if (exec_trace_unprintable(word))
+        {
+                exec_trace_ansi(word);
+                return;
+        }
+        if (!exec_trace_quoting(word))
+        {
+                log_error(word, 0);
+                return;
+        }
+
+        log_error(str("'"));
+        for (run = word; string_get(run);)
+        {
+                string_address stop = run;
+
+                while (string_get(stop) && string_get(stop) != '\'')
+                        stop++;
+                if (stop != run)
+                        log_error(run, (positive)(stop - run));
+                if (!string_get(stop))
+                        break;
+                log_error(str("'\\''"));
+                run = stop + 1;
+        }
+        log_error(str("'"));
+}
+
 static fn exec_trace(b32 count)
 {
         string_address prefix;
@@ -6246,14 +6477,37 @@ static fn exec_trace(b32 count)
                 return;
 
         prefix = env_get("PS4");
-        log_error(prefix ? prefix : (string_address) "+ ", 0);
+        if (!prefix)
+                prefix = (string_address) "+ ";
+
+        /*
+                How deep the reader is, marked the way Bash marks it: the
+                first character of PS4 written once per level and then the
+                rest of PS4, so the line an eval or a sourced file runs
+                traces under ++ where the line that reached it traced
+                under +. dash does not mark depth at all and neither does
+                this shell under a dash name.
+        */
+        if (shell_bash_compat && string_get(prefix))
+        {
+                positive depth = shell_run_depth ? shell_run_depth : 1;
+
+                for (positive again = 0; again < depth && again < 99; again++)
+                        log_error(prefix, 1);
+                log_error(prefix + 1, 0);
+        }
+        else
+                log_error(prefix, 0);
 
         for (at = 0; at < count; at++)
         {
                 if (at)
                         log_error((string_address) " ", 1);
 
-                log_error(shell_argv[at], 0);
+                if (shell_bash_compat)
+                        exec_trace_word(shell_argv[at]);
+                else
+                        log_error(shell_argv[at], 0);
         }
 
         log_error((string_address) "\n", 1);
@@ -7576,7 +7830,23 @@ static b32 exec_simple(b32 index)
         while (leading < node->word_count &&
                (parse_word_flags[node->word + leading] &
                 PARSE_WORD_ASSIGNMENT))
+        {
+                /*
+                        dash has no subscripted assignment, so `a[1]=x` is
+                        not a failed assignment to it -- it is not an
+                        assignment at all. The whole word is a command name
+                        and dash reports it not found, with or without a
+                        command after it. Under a dash name the leading run
+                        ends here rather than the word being taken for an
+                        assignment that then turns out not to name anything.
+                */
+                if (!shell_bash_compat &&
+                    parse_words[node->word + leading][
+                        parse_word_name_lengths[node->word + leading] - 1] == ']')
+                        break;
+
                 leading++;
+        }
 
         if (shell_keyword_on())
                 word_order = exec_keyword_order(node, address_of leading);

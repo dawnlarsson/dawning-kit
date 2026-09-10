@@ -5262,7 +5262,7 @@ RETURNS_NONNULL string_address shell_flags_current()
 {
         static p8 flags[32];
         static positive last_options, last_named, last_extra;
-        static bool last_bash, known;
+        static bool last_bash, last_restricted, known;
         static p8 last_source;
         p8 source = string_get(shell_option_flags);
 
@@ -5272,7 +5272,8 @@ RETURNS_NONNULL string_address shell_flags_current()
            these words changed. */
         if (known && last_options == shell_options &&
             last_named == shell_options_named && last_extra == shell_extra_state &&
-            last_bash == shell_bash_compat && last_source == source)
+            last_bash == shell_bash_compat && last_source == source &&
+            last_restricted == shell_restricted)
                 return flags;
 
         last_options = shell_options;
@@ -5280,10 +5281,11 @@ RETURNS_NONNULL string_address shell_flags_current()
         last_extra = shell_extra_state;
         last_bash = shell_bash_compat;
         last_source = source;
+        last_restricted = shell_restricted;
         known = true;
 
         string_address order = shell_bash_compat
-                                   ? (string_address) "abefhiklmnptuvxBCEHPT"
+                                   ? (string_address) "abefhiklmnprtuvxBCEHPT"
                                    : (string_address) "ubaCvxsiImfne";
         positive into = 0;
 
@@ -5291,6 +5293,16 @@ RETURNS_NONNULL string_address shell_flags_current()
         {
                 p8 letter = order[at];
                 positive index;
+
+                //      The one letter with no table entry, in the place
+                //      Bash's own table puts it: between privileged and
+                //      onecmd, so `bash -r` reads back as hrBc.
+                if (letter == 'r')
+                {
+                        if (shell_restricted)
+                                flags[into++] = letter;
+                        continue;
+                }
 
                 for (index = 0; index < SHELL_OPTION_NAMES; index++)
                         if (shell_option_names[index].value == letter)
@@ -5720,6 +5732,98 @@ static fn shell_set_written(writer write, string_address name,
 // them. Function calls save this bit alongside their positional parameters.
 static bool shell_parameters_replaced;
 
+/*
+        What the reference shells write in front of a diagnostic.
+
+        Both name the shell and the line the failing command was written
+        on, and both take the name from $0 rather than from the path the
+        binary happens to have, so a shell run as ./bash says ./bash and one
+        run as a script says the script. Bash spells the line "line 1" and
+        leaves it out of an interactive session, where the line is the one
+        the person can still see; dash spells it "1" and always writes it.
+
+        Only set writes through this. Every other diagnostic in this shell
+        is still the bare sentence with no name and no line in front of it,
+        which is what the shell domain's floor means when it says the
+        mechanism is missing rather than the wording.
+*/
+static COLD fn shell_diagnostic_where()
+{
+        string_address self = shell_script_name && string_get(shell_script_name)
+                                  ? shell_script_name : (string_address) "sh";
+
+        if (shell_bash_compat && shell_is_interactive)
+        {
+                string_format(log_error, "%s: ", self);
+                return;
+        }
+        string_format(log_error, shell_bash_compat ? "%s: line %p: " : "%s: %p: ",
+                      self, shell_line_now());
+}
+
+/*
+        set's usage line, which Bash writes under every letter complaint and
+        dash does not write at all.
+
+        The letters are the ones the loop below accepts under the bash
+        personality, so the line cannot advertise a letter set refuses.
+*/
+#define SHELL_SET_LETTERS "abefhkmnptuvxBCEHPT"
+
+static COLD b32 shell_set_refused_letter(p8 sign, p8 letter)
+{
+        p8 said[3] = {sign, letter, end};
+
+        shell_diagnostic_where();
+        if (!shell_bash_compat)
+        {
+                said[0] = '-';
+                return string_report(log_error, 2, "set: Illegal option %s\n",
+                                     said);
+        }
+        string_format(log_error, "set: %s: invalid option\n", said);
+        return string_report(log_error, 2,
+            "set: usage: set [-" SHELL_SET_LETTERS
+            "] [-o option-name] [--] [-] [arg ...]\n");
+}
+
+static COLD b32 shell_set_refused_name(bool on, string_address name)
+{
+        shell_diagnostic_where();
+        if (!shell_bash_compat)
+                return string_report(log_error, 2,
+                    "set: Illegal option -o %s\n", name);
+        return string_report(log_error, 2, "set: %s: invalid option name\n",
+                             name);
+}
+
+/*
+        Whether a letter names an option, without turning it on.
+
+        Bash reads the whole option list before it changes anything, so a
+        letter nobody has leaves every letter in front of it unchanged:
+        `set -e -Z` is not errexit and an error, it is only an error. That
+        needs the question asked apart from the answer, which is what this
+        is. The two personalities do not have the same letters -- bash has
+        no -i, -I or -s for set and does have -r -- so the question is asked
+        of whichever shell this is being run as.
+*/
+static PURE bool shell_option_letter_known(p8 letter)
+{
+        if (shell_bash_compat)
+        {
+                for (positive at = 0; SHELL_SET_LETTERS[at]; at++)
+                        if (SHELL_SET_LETTERS[at] == letter)
+                                return true;
+                return letter == 'r';
+        }
+
+        for (positive option = 0; option < SHELL_OPTION_NAMES; option++)
+                if (shell_option_names[option].value == letter)
+                        return true;
+        return false;
+}
+
 COLD fn shell_set(writer write, string_address input)
 {
         positive index = 1;
@@ -5734,6 +5838,45 @@ COLD fn shell_set(writer write, string_address input)
                         return shell_answer(string_report(log_error, 2, "%s: no room\n", "set"));
 
                 return shell_answer(0);
+        }
+
+        /*
+                Every letter is read before any of them is acted on.
+
+                A letter nobody has undoes the whole command rather than
+                the rest of it: `set -e -Z` leaves errexit exactly as it
+                was, which is what makes the shell that ran it carry on
+                instead of leaving on the errexit it never turned on. An
+                -o name is not asked about here, because the reference does
+                not ask either -- `set -f -o bogus` keeps the -f.
+        */
+        for (positive look = 1; look < shell_argc; look++)
+        {
+                string_address word = shell_argv[look];
+
+                if (word_is(word, "--") || word_is(word, "-") ||
+                    !(string_is(word, '-') || string_is(word, '+')) ||
+                    !string_not(word + 1, end))
+                        break;
+
+                for (string_address letter = word + 1; string_get(letter);
+                     letter++)
+                {
+                        if (string_get(letter) == 'o')
+                        {
+                                if (look + 1 < shell_argc)
+                                        look++;
+                                continue;
+                        }
+                        if (!shell_option_letter_known(string_get(letter)))
+                        {
+                                shell_answer(shell_set_refused_letter(
+                                    string_is(word, '-') ? '-' : '+',
+                                    string_get(letter)));
+                                exec_special_error_note();
+                                return;
+                        }
+                }
         }
 
         while (index < shell_argc)
@@ -5768,6 +5911,28 @@ COLD fn shell_set(writer write, string_address input)
                         {
                                 p8 value = string_get(letter);
 
+                                if (value == 'r' && shell_bash_compat)
+                                {
+                                        //      Restricted goes on and never
+                                        //      comes off again: +r is a
+                                        //      no-op while it is off and an
+                                        //      error once it is on, which is
+                                        //      the only way a shell that has
+                                        //      been restricted stays that
+                                        //      way.
+                                        if (!on && shell_restricted)
+                                        {
+                                                shell_answer(
+                                                    shell_set_refused_letter(
+                                                        '+', 'r'));
+                                                exec_special_error_note();
+                                                return;
+                                        }
+                                        shell_restricted = on;
+                                        letter++;
+                                        continue;
+                                }
+
                                 if (value == 'o')
                                 {
                                         // The name is the next word, and with
@@ -5786,14 +5951,9 @@ COLD fn shell_set(writer write, string_address input)
                                         // reference shell leaves 2 behind.
                                         if (!shell_option_named(shell_argv[++index], on))
                                         {
-                                                log_error(
-                                                    on ? "set: Illegal option -o "
-                                                       : "set: Illegal option +o ",
-                                                    23);
-                                                string_format(log_error,
-                                                              "%s\n",
-                                                              shell_argv[index]);
-                                                shell_answer(2);
+                                                shell_answer(
+                                                    shell_set_refused_name(
+                                                        on, shell_argv[index]));
                                                 exec_special_error_note();
                                                 return;
                                         }
@@ -5804,12 +5964,13 @@ COLD fn shell_set(writer write, string_address input)
 
                                 if (!shell_option_letter_told(value, on))
                                 {
-                                        p8 said[2] = {value, end};
-
-                                        string_format(log_error,
-                                                      "set: Illegal option %s%s\n",
-                                                      on ? "-" : "+", said);
-                                        shell_answer(2);
+                                        //      The walk above already refused
+                                        //      every letter nobody has, so
+                                        //      reaching this is a letter the
+                                        //      two disagree about rather than
+                                        //      one the caller wrote.
+                                        shell_answer(shell_set_refused_letter(
+                                            on ? '-' : '+', value));
                                         exec_special_error_note();
                                         return;
                                 }
@@ -12501,6 +12662,35 @@ static bipolar shell_source_read(bipolar handle,
         return result < 0 ? result : (bipolar)store.used;
 }
 
+/*
+        set -v: what was read, written back before anything is done with it.
+
+        Reading, not running, is what the option is about, so the echo sits
+        where the reader hands a physical line over and the option is asked
+        about again for each one: `set -v` halfway through reaches the line
+        after it, in a file and in bash's command string alike. dash echoes
+        no command string at all, because a string was not read from
+        anywhere, and that is the whole of the difference between the two.
+
+        A sourced file is read from somewhere, so both shells echo it and
+        it is declared here, beside the reader that runs one, rather than
+        beside the process reader in the entry file that is included last.
+*/
+static bool shell_verbose_from_string;
+
+static fn shell_verbose_line(string_address line)
+{
+        if (shell_verbose_from_string && !shell_bash_compat)
+                return;
+
+        if (!(shell_options & SHELL_FLAG('v')))
+                return;
+
+        log_error(line, string_length(line));
+        log_error("\n", 1);
+        log_flush();
+}
+
 static b32 shell_source_execute(p8 address_to text, positive filled,
                                  bool startup)
 {
@@ -12517,6 +12707,16 @@ static b32 shell_source_execute(p8 address_to text, positive filled,
                 positive stop = newline ? (positive)(newline - text) : filled;
 
                 text[stop] = end;
+                {
+                        //      A file is a file however it was reached, so
+                        //      the string rule that keeps dash quiet about
+                        //      a -c command does not apply to its lines.
+                        bool held = shell_verbose_from_string;
+
+                        shell_verbose_from_string = false;
+                        shell_verbose_line(text + at);
+                        shell_verbose_from_string = held;
+                }
                 run_line(text + at);
                 if (shell_syntax_generation != syntax)
                         break;
