@@ -4534,6 +4534,9 @@ typedef struct
         bool fields_given;
         bool failed;
         bool stop;
+        //      Under --debug the reference says at the end that it could not
+        //      convert everything, whatever it did about each one.
+        bool some_invalid;
 } numfmt_options;
 
 static numfmt_options numfmt;
@@ -5100,8 +5103,70 @@ static fn numfmt_body_out(p8 address_to number, positive number_length,
         }
 }
 
+/*      A number too big to print without a scale is named the way the
+        reference names it: six significant digits and an exponent, which is
+        what %Lg gives it. The digits are the ones that were typed, so this
+        is a walk over the decimal string and not any arithmetic -- rounding
+        at the seventh digit, and a carry that can make the mantissa one and
+        the exponent one larger.
+*/
+static fn numfmt_short_form(p8 address_to digits, positive length,
+                            bool negative, p8 address_to into)
+{
+        positive at = 0;
+        while (at < length && digits[at] == '0')
+                at++;
+        p8 kept[8];
+        positive have = 0;
+        positive exponent = length > at ? length - at - 1 : 0;
+
+        for (positive from = at; from < length && have < 7; from++)
+                kept[have++] = digits[from];
+        while (have < 7)
+                kept[have++] = '0';
+        if (kept[6] >= '5')
+        {
+                positive carry = 6;
+                while (carry--)
+                {
+                        if (kept[carry] != '9')
+                        {
+                                kept[carry]++;
+                                break;
+                        }
+                        kept[carry] = '0';
+                        if (!carry)
+                        {
+                                kept[0] = '1';
+                                exponent++;
+                        }
+                }
+        }
+        positive shown = 6;
+        while (shown > 1 && kept[shown - 1] == '0')
+                shown--;
+
+        positive used = 0;
+        if (negative)
+                into[used++] = '-';
+        into[used++] = kept[0];
+        if (shown > 1)
+        {
+                into[used++] = '.';
+                for (positive from = 1; from < shown; from++)
+                        into[used++] = kept[from];
+        }
+        into[used++] = 'e';
+        into[used++] = '+';
+        if (exponent < 10)
+                into[used++] = '0';
+        used += positive_into_base(into + used, exponent, 10, false);
+        into[used] = end;
+}
+
 static fn numfmt_invalid_value(p8 address_to bytes, positive length)
 {
+        numfmt.some_invalid = true;
         if (numfmt.invalid == NUMFMT_INVALID_ABORT ||
             numfmt.invalid == NUMFMT_INVALID_FAIL ||
             numfmt.invalid == NUMFMT_INVALID_WARN)
@@ -5231,6 +5296,31 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
             !numfmt_ratio(address_of number, base, power,
                           address_of numerator, address_of denominator))
         {
+                /*      A number the reference could read and this one cannot
+                        is one whose integer part has passed 1e19, and with
+                        no scale asked for that is what the reference itself
+                        refuses to print. */
+                positive sign = numeric_length && bytes[0] == '-';
+                positive whole = string_span_max(bytes + sign,
+                                                 numeric_length - sign,
+                                                 string_set_digits);
+                positive leading = 0;
+                while (leading < whole && bytes[sign + leading] == '0')
+                        leading++;
+                if (tail == stop && !power && numfmt.to == NUMFMT_SCALE_NONE &&
+                    whole - leading >= 20)
+                {
+                        p8 shown[48];
+
+                        numfmt_short_form(bytes + sign, whole, sign != 0, shown);
+                        text_flush();
+                        string_format(writer_stderr,
+                            "numfmt: value too large to be printed: '%s' (consider using --to)\n",
+                            shown);
+                        numfmt.failed = true;
+                        numfmt.stop = true;
+                        return false;
+                }
                 numfmt_invalid_value(bytes, length);
                 if (!numfmt.stop)
                         text_put(original, original_length);
@@ -5888,6 +5978,12 @@ static b32 tools_numfmt()
                 }
 
                 text_close();
+        }
+
+        if (numfmt.debug && numfmt.some_invalid && !numfmt.stop)
+        {
+                text_flush();
+                writer_stderr("numfmt: failed to convert some of the input numbers\n", 0);
         }
 
         return text_done(numfmt.failed ? 2 : text_status);
