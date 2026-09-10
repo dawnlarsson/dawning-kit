@@ -2035,6 +2035,64 @@ static b32 process_script_record(process_script_state address_to state,
         positive offered = 0;
         positive status = 0;
 
+        /*
+                The first of our input goes into the terminal before the
+                command has finished starting. A terminal echoes what it is
+                given as it is given it, so input handed over after the
+                command's first word is recorded after that word, and which of
+                the two comes first is otherwise left to how the two processes
+                are scheduled -- the same session recorded twice then differs.
+                The read does not wait, so a terminal on the other side of our
+                own input does not hold the recorder here.
+        */
+        {
+                process_timeout_poll first[2] = {
+                    {0, PROCESS_POLL_IN, 0}, {master, PROCESS_POLL_OUT, 0}};
+                timespec none = {0, 0};
+
+                if (system_call_5(syscall(ppoll), (positive)first, 2,
+                                  (positive)address_of none, 0, 8) > 0 &&
+                    first[0].returned)
+                {
+                        bipolar got = system_read_once(0, input, sizeof(input));
+
+                        if (got > 0)
+                        {
+                                input_length = (positive)got;
+
+                                /* Only where the terminal has room for it: a
+                                   command that never reads its input leaves a
+                                   full one, and a write that waits here waits
+                                   before the loop that empties the other side.
+                                   Held back, it goes out on the first pass. */
+                                bipolar wrote = first[1].returned
+                                                    ? system_write_once(
+                                                          (positive)master, input,
+                                                          input_length)
+                                                    : 0;
+
+                                if (wrote > 0)
+                                {
+                                        input_at = (positive)wrote;
+
+                                        if (!process_script_payload(
+                                                state, 'I', input,
+                                                (positive)wrote))
+                                        {
+                                                failed = true;
+                                                master_end = true;
+                                        }
+                                }
+                        }
+                        else if (got != -UL_ERROR_AGAIN &&
+                                 got != UL_ERROR_INTERRUPTED)
+                        {
+                                input_end = true;
+                                eot = true;
+                        }
+                }
+        }
+
         while (!master_end)
         {
                 process_timeout_poll waited[4];

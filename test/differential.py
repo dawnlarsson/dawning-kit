@@ -126877,7 +126877,7 @@ PINNED = r"""
   "id": "2d0ab8c004420b54",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -126908,7 +126908,7 @@ PINNED = r"""
   "id": "2edd1e661e0a5ca0",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -126937,7 +126937,7 @@ PINNED = r"""
   "id": "316adf942ad71e17",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -126968,7 +126968,7 @@ PINNED = r"""
   "id": "3aaebaa66fb8e647",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -127001,7 +127001,7 @@ PINNED = r"""
   "id": "41b657ce1b89a1da",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
    "status": 0,
@@ -127034,7 +127034,7 @@ PINNED = r"""
   "id": "43ec644b0b88ddb7",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
    "status": 0,
@@ -127065,7 +127065,7 @@ PINNED = r"""
   "id": "7176e1b3a11cadee",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
@@ -127098,7 +127098,7 @@ PINNED = r"""
   "id": "7d182f64366257ea",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
    "status": 0,
@@ -127131,7 +127131,7 @@ PINNED = r"""
   "id": "9fd1dba14ac31587",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "7594fc842ad925aed4f66b1d377e40256d4945843b4d345b0c687d593bd0025a",
    "status": 0,
@@ -127162,7 +127162,7 @@ PINNED = r"""
   "id": "d7d63c827ba00b54",
   "kind": "bug",
   "list": "ledger",
-  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here, and a negative one prints as its unsigned self there and as zero here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
+  "reason": "the microsecond half of a record's timestamp. The reference prints a fraction only where the field already holds one: a field of a million or more prints as 000000 there and as its remainder here. Anything read as records that is not a real login database -- the text these fixtures hold -- has every one of those fields out of range, so the last column of every line differs, in the standard output and in the file --output writes alike.",
   "reference": {
    "effects": "d3429fd95c8bb44b11bb42d0016d39ef70e4b44349f8f06276d17ef7b2721f60",
    "status": 0,
