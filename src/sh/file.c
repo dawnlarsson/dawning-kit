@@ -12463,7 +12463,7 @@ static COLD bool pathchk_limit(positive limit, positive length, string_address w
         p8 shown[FILE_PATH_MAX];
 
         string_copy_max_end(shown, text, min(text_length, FILE_PATH_MAX - 1));
-        string_format(log_error, "pathchk: limit %u exceeded by length %u of %s '%s'\n",
+        string_format(log_error, "pathchk: limit %p exceeded by length %p of %s '%s'\n",
                       limit, length, what, shown);
         return false;
 }
@@ -23752,7 +23752,7 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code == XARGS_EXEC_SIGNAL)
         {
-                string_format(log_error, "xargs: %s: terminated by signal %d\n",
+                string_format(log_error, "xargs: %s: terminated by signal %b\n",
                               command, xargs_signal);
                 xargs_answer = 125;
                 xargs_done = true;
