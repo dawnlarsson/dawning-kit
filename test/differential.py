@@ -6957,6 +6957,21 @@ def misc_diff_normalize(channel, data):
     return data
 
 
+def misc_who_normalize(channel, data):
+    """Two of who's columns are not the file's: the message flag and the idle
+    time are read from the terminal device each record names, and those
+    devices are whatever sessions the machine happens to be holding open. A
+    pseudo-terminal that exists while the reference runs and is gone when the
+    candidate does answers "-" to one and "?" to the other, and an idle time
+    turns over on the minute between the two. Both are masked here so the
+    rest of the record -- which is the file's, and is what these cases are
+    about -- can be compared byte for byte."""
+    if channel != "stdout":
+        return data
+    data = re.sub(rb"(?<=\d\d:\d\d)( +)(\d\d:\d\d|old|[.?])", b" <IDLE>", data)
+    return re.sub(rb"(?m)^(\S+ +|\s+)([-+?])( +\S)", rb"\1<M>\3", data)
+
+
 def misc_ps_normalize(channel, data):
     """A live listing (many rows) keeps only its heading and the fact that
     rows followed; a selected process keeps its content with the columns
@@ -7165,7 +7180,11 @@ def misc_last_normalize(channel, data):
                 when = time.mktime(time.strptime(stamp.replace("  ", " "), layout))
             except ValueError:
                 continue
-            if abs(time.time() - when) < 7200:
+            #       The program ran under TZ=UTC0 and this reads its stamp
+            #       in whatever zone the machine keeps, so "now" can be a
+            #       whole offset away from now; a day of slack covers every
+            #       zone, and the fixtures' own dates are years off.
+            if abs(time.time() - when) < 86400:
                 return match.group(1) + b"<NOW>"
         return match.group(0)
     return re.sub(rb"( begins )(.+)$", recent, data)
@@ -7648,7 +7667,7 @@ MISC_UTILITIES = (
                      Option("--lookup")),
             operands=((), ("utmp",), ("wtmp",), ("empty",), ("missing",), ("a.txt",), ("binary",), ("utmp", "x"),
                       ("am", "i"), ("utmp", "a", "b"), ("dir",), ("unreadable",)),
-            stdin=("empty",), fixture="misc", stderr="exact",
+            stdin=("empty",), fixture="misc", stderr="exact", normalize=misc_who_normalize,
             extra=(("--all", "utmp"), ("--boot", "--dead", "--heading", "utmp"), ("--login", "--process", "--runlevel", "utmp"),
                    ("--count", "utmp"), ("--short", "--time", "utmp"), ("--mesg", "utmp"), ("--message", "--users", "utmp"),
                    ("--writable", "wtmp"), ("--all", "--heading", "wtmp"))),
@@ -220893,13 +220912,6 @@ PINNED = r"""
   "id": "21a1463d05cd4500",
   "list": "regression",
   "utility": "umount"
- },
- {
-  "domain": "misc",
-  "id": "89874bd7e7f073f8",
-  "list": "unstable",
-  "reason": "the line saying when the database begins is stamped with the moment the program ran, so the two runs write it a second apart whenever they straddle one",
-  "utility": "last"
  },
  {
   "domain": "misc",
