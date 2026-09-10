@@ -19015,7 +19015,7 @@ REASONS = {
  "r289": "a range file is not read: ranges are given as operands",
  "r29": "gawk's --exec; refused with usage",
  "r290": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them",
- "r291": "the mount table is read from mountinfo and printed as a flat table: the tree and df layouts, JSON and pairs, the fstab/mtab tables, tag evaluation, canonicalisation, polling, filters and another task's namespace are refused",
+ "r291": "the mount table is read from mountinfo alone and drawn as a tree or a list: the df layouts, JSON, the fstab and mtab tables, tag evaluation, the path cache, polling, expression filters, forcing the tree back on over a query that turned it off, and another task's namespace are refused",
  "r292": "POSIX message queues, shared memory and semaphores are not created: this build makes the System V objects only",
  "r293": "removing every object at once is not built, and --all is refused with it",
  "r294": "the detail, time, pid, creator, limits and summary modes read fields this census does not keep",
@@ -209332,14 +209332,6 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "option": "-Q",
-  "reason_id": "r291",
-  "utility": "findmnt"
- },
- {
-  "domain": "util_linux",
-  "kind": "deliberate",
-  "list": "ledger",
-  "option": "-R",
   "reason_id": "r291",
   "utility": "findmnt"
  },
