@@ -356,6 +356,22 @@ static void pane_arrange(struct pane *pane, unsigned int how,
         width = clamp(width, 0, max_w);
         height = clamp((int)output->height - title - border * 3, 0, max_h);
 
+        /*
+                Rounded to whole cells before the left edge is chosen, the way
+                a resize is, and for the same reason: a window of text cannot
+                be exactly half a screen wide, so a few pixels have to go
+                somewhere. They come off the edge the window was not thrown
+                at. Without this a window snapped right sat two pixels short
+                of the screen edge with a stripe of desktop down the outside,
+                while the same window snapped left was flush -- the rounding
+                always ate the right-hand side, whichever side had been asked
+                for.
+        */
+        pane_grid_fit(pane, &width, &height);
+
+        if (how == PANE_RIGHT)
+                x = output->x + (int)output->width - border - width;
+
         pane_reshape(pane, x, output->y + border, width, height);
 }
 
@@ -426,9 +442,46 @@ static void drag_press(int x, int y)
         desktop.press_y = y;
 
         /*
-                The X, before anything that takes hold of the window.
+                Alt and anywhere on a window moves it.
 
-                Above the double-click test as well: the button is inside the
+                A window with no titlebar has nothing to take hold of at all:
+                its program put it where it is and only its program could move
+                it again. This is the thirty-year-old answer to that, and it is
+                the whole of what makes a frameless window manageable.
+
+                Before the edges, so Alt over a corner moves rather than
+                resizes: with Alt held the hand has said which of the two it
+                meant, and a frameless window has no corner to resize from
+                anyway.
+
+                A window the compositor owns is not the program's to move
+                around by the body -- the kernel log has no titlebar because it
+                is not a window in that sense -- so this needs a shared page
+                like everything else that answers to a hand.
+        */
+        if (pane->shared &&
+            ((unsigned int)atomic_read(&desktop.modifiers) & WINDOW_KEY_ALT))
+        {
+                if (pane->arranged != PANE_FLOATING)
+                        pane_restore_for_drag(pane, x, y);
+
+                desktop.dragging = pane;
+                desktop.grab_x = x - pane->x;
+                desktop.grab_y = y - pane->y;
+                goto redraw;
+        }
+
+        /*
+                The X, before anything that takes hold of the window, and after
+                the edges.
+
+                After, for the reason the scrollbar is: the button's square and
+                the corner's grip overlap by a few pixels, and a window that
+                cannot be resized from its own corner is worse than a button
+                that has to be hit a little further in. There is plenty of
+                button left inside.
+
+                Above the double-click test, though: the button is inside the
                 titlebar, so a second click on it would otherwise maximize the
                 window on its way out. Nothing is dragged and no press is
                 remembered -- a click on the button is not one of a pair.
@@ -436,7 +489,7 @@ static void drag_press(int x, int y)
         {
                 int cx, cy, side;
 
-                if (pane_close_box(pane, &cx, &cy, &side) &&
+                if (!edges && pane_close_box(pane, &cx, &cy, &side) &&
                     point_in_rect(cx, cy, side, side, x, y))
                 {
                         desktop.press_pane = NULL;

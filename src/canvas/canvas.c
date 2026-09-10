@@ -149,6 +149,19 @@ struct pane
         */
         int cascade;
         _Bool cascaded;
+
+        /*
+                One wake owed to the program, because it has been asked to
+                close.
+
+                An event and not a state: the state is WINDOW_CLOSING in the
+                shared page, which the program reads whenever it likes and
+                nothing here ever clears. If the poll answered from the state
+                instead, a program that does not act on the request would be
+                handed a ready file every time it asked -- ppoll returning
+                immediately, for ever, which is a spin and not a wait.
+        */
+        atomic_t closing_wake;
 };
 
 struct output

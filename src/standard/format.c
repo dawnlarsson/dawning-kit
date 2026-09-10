@@ -250,7 +250,52 @@ static fn format_emit(format_sink address_to sink, address_any data,
         if (length < room)
                 room = length;
 
-        memory_copy(sink->buffer + sink->used, data, room);
+        //      Nine of these a call and six of them one byte: the format
+        //      string's own colons, a sign, a one place pad. Measured with a
+        //      histogram on "%08d:%-12s:%6.3f", which is 28 bytes of output
+        //      and asks for nine copies -- six of one byte, then a two, a
+        //      four and an eight.
+        //
+        //      A byte through the general routine is a call, an overlap test
+        //      it cannot need, a tail jump into the copy and a width ladder,
+        //      to move one byte. Writing sizes up to eight here instead took
+        //      the call from 3,781 instructions to 3,533 and 757 cycles to
+        //      682, about a tenth, and dropped the copy routine from 23% of
+        //      the call's instructions to under 10%.
+        //
+        //      Overlapping windows so no size needs its own branch. The sink
+        //      buffer is the caller's output and never overlaps a source, so
+        //      this is a copy and not a move.
+        {
+                p8 address_to to = (p8 address_to)sink->buffer + sink->used;
+                p8 address_to from = (p8 address_to)data;
+
+                if (room == 1)
+                {
+                        to[0] = from[0];
+                }
+                else if (room >= 8)
+                {
+                        if (room == 8)
+                                __builtin_memcpy(to, from, 8);
+                        else
+                                memory_copy_apart(to, from, room);
+                }
+                else if (room >= 4)
+                {
+                        p32 head = memory_load_unaligned(p32, from);
+                        p32 tail = memory_load_unaligned(p32, from + room - 4);
+                        __builtin_memcpy(to, address_of head, 4);
+                        __builtin_memcpy(to + room - 4, address_of tail, 4);
+                }
+                else if (room >= 2)
+                {
+                        p16 head = memory_load_unaligned(p16, from);
+                        p16 tail = memory_load_unaligned(p16, from + room - 2);
+                        __builtin_memcpy(to, address_of head, 2);
+                        __builtin_memcpy(to + room - 2, address_of tail, 2);
+                }
+        }
         sink->used += room;
 }
 

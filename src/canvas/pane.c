@@ -946,6 +946,7 @@ static void pane_close_request(struct pane *pane)
 
         pane->state |= WINDOW_CLOSING;
         WRITE_ONCE(pane->shared->state, pane->state);
+        atomic_set(&pane->closing_wake, 1);
         wake_up_interruptible(&pane->wait);
 }
 
@@ -1389,10 +1390,13 @@ static __poll_t window_poll(struct file *file, poll_table *wait)
                 without a reason here the poll went straight back to sleep and
                 the X in the titlebar did nothing until the next keystroke.
 
-                pane->state and not the shared copy: this is the compositor
-                asking, and the answer must not be one the program can write.
+                Taken rather than read, so it is delivered once. The request
+                itself stays set in the shared page for the program to find at
+                its own pace; answering from that instead would make every
+                later poll return immediately and turn a program that ignores
+                the X into one that spins.
         */
-        if (pane->state & WINDOW_CLOSING)
+        if (atomic_xchg(&pane->closing_wake, 0))
                 return EPOLLIN | EPOLLRDNORM;
 
         // The grid the program laid out to is its own record in the page;

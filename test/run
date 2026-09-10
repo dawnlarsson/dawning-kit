@@ -7533,6 +7533,100 @@ if len(runs) >= 1:
     wheel_shift = max(scores, key=lambda item: item[0])[1] if scores else 0
     out.append(("wheel is three lines", str(wheel_shift), "144"))
 
+    #   A terminal from the keyboard, and where the second one lands.
+    #
+    #   Control-Shift-T asks the compositor for one, which is the only way to
+    #   get a window without a program already running to ask for it. The new
+    #   one is centred like the first, so without a cascade it lands on top of
+    #   it exactly -- same size, same place, pixel for pixel -- and opening a
+    #   terminal looks like nothing happened at all. Measured and not assumed:
+    #   the two overlapping windows make one run across the middle of the
+    #   screen, and that run is one titlebar wider than the single window was.
+    def spans(name):
+        rw, rh, rpx = load(name)
+
+        def rat(x, y):
+            o = (y * rw + x) * 3
+            return rpx[o], rpx[o + 1], rpx[o + 2]
+
+        found, first = [], None
+        for x in range(rw):
+            on = rat(x, rh // 2) != bg
+            if on and first is None:
+                first = x
+            elif not on and first is not None:
+                if x - first > 40:
+                    found.append((first, x - 1))
+                first = None
+        if first is not None and rw - first > 40:
+            found.append((first, rw - 1))
+        return found
+
+    before_spawn = spans("first")
+    term_left, term_right = before_spawn[-1]
+    term_top = next(y for y in range(h) if at((term_left + term_right) // 2, y) != bg)
+
+    chord("ctrl", "shift", "t")
+    time.sleep(3.0)
+    shot("spawned", 0.5)
+    after_spawn = spans("spawned")
+
+    out.append(("Control-Shift-T opens a window",
+                "yes" if len(after_spawn) == len(before_spawn) and
+                after_spawn and after_spawn[-1] != before_spawn[-1] else "no",
+                "yes"))
+
+    #   The step, from the picture and not from a number written here.
+    #
+    #   Everything the compositor draws is multiplied by a scale set in the
+    #   config, so a cascade asserted as twenty pixels would be a check that
+    #   only passes on one setting. It moves the window by the same distance
+    #   down as across, and that is what is asserted: the run grew by exactly
+    #   as much as the new window's top sits below the old one's.
+    sw, sh, spx = load("spawned")
+
+    def spixel(x, y):
+        o = (y * sw + x) * 3
+        return spx[o], spx[o + 1], spx[o + 2]
+
+    grew = 0
+    dropped = -1
+
+    if after_spawn:
+        new_left, new_right = after_spawn[-1]
+        grew = (new_right - new_left) - (term_right - term_left)
+        #   Clear of the window behind it, so this is the new window's own
+        #   top edge and not the one it is stacked on.
+        new_top = next((y for y in range(sh) if spixel(new_right - 4, y) != bg),
+                       term_top)
+        dropped = new_top - term_top
+
+    out.append(("the second one cascades", "%d px across" % grew,
+                "%d px across" % dropped if dropped > 0 else "a step down"))
+
+    #   The X in the titlebar, which is the only thing on a window that ends
+    #   a program rather than moving it. Aimed at the glyph the compositor
+    #   actually drew -- the rightmost title-coloured text in the new
+    #   window's own titlebar -- because working out where it ought to be is
+    #   how a check passes while the button is somewhere else entirely.
+    if after_spawn and dropped > 0:
+        band = range(new_top + 4, new_top + dropped - 4)
+        marks = [x for x in range(new_right, new_left, -1)
+                 for y in band if spixel(x, y) == (223, 231, 239)]
+
+        if marks:
+            moveto(marks[0] - 3, new_top + dropped // 2)
+            send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+            time.sleep(0.08)
+            send([{"type": "btn", "data": {"down": False, "button": "left"}}])
+            time.sleep(3.0)
+
+        shot("closed", 0.5)
+        out.append(("the X closes a window",
+                    "yes" if marks and spans("closed") == before_spawn else "no",
+                    "yes"))
+
+
 #       A click on a titlebar takes the focus, which the titlebar says.
 if len(runs) >= 2:
     a_left, a_right = runs[0]
@@ -7897,6 +7991,127 @@ if len(runs) >= 2:
                   "%dx%d" % (blue_key[2] - blue_key[0] + 1,
                              blue_key[3] - blue_key[1] + 1))
     out.append(("Alt-Tab restores", key_extent, "200x120"))
+
+#       Snapping, at the end because it leaves a window somewhere new.
+#
+#       A drag that ends against an edge of the screen is the window asking
+#       for that half of it, which is what throwing a window at the side has
+#       meant since the idea existed. Top is the whole screen, and taking the
+#       window off again puts back the rectangle its program had -- saved once
+#       on the way out of floating, so left, then right, then off lands where
+#       it started rather than on the left half.
+#
+#       Read as how much of one column of the screen a window covers, and not
+#       as where the edges of a run are: by this point the desktop has the
+#       demo windows on it, runs of non-background merge every window they
+#       touch, and the answer stops meaning anything. A snapped window is the
+#       full height of the screen and nothing else here is -- the largest of
+#       the demos covers an eighth of a column -- so a column that is nearly
+#       all window is a snapped window, wherever the others happen to be.
+if runs:
+    def covered(name, x):
+        """How much of one column of the screen is not desktop."""
+        rw, rh, rpx = load(name)
+        rows = range(0, rh, 4)
+        lit = 0
+        for y in rows:
+            o = (y * rw + x) * 3
+            if (rpx[o], rpx[o + 1], rpx[o + 2]) != bg:
+                lit += 1
+        return lit * 100 // len(list(rows))
+
+    def throw(name, to_x, to_y, grab):
+        gx, gy = grab
+        moveto(gx, gy)
+        send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+        time.sleep(0.1)
+        for stepped in range(1, 9):
+            moveto(gx + (to_x - gx) * stepped // 8,
+                   gy + (to_y - gy) * stepped // 8)
+        send([{"type": "btn", "data": {"down": False, "button": "left"}}])
+        time.sleep(1.6)
+        shot(name, 0.5)
+
+    chord("ctrl", "shift", "t")
+    time.sleep(3.0)
+    shot("snap-start", 0.5)
+    snap_w, snap_h, snap_px = load("snap-start")
+
+    def snap_at(x, y):
+        o = (y * snap_w + x) * 3
+        return snap_px[o], snap_px[o + 1], snap_px[o + 2]
+
+    #   The new terminal is the frontmost window, and the rightmost run at the
+    #   middle of the screen reaches its right edge.
+    start_runs, first_x = [], None
+    for x in range(snap_w):
+        on = snap_at(x, snap_h // 2) != bg
+        if on and first_x is None:
+            first_x = x
+        elif not on and first_x is not None:
+            if x - first_x > 40:
+                start_runs.append((first_x, x - 1))
+            first_x = None
+    if first_x is not None and snap_w - first_x > 40:
+        start_runs.append((first_x, snap_w - 1))
+
+    hold_left, hold_right = start_runs[-1]
+    hold_top = next(y for y in range(snap_h)
+                    if snap_at(hold_right - 4, y) != bg)
+    hold = (hold_right - 40, hold_top + 9)
+    edge = snap_w - 1
+    FULL = 90
+
+    throw("snap-left", 3, snap_h // 2, hold)
+    at_left, at_right = covered("snap-left", 0), covered("snap-left", edge)
+    left_ok = at_left >= FULL and at_right < FULL
+    out.append(("a drag to the left edge takes the left half",
+                "yes" if left_ok else "%d%% of the left column, %d%% of the right"
+                % (at_left, at_right), "yes"))
+
+    inside = covered("snap-left", snap_w // 2 - 30)
+    past = covered("snap-left", snap_w // 2 + 30)
+    out.append(("and stops at the middle",
+                "yes" if inside >= FULL and past < FULL else
+                "%d%% just inside, %d%% just past" % (inside, past), "yes"))
+
+    if left_ok:
+        hold = (snap_w // 4, 11)
+
+    throw("snap-right", edge - 2, snap_h // 2, hold)
+    at_left, at_right = covered("snap-right", 0), covered("snap-right", edge)
+    right_ok = at_right >= FULL and at_left < FULL
+    out.append(("a drag to the right edge takes the right half",
+                "yes" if right_ok else "%d%% of the left column, %d%% of the right"
+                % (at_left, at_right), "yes"))
+
+    if right_ok:
+        hold = (snap_w - snap_w // 4, 11)
+
+    #   A cell short of the far edge, because a window of text is a whole
+    #   number of cells: half a screen rarely divides by eight, and what is
+    #   left over sits at the edge the window was not thrown at. Snapped
+    #   right that is the left, so the check above can ask for the last
+    #   column; filling the screen has no such edge and keeps the remainder
+    #   on the right.
+    throw("snap-top", snap_w // 2, 2, hold)
+    at_left, at_right = covered("snap-top", 0), covered("snap-top", edge - 8)
+    top_ok = at_left >= FULL and at_right >= FULL
+    out.append(("a drag to the top fills the screen",
+                "yes" if top_ok else "%d%% of the left column, %d%% of the right"
+                % (at_left, at_right), "yes"))
+
+    if top_ok:
+        hold = (snap_w // 2, 11)
+
+    #   And off again: a window that is not against any edge and is no longer
+    #   the height of the screen is one that got its own rectangle back.
+    throw("snap-off", snap_w // 3, snap_h // 2, hold)
+    at_left, at_right = covered("snap-off", 0), covered("snap-off", edge)
+    out.append(("dragging off puts the window back",
+                "yes" if at_left < FULL and at_right < FULL else
+                "%d%% of the left column, %d%% of the right" % (at_left, at_right),
+                "yes"))
 
 try:
     serial = open(work + "/serial", "rb").read().lower()

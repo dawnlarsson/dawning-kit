@@ -19003,7 +19003,14 @@ fn memory_release(address_any address_to held, positive address_to have,
         still owns mapping, bump allocation, refill and refusal. The literals
         below are that file's constants and it asserts they still agree.
 */
-#ifndef KERNEL_MODE
+//      Emitted only when the umbrella is what is being built, because that is
+//      exactly when src/standard/allocator.c comes with it. The routines below
+//      jump to that file's C for anything a shelf cannot answer, and a
+//      configuration that includes library.c on its own -- the standalone
+//      printf check is one -- has no such C to jump to and fails at the link
+//      with an undefined allocator_take_slow. compiler_memory.c defines this
+//      before it includes library.c, so the test is answerable here.
+#if !defined(KERNEL_MODE) && defined(STANDARD_MODERN_C_COMPILER_MEMORY)
 extern address_any allocator_free_list[];
 ALLOCATES ALLOCATES_SIZE(1) address_any memory_take(positive bytes);
 fn memory_give(address_any block);
