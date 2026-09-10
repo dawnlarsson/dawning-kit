@@ -97,6 +97,11 @@ cover('direct_benchmark', 'test/checks.c#BENCH_reserve', 'memory_reserve',
       'fresh-process mapping growth timing and peak resident memory, with '
       'dense and sparse inputs; hardware/RSS claims require native execution')
 
+cover('direct_benchmark', 'test/checks.c#BENCH_allocator', 'memory_take memory_give',
+      'malloc/free pair timing against an empty ABI control and a free-list '
+      'traffic floor that pops and pushes the same words; the shelf-hit path '
+      'is what is timed, and refill/mapping stay in the C it jumps to')
+
 cover('direct_benchmark', 'test/checks.c#BENCH_fields', '''
 positive_into_padded positive_into_pair
 ''', 'paired former-C/assembly timing across padded converter shapes')

@@ -93,7 +93,7 @@ CONST bipolar absolute_wide(bipolar value);
         floating point registers without asking first.
 */
 #ifndef KERNEL_MODE
-decimal square_root(decimal value);
+CONST decimal square_root(decimal value);
 CONST decimal absolute(decimal value);
 #endif
 
@@ -366,14 +366,16 @@ PURE b32 string_compare_folded_max(string_address source, string_address input,
         with only the zero/non-zero part of the answer promised, and memcmp
         promises more, so the alias is safe in the direction it is used.
 */
+WRITES(1, 4)
 address_any memory_copy_until(address_any destination, address_any source,
                               b8 value, positive size);
 p8 address_to string_copy_end(string_address destination, string_address source);
+WRITES(1, 3)
 p8 address_to string_copy_max_endptr(string_address destination,
                                      string_address source, positive bound);
 string_address string_append_max(string_address destination,
                                  string_address source, positive bound);
-fn memory_zero(address_any destination, positive size);
+WRITES(1, 2) fn memory_zero(address_any destination, positive size);
 fn memory_copy_source_first(address_any source, address_any destination,
                             positive size);
 
@@ -617,16 +619,16 @@ CONST b32 bits_first_set_wide(bipolar value);
         floating point registers without asking first.
 */
 #ifndef KERNEL_MODE
-decimal decimal_truncated(decimal value);
-decimal decimal_floor(decimal value);
-decimal decimal_ceiling(decimal value);
-decimal decimal_rounded(decimal value);
+CONST decimal decimal_truncated(decimal value);
+CONST decimal decimal_floor(decimal value);
+CONST decimal decimal_ceiling(decimal value);
+CONST decimal decimal_rounded(decimal value);
 decimal decimal_nearest(decimal value);
 CONST decimal decimal_with_sign(decimal magnitude, decimal sign);
-decimal decimal_smaller(decimal first, decimal second);
-decimal decimal_larger(decimal first, decimal second);
-decimal decimal_difference(decimal first, decimal second);
-decimal decimal_multiply_add(decimal first, decimal second, decimal addend);
+CONST decimal decimal_smaller(decimal first, decimal second);
+CONST decimal decimal_larger(decimal first, decimal second);
+CONST decimal decimal_difference(decimal first, decimal second);
+PURE decimal decimal_multiply_add(decimal first, decimal second, decimal addend);
 #endif
 
 /*
@@ -733,14 +735,14 @@ decimal decimal_multiply_add(decimal first, decimal second, decimal addend);
         point registers without asking first.
 */
 #ifndef KERNEL_MODE
-f32 narrow_square_root(f32 value);
+CONST f32 narrow_square_root(f32 value);
 CONST f32 narrow_absolute(f32 value);
-f32 narrow_smaller(f32 value, f32 other);
-f32 narrow_larger(f32 value, f32 other);
-f32 narrow_truncated(f32 value);
-f32 narrow_floor(f32 value);
-f32 narrow_ceiling(f32 value);
-f32 narrow_rounded(f32 value);
+CONST f32 narrow_smaller(f32 value, f32 other);
+CONST f32 narrow_larger(f32 value, f32 other);
+CONST f32 narrow_truncated(f32 value);
+CONST f32 narrow_floor(f32 value);
+CONST f32 narrow_ceiling(f32 value);
+CONST f32 narrow_rounded(f32 value);
 CONST f32 narrow_with_sign(f32 magnitude, f32 sign);
 #endif
 

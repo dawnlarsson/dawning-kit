@@ -292,6 +292,21 @@ decimal_difference decimal_larger decimal_smaller decimal_multiply_add
 ''', 'one or two floating point instructions; same argument as the leaves above')
 cover('folds_already', 'value', 'narrow_larger narrow_smaller',
       'a min or a max the hardware does in one instruction')
+
+# The shelf number is a pure function of the request, and malloc(sizeof(T)) is
+# the common call, so an expansion could hand the pop a constant and drop the
+# leading-zero count and the two shifts behind it. It is recorded here rather
+# than built because nothing has timed it: the routine's own gap to its
+# free-list floor is 7.3 ticks a pair on a 9950X, and which part of that the
+# class arithmetic owns has not been separated from the pop's store-to-load
+# chain. Build it against BENCH_allocator, or contradict this row.
+cover('folds_already', 'bytes', 'memory_take',
+      'the shelf number folds at a literal request, but the saving has not '
+      'been separated from the free-list chain that dominates the pair')
+
+cover('nothing_to_fold', None, 'memory_give',
+      'a pointer into memory the caller owns, and a shelf number read back '
+      'out of the block rather than handed over by the call site')
 cover('folds_already', 'magnitude', 'narrow_with_sign decimal_with_sign',
       'a sign copy: one and or one bit insert')
 

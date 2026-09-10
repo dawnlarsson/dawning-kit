@@ -176,6 +176,7 @@ static b32 screen_term()
         struct window_key typed[WINDOW_KEYS];
         timespec nap = {0, 4000000};
         unsigned int synchronized_wait = 0;
+        b32 hung_up = false;
 
         cursor_show();
         window_damage(window, 0, ROWS);
@@ -267,6 +268,28 @@ static b32 screen_term()
                 // way keys go.
                 if (!gone && !term_send(master))
                         gone = true;
+
+                /*
+                        The X in the titlebar.
+
+                        A terminal window closing is its line hanging up, and
+                        SIGHUP is what that has always been: the shell runs
+                        whatever it has for one, its children get the same,
+                        and the pty then reads EIO so the ordinary way out
+                        below does the rest -- there is no second path here
+                        that has to be kept working.
+
+                        To the group, because the shell is a session leader on
+                        this pty and the job it is running is the reason to
+                        hang up at all. Once, because the compositor leaves the
+                        request set for as long as the window exists, and a
+                        signal every four milliseconds is not asking twice.
+                */
+                if (!gone && !hung_up && window_closing(window))
+                {
+                        system_call_2(syscall(kill), (positive)(-child), SIGHUP);
+                        hung_up = true;
+                }
 
                 // The line editor draws where the shell would have echoed, so
                 // what it touched is what says the screen changed.

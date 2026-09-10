@@ -51821,7 +51821,11 @@ b32 main(void)
 #endif /* BENCH_random */
 
 #ifdef BENCH_allocator
-/* malloc/free class fast path against its call and free-list traffic floors. */
+/* malloc/free class fast path against its call and free-list traffic floors.
+   The subjects are memory_take and memory_give, which malloc and free are
+   second labels on: what the pair times is the shelf pop and the shelf push
+   in library.c, with refill, mapping and every tag those two do not own
+   staying in the C that their miss paths jump to. */
 #include "../src/compiler_memory.c"
 #define SHARED_bench_measure
 #include "checks.c"

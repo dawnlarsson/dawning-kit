@@ -237,76 +237,144 @@ static void bar_move(struct pane *pane, int y,
 }
 
 /*
-        Filling the screen, and going back.
+        The screen a point is on, and which number it is.
 
-        The rectangle it had is kept on the window itself, so a second pair of
-        clicks puts it back where it was rather than somewhere a rule decided.
+        The pointer is confined to an output, so a press or a drag always ends
+        on one. Which one matters: arranging against the bounding box of every
+        monitor puts a maximized window across all of them.
 */
-static void pane_maximize(struct pane *pane, int at_x, int at_y)
+static struct output *output_at(int x, int y, unsigned int *index)
 {
-        struct output *output = NULL;
         struct output *candidate;
-        int title = pane->style & WINDOW_FRAME ? canvas_title : 0;
-        int border = pane->style & WINDOW_FRAME ? canvas_border : 0;
-        int max_w, max_h, width, height;
-        unsigned int display = pane->display, index = 0;
+        unsigned int at = 0;
 
-        if (pane->maximized)
-        {
-                pane->maximized = false;
-                pane->display = pane->saved_display;
-                if (pane->shared)
-                        WRITE_ONCE(pane->shared->display, pane->display);
-                pane_reshape(pane, pane->saved_x, pane->saved_y,
-                             pane->saved_w, pane->saved_h);
-                return;
-        }
-
-        pane->saved_x = pane->x;
-        pane->saved_y = pane->y;
-        pane->saved_w = pane->width;
-        pane->saved_h = pane->height;
-        pane->saved_display = pane->display;
-
-        // The click is on an output because the pointer is confined to one.
-        // Maximize on that output, not across the bounding box of every
-        // monitor. Keep the index in sync so fullscreen requests agree later.
         list_for_each_entry(candidate, &desktop.outputs, link)
         {
                 if (point_in_rect(candidate->x, candidate->y,
                                   (int)candidate->width,
-                                  (int)candidate->height, at_x, at_y))
+                                  (int)candidate->height, x, y))
                 {
-                        output = candidate;
-                        display = index;
-                        break;
+                        *index = at;
+                        return candidate;
                 }
 
-                index++;
+                at++;
+        }
+
+        return NULL;
+}
+
+// Back to the rectangle the program last had, wherever it was put since.
+static void pane_float(struct pane *pane)
+{
+        if (pane->arranged == PANE_FLOATING)
+                return;
+
+        pane->arranged = PANE_FLOATING;
+        pane->display = pane->saved_display;
+
+        if (pane->shared)
+                WRITE_ONCE(pane->shared->display, pane->display);
+
+        pane_reshape(pane, pane->saved_x, pane->saved_y,
+                     pane->saved_w, pane->saved_h);
+}
+
+/*
+        Filling the screen, or half of it.
+
+        Maximized and the two halves are one operation: work out a rectangle
+        from the output the hand is over and go there. The rectangle the window
+        had is saved on the way out of floating and not on every arrangement,
+        so snapping left, then right, then dragging off puts it back where its
+        program had it rather than on the left half.
+*/
+static void pane_arrange(struct pane *pane, unsigned int how,
+                         int at_x, int at_y)
+{
+        int title = pane->style & WINDOW_FRAME ? canvas_title : 0;
+        int border = pane->style & WINDOW_FRAME ? canvas_border : 0;
+        unsigned int display = pane->display;
+        struct output *output = output_at(at_x, at_y, &display);
+        int max_w, max_h, width, height, x, half;
+
+        if (how == PANE_FLOATING)
+        {
+                pane_float(pane);
+                return;
         }
 
         if (!output)
+        {
                 output = output_by_index(pane->display);
+                display = pane->display;
+        }
 
         if (!output)
                 return;
 
-        pane->maximized = true;
+        if (pane->arranged == PANE_FLOATING)
+        {
+                pane->saved_x = pane->x;
+                pane->saved_y = pane->y;
+                pane->saved_w = pane->width;
+                pane->saved_h = pane->height;
+                pane->saved_display = pane->display;
+        }
+
+        pane->arranged = how;
         pane->display = display;
+
         if (pane->shared)
                 WRITE_ONCE(pane->shared->display, display);
 
         pane_limits(pane, &max_w, &max_h);
-        width = clamp((int)output->width - border * 2, 0, max_w);
+
+        // Halves are cut from the whole rather than each taking half of it,
+        // so an odd number of pixels goes to the right one instead of leaving
+        // a column of desktop showing down the middle.
+        half = (int)output->width / 2;
+
+        switch (how)
+        {
+        case PANE_LEFT:
+                x = output->x + border;
+                width = half - border * 2;
+                break;
+
+        case PANE_RIGHT:
+                x = output->x + half + border;
+                width = (int)output->width - half - border * 2;
+                break;
+
+        default:
+                x = output->x + border;
+                width = (int)output->width - border * 2;
+                break;
+        }
+
+        width = clamp(width, 0, max_w);
         height = clamp((int)output->height - title - border * 3, 0, max_h);
 
-        pane_reshape(pane, output->x + border, output->y + border, width, height);
+        pane_reshape(pane, x, output->y + border, width, height);
+}
+
+// A double click on the titlebar, which fills the screen or undoes it.
+static void pane_maximize(struct pane *pane, int at_x, int at_y)
+{
+        if (pane->arranged == PANE_MAXIMIZED)
+        {
+                pane_float(pane);
+                return;
+        }
+
+        pane_arrange(pane, PANE_MAXIMIZED, at_x, at_y);
 }
 
 /*
-        Taking a maximized titlebar restores the saved window under the hand.
+        Taking an arranged titlebar restores the saved window under the hand.
 
-        Leaving it maximized while ordinary drag_move changed x and y produced
+        Leaving it arranged while ordinary drag_move changed x and y produced
         a full-screen-sized loose window, and the next double-click restored
         geometry from before the maximize. Keep the horizontal fraction that
         was grabbed, so taking the right side does not make the restored
@@ -324,7 +392,7 @@ static void pane_restore_for_drag(struct pane *pane, int x, int y)
         height = clamp(pane->saved_h, min(WINDOW_MIN_HEIGHT, max_h), max_h);
         grab = (int)((long)(x - pane->x) * width / old_w);
 
-        pane->maximized = false;
+        pane->arranged = PANE_FLOATING;
         pane_reshape(pane, x - grab, y - title_at, width, height);
 }
 
@@ -356,6 +424,26 @@ static void drag_press(int x, int y)
 
         desktop.press_x = x;
         desktop.press_y = y;
+
+        /*
+                The X, before anything that takes hold of the window.
+
+                Above the double-click test as well: the button is inside the
+                titlebar, so a second click on it would otherwise maximize the
+                window on its way out. Nothing is dragged and no press is
+                remembered -- a click on the button is not one of a pair.
+        */
+        {
+                int cx, cy, side;
+
+                if (pane_close_box(pane, &cx, &cy, &side) &&
+                    point_in_rect(cx, cy, side, side, x, y))
+                {
+                        desktop.press_pane = NULL;
+                        pane_close_request(pane);
+                        goto redraw;
+                }
+        }
 
         {
                 u64 now = ktime_get_ns();
@@ -404,7 +492,7 @@ static void drag_press(int x, int y)
                 // An edge resize makes this ordinary geometry; a later
                 // double-click must maximize it, not restore stale pre-max
                 // coordinates.
-                pane->maximized = false;
+                pane->arranged = PANE_FLOATING;
                 desktop.resizing = pane;
                 desktop.resize_edges = edges;
                 desktop.resize_x = pane->x;
@@ -416,7 +504,7 @@ static void drag_press(int x, int y)
                  point_in_rect(pane->x, pane->y, pane->width,
                                canvas_title, x, y))
         {
-                if (pane->maximized)
+                if (pane->arranged != PANE_FLOATING)
                         pane_restore_for_drag(pane, x, y);
 
                 desktop.dragging = pane;
@@ -424,6 +512,7 @@ static void drag_press(int x, int y)
                 desktop.grab_y = y - pane->y;
         }
 
+redraw:
         // The titlebar that lost focus and the window that came to the front.
         desktop.damage_count = 0;
         desktop.damage_all = false;
@@ -439,11 +528,59 @@ static void drag_press(int x, int y)
         desktop_repaint();
 }
 
-static void drag_release(void)
+/*
+        Where a drag ended, read as an arrangement.
+
+        The pointer and not the window, because the pointer is what the hand
+        aimed and the window is wherever it happened to be held by. Against
+        the output the pointer is on rather than the desktop, so the shared
+        border between two screens is not two snap targets that fight.
+
+        Top before the sides, so a corner maximizes: it is the one of the
+        three that cannot be reached any other way by dragging.
+*/
+static unsigned int snap_at(int x, int y)
 {
+        unsigned int index;
+        struct output *output = output_at(x, y, &index);
+
+        if (!output)
+                return PANE_FLOATING;
+
+        if (y - output->y < SNAP_MARGIN)
+                return PANE_MAXIMIZED;
+
+        if (x - output->x < SNAP_MARGIN)
+                return PANE_LEFT;
+
+        if (output->x + (int)output->width - 1 - x < SNAP_MARGIN)
+                return PANE_RIGHT;
+
+        return PANE_FLOATING;
+}
+
+static void drag_release(int x, int y)
+{
+        struct pane *dragged = desktop.dragging;
+
         desktop.dragging = NULL;
         desktop.resizing = NULL;
         desktop.barring = NULL;
+
+        /*
+                Only a window that was being moved. A resize is the hand saying
+                what size it wants, and answering that by snapping would throw
+                the size away at the moment it was chosen.
+        */
+        if (!dragged)
+                return;
+
+        {
+                unsigned int how = snap_at(x, y);
+
+                if (how != PANE_FLOATING)
+                        pane_arrange(dragged, how, x, y);
+        }
 }
 
 /*

@@ -500,12 +500,33 @@ static void compose_pane(struct pane *pane, const struct target *t)
                            t->ink[pane->state & WINDOW_FOCUSED ? INK_TITLE_LIT
                                                               : INK_TITLE]);
 
-                if (pane->title_length)
-                        text_draw(t, x + canvas_cell_w, y,
-                                  pane->width - canvas_cell_w * 2, title,
-                                  pane->title, pane->title_length,
-                                  TEXT_CENTRE | TEXT_MIDDLE, (int)desktop.scale,
-                                  t->ink[INK_TEXT]);
+                {
+                        int cx, cy, side;
+                        /*
+                                What the button takes out of the title's room.
+                                Without this a long title is centred under the
+                                X and reads as one word short.
+                        */
+                        int reserved = canvas_cell_w;
+
+                        if (pane_close_box(pane, &cx, &cy, &side))
+                                reserved = side + canvas_border * 2;
+
+                        if (pane->title_length)
+                                text_draw(t, x + canvas_cell_w, y,
+                                          pane->width - canvas_cell_w - reserved,
+                                          title, pane->title, pane->title_length,
+                                          TEXT_CENTRE | TEXT_MIDDLE,
+                                          (int)desktop.scale, t->ink[INK_TEXT]);
+
+                        // Centred in its square at the size of a glyph, so it
+                        // sits with the title rather than over it.
+                        if (pane_close_box(pane, &cx, &cy, &side))
+                                bits_draw(t, cx - t->x + (side - canvas_cell_w) / 2,
+                                          cy - t->y + (side - canvas_cell_w) / 2,
+                                          (int)desktop.scale, close_bits, 1, 8, 8,
+                                          t->ink[INK_TEXT]);
+                }
         }
 
         if (pane->cells)

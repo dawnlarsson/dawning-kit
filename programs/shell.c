@@ -355,7 +355,20 @@ static positive shell_start_long_options(string_address address_to arguments,
                         shell_shopt_state |= SHELL_SHOPT(LOGIN_SHELL);
                 else if (word_is(name, "version"))
                 {
-                        string_format(log, "GNU bash, version %s (%s)\n",
+                        /*
+                                What this is, and what it answers for. The
+                                reference writes "GNU bash, version ..." and
+                                four lines of FSF copyright after it; saying
+                                the first without the rest would be neither
+                                true nor a copy, and claiming the rest would
+                                be a copyright statement about somebody
+                                else's work. The version is bash's because
+                                that is the surface being matched, and a
+                                script reading it for a feature test gets the
+                                number it is looking for.
+                        */
+                        string_format(log,
+                                      "Moonwater shell, bash %s compatible (%s)\n",
                                       "5.3.15(1)-release", MOONWATER_MACHTYPE);
                         invocation->status = 0;
                         invocation->finished = true;

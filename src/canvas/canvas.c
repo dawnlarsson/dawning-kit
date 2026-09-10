@@ -127,12 +127,28 @@ struct pane
         unsigned long bytes;
         void *mapping;
 
-        // Where it was before it filled the screen, and whether it is filling
-        // it. A window remembers one rectangle, which is what a second double
-        // click puts it back to.
+        /*
+                Where it was before something other than its program decided
+                its shape, and which of those decided.
+
+                One rectangle, saved on the way out of floating and not on
+                every arrangement: snapped left, then right, then dragged off
+                lands where the window started rather than on the left half.
+        */
         int saved_x, saved_y, saved_w, saved_h;
         unsigned int saved_display;
-        _Bool maximized;
+        unsigned int arranged;
+
+        /*
+                How far down the stack of centred windows this one is, and
+                whether that has been decided.
+
+                Decided once and then kept, because placement runs on every
+                commit a program makes: a step worked out afresh each time
+                would walk the window down the screen while its program drew.
+        */
+        int cascade;
+        _Bool cascaded;
 };
 
 struct output
@@ -310,6 +326,16 @@ static struct desktop
         atomic_t focus_commit;
         atomic_t focus_cycling;
         atomic_t minimize;
+
+        /*
+                A terminal asked for from the keyboard.
+
+                One bit and not a count: held down, a key autorepeats, and a
+                counter would answer that with a screen full of shells. The
+                press is what asks, the repeat is not, and a second press that
+                arrives before the thread has run is the same request.
+        */
+        atomic_t spawn;
         int focus_cycle_z;
 
         // The button, and where it went down. Picking a window needs the list,
@@ -456,6 +482,60 @@ static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)
         *w = pane->width + border * 2;
         *h = pane->height + title + border * 3;
 }
+
+/*
+        The close button, in desktop coordinates.
+
+        One function and not two, because two drift: the square that is drawn
+        and the square that answers a press are the same square here, and a
+        button that can be seen but not hit is the oldest bug in window
+        decoration.
+
+        A square at the right end of the titlebar, inset by the border so it
+        does not sit on the frame. Nothing for a window with no titlebar to
+        put it in, nothing for the compositor's own panes -- there is no
+        program to ask -- and nothing for a window too narrow to hold both a
+        button and a title, below which a window is all button and the strip
+        the hand actually drags by has gone.
+*/
+static _Bool pane_close_box(struct pane *pane, int *x, int *y, int *side)
+{
+        int box = canvas_title - canvas_border * 2;
+
+        if (!(pane->style & WINDOW_FRAME) || !pane->shared || box <= 0)
+                return false;
+
+        if (pane->width < box + canvas_cell_w * 2)
+                return false;
+
+        *side = box;
+        *x = pane->x + pane->width - box - canvas_border;
+        *y = pane->y + canvas_border;
+        return true;
+}
+
+/*
+        The X, as a bitmap, because there is no line to draw one with and a
+        letter x is a letter. Two pixels thick so it reads at scale one.
+*/
+static const unsigned char close_bits[8] = {
+    0xc3, 0xe7, 0x7e, 0x3c, 0x3c, 0x7e, 0xe7, 0xc3,
+};
+
+/*
+        How a window came to be the shape it is.
+
+        Floating is the program's own rectangle. The rest are the
+        compositor's, share one saved rectangle to go back to, and are all
+        the same operation with different arithmetic.
+*/
+#define PANE_FLOATING 0u
+#define PANE_MAXIMIZED 1u
+#define PANE_LEFT 2u
+#define PANE_RIGHT 3u
+
+// How close to the edge of a screen a drag has to end to snap to it.
+#define SNAP_MARGIN (8 * (int)desktop.scale)
 
 // Which edges of a window's frame a point is close enough to take hold of.
 #define EDGE_LEFT 1u

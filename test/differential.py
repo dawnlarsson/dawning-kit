@@ -9362,6 +9362,14 @@ shell_STARTUP = Utility(
         ("-c", "false"), ("-c", " false # trailing"), ("-c", ":#word"),
         ("-c", "echo one\necho two\nexit 5\necho three"),
         ("-c", "--", shell_PROBE_FLAGS), ("--", "-c", shell_PROBE_FLAGS),
+        #       --version and --help answer for the shell rather than run
+        #       anything, so nothing else in this family reaches them. They
+        #       are walked because a shell that answers an identity should
+        #       be held to the answer, and this one deliberately does not
+        #       claim to be the reference: it says what it is and carries
+        #       bash's number, which is the difference the ledger records.
+        ("--version",), ("--help",), ("--version", "-c", "echo after"),
+        ("--norc", "--version"), ("-c", "echo x", "--version"),
         ("-ec", shell_PROBE_ERREXIT), ("-ce", shell_PROBE_ERREXIT), ("-nc", shell_PROBE_FLAGS),
         ("-xvc", shell_PROBE_TRACE), ("-tc", shell_PROBE_ONECMD), ("-kc", shell_PROBE_KEYWORD),
         ("-ic", shell_PROBE_FLAGS), ("-pc", shell_PROBE_FLAGS), ("-lc", shell_PROBE_FLAGS),

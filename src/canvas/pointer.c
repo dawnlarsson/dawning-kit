@@ -194,7 +194,8 @@ static void pointer_apply(void)
                                 drag_press(atomic_read(&desktop.button_x),
                                            atomic_read(&desktop.button_y));
                         else
-                                drag_release();
+                                drag_release(atomic_read(&desktop.button_x),
+                                             atomic_read(&desktop.button_y));
                 }
 
                 if (motion)
@@ -728,12 +729,26 @@ static int canvas_loop(void *unused)
                     !atomic_read(&desktop.focus_steps) &&
                     !atomic_read(&desktop.focus_commit) &&
                     !atomic_read(&desktop.minimize) &&
+                    !atomic_read(&desktop.spawn) &&
                     atomic_read(&desktop.key_head) == atomic_read(&desktop.key_tail))
                         schedule();
 
                 __set_current_state(TASK_RUNNING);
 
                 pointer_apply();
+
+                /*
+                        Outside desktop.lock, and deliberately.
+
+                        Starting a program allocates, makes a task and runs
+                        execve on it, none of which the lock has anything to do
+                        with -- and the window it ends up asking for is created
+                        under that same lock by the ioctl the new program will
+                        make. Holding it across the spawn is a lock held over an
+                        unbounded amount of somebody else's work.
+                */
+                if (atomic_xchg(&desktop.spawn, 0))
+                        spawn_terminal();
 
                 if (atomic_read(&desktop.focus_steps) ||
                     atomic_read(&desktop.focus_commit) ||

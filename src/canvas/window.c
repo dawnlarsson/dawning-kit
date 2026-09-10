@@ -100,6 +100,17 @@
 #define WINDOW_FOCUSED 1u
 
 /*
+        The compositor is asking this window to go away.
+
+        Asking, because it cannot do more: the pages are the program's and the
+        task is the kernel's, and a compositor that could end either would be a
+        compositor that can be told to end any of them. The X in the titlebar
+        sets this and wakes the program; what happens next is the program's,
+        and one that ignores it keeps its window.
+*/
+#define WINDOW_CLOSING 2u
+
+/*
         Text layout. Alignment is one field: a horizontal one, a vertical one,
         and whether long text wraps at the width of its box or runs off the end
         of one line.
@@ -228,6 +239,13 @@ struct window
         unsigned int max_rows;
         unsigned int mapping;
 };
+
+// Whether the compositor has asked this window to close. A program that draws
+// in a loop reads this where it reads its keys.
+static inline int window_closing(const struct window *window)
+{
+        return (int)(window->state & WINDOW_CLOSING);
+}
 
 static inline void window_damage(struct window *window, unsigned int row,
                                  unsigned int rows)

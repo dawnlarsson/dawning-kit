@@ -284,7 +284,15 @@ static const positive allocator_class_size[ALLOCATOR_CLASSES] = {
 //      link to the next free block lives in the payload's first eight bytes,
 //      which every class has room for, so a pop is a load and a store and the
 //      tag is never disturbed.
-static address_any allocator_free_list[ALLOCATOR_CLASSES];
+//
+//      The heads themselves are in library.c beside memory_take, which is the
+//      only routine that pops one on the path that matters. What is here is
+//      the rest of the family reaching the same object. The two literals that
+//      assembly spells out are checked against this file's constants below.
+_Static_assert(ALLOCATOR_CLASSES == 52,
+               "library.c reserves 52 shelf heads for allocator_free_list");
+_Static_assert(ALLOCATOR_LARGEST - ALLOCATOR_HEADER == 262136,
+               "library.c's memory_take compares the request against 262136");
 
 //      The base of the next block to be cut from the current chunk, which is
 //      always eight modulo sixteen, and how many bytes are left after it.
@@ -560,7 +568,20 @@ static address_any allocator_take(positive bytes, bool address_to fresh)
         different pointers, which is what a program that uses the pointer as
         an identity expects.
 */
-pub address_any memory_take(positive bytes)
+//      What library.c's memory_take jumps to when the shelf could not answer:
+//      a request past the largest shelf, an empty shelf, or a size that would
+//      wrap. Everything the fast path skipped is redone here, because a slow
+//      path that runs once per refill can afford to.
+//
+//      pub, and it has to be. The only thing that reaches this is a jump
+//      inside a top-level __asm__ string, which the compiler treats as text
+//      it cannot read: nothing it can see refers to the name. The shell and
+//      the image are built with -flto -fwhole-program, where that is licence
+//      to delete the body, and the link then fails on an undefined
+//      allocator_take_slow. pub carries KEEP -- __attribute__((used)) -- and
+//      is what says the reference exists somewhere the compiler is not
+//      looking. The same goes for allocator_give_slow below.
+pub address_any allocator_take_slow(positive bytes)
 {
         return allocator_take(bytes, null);
 }
@@ -592,20 +613,13 @@ pub address_any memory_take(positive bytes)
         the containment: the alternative is to index the free list array with
         whatever the number happened to be and write a pointer through it.
 */
-pub fn memory_give(address_any block)
+//      The shelf push is assembly in library.c beside the pop. What is left
+//      here is everything a shelf number does not cover, reached by a jump
+//      from it: the block is known to carry a tag of ALLOCATOR_CLASSES or
+//      more, so the shelf test is not repeated.
+pub fn allocator_give_slow(address_any block)
 {
-        if (!block)
-                return;
-
         positive tag = address_to allocator_tag(block);
-
-        if (tag < ALLOCATOR_CLASSES)
-        {
-                address_to allocator_tag(block) = ALLOCATOR_FREED + tag;
-                address_to allocator_link(block) = allocator_free_list[tag];
-                allocator_free_list[tag] = block;
-                return;
-        }
 
         if (tag == ALLOCATOR_SHIFTED)
         {
@@ -947,9 +961,13 @@ pub b32 memory_take_aligned_into(address_any address_to result,
         equal, which is the honest answer: they are the same function and the
         prose name is the one it was written under.
 */
-pub address_any malloc(positive bytes) __attribute__((alias("memory_take")));
+//      memory_take is assembly in library.c, and GCC's alias attribute wants
+//      a C definition in this translation unit to point at. A .set is the
+//      same thing one layer down and does not care how the target was
+//      written, which is how library.c spells every other standard name.
+__asm__(ASM_ALIAS(malloc, memory_take));
 
-pub fn free(address_any block) __attribute__((alias("memory_give")));
+__asm__(ASM_ALIAS(free, memory_give));
 
 pub address_any calloc(positive count, positive size)
         __attribute__((alias("memory_take_zeroed")));

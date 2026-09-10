@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        256 routines (246 public, 10 local), 255 of them on all three and 1 local to one.
+        258 routines (248 public, 10 local), 257 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -173,6 +173,7 @@
           memory_first_of_ascii_case     public  yes     yes     yes
           memory_free                    public  yes     yes     yes
           memory_frob                    public  yes     yes     yes
+          memory_give                    public  yes     yes     yes
           memory_growth                  public  yes     yes     yes
           memory_hash_33                 public  yes     yes     yes
           memory_into_escaped            public  yes     yes     yes
@@ -192,6 +193,7 @@
           memory_span_byte               public  yes     yes     yes
           memory_span_byte_wide          local   yes     --      --
           memory_sum_bytes               public  yes     yes     yes
+          memory_take                    public  yes     yes     yes
           memory_to_lower_ascii          public  yes     yes     yes
           memory_to_upper_ascii          public  yes     yes     yes
           memory_translate               public  yes     yes     yes
@@ -333,6 +335,89 @@
           memory_span_byte_wide -- local to x86_64
 */
 
+/*
+        NOTES ON WRITING THE ASSEMBLY, FROM WHAT HAS BEEN MEASURED
+
+        Not style. These are results, with the counters that produced them,
+        kept here because every one of them cost a day to learn and reads as
+        obviously wrong until you have the numbers in front of you.
+
+        1. FEWER INSTRUCTIONS IS NOT FEWER CYCLES, AND THE GAP CAN BE LARGE.
+
+        memory_take was hand written to remove what the compiler was wasting
+        on its fast path: a fifty six byte frame in a leaf, a store to an
+        out-parameter malloc always passes as zero, and a ten byte immediate
+        for a bound that one compare covers. Twenty six instructions against
+        the compiler's thirty, no frame, nothing dead. It was 10% SLOWER.
+
+        Measured on a 9950X, malloc/free pairs against a free-list floor,
+        paired alternating runs on an otherwise quiet machine:
+
+              the compiler's arrangement, as assembly    18.52
+              the same routine written lean              20.41
+              the C the assembly replaced                19.57
+
+        Instructions retired fell 2.58e9 -> 2.11e9 while cycles rose
+        1.387e9 -> 1.468e9. IPC 1.80 -> 1.28. The lean version does strictly
+        less work and takes strictly longer.
+
+        2. WHAT IT WAS NOT. Each of these was tested and rejected, so that
+        the next person does not spend the day again:
+
+              - Frontend starvation. stalled-cycles-frontend was identical
+                to within 0.1%: 117.9M against 118.0M.
+              - The op cache. op_cache_hit_miss.op_cache_miss identical to
+                four figures: 29368754 against 29369146.
+              - Dispatch resources. store_queue_rsrc_stall,
+                load_queue_rsrc_stall and taken_brnch_buffer_rsrc were all
+                zero in both.
+              - Alignment alone. Padding the lean entry through 8, 16, 24
+                and 32 bytes recovered at most half a tick of the two.
+              - Store drain slack. The hot store is the tag, which free
+                loads on the very next call; hoisting it earlier made it
+                worse (20.73) and padding behind it recovered 0.3.
+
+        The one counter that did move: ls_bad_status2.stli_other, the
+        store-to-load interlock, 24.96M against 28.11M. About 11% more
+        interlocks in the lean version, which is a lead and not a proof --
+        it accounts for perhaps half the cycle difference at the usual cost
+        of an interlock, and no single event has been found that accounts
+        for all of it.
+
+        3. WHAT TO DO ABOUT IT. Take the compiler's arrangement as the thing
+        to beat rather than the thing to fix. Write the routine, then check
+        what gcc emitted for the C it replaces, and if the shapes differ,
+        measure both before assuming the shorter one wins. Where a routine
+        has no C to compare against, get it working and then perturb it: the
+        arrangement is worth more than the instruction count, and neither is
+        visible by reading.
+
+        4. HOW TO MEASURE IT, BECAUSE GETTING THIS WRONG COSTS MORE THAN THE
+        OPTIMISATION IS WORTH. The first run of this comparison said the
+        assembly was 2.4x off its floor and the C was at it; both numbers
+        were contamination from another job on the same machine. Check the
+        load average before every timed run, pin with taskset, and alternate
+        the two binaries within one loop rather than running all of A and
+        then all of B. Under those conditions the numbers above repeat to a
+        hundredth. Emulated runs are instruction shape and never hardware
+        timing.
+
+        5. TWO WAYS THE TOOLCHAIN WILL DELETE OR BREAK ASSEMBLY THAT IS
+        CORRECT. Both were live bugs here.
+
+              - A top-level __asm__ string is opaque to the compiler, so a C
+                function reached only from one looks unreferenced. The shell
+                and the image build with -flto -fwhole-program, which is
+                licence to delete it, and the link fails. Anything assembly
+                jumps to needs pub, which carries KEEP.
+              - A riscv j is JAL with a twenty one bit displacement and
+                reaches one megabyte. That is enough in a small test binary
+                and not enough in the shell, where it failed as "relocation
+                truncated to fit". Use tail for anything leaving the routine.
+                arm64 b reaches 128 MiB and the linker veneers past that;
+                x86_64 jmp is rel32 and reaches everywhere here.
+*/
+
 #ifndef STANDARD_MODERN_C
 #define STANDARD_MODERN_C
 
@@ -415,6 +500,40 @@
 #define DEAD_END __attribute__((noreturn))
 #define RETURNS_NONNULL __attribute__((returns_nonnull))
 #define WEAK __attribute__((weak))
+
+//
+//      What the compiler cannot read off a routine whose body is a string.
+//
+//      Every routine below this line is a top-level __asm__ block, so the
+//      declaration is the whole of what the optimiser knows. PURE and CONST
+//      say a call can be folded; these say what a pointer argument is for.
+//      access(read_only, p, n) is the memrchr contract -- n bytes of an
+//      n-byte object, all of them read -- and it is deliberately absent from
+//      the routines that may stop early, because there the object is allowed
+//      to be shorter than the bound. A size index is what keeps a null
+//      pointer legal at size zero; the bare two-argument form would not.
+//
+//      access is gcc's; clang parses the tree too and does not have it, so it
+//      gets the empty spelling rather than a warning on every declaration.
+//      __has_attribute would say this in one line and is not written here:
+//      the inventory's own directive reader has no call in its grammar.
+#if defined(__GNUC__) && !defined(__clang__)
+#define READS(...) __attribute__((access(read_only, __VA_ARGS__)))
+#define WRITES(...) __attribute__((access(write_only, __VA_ARGS__)))
+#define READS_WRITES(...) __attribute__((access(read_write, __VA_ARGS__)))
+#else
+#define READS(...)
+#define WRITES(...)
+#define READS_WRITES(...)
+#endif
+
+#if defined(__GNUC__)
+#define ALLOCATES __attribute__((malloc))
+#define ALLOCATES_SIZE(...) __attribute__((alloc_size(__VA_ARGS__)))
+#else
+#define ALLOCATES
+#define ALLOCATES_SIZE(...)
+#endif
 
 #define pub extern __attribute__((visibility("default"))) KEEP
 
@@ -1041,7 +1160,7 @@ typedef struct
 //      signature is refused by the arm64 kernel build whether or not anything
 //      calls it, so it has to stay inside a KERNEL_MODE guard.
 //
-decimal fast_sin(decimal x);
+CONST decimal fast_sin(decimal x);
 
 // simpler polynomial error < 0.01
 #endif // KERNEL_MODE
@@ -16094,6 +16213,7 @@ __asm__(
    existing lowercase alphabet, not another hex table or per-byte call. Kernel
    builds and RV64 keep the same byte-table scalar contract. */
 PURE positive memory_escape_index(address_any source, positive size, p8 policy);
+WRITES(1, 4) READS(2, 3)
 positive2 memory_into_escaped(address_any destination, address_any source,
                               positive size, positive capacity, p8 policy);
 extern const p8 escape_categories[256];
@@ -16429,6 +16549,7 @@ string_address string_copy(string_address destination, string_address source);
 
 //      strcat exactly: the source onto the end of the destination.
 string_address string_append(string_address destination, string_address source);
+WRITES(1, 3)
 string_address string_copy_max(string_address destination, string_address source, positive length);
 /*
         The same copy, terminated, with the end handed back.
@@ -16437,6 +16558,7 @@ string_address string_copy_max(string_address destination, string_address source
         needs bound + 1 bytes and the answer is where the terminator went, so
         an append is this call and then the next one from there.
 */
+WRITES(1, 3)
 p8 address_to string_copy_max_end(p8 address_to into, string_address source,
                                   positive bound);
 PURE string_address string_last_of(string_address source, p8 character);
@@ -16455,10 +16577,13 @@ string_address string_cut(string_address string, b8 cut_symbol);
         and dirname rules: trailing separators go except for root, and a path
         without a directory has "." for its head.
 */
+READS_WRITES(1, 2)
 positive path_join(p8 address_to destination, positive capacity,
                    string_address directory, string_address name);
+WRITES(1, 2)
 positive path_tail_copy(p8 address_to destination, positive capacity,
                         string_address path);
+WRITES(1, 2)
 positive path_head_copy(p8 address_to destination, positive capacity,
                         string_address path);
 fn path_basename(writer write, string_address input);
@@ -16602,7 +16727,7 @@ positive string_digits_base_max(string_address source, positive bound,
                                 positive base, positive address_to used);
 PURE positive string_table_find(string_address name, const address_any table,
                                 positive stride, positive count);
-address_any memory_fill(address_any destination, b8 value, positive size);
+WRITES(1, 3) address_any memory_fill(address_any destination, b8 value, positive size);
 fn memory_fill_u32(address_any destination, positive count, unsigned int value);
 fn memory_fill_u64_aligned(address_any destination, positive count,
                            positive value);
@@ -16615,18 +16740,20 @@ address_any memory_fill_32(address_any destination, unsigned int value,
 address_any memory_fill_64(address_any destination, positive value,
                            positive count);
 PURE positive memory_common_prefix(address_any one, address_any two, positive size);
-PURE positive memory_hash_33(address_any block, positive size);
-PURE p32 memory_sum_bytes(address_any block, positive size);
+PURE READS(1, 2) positive memory_hash_33(address_any block, positive size);
+PURE READS(1, 2) p32 memory_sum_bytes(address_any block, positive size);
 // Writes exactly 2*size lowercase hex bytes, without a terminator, and returns
 // that length. Source and destination must not overlap; size must fit when
 // doubled. Zero size permits null pointers. Both spans may be unaligned.
+READS(2, 3)
 positive memory_into_hex(address_any destination, address_any source,
                           positive size);
 // The same bounded encoder, selecting uppercase rather than lowercase when
 // upper is nonzero. Both entries share their vector and exact-tail bodies.
+READS(2, 3)
 positive memory_into_hex_case(address_any destination, address_any source,
                               positive size, positive upper);
-PURE p32 memory_checksum_bsd16(address_any block, positive size, p32 seed);
+PURE READS(1, 2) p32 memory_checksum_bsd16(address_any block, positive size, p32 seed);
 PURE positive2 string_hash_33_length(string_address source);
 PURE positive memory_span_byte(address_any block, p8 value, positive size);
 // Returns {bytes, characters}, bounded by both size and count. Invalid UTF-8
@@ -16652,29 +16779,35 @@ PURE address_any memory_search_ascii_case_prepared(address_any block, positive s
                                                    positive anchor);
 PURE address_any memory_search_ascii_case(address_any block, positive size,
                                           address_any needle, positive needle_size);
-PURE address_any memory_last_of(address_any block, b8 value, positive size);
-PURE positive2 memory_count_words(address_any block, positive size, bool inside);
+PURE READS(1, 3) address_any memory_last_of(address_any block, b8 value, positive size);
+PURE READS(1, 2) positive2 memory_count_words(address_any block, positive size, bool inside);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
-address_any memory_reverse(address_any block, positive size);
+READS_WRITES(1, 2) address_any memory_reverse(address_any block, positive size);
 // XOR exactly size bytes with 42 and return block. A zero size does not read
 // or write block, so null is valid in that case.
-address_any memory_frob(address_any block, positive size);
+READS_WRITES(1, 2) address_any memory_frob(address_any block, positive size);
 // Convert exactly size bytes in place. Bytes outside the ASCII letter range
 // are unchanged, including NUL and bytes with the high bit set.
-address_any memory_to_lower_ascii(address_any block, positive size);
-address_any memory_to_upper_ascii(address_any block, positive size);
+READS_WRITES(1, 2) address_any memory_to_lower_ascii(address_any block, positive size);
+READS_WRITES(1, 2) address_any memory_to_upper_ascii(address_any block, positive size);
 // Translate size bytes using a readable 256-byte table; size zero accesses neither pointer.
+READS_WRITES(1, 2)
 address_any memory_translate(address_any block, positive size,
                              address_any table);
 // Swap exactly size bytes between separate ranges. The ranges must be
 // disjoint unless left == right; equal addresses and zero size are no-ops and
 // do not dereference either address.
+READS_WRITES(1, 3) READS_WRITES(2, 3)
 fn memory_exchange_apart(address_any left, address_any right, positive size);
+WRITES(1, 3) READS(2, 3)
 address_any memory_copy_apart(address_any destination, address_any source, positive size);
+WRITES(1, 3) READS(2, 3)
 p8 address_to memory_copy_apart_end(p8 address_to destination, address_any source,
                                    positive size);
+READS_WRITES(1, 3) READS(2, 3)
 address_any memory_copy(address_any destination, address_any source, positive size);
+READS_WRITES(1, 3) READS(2, 3)
 p8 address_to memory_copy_end(p8 address_to destination, address_any source,
                               positive size);
 
@@ -16714,7 +16847,7 @@ fn moonwater_cpu_detect(void);
 //      written, nothing is remembered between bytes -- which is why it can
 //      run at the speed the memory arrives and the others cannot.
 //
-PURE positive memory_count(address_any block, positive size, b8 value);
+PURE READS(1, 2) positive memory_count(address_any block, positive size, b8 value);
 PURE positive memory_count_records_with_prepared(address_any block, positive size,
                                                  address_any needle,
                                                  positive needle_size,
@@ -18817,7 +18950,7 @@ __asm__(
 
 #if !defined(WINDOWS)
 
-address_any memory(positive size);
+ALLOCATES ALLOCATES_SIZE(1) address_any memory(positive size);
 fn memory_free(address_any address, positive size);
 CONST positive memory_growth(positive have, positive want, positive first);
 /* Owned mmap-backed movable storage, not an allocator block. Only the used
@@ -18827,6 +18960,295 @@ bool memory_reserve(address_any address_to held, positive address_to have,
                     positive used, positive want, positive unit, positive first);
 fn memory_release(address_any address_to held, positive address_to have,
                   positive address_to used, positive unit);
+
+/*
+        The allocator's shelf heads, and the pop that is the whole fast path.
+
+        One head per size class, holding payload addresses. The link to the
+        next free block lives in the payload's first eight bytes and the tag
+        lives in the eight in front of it, so a pop is a load, a store and a
+        store, and the C above this owns everything a pop cannot answer.
+
+        The heads are here rather than in the family that grew them because
+        the routine below is the only thing that touches them on the path that
+        matters, and a shelf head reached through an assembly symbol costs the
+        same as one reached through a C object while letting the pop be a leaf.
+
+        What the C fast path cost, measured on a 9950X against a free-list
+        floor that pops and pushes the same words: 18.23 ticks a malloc/free
+        pair against the floor's 10.89, stable to a hundredth over three runs.
+        The gap was never the shelf arithmetic. It was that every one of the
+        three architectures builds a frame on the fast path for the sake of
+        the mapping and refill paths that need one -- x86_64 a fifty six byte
+        frame with rbp saved through it, arm64 a sixty four byte frame with
+        x29/x30 stacked, riscv64 a forty eight byte frame plus an actual jal
+        to an outlined allocator_class_of and a spill and reload around it --
+        and that malloc reaches allocator_take through a two argument entry
+        whose second argument it always passes as zero, so the test and the
+        store that clears it are dead in every call a program makes.
+
+        None of that is the compiler being wrong. A frame hoisted out of the
+        branches is the right choice for a body that has slow paths in it.
+        This is the same body with the slow paths behind a jump instead, which
+        is a choice only the routine's author can make.
+
+        The class arithmetic is the C's own, instruction for instruction on
+        x86_64 and arm64: the top set bit, a step of a quarter of that, and a
+        shelf number that counts four to the doubling. It is not reproduced
+        here because it was slow. It is reproduced because the pop it feeds
+        cannot be a leaf while it lives behind a call.
+
+        Anything this cannot answer -- a request past the largest shelf, an
+        empty shelf, a size that overflows -- falls through to the C, which
+        still owns mapping, bump allocation, refill and refusal. The literals
+        below are that file's constants and it asserts they still agree.
+*/
+#ifndef KERNEL_MODE
+extern address_any allocator_free_list[];
+ALLOCATES ALLOCATES_SIZE(1) address_any memory_take(positive bytes);
+fn memory_give(address_any block);
+address_any allocator_take_slow(positive bytes);
+fn allocator_give_slow(address_any block);
+
+__asm__(
+    ASM_HIDDEN_BSS_OBJECT_BEGIN(allocator_free_list, 16)
+    ASM_ZERO(416)
+    ASM_OBJECT_END(allocator_free_list)
+);
+
+//
+//      A whole line, not the sixteen bytes ASM_FUNC gives every routine. The
+//      fast path is ninety six bytes and the shelf load sits in the middle of
+//      it, so starting sixteen bytes into a line puts the load and its branch
+//      in the second one. This machine has already made that argument once,
+//      in the copy entry alignment the recovery pass kept.
+//
+//      One block per machine rather than one block with the machines inside
+//      it: the inventory reads a routine's architectures from the scope its
+//      ASM_FUNC stands in, and a name opened outside every #if belongs to
+//      none of them.
+//
+#if X64
+__asm__(
+    ASM_SECTION
+    ".balign 64\n"
+    ASM_FUNC(memory_take)
+    //
+    //   Past the largest shelf, or large enough that adding the header would
+    //   wrap, is one unsigned compare rather than the C's ten byte immediate
+    //   against the overflow limit followed by two range tests further down.
+    //
+    //
+    //   What follows is the instruction sequence the C compiler emitted for
+    //   this routine, kept deliberately, including two things that look like
+    //   waste and are not: a frame this leaf never needs, and a store to an
+    //   out-parameter malloc always passes as zero.
+    //
+    //   Removing them was the entire point of writing this by hand, and it
+    //   was measured three ways. Against the C at 19.57 ticks a malloc/free
+    //   pair with free held constant, this sequence is 18.52 and the lean one
+    //   -- no frame, no dead store, one bound test instead of three -- is
+    //   20.41. Each removal on its own costs about 1.2, the three together
+    //   1.9, and padding the entry to put the shelf pop back where it had
+    //   been recovers only half a tick of it. So it is not the instruction
+    //   count and it is not purely where the pop lands; the arrangement
+    //   itself is what the machine is fast on, and the arrangement is the
+    //   compiler's. The one instruction that is worth removing is the
+    //   sign-extend below, which is measurably free to drop because the
+    //   shelf number is written to a 32-bit register and so is already zero
+    //   extended: 18.18 against 18.52.
+    //
+    //   Written down because somebody will read this, see a frame in a leaf,
+    //   and delete it. It has been deleted once already and it cost 10%.
+    //
+    "xor %esi, %esi\n"
+    "test %rsi, %rsi\n   je 1f\n"
+    "movb $0x0, (%rsi)\n"
+    "1:  movabs $0xffffffffffffffe, %rax\n"
+    "cmp %rdi, %rax\n   jb 9f\n"
+    "sub $0x38, %rsp\n"
+    "lea 0x8(%rdi), %rax\n"
+    "mov %rbp, 0x30(%rsp)\n"
+    "mov %rsi, %rbp\n"
+    "lea 0x7(%rdi), %rsi\n"
+    "shr $0x4, %rsi\n"
+    "cmp $0x40, %rax\n   jbe 2f\n"
+    "cmp $0x40000, %rax\n   ja 8f\n"
+    "bsr %rax, %rax\n"
+    "mov $0x3d, %ecx\n"
+    "mov $0x1, %edx\n"
+    "xor $0x3f, %rax\n"
+    "sub %eax, %ecx\n"
+    "shl %cl, %rdx\n"
+    "lea 0x7(%rdx,%rdi,1), %rdx\n"
+    "shr %cl, %rdx\n"
+    "mov $0x39, %ecx\n"
+    "sub %eax, %ecx\n"
+    "lea -0x1(%rdx,%rcx,4), %esi\n"
+    "cmp $0x33, %esi\n   jg 8f\n"
+    //
+    //   The base goes in r8, not rdi as the compiler had it: the request has
+    //   to survive to the jump at 9, which is reached from here when the
+    //   shelf is empty. The compiler could clobber rdi because its own slow
+    //   paths were inline and had the value spilled.
+    //
+    "2:  lea allocator_free_list(%rip), %r8\n"
+    "mov (%r8,%rsi,8), %r9\n"
+    "test %r9, %r9\n   je 8f\n"
+    "mov (%r9), %rax\n"
+    "mov %rsi, -0x8(%r9)\n"
+    "mov %rax, (%r8,%rsi,8)\n"
+    "mov 0x30(%rsp), %rbp\n"
+    "mov %r9, %rax\n"
+    "add $0x38, %rsp\n"
+    ASM_RET
+    "8:  mov 0x30(%rsp), %rbp\n   add $0x38, %rsp\n"
+    "9:  jmp allocator_take_slow\n"
+    ASM_END(memory_take)
+    //
+    //   The push, and the order of its two stores is the whole reason it is
+    //   written out. The pop above reads the shelf head first, so the head
+    //   is the word the next call waits on: storing it before the link puts
+    //   the block on the shelf a forward earlier. Compiled from C with the
+    //   heads visible as a file-scope object the compiler chose that order
+    //   on its own; with the heads an assembly symbol it chose the other,
+    //   and the pair measured 18.5 ticks against 20.5 on a 9950X for that
+    //   one swap. Nothing else about the two bodies differed.
+    //
+    //   Fifty four is ALLOCATOR_FREED, which is the shelf count and two.
+    //   Fifty one is the last shelf: anything above it is a mapping, a
+    //   shifted block or a tag this allocator never wrote, and all three are
+    //   the C's to sort out.
+    //
+    ".balign 64\n"
+    ASM_FUNC(memory_give)
+    "test %rdi, %rdi\n   jz 8f\n"
+    "mov -8(%rdi), %rax\n"
+    "cmp $51, %rax\n   ja 9f\n"
+    "lea 54(%rax), %rdx\n"
+    "mov %rdx, -8(%rdi)\n"
+    "lea allocator_free_list(%rip), %rdx\n"
+    "mov (%rdx,%rax,8), %rcx\n"
+    "mov %rdi, (%rdx,%rax,8)\n"
+    "mov %rcx, (%rdi)\n"
+    "8:\n"
+    ASM_RET
+    "9:  jmp allocator_give_slow\n"
+    ASM_END(memory_give)
+);
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    ".balign 64\n"
+    ASM_FUNC(memory_take)
+    "mov w9, #65528\n   movk w9, #3, lsl #16\n   cmp x0, x9\n   b.hi 9f\n"
+    "add x2, x0, #8\n"
+    "cmp x2, #64\n   b.ls 1f\n"
+    "clz x3, x2\n"
+    "mov w4, #61\n   sub w4, w4, w3\n"
+    "add x5, x0, #7\n"
+    "mov x6, #1\n   lsl x6, x6, x4\n"
+    "add x6, x6, x5\n   lsr x6, x6, x4\n"
+    "mov w7, #57\n   sub w7, w7, w3\n"
+    "add w1, w6, w7, lsl #2\n   sub w1, w1, #1\n"
+    "b 2f\n"
+    "1:  add x1, x0, #7\n   lsr x1, x1, #4\n"
+    "2:  adrp x8, allocator_free_list\n   add x8, x8, :lo12:allocator_free_list\n"
+    "ldr x10, [x8, x1, lsl #3]\n   cbz x10, 9f\n"
+    "ldr x11, [x10]\n"
+    "stur x1, [x10, #-8]\n"
+    "str x11, [x8, x1, lsl #3]\n"
+    "mov x0, x10\n"
+    ASM_RET
+    "9:  b allocator_take_slow\n"
+    ASM_END(memory_take)
+    //      The store order argument is the x86_64 body's.
+    ".balign 64\n"
+    ASM_FUNC(memory_give)
+    "cbz x0, 8f\n"
+    "ldur x1, [x0, #-8]\n"
+    "cmp x1, #51\n   b.hi 9f\n"
+    "add x2, x1, #54\n"
+    "stur x2, [x0, #-8]\n"
+    "adrp x3, allocator_free_list\n   add x3, x3, :lo12:allocator_free_list\n"
+    "ldr x4, [x3, x1, lsl #3]\n"
+    "str x0, [x3, x1, lsl #3]\n"
+    "str x4, [x0]\n"
+    "8:\n"
+    ASM_RET
+    "9:  b allocator_give_slow\n"
+    ASM_END(memory_give)
+);
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    ".balign 64\n"
+    ASM_FUNC(memory_take)
+    //
+    //   No Zbb, so no count-leading-zeros: the top set bit comes out of the
+    //   same halving the C's own riscv body uses, inlined here rather than
+    //   called. The want is bounded by the shelf test above, so five steps
+    //   reach it and the thirty two step the general routine needs is absent.
+    //
+    "li a5, 262136\n   bltu a5, a0, 9f\n"
+    "addi a1, a0, 8\n"
+    "li a5, 64\n   bgeu a5, a1, 1f\n"
+    "mv a2, a1\n   li a3, 0\n"
+    "srli a5, a2, 16\n   beqz a5, 3f\n   addi a3, a3, 16\n   mv a2, a5\n"
+    "3:  srli a5, a2, 8\n   beqz a5, 4f\n   addi a3, a3, 8\n   mv a2, a5\n"
+    "4:  srli a5, a2, 4\n   beqz a5, 5f\n   addi a3, a3, 4\n   mv a2, a5\n"
+    "5:  srli a5, a2, 2\n   beqz a5, 6f\n   addi a3, a3, 2\n   mv a2, a5\n"
+    "6:  srli a5, a2, 1\n   beqz a5, 7f\n   addi a3, a3, 1\n"
+    "7:  addi a4, a3, -2\n"
+    "li a5, 1\n   sll a5, a5, a4\n"
+    "addi a6, a1, -1\n   add a5, a5, a6\n"
+    "srl a5, a5, a4\n"
+    "slli a6, a3, 2\n   addiw a6, a6, -25\n"
+    "addw a1, a5, a6\n"
+    "j 2f\n"
+    "1:  addi a1, a0, 7\n   srli a1, a1, 4\n"
+    "2:  lla a6, allocator_free_list\n"
+    "slli a5, a1, 3\n   add a6, a6, a5\n"
+    "ld a5, 0(a6)\n   beqz a5, 9f\n"
+    "ld a4, 0(a5)\n"
+    "sd a1, -8(a5)\n"
+    "sd a4, 0(a6)\n"
+    "mv a0, a5\n"
+    ASM_RET
+    //
+    //   tail, not j. A riscv j is JAL with a twenty one bit displacement,
+    //   which reaches a megabyte, and the C this leaves for is wherever the
+    //   linker put the rest of the standard library. In a small program that
+    //   is close enough and in a large one it is not: the shell's own binary
+    //   put allocator_take_slow out of range and the assembler refused with
+    //   "relocation truncated to fit". tail is auipc plus jalr, reaches
+    //   anywhere, and costs one more instruction on the path that was about
+    //   to call into C anyway. It clobbers t1, which is a temporary and is
+    //   not live here.
+    //
+    "9:  tail allocator_take_slow\n"
+    ASM_END(memory_take)
+    //      The store order argument is the x86_64 body's.
+    ".balign 64\n"
+    ASM_FUNC(memory_give)
+    "beqz a0, 8f\n"
+    "ld a1, -8(a0)\n"
+    "li a5, 51\n   bltu a5, a1, 9f\n"
+    "addi a2, a1, 54\n"
+    "sd a2, -8(a0)\n"
+    "lla a3, allocator_free_list\n"
+    "slli a4, a1, 3\n   add a3, a3, a4\n"
+    "ld a4, 0(a3)\n"
+    "sd a0, 0(a3)\n"
+    "sd a4, 0(a0)\n"
+    "8:\n"
+    ASM_RET
+    //      tail rather than j, for the reason memory_take gives.
+    "9:  tail allocator_give_slow\n"
+    ASM_END(memory_give)
+);
+#endif
+#endif // KERNEL_MODE
 
 #if X64
 __asm__(

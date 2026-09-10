@@ -40,6 +40,48 @@ static PURE struct output *output_by_index(unsigned int index)
         return list_first_entry_or_null(&desktop.outputs, struct output, link);
 }
 
+/*
+        The first step down the cascade that no other window is sitting on.
+
+        Bounded, and not only because an unbounded search would be a loop over
+        the window list per step: eight titlebars down is already most of the
+        way across a small screen, and past that the honest answer is to start
+        again at the centre and let them overlap. A step that would put the
+        window off the bottom or the right of its own output stops the search
+        for the same reason -- a window placed where it cannot be seen is
+        worse than one placed on top of another.
+*/
+static PURE int pane_cascade_free(struct pane *pane, struct output *output,
+                                  int title)
+{
+        int step = canvas_title;
+        int at;
+
+        for (at = 0; at < 8; at++)
+        {
+                struct pane *other;
+                int x = pane->x + at * step;
+                int y = pane->y + at * step;
+                _Bool taken = false;
+
+                if (x + pane->width > output->x + (int)output->width ||
+                    y + pane->height + title > output->y + (int)output->height)
+                        break;
+
+                list_for_each_entry(other, &desktop.windows, link)
+                        if (other != pane && other->x == x && other->y == y)
+                        {
+                                taken = true;
+                                break;
+                        }
+
+                if (!taken)
+                        return at;
+        }
+
+        return 0;
+}
+
 // Where a region or a style puts a window. Free floating and not fullscreen
 // is the program's own x and y.
 static void pane_place(struct pane *pane)
@@ -70,6 +112,28 @@ static void pane_place(struct pane *pane)
 
         pane->x = output->x + ((int)output->width - pane->width) / 2;
         pane->y = output->y + ((int)output->height - (pane->height + title)) / 2;
+
+        /*
+                Down and across, when the centre is already taken.
+
+                Every terminal asks to be centred, so a second one landed on
+                the first exactly -- same size, same place, pixel for pixel --
+                and opening one looked like nothing had happened at all. The
+                window was there, with another behind it.
+
+                Worked out once, the first time this window is placed, and
+                kept: it is the window's position in a stack, not a function
+                of where the other windows are this instant, or closing the
+                one underneath would slide this one up the screen.
+        */
+        if (!pane->cascaded)
+        {
+                pane->cascaded = true;
+                pane->cascade = pane_cascade_free(pane, output, title);
+        }
+
+        pane->x += pane->cascade * canvas_title;
+        pane->y += pane->cascade * canvas_title;
 }
 
 /*
@@ -840,21 +904,49 @@ static void pane_focus(struct pane *pane)
         if (old == pane)
                 return;
 
+        /*
+                One bit each way, not the whole word.
+
+                state was only ever WINDOW_FOCUSED, so assigning it was the
+                same as setting the bit -- and stopped being the same the
+                moment WINDOW_CLOSING joined it: clicking another window
+                after pressing the X would have withdrawn the request the
+                program had not read yet.
+        */
         if (old)
         {
-                old->state = 0;
+                old->state &= ~WINDOW_FOCUSED;
                 if (old->shared)
-                        WRITE_ONCE(old->shared->state, 0);
+                        WRITE_ONCE(old->shared->state, old->state);
         }
 
         desktop.focused = pane;
 
         if (pane)
         {
-                pane->state = WINDOW_FOCUSED;
+                pane->state |= WINDOW_FOCUSED;
                 if (pane->shared)
-                        WRITE_ONCE(pane->shared->state, WINDOW_FOCUSED);
+                        WRITE_ONCE(pane->shared->state, pane->state);
         }
+}
+
+/*
+        Ask the program to close its window.
+
+        Nothing here frees anything. The pane goes when the program closes the
+        file it was made from, which is window_release, and a program that
+        never does keeps its window on the screen -- visibly, which is the
+        honest outcome and not a leak: the alternative is the compositor
+        taking pages out from under a task that is still writing to them.
+*/
+static void pane_close_request(struct pane *pane)
+{
+        if (!pane->shared || (pane->state & WINDOW_CLOSING))
+                return;
+
+        pane->state |= WINDOW_CLOSING;
+        WRITE_ONCE(pane->shared->state, pane->state);
+        wake_up_interruptible(&pane->wait);
 }
 
 static PURE _Bool pane_focusable(struct pane *pane, _Bool include_minimized)
@@ -1290,6 +1382,18 @@ static __poll_t window_poll(struct file *file, poll_table *wait)
 
         shared = pane->shared;
         poll_wait(file, &pane->wait, wait);
+
+        /*
+                The close request wakes the program and has to be something it
+                can wake up to. pane_close_request already wakes this queue;
+                without a reason here the poll went straight back to sleep and
+                the X in the titlebar did nothing until the next keystroke.
+
+                pane->state and not the shared copy: this is the compositor
+                asking, and the answer must not be one the program can write.
+        */
+        if (pane->state & WINDOW_CLOSING)
+                return EPOLLIN | EPOLLRDNORM;
 
         // The grid the program laid out to is its own record in the page;
         // the compositor's columns and rows moving away from it is a resize

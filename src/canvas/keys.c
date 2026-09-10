@@ -182,6 +182,35 @@ static void keyboard_event(struct input_handle *handle, unsigned int code, int v
                 return;
         }
 
+        /*
+                Control-Shift-T is a new terminal.
+
+                Shift, and not Control-T on its own, because Control-T is
+                readline's transpose-characters and the shell in every window
+                would lose it. Nothing is lost by taking this one: key_character
+                folds Control over a letter before it looks at Shift, so
+                Control-Shift-T and Control-T are the same byte 0x14 to a
+                program, and a chord no client could tell apart from another is
+                a chord no client can miss.
+
+                A press and not a repeat, so a key held down does not fill the
+                desktop with shells; the release is consumed with it, or the
+                client sees half a chord.
+        */
+        if ((modifiers & (WINDOW_KEY_ALT | WINDOW_KEY_SHIFT |
+                          WINDOW_KEY_CONTROL)) ==
+                (WINDOW_KEY_SHIFT | WINDOW_KEY_CONTROL) &&
+            code == KEY_T)
+        {
+                if (value == 1)
+                {
+                        atomic_set(&desktop.spawn, 1);
+                        canvas_thread_wake();
+                }
+
+                return;
+        }
+
         // Once an Alt-Tab traversal has started, do not leak another
         // Alt-modified key into the selected-but-not-yet-raised client.
         if ((modifiers & WINDOW_KEY_ALT) &&
