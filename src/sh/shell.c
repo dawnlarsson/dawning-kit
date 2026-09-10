@@ -998,47 +998,42 @@ static bool shell_spawn_request(struct spawn address_to request,
 }
 
 // Returns the child pid, or a negative error if the device could not take it.
-static bipolar shell_spawn_via_device(b32 operation, string_address path,
+static bipolar shell_spawn_via_device(b32 flags, string_address path,
                                       string_address address_to arguments,
-                                      b32 output, b32 error)
+                                      b32 input, b32 output, b32 error)
 {
-        struct spawn_to directed;
-        struct spawn address_to request = address_of directed.spawn;
-        if (!shell_spawn_request(request, path, arguments))
-                return -1;
-        directed.output = output;
-        directed.error = error;
+        struct spawn request;
 
-        return system_control(spawn_device, operation, address_of directed);
+        if (!shell_spawn_request(address_of request, path, arguments))
+                return -1;
+
+        request.flags = flags;
+        request.stdio[0] = input;
+        request.stdio[1] = output;
+        request.stdio[2] = error;
+
+        return system_control(spawn_device, SPARK_IOCTL_SPAWN,
+                              address_of request);
 }
 
 /*
         One pipeline stage, with its three descriptors named in the request.
 
-        The difference from the launch above is the whole point of it: a
-        stage used to be a forked copy of the shell that arranged its own
+        The difference from a plain launch is the whole point of it: a stage
+        used to be a forked copy of the shell that arranged its own
         descriptors and then replaced itself, and the copy was a page table
         duplicated for an address space the child discards microseconds
         later. Naming them here means the stage is spawned instead, and the
         fork never happens.
-
-        A descriptor of -1 is left alone, so a stage at either end of the
-        pipeline keeps the shell's own.
 */
 bipolar shell_spawn_stage(string_address address_to arguments,
                           b32 input, b32 output, b32 error)
 {
-        struct spawn_into directed;
-        struct spawn address_to request = address_of directed.spawn;
-        if (!shell_spawn_device_open() ||
-            !shell_spawn_request(request, arguments[0], arguments))
+        if (!shell_spawn_device_open())
                 return -1;
-        directed.input = input;
-        directed.output = output;
-        directed.error = error;
 
-        return system_control(spawn_device, SPARK_IOCTL_SPAWN_SHELL_INTO,
-                              address_of directed);
+        return shell_spawn_via_device(SPARK_SPAWN_SHELL, arguments[0],
+                                      arguments, input, output, error);
 }
 
 static bool shell_spawn_device_open()
@@ -1071,10 +1066,8 @@ bipolar shell_spawn_tool(string_address address_to arguments,
         if (quiet && null_output < 0)
                 return -1;
 
-        return shell_spawn_via_device(output < 0 ? SPARK_IOCTL_SPAWN_TOOL
-                                                 : SPARK_IOCTL_SPAWN_TOOL_TO,
-                                      null, arguments, output,
-                                      quiet ? null_output : -1);
+        return shell_spawn_via_device(SPARK_SPAWN_TOOL, null, arguments, -1,
+                                      output, quiet ? null_output : -1);
 }
 
 fn shell_execute_command()
@@ -1084,9 +1077,9 @@ fn shell_execute_command()
         log_flush();
 
         if (shell_spawn_device_open())
-                child = shell_spawn_via_device(SPARK_IOCTL_SPAWN_SHELL,
+                child = shell_spawn_via_device(SPARK_SPAWN_SHELL,
                                                shell_argv[0], shell_argv,
-                                               -1, -1);
+                                               -1, -1, -1);
 
         if (child < 0)
         {

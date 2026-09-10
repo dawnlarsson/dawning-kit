@@ -761,9 +761,7 @@ malformed:
         return -EINVAL;
 }
 
-static long do_spawn(struct file *file, struct spawn __user *request,
-                     bool shell_fallback, const char *fixed_path,
-                     int input, int output, int error)
+static long do_spawn(struct file *file, struct spawn __user *request)
 {
         struct device_context *context = file->private_data;
         struct spawn args;
@@ -771,22 +769,36 @@ static long do_spawn(struct file *file, struct spawn __user *request,
         struct spawn_strings *old_environment = NULL;
         struct pid *old_owner = NULL;
         const struct cred *old_cred = NULL;
+        bool shell_fallback;
+        const char *fixed_path;
         long ret;
         pid_t pid;
 
         if (copy_from_user(&args, request, sizeof(args)))
                 return -EFAULT;
 
+        /* Refusing what this kernel does not define keeps a flag added later
+           from meaning "ignored" on an older loader. */
+        if (args.flags & ~SPARK_SPAWN_FLAGS)
+                return -EINVAL;
+
+        shell_fallback = args.flags & SPARK_SPAWN_SHELL;
+        fixed_path = args.flags & SPARK_SPAWN_TOOL ? "/shell" : NULL;
+
         work = kzalloc(sizeof(*work), GFP_KERNEL);
         if (!work)
                 return -ENOMEM;
 
-        if ((input >= 0 && !(work->stdio[0] = fget(input))) ||
-            (output >= 0 && !(work->stdio[1] = fget(output))) ||
-            (error >= 0 && !(work->stdio[2] = fget(error))))
+        for (unsigned int i = 0; i < array_count(work->stdio); i++)
         {
-                ret = -EBADF;
-                goto fail;
+                if (args.stdio[i] < 0)
+                        continue;
+
+                if (!(work->stdio[i] = fget(args.stdio[i])))
+                {
+                        ret = -EBADF;
+                        goto fail;
+                }
         }
 
         if (fixed_path)
@@ -1141,28 +1153,7 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         switch (cmd)
         {
         case SPARK_IOCTL_SPAWN:
-        case SPARK_IOCTL_SPAWN_SHELL:
-        case SPARK_IOCTL_SPAWN_TOOL:
-                return do_spawn(file, (struct spawn __user *)arg,
-                                cmd == SPARK_IOCTL_SPAWN_SHELL,
-                                cmd == SPARK_IOCTL_SPAWN_TOOL ? "/shell" : NULL,
-                                -1, -1, -1);
-        case SPARK_IOCTL_SPAWN_SHELL_INTO:
-        case SPARK_IOCTL_SPAWN_TOOL_TO:
-        {
-                _Bool shell = cmd == SPARK_IOCTL_SPAWN_SHELL_INTO;
-                int descriptors[3] = {-1, -1, -1};
-
-                // Both ABIs append descriptors directly after the spawn.
-                if (copy_from_user(descriptors + !shell,
-                                   (const char __user *)arg + sizeof(struct spawn),
-                                   (shell ? 3 : 2) * sizeof(int)))
-                        return -EFAULT;
-
-                return do_spawn(file, (struct spawn __user *)arg, shell,
-                                shell ? NULL : "/shell", descriptors[0],
-                                descriptors[1], descriptors[2]);
-        }
+                return do_spawn(file, (struct spawn __user *)arg);
         case SPARK_IOCTL_STATS:
                 return report_stats((struct stats __user *)arg);
         case SPARK_IOCTL_SNAPSHOT:

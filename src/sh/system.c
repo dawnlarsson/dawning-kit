@@ -100,6 +100,10 @@ static bipolar start_service(b32 device, string_address path,
                 request.envp_bytes = 0;
                 request.envp_count = 0;
                 request.envp_generation = 0;
+                request.flags = 0;
+                request.stdio[0] = -1;
+                request.stdio[1] = -1;
+                request.stdio[2] = -1;
 
                 {
                         bipolar spawned = system_control(
