@@ -2204,6 +2204,53 @@ static COLD b32 ul_flock_usage()
                              "Try 'flock --help' for more information.\n");
 }
 
+/*      Every occurrence of a valued option is checked as it is read, not
+        only the one that survives: `-w bad --wait=.01` is a usage error even
+        though the timeout that would have been used is a good one. A
+        negative timeout is not a usage error at all -- it parses, and it is
+        the timer that refuses it, so only the surviving value can raise it. */
+static bool ul_flock_seen(p8 letter, string_address value)
+{
+        positive parsed;
+
+        if (!value)
+                return true;
+        if (letter == 'E')
+        {
+                if (!ul_unsigned(value, 255, address_of parsed))
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock",
+                                      "exit code out of range (expected 0 to 255)");
+                        return false;
+                }
+        }
+        else if (letter == 'w')
+        {
+                string_address text = value;
+
+                while (byte_is_space(string_get(text)))
+                        text++;
+                if (string_is(text, '-') && text[1] >= '0' && text[1] <= '9')
+                        return true;
+                if (!file_duration_read(text, false, address_of parsed))
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock",
+                                      "invalid timeout");
+                        return false;
+                }
+        }
+        else if (letter == 'S' || letter == 'N')
+        {
+                if (!ul_size(value, address_of parsed))
+                {
+                        string_report(log_error, 1, "%s: %s\n", "flock",
+                                      "invalid lock range");
+                        return false;
+                }
+        }
+        return true;
+}
+
 static b32 util_linux_flock()
 {
         file_taking taking = {
@@ -2212,6 +2259,7 @@ static b32 util_linux_flock()
             .valued = (string_address)"wEcSN",
             .longs = ul_flock_longs,
             .supersedes = ul_flock_supersedes,
+            .seen = ul_flock_seen,
         };
         b32 answer;
 
