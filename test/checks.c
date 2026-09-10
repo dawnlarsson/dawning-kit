@@ -33520,12 +33520,17 @@ static fn lexical_fields(void)
                     !got.field[1] && at == text + (flags || digit || byte == '.' || byte == '*'));
         }
         static const struct {
-                string_address text; positive width, precision; p8 fields, stars, overflow;
+                string_address text; p32 width, precision; p8 fields, stars, overflow;
         } cases[] = {
             {"12",12,0,1,0,0}, {"12.",12,0,2,0,0}, {"12.*",12,0,2,2,0},
             {"*",0,0,1,1,0}, {"*.*",0,0,2,3,0}, {"*.003",0,3,2,1,0},
-            {"18446744073709551615",positive_max,0,1,0,0},
-            {"18446744073709551616.18446744073709551617",0,1,2,0,3},
+            //      The fields are thirty two bits, so these wrap at four
+            //      billion and not at eighteen quintillion. Both are past
+            //      what any consumer accepts and every one of them tests the
+            //      overflow bit; the record is this width so that it lands in
+            //      registers rather than on the stack. See library.common.c.
+            {"4294967295",4294967295u,0,1,0,0},
+            {"4294967296.4294967297",0,1,2,0,3},
             {"*.00000000000000000000000003",0,3,2,1,0}
         };
         for (positive i = 0; i < array_count(cases); i++)

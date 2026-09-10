@@ -588,10 +588,26 @@ static const p8 conversion_flag_bytes['0' + 1] = {
 /* Lexical printf fields only: field[0] is width, field[1] is precision.
    Stars and overflow use the corresponding bit. Keep the wrapped unsigned
    value on overflow; each dialect decides its limits and resolves stars in
-   field order. Length modifiers and the conversion remain at the cursor. */
+   field order. Length modifiers and the conversion remain at the cursor.
+
+   The fields are thirty two bits and the record is sixteen bytes, which is
+   what a pair of registers holds. At twenty four bits of value and thirty two
+   bytes it did not, so the compiler built it on the stack: an eight byte
+   store of the flags and then a sixteen byte read of the flags and the width
+   together, which is a load no processor can forward from a narrower store.
+   That one stall was 77% of snprintf's own time and 17.5 million interlocks
+   a run; sixteen bytes leaves 6.9 million and takes 8.5% off a format-heavy
+   workload.
+
+   A width is an int everywhere it is finally used, so nothing downstream can
+   accept more than this holds. What changes is which pathological spellings
+   wrap: past four billion rather than past eighteen quintillion. Both are
+   past what any consumer accepts, and every consumer now says so -- file.c
+   and format.c already tested the overflow bit, and awk and the shell's
+   printf were reading a wrapped width as a width and now do not. */
 typedef struct
 {
-        positive flags, field[2];
+        p32 flags, field[2];
         p8 fields, stars, overflow;
 } conversion_spec;
 
@@ -634,10 +650,10 @@ static inline INLINE conversion_spec conversion_spec_take_max(
                         p32 digit = (p32)string_get(at) - '0';
                         if (digit > 9)
                                 break;
-                        positive scaled;
+                        p32 scaled;
                         bool overflow = __builtin_mul_overflow(spec.field[field],
-                            (positive)10, &scaled);
-                        overflow |= __builtin_add_overflow(scaled, (positive)digit,
+                            (p32)10, &scaled);
+                        overflow |= __builtin_add_overflow(scaled, (p32)digit,
                             &spec.field[field]);
                         spec.overflow |= (p8)overflow << field;
                         at++;

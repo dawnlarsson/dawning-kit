@@ -8791,8 +8791,10 @@ fn printf_one(writer write, string_address format)
                 step++;
 
                 conversion_spec parsed = conversion_spec_take_max(&step, positive_max);
-                positive width = parsed.field[0];
-                bipolar precision = parsed.fields == 2 ? (bipolar)parsed.field[1] : -1;
+                //      An overflowed field is not a width; see awk_sprintf.
+                positive width = (parsed.overflow & 1) ? 0 : parsed.field[0];
+                bipolar precision = parsed.fields == 2 && !(parsed.overflow & 2)
+                    ? (bipolar)parsed.field[1] : -1;
                 for (p8 field = 0; field < parsed.fields; field++)
                         if (parsed.stars & (1u << field))
                         {

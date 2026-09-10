@@ -2156,8 +2156,12 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
 
                 string_address fields_at = format + at;
                 conversion_spec parsed = conversion_spec_take_max(&fields_at, length - at);
-                positive width = parsed.field[0];
-                b32 precision = parsed.fields == 2 ? (b32)min(2147483647ul, parsed.field[1]) : -1;
+                //      An overflowed field is not a width. Nothing below
+                //      guarded it, so a count past what the field holds
+                //      arrived as whatever it wrapped to and was padded out.
+                positive width = (parsed.overflow & 1) ? 0 : parsed.field[0];
+                b32 precision = parsed.fields == 2 && !(parsed.overflow & 2)
+                    ? (b32)min(2147483647ul, parsed.field[1]) : -1;
                 for (p8 field = 0; field < parsed.fields; field++)
                         if (parsed.stars & (1u << field))
                         {
