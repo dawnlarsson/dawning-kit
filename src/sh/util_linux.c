@@ -13500,6 +13500,36 @@ static b32 util_linux_lsipc()
         return have_id && !ul_ipc.count ? 1 : 0;
 }
 
+/*      The old listing writes a human size right-aligned in six columns and
+        then pads the field out, where a byte count is written left-aligned
+        across the whole field. Padding the value here keeps one table
+        renderer rather than a second alignment rule inside it. */
+static positive ul_ipcs_size_align;
+
+static string_address ul_ipcs_field(address_any opaque, p8 column,
+                                    p8 address_to scratch)
+{
+        string_address value = ul_ipc_field(opaque, column, scratch);
+        p8 hold[48];
+        positive length;
+        positive pad;
+
+        if (!ul_ipcs_size_align ||
+            (column != UL_IPC_SIZE && column != UL_IPC_USEDBYTES))
+                return value;
+        length = string_length(value);
+        if (length >= ul_ipcs_size_align || length >= array_count(hold))
+                return value;
+        for (positive i = 0; i <= length; i++)
+                hold[i] = value[i];
+        pad = ul_ipcs_size_align - length;
+        for (positive i = 0; i < pad; i++)
+                scratch[i] = ' ';
+        for (positive i = 0; i <= length; i++)
+                scratch[pad + i] = hold[i];
+        return scratch;
+}
+
 /* The legacy projection has different headings/alignment, not different
    fields. Keep the shared IPC column IDs and getter instead of remapping
    every row through three duplicate schemas. */
@@ -13520,18 +13550,21 @@ static fn ul_ipcs_table(p8 type)
 {
         static const struct
         {
-                string_address title, id, empty_heading;
+                string_address title, id, empty_heading, human_heading;
                 p8 count, columns[7];
         } views[] = {
             {"Message Queues", "msqid",
              "key        msqid      owner      perms      used-bytes   messages    \n",
+             "key        msqid      owner      perms      size         messages    \n",
              6, {UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS,
                  UL_IPC_USEDBYTES, UL_IPC_MSGS}},
             {"Shared Memory Segments", "shmid",
              "key        shmid      owner      perms      bytes      nattch     status      \n",
+             "key        shmid      owner      perms      size       nattch     status      \n",
              7, {UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS,
                  UL_IPC_SIZE, UL_IPC_NATTCH, UL_IPC_STATUS}},
             {"Semaphore Arrays", "semid",
+             "key        semid      owner      perms      nsems     \n",
              "key        semid      owner      perms      nsems     \n",
              5, {UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS, UL_IPC_NSEMS}},
         };
@@ -13543,7 +13576,8 @@ static fn ul_ipcs_table(p8 type)
                ul_ipc.rows[first + rows].type == type) rows++;
         if (!rows)
         {
-                log(views[type].empty_heading, 0);
+                log(ul_ipcs_size_align ? views[type].human_heading
+                                       : views[type].empty_heading, 0);
                 return;
         }
         ul_ipcs_columns[UL_IPC_ID].heading = views[type].id;
@@ -13553,7 +13587,7 @@ static fn ul_ipcs_table(p8 type)
         ul_table_out(ul_ipc.rows + first, sizeof(ul_ipc.rows[0]), rows,
                      ul_ipcs_columns, UL_IPC_COLUMNS,
                      (p8 address_to)views[type].columns, views[type].count,
-                     true, false, ul_ipc_field);
+                     true, false, ul_ipcs_field);
         ul_table_pad_last = false;
         ul_table_declared_widths = false;
         ul_table_pad_extra = 0;
@@ -13591,6 +13625,10 @@ static b32 util_linux_ipcs()
         if (!ul_ipc_snapshot_load(types))
                 return string_report(log_error, 1, "%s: %s\n", "ipcs", "cannot read System V IPC snapshot");
         ul_ipc_bytes = !(taking.flags & FILE_FLAG('H'));
+        ul_ipcs_size_align = ul_ipc_bytes ? 0 : 6;
+        ul_ipcs_columns[UL_IPC_SIZE].heading = ul_ipc_bytes ? "bytes" : "size";
+        ul_ipcs_columns[UL_IPC_USEDBYTES].heading = ul_ipc_bytes ? "used-bytes"
+                                                                 : "size";
         ul_ipc_numeric_permissions = true;
         ul_ipc_octal_prefix = false;
         if (types & UL_IPC_MESSAGE_BIT) ul_ipcs_table(UL_IPC_MESSAGE);
