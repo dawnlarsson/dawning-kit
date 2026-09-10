@@ -11812,8 +11812,15 @@ static b32 diff_directories(string_address left, string_address right, positive 
 
                 if (left_directory && right_directory && !diff_recursive)
                 {
-                        diff_announce("Common subdirectories: ", one_left,
-                                      one_right, "\n");
+                        //      A label renames the file that was compared,
+                        //      and a directory nobody looked inside was not
+                        //      compared: the reference names it as it stands.
+                        text_put_string("Common subdirectories: ");
+                        text_put_string(one_left);
+                        text_put_string(" and ");
+                        text_put_string(one_right);
+                        text_put_string("\n");
+                        text_flush();
                 }
                 else
                 {
@@ -12177,7 +12184,13 @@ static b32 tools_diff(void)
 #define PS_FIELD_PGID 15
 #define PS_FIELD_NLWP 16
 #define PS_FIELD_ETIMES 17
-#define PS_FIELD_COUNT 18
+#define PS_FIELD_NICE 18
+#define PS_FIELD_PRI 19
+#define PS_FIELD_PCPU 20
+#define PS_FIELD_RUSER 21
+#define PS_FIELD_LSTART 22
+#define PS_FIELD_START 23
+#define PS_FIELD_COUNT 24
 
 typedef struct
 {
@@ -12196,7 +12209,10 @@ static ps_column ps_columns[PS_FIELD_COUNT] = {
     {"tty", "TT", 2, false},        {"uid", "UID", 5, true},
     {"c", "C", 2, true},            {"stime", "STIME", 5, false},
     {"sid", "SID", 7, true},         {"pgid", "PGID", 7, true},
-    {"nlwp", "NLWP", 4, true},       {"etimes", "ELAPSED", 7, true}};
+    {"nlwp", "NLWP", 4, true},       {"etimes", "ELAPSED", 7, true},
+    {"nice", "NI", 3, true},         {"pri", "PRI", 3, true},
+    {"pcpu", "%CPU", 4, true},       {"ruser", "RUSER", 8, false},
+    {"lstart", "STARTED", 24, true}, {"start", "STARTED", 8, true}};
 
 typedef struct
 {
@@ -12526,6 +12542,95 @@ static fn ps_draw(struct snapshot_process address_to process,
                 ps_digits(ps_now > began ? ps_now - began : 0);
                 break;
         }
+        case PS_FIELD_NICE:
+                if (process->nice < 0)
+                {
+                        ps_byte('-');
+                        ps_digits((positive)(-(bipolar)process->nice));
+                }
+                else
+                        ps_digits((positive)process->nice);
+                break;
+        case PS_FIELD_PRI:
+                //      The scheduling priority the way POSIX asks for it,
+                //      counted down from the nice value the kernel reports.
+                ps_digits(process->nice < 39 - 20
+                              ? (positive)(19 - (bipolar)process->nice) : 0);
+                break;
+        case PS_FIELD_PCPU:
+        {
+                positive began = process->start_ns / SYSTEM_NANOSECONDS;
+                positive lived = ps_now > began ? ps_now - began : 0;
+                positive tenths = lived
+                    ? system_saturating_add(process->user_ns,
+                                            process->system_ns) /
+                          SYSTEM_NANOSECONDS * 1000 / lived
+                    : 0;
+
+                ps_digits(tenths / 10);
+                ps_byte('.');
+                ps_digits(tenths % 10);
+                break;
+        }
+        case PS_FIELD_RUSER:
+                if (!detail->user &&
+                    !(detail->user = ps_name_of(process->uid)))
+                        ps_failed = true;
+                ps_text(detail->user);
+                break;
+        case PS_FIELD_LSTART:
+        case PS_FIELD_START:
+        {
+                b64 began = ps_boot +
+                            (b64)(process->start_ns / SYSTEM_NANOSECONDS);
+                b64 year;
+                positive month, day, hour, minute, second;
+
+                file_split_moment(began, address_of year, address_of month,
+                                  address_of day, address_of hour,
+                                  address_of minute, address_of second);
+                if (field == PS_FIELD_LSTART)
+                {
+                        //      The whole moment, spelled as the reference
+                        //      spells it: weekday, month, day, clock, year.
+                        ps_text(file_weekday_names[
+                            (positive)(((began / 86400) + 4) % 7)]);
+                        ps_byte(' ');
+                        file_month_short(ps_bytes, month);
+                        ps_byte(' ');
+                        if (day < 10)
+                                ps_byte(' ');
+                        ps_digits(day);
+                        ps_byte(' ');
+                        file_two(ps_bytes, hour);
+                        ps_byte(':');
+                        file_two(ps_bytes, minute);
+                        ps_byte(':');
+                        file_two(ps_bytes, second);
+                        ps_byte(' ');
+                        ps_digits((positive)year);
+                        break;
+                }
+                //      Within the day the clock, otherwise the date: the
+                //      column is eight wide and both fit it.
+                if (ps_wall - (positive)began < 86400)
+                {
+                        file_two(ps_bytes, hour);
+                        ps_byte(':');
+                        file_two(ps_bytes, minute);
+                        ps_byte(':');
+                        file_two(ps_bytes, second);
+                }
+                else
+                {
+                        file_month_short(ps_bytes, month);
+                        ps_byte(' ');
+                        if (day < 10)
+                                ps_byte(' ');
+                        ps_digits(day);
+                }
+                break;
+        }
         default: break;
         }
 
@@ -12767,7 +12872,8 @@ static bool ps_command_selected(string_address address_to values,
         return false;
 }
 
-static bool ps_sort_pid(string_address list, bool address_to reverse)
+static bool ps_sort_pid(string_address list, bool address_to reverse,
+                        bool address_to by_command)
 {
         ps_list_cursor item = {.at = list};
         bool any = false;
@@ -12788,9 +12894,16 @@ static bool ps_sort_pid(string_address list, bool address_to reverse)
                         length--;
                 }
 
-                if (length != 3 || string_compare_max(from,
-                                                       (string_address)"pid", 3))
+                //      The two keys this listing can be put in order by.
+                bool named = length == 4 &&
+                             !string_compare_max(from, (string_address)"comm", 4);
+
+                if (!named &&
+                    (length != 3 ||
+                     string_compare_max(from, (string_address)"pid", 3)))
                         return false;
+                if (named)
+                        address_to by_command = true;
 
                 if (!any)
                         address_to reverse = descending;
@@ -12929,6 +13042,12 @@ static b32 tools_ps(void)
         bool force_headers = false;
         bool reverse = false;
         bool sorted = false;
+        bool by_command = false;
+        /*      -H asks for the listing in hierarchy order, which for a set
+                of processes that all answer to the same parent is the order
+                by identifier -- and it is that order whatever --sort said,
+                because the hierarchy is not a key one can sort against. */
+        bool hierarchy = false;
         positive heading_options = 0;
 
         text_begin("ps");
@@ -12981,7 +13100,7 @@ static b32 tools_ps(void)
                               option == 's' || option == 'C';
                 if (!option || (long_option && cursor.attached && !valued) ||
                     (!long_option && (option > 255 ||
-                     !string_first_of("eAfjwhopC", (p8)option) ||
+                     !string_first_of("eAfjwhopCH", (p8)option) ||
                      (option == 'C' && *cursor.word != '-'))))
                 {
                         // Other BSD personalities also change the display
@@ -12997,6 +13116,11 @@ static b32 tools_ps(void)
                 case 'j': jobs = true; break;
                 case 'w': break;
                 case 'H':
+                        if (!long_option)
+                        {
+                                hierarchy = true;
+                                break;
+                        }
                         force_headers = true;
                         no_headers = false;
                         heading_options++;
@@ -13018,7 +13142,8 @@ static b32 tools_ps(void)
                                 return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid command list"));
                         break;
                 case 's':
-                        if (!value || !ps_sort_pid(value, &reverse))
+                        if (!value || !ps_sort_pid(value, &reverse,
+                                                   &by_command))
                                 return text_done(string_diagnostic(&text_diagnostic, 1, value, "unsupported sort key"));
                         sorted = true;
                         break;
@@ -13044,6 +13169,12 @@ static b32 tools_ps(void)
                 string_diagnostic(&text_diagnostic, 0, null, "only one heading option may be specified");
                 return text_done(1);
         }
+
+        //      Neither the hierarchy nor a name is an order this listing can
+        //      walk backwards, so the descending sense of --sort goes away
+        //      with either of them.
+        if (hierarchy || by_command)
+                reverse = false;
 
         /*
                 The two listings ps has of its own are not -o spelled out:
