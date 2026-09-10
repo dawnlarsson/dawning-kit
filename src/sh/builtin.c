@@ -5914,10 +5914,13 @@ COLD fn shell_set(writer write, string_address input)
                                 if (value == 'r' && shell_bash_compat)
                                 {
                                         //      Restricted goes on and never
-                                        //      comes off again, so +r is the
-                                        //      one spelling of it that is an
-                                        //      error rather than an undo.
-                                        if (!on)
+                                        //      comes off again: +r is a
+                                        //      no-op while it is off and an
+                                        //      error once it is on, which is
+                                        //      the only way a shell that has
+                                        //      been restricted stays that
+                                        //      way.
+                                        if (!on && shell_restricted)
                                         {
                                                 shell_answer(
                                                     shell_set_refused_letter(
@@ -5925,7 +5928,7 @@ COLD fn shell_set(writer write, string_address input)
                                                 exec_special_error_note();
                                                 return;
                                         }
-                                        shell_restricted = true;
+                                        shell_restricted = on;
                                         letter++;
                                         continue;
                                 }
