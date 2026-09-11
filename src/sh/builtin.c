@@ -4428,11 +4428,9 @@ COLD fn shell_pushd(writer write, string_address input)
                 //      A lone "-" is the previous directory, which is a
                 //      name and not an index; a sign in front of anything
                 //      but digits is a number pushd will not read.
-                if (!shell_dirstack_spec(word) && !word_is(word, "-") &&
-                    (string_is(word, '+') || string_is(word, '-')))
-                        return shell_answer(shell_dirstack_number_refused(
-                            "pushd", word, "pushd [-n] [+N | -N | dir]"));
-
+                //      The count comes first: "pushd - -Z" is two words
+                //      to bash before either of them is a number it could
+                //      not read.
                 if (named)
                 {
                         shell_diagnostic_where();
@@ -4440,6 +4438,11 @@ COLD fn shell_pushd(writer write, string_address input)
                         return shell_answer(string_report(
                             log_error, 1, "pushd: too many arguments\n"));
                 }
+
+                if (!shell_dirstack_spec(word) && !word_is(word, "-") &&
+                    (string_is(word, '+') || string_is(word, '-')))
+                        return shell_answer(shell_dirstack_number_refused(
+                            "pushd", word, "pushd [-n] [+N | -N | dir]"));
 
                 named = word;
         }
@@ -4529,8 +4532,19 @@ COLD fn shell_pushd(writer write, string_address input)
                                   index * sizeof(list[0]));
         }
         else
-                return shell_answer(string_report(log_error, 1, "pushd: %s: directory stack index out of range\n",
-                              named));
+        {
+                shell_diagnostic_where();
+
+                //      With nothing pushed there is no stack to index into,
+                //      and bash says that rather than naming the number.
+                if (count < 2)
+                        return shell_answer(string_report(log_error, 1,
+                            "pushd: directory stack empty\n"));
+
+                return shell_answer(string_report(log_error, 1,
+                    "pushd: %s: directory stack index out of range\n",
+                    named));
+        }
 
         string_copy_max_end(wanted, rotated[0], sizeof(wanted) - 1);
 

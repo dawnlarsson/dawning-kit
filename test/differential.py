@@ -24325,6 +24325,198 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
+    "f() { bind -- -Z; printf \"[%s]\\n\" \"$?\"; }\nf\n"
+   ],
+   "domain": "builtins",
+   "family": "bad_option_bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "12b1cc1c11edaaf9",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bind writes what readline would write: this shell has no readline, so a key sequence it cannot bind is refused as an option it does not have rather than reported back by a line editor that is not there.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "bad_option_bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { bind - -Z; printf \"[%s]\\n\" \"$?\"; }\nf\n"
+   ],
+   "domain": "builtins",
+   "family": "bad_option_bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "12c3efa62f11d636",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bind writes what readline would write: this shell has no readline, so a key sequence it cannot bind is refused as an option it does not have rather than reported back by a line editor that is not there.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "bad_option_bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { bind -- -Z; printf \"[%s]\\n\" \"$?\"; }\nf\n"
+   ],
+   "domain": "builtins",
+   "family": "bad_option_bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "5eaa3c038fa17839",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bind writes what readline would write: this shell has no readline, so a key sequence it cannot bind is refused as an option it does not have rather than reported back by a line editor that is not there.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "bad_option_bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { bind +Z; printf \"[%s]\\n\" \"$?\"; }\nf\n"
+   ],
+   "domain": "builtins",
+   "family": "bad_option_bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e041599eb2aa1f46",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bind writes what readline would write: this shell has no readline, so a key sequence it cannot bind is refused as an option it does not have rather than reported back by a line editor that is not there.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "bad_option_bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { bind - -Z; printf \"[%s]\\n\" \"$?\"; }\nf\n"
+   ],
+   "domain": "builtins",
+   "family": "bad_option_bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "e372004efed86b1e",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bind writes what readline would write: this shell has no readline, so a key sequence it cannot bind is refused as an option it does not have rather than reported back by a line editor that is not there.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "bad_option_bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { bind +Z; printf \"[%s]\\n\" \"$?\"; }\nf\n"
+   ],
+   "domain": "builtins",
+   "family": "bad_option_bind",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "singles",
+   "utility": "shell"
+  },
+  "domain": "builtins",
+  "id": "eafaaaacea22e975",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "bind writes what readline would write: this shell has no readline, so a key sequence it cannot bind is refused as an option it does not have rather than reported back by a line editor that is not there.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "utility": "bad_option_bind"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
+  },
+  "case": {
+   "argv": [
+    "-c",
     "bind -p\nprintf \"[%s]\\n\" \"$?\"\n"
    ],
    "domain": "builtins",
