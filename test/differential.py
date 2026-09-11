@@ -4599,6 +4599,62 @@ for name in ("poweroff", "reboot"):
         max_flags=0))
 
 
+# --- a letter no builtin has ------------------------------------------------
+#       Every family above compares a diagnostic as present or absent, which
+#       is how thirty builtins each came to spell a refused option their own
+#       way and stay that way: something was written to standard error, and
+#       that was all anything checked. This one compares the words. Both
+#       shells answer a bad letter in two parts -- the script and line, the
+#       builtin and the letter, and then the line that says how the builtin
+#       is called -- and the parts are what drifted.
+#
+#       The first list is the builtins dash has too, so all three modes can
+#       read them; the second is bash's own, where dash would only say the
+#       name is not found. kill and which are left out: kill's builtin and
+#       its program disagree by design, and which is a program of its own
+#       with a page of help behind it.
+BUILTINS_BAD_OPTION_POSIX = (
+    "cd", "command", "export", "getopts", "hash", "printf", "pwd", "read",
+    "readonly", "set", "times", "trap", "type", "ulimit", "umask", "unset",
+    "wait",
+)
+
+BUILTINS_BAD_OPTION_BASH = (
+    "alias", "bind", "builtin", "compgen", "complete", "compopt", "declare",
+    "dirs", "disown", "enable", "eval", "exec", "fc", "help", "history",
+    "jobs", "local", "mapfile", "popd", "pushd", "readarray", "shopt",
+    "source", "suspend", "typeset", "unalias",
+)
+
+
+def builtins_bad_option_normalize(channel, data):
+    #       times writes four clocks, and two runs a moment apart do not
+    #       agree about the last digits of them.
+    return re.sub(rb"\d+m\d+\.\d+s", b"#", data)
+
+
+def builtins_bad_option_script(name):
+    #       In a function, because local has nothing to say outside one, and
+    #       every other builtin here reads the same either way.
+    def script(argv, stdin):
+        return ("f() { " + name + " " + builtins_words(argv) +
+                '; printf "[%s]\\n" "$?"; }\nf\n')
+    return script
+
+
+for _names, _modes in ((BUILTINS_BAD_OPTION_POSIX, ALL),
+                       (BUILTINS_BAD_OPTION_BASH, BASH)):
+    for _name in _names:
+        builtins_add(Utility(
+            "bad_option_" + _name,
+            #       A sign either way: declare's family reads +x as an
+            #       attribute taken away, and names the sign it refused.
+            operands=(("-Z",), ("+Z",), ("-Z", "name")),
+            stdin=("empty",), stderr="exact", modes=_modes,
+            normalize=builtins_bad_option_normalize,
+            script=builtins_bad_option_script(_name), max_flags=0))
+
+
 BUILTINS_UTILITIES = tuple(BUILTINS_UTILITIES)
 
 

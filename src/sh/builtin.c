@@ -131,6 +131,34 @@ static COLD b32 shell_letter_refused(string_address name, p8 letter,
 }
 
 /*
+        A word that is no name.
+
+        bash quotes the word as it was handed over, back-quote and all, and
+        says it is no identifier; dash names it and calls it a bad variable
+        name. A word may carry its value -- "1bad=2" -- which bash keeps and
+        dash cuts at the equals, so the caller gives the length of the name
+        and the whole word is read for the other house.
+*/
+static COLD fn shell_name_refused(string_address command, string_address word,
+                                  positive length)
+{
+        shell_diagnostic_where();
+
+        if (shell_bash_compat)
+        {
+                string_format(log_error, "%s: `", command);
+                log_error(word, string_length(word));
+                log_error("': not a valid identifier\n", 0);
+
+                return;
+        }
+
+        string_format(log_error, "%s: ", command);
+        log_error(word, length);
+        log_error(": bad variable name\n", 0);
+}
+
+/*
         Which usage line declare's family writes.
 
         One body serves declare, typeset and local, and bash gives each of
@@ -3689,6 +3717,8 @@ bool shell_directory_moved(string_address logical)
 
 static p8 shell_cd_target[4096];
 
+static bipolar shell_cd_reason;
+
 bool shell_cd_try(string_address candidate, bool physical,
                   bool address_to physical_named,
                   bool address_to variables_set,
@@ -3701,8 +3731,19 @@ bool shell_cd_try(string_address candidate, bool physical,
         if (!physical)
                 shell_path_tidy(wanted);
 
-        if (system_change_directory(wanted))
-                return false;
+        {
+                bipolar answer = system_change_directory(wanted);
+
+                //      Kept for the diagnostic: bash says why it could not
+                //      go there, and the last name tried is the one it
+                //      names, whether it came from the operand or CDPATH.
+                if (answer)
+                {
+                        shell_cd_reason = answer < 0 ? -answer : answer;
+
+                        return false;
+                }
+        }
 
         if (physical && !shell_here(wanted, sizeof(wanted)))
         {
@@ -3949,8 +3990,27 @@ COLD fn shell_cd(writer write, string_address input)
         {
                 shell_answer(shell_bash_compat ? 1 : 2);
 
-                return string_format(log_error, "cd: can't cd to %s\n",
-                                     shell_cd_target);
+                //      dash says only that it could not; bash says what the
+                //      kernel said, which is the difference between a name
+                //      that is not there and one that is not readable.
+                if (!shell_bash_compat)
+                        return string_format(log_error,
+                                             "cd: can't cd to %s\n",
+                                             shell_cd_target);
+
+                shell_diagnostic_where();
+
+                {
+                        string_address why =
+                            system_error_message(shell_cd_reason);
+
+                        return string_format(log_error, "cd: %s: %s\n",
+                                             shell_cd_target,
+                                             why ? why
+                                                 : (string_address)
+                                                   "No such file or "
+                                                   "directory");
+                }
         }
 
         if (!variables_set)
@@ -4149,9 +4209,11 @@ COLD fn shell_dirs(writer write, string_address input)
                 if (!string_is(word, '-') || !string_get(word + 1))
                         break;
 
+                //      Nothing after it is read at all, not even an index:
+                //      "dirs -- +0" writes the whole stack.
                 if (word_is(word, "--"))
                 {
-                        index++;
+                        index = shell_argc;
                         break;
                 }
 
@@ -4159,6 +4221,18 @@ COLD fn shell_dirs(writer write, string_address input)
                 // so a digit ends the option scan.
                 if (word[1] >= '0' && word[1] <= '9')
                         break;
+
+                //      One letter to a word: bash reads "-lp" as a stack
+                //      index and refuses it as a number, where every other
+                //      builtin would have taken the two letters.
+                if (word[2])
+                        return shell_answer(
+                            shell_bash_compat
+                                ? shell_dirstack_number_refused(
+                                      "dirs", word, "dirs [-clpv] [+N] [-N]")
+                                : shell_option_refused(
+                                      "dirs", word,
+                                      "dirs [-clpv] [+N] [-N]"));
 
                 for (at = 1; string_get(word + at); at++)
                 {
@@ -4179,21 +4253,23 @@ COLD fn shell_dirs(writer write, string_address input)
                                 lines = true;
                         else
                         {
-                                //      A letter dirs has no use for is read
+                                //      A word dirs has no letter for is read
                                 //      as a stack index, which is what it
-                                //      would have been: bash refuses it as
-                                //      a number rather than an option.
-                                p8 said[3] = {'-', letter, end};
+                                //      would have been: bash refuses the
+                                //      whole word as a number rather than
+                                //      the letter as an option, so "-xy" is
+                                //      named as it was written.
+                                (void)letter;
 
                                 if (!shell_bash_compat)
                                         return shell_answer(
                                             shell_option_refused(
-                                                "dirs", said,
+                                                "dirs", word,
                                                 "dirs [-clpv] [+N] [-N]"));
 
                                 return shell_answer(
                                     shell_dirstack_number_refused(
-                                        "dirs", said,
+                                        "dirs", word,
                                         "dirs [-clpv] [+N] [-N]"));
                         }
                 }
@@ -4213,16 +4289,40 @@ COLD fn shell_dirs(writer write, string_address input)
                 string_address address_to list =
                     shell_dirstack_entries(address_of count);
 
+                //      A word with no sign in front of it never was an
+                //      index, and bash reads it as the option it is not.
                 if (!shell_dirstack_spec(shell_argv[index]))
-                        return shell_answer(shell_dirstack_number_refused(
+                {
+                        if (string_is(shell_argv[index], '+') ||
+                            string_is(shell_argv[index], '-'))
+                                return shell_answer(
+                                    shell_dirstack_number_refused(
+                                        "dirs", shell_argv[index],
+                                        "dirs [-clpv] [+N] [-N]"));
+
+                        return shell_answer(shell_option_refused(
                             "dirs", shell_argv[index],
                             "dirs [-clpv] [+N] [-N]"));
+                }
 
                 if (!shell_dirstack_index(shell_argv[index], count,
                                           address_of wanted))
-                        return shell_answer(string_report(log_error, 1, "dirs: %s: %s\n",
-                                      shell_argv[index],
-                                      "directory stack index out of range"));
+                {
+                        shell_diagnostic_where();
+
+                        //      With nothing pushed there is no stack to
+                        //      index into, and that is what bash says; past
+                        //      that it names the number, without the sign it
+                        //      was given.
+                        if (count < 2)
+                                return shell_answer(string_report(
+                                    log_error, 1,
+                                    "dirs: directory stack empty\n"));
+
+                        return shell_answer(string_report(log_error, 1,
+                            "dirs: %s: directory stack index out of range\n",
+                            shell_argv[index] + 1));
+                }
 
                 //      -v numbers one entry as it numbers a listing, in a
                 //      field of two so the paths line up past nine.
@@ -6345,9 +6445,8 @@ COLD fn shell_unset(writer write, string_address input)
                                         continue;
                                 }
 
-                                string_format(log_error, "%s: bad variable name: ", "unset");
-                                log_error(word, word_length);
-                                log_error("\n", 1);
+                                shell_name_refused("unset", word,
+                                                   word_length);
                                 exec_special_error_note();
                                 shell_answer(2);
                                 return;
@@ -6436,9 +6535,7 @@ COLD fn shell_unset(writer write, string_address input)
                                 continue;
                         }
 
-                        string_format(log_error, "%s: bad variable name: ", "unset");
-                        log_error(word, word_length);
-                        log_error("\n", 1);
+                        shell_name_refused("unset", word, word_length);
                         exec_special_error_note();
                         shell_answer(2);
                         return;
@@ -7237,12 +7334,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                     (subscript && (!subscript_length ||
                                    (state->attributes_set & SHELL_ARRAY_NAMEREF))))
                 {
-                        if (local_mode)
-                                return shell_answer(string_report(log_error, shell_bash_compat ? 1 : 2,
-                                    "local: bad name\n"));
-                        string_format(log_error, "%s: bad variable name: ", shell_argv[0]);
-                        log_error(word, length);
-                        log_error("\n", 1);
+                        shell_name_refused(shell_argv[0], word, length);
                         exec_special_error_note();
                         shell_answer(shell_bash_compat ? 1 : 2);
 
@@ -7989,9 +8081,7 @@ static COLD fn shell_marked(writer write, p8 mark)
 
                 if (!shell_valid_name(word, length))
                 {
-                        string_format(log_error, "%s: bad variable name: ", command);
-                        log_error(word, length);
-                        log_error("\n", 1);
+                        shell_name_refused(command, word, length);
                         exec_special_error_note();
 
                         //      Bash names the word it will not have and goes
@@ -9712,8 +9802,12 @@ COLD fn shell_read(writer write, string_address input)
                 {
                         if (!shell_valid_name(value,
                                               string_length(value)))
-                                return shell_answer(string_report(log_error, 2,
-                                    "read: bad variable name: %s\n", value));
+                        {
+                                shell_name_refused("read", value,
+                                                   string_length(value));
+
+                                return shell_answer(2);
+                        }
 
                         array_name = value;
                 }
@@ -9799,10 +9893,12 @@ COLD fn shell_read(writer write, string_address input)
                         //      error to the Debian shell and a plain
                         //      failure to Bash, which answers 1.
                         if (!shell_valid_name(shell_argv[name], length))
-                                return shell_answer(string_report(log_error,
-                                              shell_bash_compat ? 1 : 2,
-                                              "read: bad variable name: %s\n",
-                                              shell_argv[name]));
+                        {
+                                shell_name_refused("read", shell_argv[name],
+                                                   length);
+
+                                return shell_answer(shell_bash_compat ? 1 : 2);
+                        }
 
                 }
         }
@@ -10352,15 +10448,9 @@ COLD fn shell_getopts(writer write, string_address input)
         //      from the end of the options.
         if (!shell_valid_name(name, string_length(name)))
         {
-                shell_diagnostic_where();
+                shell_name_refused("getopts", name, string_length(name));
 
-                if (shell_bash_compat)
-                        return shell_answer(string_report(log_error, 1,
-                            "getopts: `%s\': not a valid identifier\n",
-                            name));
-
-                return shell_answer(string_report(log_error, 2,
-                    "getopts: %s: bad variable name\n", name));
+                return shell_answer(shell_bash_compat ? 1 : 2);
         }
 
         if (shell_argc > first + 2)
@@ -10776,8 +10866,14 @@ COLD fn shell_times(writer write, string_address input)
         //      reads none and prints the four times whatever it was given.
         if (shell_bash_compat &&
             shell_option_letter(address_of walk, address_of which))
-                return shell_answer(shell_letter_refused("times", which,
-                                                         "times"));
+        {
+                //      times is a special builtin, so the refusal takes the
+                //      script with it wherever POSIX says it should.
+                shell_letter_refused("times", which, "times");
+                exec_special_error_note();
+
+                return shell_answer(2);
+        }
 
         memory_fill(address_of clocks, 0, sizeof(clocks));
         system_call_1(syscall(times), (positive)address_of clocks);
