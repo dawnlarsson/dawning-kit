@@ -25965,58 +25965,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "1229aef37d9cab86aeb4b8e3a0699358a77ac56776d8c1f6541ef614f55f195d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "printf 'opterr:%s\\n' \"${OPTERR-unset}\"\n"
-   ],
-   "domain": "builtins",
-   "family": "builtins-dynamic-variables",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "034cfe4a7f65f941",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r58",
-  "utility": "builtins-dynamic-variables"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "1229aef37d9cab86aeb4b8e3a0699358a77ac56776d8c1f6541ef614f55f195d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "printf 'opterr:%s\\n' \"${OPTERR-unset}\"\n"
-   ],
-   "domain": "builtins",
-   "family": "builtins-dynamic-variables",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "a041c3f5d90fc34c",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r58",
-  "utility": "builtins-dynamic-variables"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
    "stdout": "d8486e1b4ae7ba5a80cfbd09d513683c5e3bf2dd34d2362dc5cc4f0f7a07d6f1"
   },
   "case": {
@@ -32199,38 +32147,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "61b6844e9a5c19768c8e380ae620c1984c60a861302d00f4dc3d1a9ee3188de8"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -r -A -i -n -g v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "003fc2281fee1af5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "4e7cde44859763339697a463bfb9d56ffdde3b3bceea3feeec8ec5d0194bf410"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -32289,32 +32205,6 @@ PINNED = r"""
    "status": 1,
    "stdout": "c60ddb05d515dbeecfde2ee34360b5870cf52131f4f4afd2391f26eb15d413ae"
   },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "3d8ddfd63d4860ec3103195b469ae78c02c7718e587f311b44b2e1c3352d30bc"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -x -r -A v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "01d5c38c3f6aced7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
   "utility": "declare"
  },
  {
@@ -33209,38 +33099,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "804cb2cc4afa2c20bc57579acbe18309369ae1c60755253c8eb56e41e7de560e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -x -A v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "19b7e528a39353e0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "1e093128e493910af1fd7128bd40eabf95eb445e7d2e7c4e9e5e2cdbeb40906c"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -33266,38 +33124,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "f8ab4df3ef49ec4556c713c24ad4cf03419d4004752ef04fe1076f81279a0e6c"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "d7e20241394eb422458d3fcd9774431d2612a43a23be264a2dc3db53e17ada42"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -A -n -x v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "1b6cfb678d5a9207",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "d9bb1e8ada7810ae1ce7761767a1741137fd642d6b027ed9d48131f77b460eb6"
   },
   "utility": "declare"
  },
@@ -33420,70 +33246,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6c5823fdb90d4d7812d70bac6ab48a5594b1b5f18434f648a86394ce55f770c7"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -l -x -n -A -g v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "1e61994a0e0f66e7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "dd9197e4cf04940be3e0c433cbaba82550cf6496c85af2eb6bc0ffd4977fecfd"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6c5823fdb90d4d7812d70bac6ab48a5594b1b5f18434f648a86394ce55f770c7"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -l -x -n -A -g v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "1ea710e2a235d6cb",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "dd9197e4cf04940be3e0c433cbaba82550cf6496c85af2eb6bc0ffd4977fecfd"
   },
   "utility": "declare"
  },
@@ -33670,38 +33432,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "9a296bbaa8d28b8ef5d65c7f5d0998c614558b77b111718ee23e9029c70f7c0d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -l -A -n v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "23670d1c635db0ee",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "07dfc3e98bfdc4cce72ba1e49f586731e18b00922662f7b32fa592dba757bde4"
   },
   "utility": "declare"
  },
@@ -34429,38 +34159,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "09fa5aca798aebd805bba8fcafdd0780e9fe0af16493854ececc1690d6a9e0df"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -r -A -l -n -u v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "31aa9b9ab9c475d5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5fd1b52a6090ae1fed7c47f2fb354221fbd57bc7662987413790edc401349af8"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -34638,32 +34336,6 @@ PINNED = r"""
   },
   "domain": "builtins",
   "id": "37e8cc0bce8c04d6",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "acc31c816b8c52ce1893eb7fd5572880d3f3ba31caaaa8bb14214bc36438b894"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -g -x -u -A v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "3897a95e1de42946",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
@@ -34969,38 +34641,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "61b6844e9a5c19768c8e380ae620c1984c60a861302d00f4dc3d1a9ee3188de8"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -r -A -i -n -g v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "3dee2dc76f7b7baf",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "4e7cde44859763339697a463bfb9d56ffdde3b3bceea3feeec8ec5d0194bf410"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -35085,32 +34725,6 @@ PINNED = r"""
    "status": 1,
    "stdout": "845f2516f7a4211f4cbf9d08798e34144b33ee65c15bcadd319851719c2d0936"
   },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "ac235a158a3ae07f58736e69719697cc29e87d098d09d729926a9780718e0bdb"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -g -a -x -u -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "4139bb488e73a4d6",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
   "utility": "declare"
  },
  {
@@ -35329,70 +34943,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "f9b0d038ad256f228dc47dc574a1bd46bc9d9480d3f1917a32a79f60cac0f0eb"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -a -r -x -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "48e6437b706f068a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "7f617783f90404549e5a54747c02af4b8e74051a3c3fb9bbbeb1fe1c05f2556b"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6c5823fdb90d4d7812d70bac6ab48a5594b1b5f18434f648a86394ce55f770c7"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -x -A -l -n -g v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "49ae6c0d6d8a53c4",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "dd9197e4cf04940be3e0c433cbaba82550cf6496c85af2eb6bc0ffd4977fecfd"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
   },
   "case": {
@@ -35567,64 +35117,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "4ad63b767cecf8784103464e9e648f641b9fbc388d3e7bc80d6ec2f4c3f6bd0e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -l -A -u -g v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "4d92579f1aefd5f1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "714ea5383ad643f1f2b0aba5e364119c3d37158bf610166c17d18c93a96e3b83"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -i -g -A v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "4db80f3c77ec2dcc",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "f94d3aa845cc4dfe8f3ab8d919a1e50eb8553ec17eb078d878d2d8c46ec85a6b"
-  },
   "utility": "declare"
  },
  {
@@ -35933,38 +35425,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "09fa5aca798aebd805bba8fcafdd0780e9fe0af16493854ececc1690d6a9e0df"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -r -A -l -n -u v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "528f35c6cd47d2e6",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5fd1b52a6090ae1fed7c47f2fb354221fbd57bc7662987413790edc401349af8"
-  },
   "utility": "declare"
  },
  {
@@ -36311,38 +35771,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "bffc9c79b612ad3aa9438d2c88a70c635b8d4d078670576d6e06228c85bec433"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -A -i -r -g -n v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "5c87f68fa23f098c",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "92f15976b6fdf634582b4ede4d6257eef24bf920e070ee278285b59de240d52e"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -36465,38 +35893,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "1553b9c1856283f36c5d69ad7ce63ddff2e4e1b579a12387de14c0959d63c78c"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -a -i -l -u -x -g -n v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "5fb99021f81e9d4e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "af01bb12fa29a1d7180d00dbb65c9f1da8458adf2a98b444291d16583867bab3"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -36607,38 +36003,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "9a296bbaa8d28b8ef5d65c7f5d0998c614558b77b111718ee23e9029c70f7c0d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -l -A -n v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "64260a443502a61e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "07dfc3e98bfdc4cce72ba1e49f586731e18b00922662f7b32fa592dba757bde4"
-  },
   "utility": "declare"
  },
  {
@@ -37075,38 +36439,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "714ea5383ad643f1f2b0aba5e364119c3d37158bf610166c17d18c93a96e3b83"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -i -g -A v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "723dd6afea6ffd8b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "f94d3aa845cc4dfe8f3ab8d919a1e50eb8553ec17eb078d878d2d8c46ec85a6b"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -37379,38 +36711,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6c5823fdb90d4d7812d70bac6ab48a5594b1b5f18434f648a86394ce55f770c7"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -x -A -l -n -g v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "7e4f95fccd3d0aea",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "dd9197e4cf04940be3e0c433cbaba82550cf6496c85af2eb6bc0ffd4977fecfd"
-  },
   "utility": "declare"
  },
  {
@@ -37757,32 +37057,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "dcdc2b4733c05241a2741730439d541485dfeb5298db75932057f8b4ae567e48"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -g -a -n -l -i v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "85ec24579ed41b03",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -37937,32 +37211,6 @@ PINNED = r"""
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
   },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "63c7cd7b42a80083e2cddd97d4b2fd0b7bdfbb229ee54889b4e5d1eec9946f1f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -r -i -x -A v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "8de19a655c7a2f14",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
   "utility": "declare"
  },
  {
@@ -38180,38 +37428,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "995adebf21b6e8b03ec0ae53671b7fe006c95b096e8bf57732ad0f1ebd687814"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -g -a -n -u v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "95a7c4b4880b84a9",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "00b0ecccfc1eeb9b527a84fb69b7286fb3bce1cc103db1fe17210b6a6e2cc4a8"
   },
   "utility": "declare"
  },
@@ -38547,32 +37763,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "dcdc2b4733c05241a2741730439d541485dfeb5298db75932057f8b4ae567e48"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -g -a -n -l -i v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "a159e792c97b70ae",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -38733,38 +37923,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "f9b0d038ad256f228dc47dc574a1bd46bc9d9480d3f1917a32a79f60cac0f0eb"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -a -r -x -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "a852c25af248ff7e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "7f617783f90404549e5a54747c02af4b8e74051a3c3fb9bbbeb1fe1c05f2556b"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -38874,38 +38032,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "1553b9c1856283f36c5d69ad7ce63ddff2e4e1b579a12387de14c0959d63c78c"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -a -i -l -u -x -g -n v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "aba290f85f10dd65",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "af01bb12fa29a1d7180d00dbb65c9f1da8458adf2a98b444291d16583867bab3"
   },
   "utility": "declare"
  },
@@ -39471,32 +38597,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "acc31c816b8c52ce1893eb7fd5572880d3f3ba31caaaa8bb14214bc36438b894"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -g -x -u -A v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "b6dc4db9ded6df79",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -39523,32 +38623,6 @@ PINNED = r"""
    "status": 1,
    "stdout": "f92644d3b2016992ef1f2415c3348f9adfabbd3eee296aa7169f013e242d0211"
   },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "ac235a158a3ae07f58736e69719697cc29e87d098d09d729926a9780718e0bdb"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -g -a -x -u -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "b76564299b91310d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
   "utility": "declare"
  },
  {
@@ -39612,38 +38686,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "804cb2cc4afa2c20bc57579acbe18309369ae1c60755253c8eb56e41e7de560e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -x -A v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ba0b5e498321db16",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "1e093128e493910af1fd7128bd40eabf95eb445e7d2e7c4e9e5e2cdbeb40906c"
   },
   "utility": "declare"
  },
@@ -39979,38 +39021,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "f1392955310f9b05e5984af781c2c48763910fd715a62ad642bb3f1b7aa13de2"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -l -g -i -n -a v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "c06610defe56805b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "0890a27baf4a5fdeb9207bdaf9f5bc6ea7c89941025bdba17a463400ac6e0fe3"
-  },
   "utility": "declare"
  },
  {
@@ -40633,64 +39643,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "63c7cd7b42a80083e2cddd97d4b2fd0b7bdfbb229ee54889b4e5d1eec9946f1f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -r -i -x -A v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "d2d5f4cb72aafa0b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "d7e20241394eb422458d3fcd9774431d2612a43a23be264a2dc3db53e17ada42"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -A -n -x v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "d3b1a6493942e456",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "d9bb1e8ada7810ae1ce7761767a1741137fd642d6b027ed9d48131f77b460eb6"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -40864,38 +39816,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "dbe931326f776367524d0c059331eab94a5356461944ff1e4b0ce5658ae9c0e0"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "f1392955310f9b05e5984af781c2c48763910fd715a62ad642bb3f1b7aa13de2"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -l -g -i -n -a v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "d6d2b32e1925c09d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "0890a27baf4a5fdeb9207bdaf9f5bc6ea7c89941025bdba17a463400ac6e0fe3"
   },
   "utility": "declare"
  },
@@ -41443,38 +40363,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "995adebf21b6e8b03ec0ae53671b7fe006c95b096e8bf57732ad0f1ebd687814"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -g -a -n -u v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "e83539520a1bac47",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "00b0ecccfc1eeb9b527a84fb69b7286fb3bce1cc103db1fe17210b6a6e2cc4a8"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
   },
   "case": {
@@ -41880,64 +40768,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "3d8ddfd63d4860ec3103195b469ae78c02c7718e587f311b44b2e1c3352d30bc"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -x -r -A v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ee7f5a9af93604c8",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "bffc9c79b612ad3aa9438d2c88a70c635b8d4d078670576d6e06228c85bec433"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -A -i -r -g -n v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ef27363040362b53",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "92f15976b6fdf634582b4ede4d6257eef24bf920e070ee278285b59de240d52e"
   },
   "utility": "declare"
  },
@@ -42503,32 +41333,6 @@ PINNED = r"""
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
   },
-  "utility": "declare"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "4ad63b767cecf8784103464e9e648f641b9fbc388d3e7bc80d6ec2f4c3f6bd0e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ndeclare -n -l -A -u -g v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "declare",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "fe51f64dc9905eb5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
   "utility": "declare"
  },
  {
@@ -48181,7 +46985,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "169faf91b86290c5e502a1b6d76c0f7a6d985de94984b4193523ff10d1c50162"
   },
   "case": {
    "argv": [
@@ -48202,6 +47006,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48213,7 +47018,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "dd5dd9e5db4aba3e83f10564207f26d1bd50cb7b066f17eec58a4ebde3e89ac9"
   },
   "case": {
    "argv": [
@@ -48234,6 +47039,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48245,7 +47051,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "8362ee1ade0e39373c8386135280d3969b202453706662edb44741df91d3b034"
   },
   "case": {
    "argv": [
@@ -48266,6 +47072,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48277,7 +47084,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d8a901259958a8a45353edd2cba93249d54438514a7f7ceaaaeff30cf865ed17"
   },
   "case": {
    "argv": [
@@ -48298,6 +47105,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48341,7 +47149,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "06c770222adbbbd6fb0b8852bf08e32ecd252b1475bbd2e8a9ae3dbc1bfc0ad9"
   },
   "case": {
    "argv": [
@@ -48362,6 +47170,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48437,7 +47246,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3d2c6f1fe16be892b735de41129c5bee1b944396ac5adcc71b7f367692c5ed91"
   },
   "case": {
    "argv": [
@@ -48458,6 +47267,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48469,7 +47279,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f43b1bea5c1faa71f3812224cfd4a9f4dbdab70240cb9f25e18661a3b57f0058"
   },
   "case": {
    "argv": [
@@ -48490,6 +47300,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48565,7 +47376,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "ac456c2aa8e914e52c04cfea502a2f703bd67f03eccd06d881cf2c53b789be2b"
   },
   "case": {
    "argv": [
@@ -48586,6 +47397,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48693,7 +47505,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "594a1cb1691c5798f868d7bfec6ffb94bbec0f43d300851eebfec62619aa819b"
   },
   "case": {
    "argv": [
@@ -48714,6 +47526,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48757,7 +47570,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "c55f2a4919cd3032369aff44d661b2059de49a1b1c97cfe64695eae48fee4c89"
   },
   "case": {
    "argv": [
@@ -48778,6 +47591,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48917,7 +47731,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "547e27c426068384ad027824d88c8dac4e1d797a5ffc8207ea21d6b3c1cd9c6d"
   },
   "case": {
    "argv": [
@@ -48938,6 +47752,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -48949,7 +47764,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "4882b0ae2f5efbff587d275444b05e9738faa1a9f7a34de0f1f9f611d5cc1b02"
   },
   "case": {
    "argv": [
@@ -48970,6 +47785,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49013,7 +47829,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "444eb3313e98038dec6404d6af914afe8b23f2411b52788bc18c327ad1afb319"
   },
   "case": {
    "argv": [
@@ -49034,6 +47850,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49077,7 +47894,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6a30de938aea218fd47b02178ebf0d962b0e77041a0a1e55906b703fcc832cef"
   },
   "case": {
    "argv": [
@@ -49098,6 +47915,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49167,7 +47985,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "38d0bcc510a63aeeafc0cc12c1580487cfdc012e4e35ffd82444b428b0d2694f"
   },
   "case": {
    "argv": [
@@ -49188,6 +48006,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49199,7 +48018,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "67da619d80c04655a883ee56acca6d9e3ec5f56401c7f40041e81b239727f185"
   },
   "case": {
    "argv": [
@@ -49220,6 +48039,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49231,7 +48051,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d4272d73fcd271b8a4c3cbf297f74fff8c58527e1b6a88bbe5825b5383a2f7f6"
   },
   "case": {
    "argv": [
@@ -49252,6 +48072,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49263,7 +48084,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d4272d73fcd271b8a4c3cbf297f74fff8c58527e1b6a88bbe5825b5383a2f7f6"
   },
   "case": {
    "argv": [
@@ -49284,6 +48105,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49295,7 +48117,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "67da619d80c04655a883ee56acca6d9e3ec5f56401c7f40041e81b239727f185"
   },
   "case": {
    "argv": [
@@ -49316,6 +48138,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49327,7 +48150,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "92908f58f40de2f767ed8825139162788baa95fdd524fcc7998268221bb9fb8a"
   },
   "case": {
    "argv": [
@@ -49348,6 +48171,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49359,39 +48183,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -a -n -l -u v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "091cb595ecb9a83d",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "2b9457c1b90421481b48d13dcbc2739487908da012ccf329de96fe76d7bf3178"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "492fc58a2c78554766657c910e5f0a5920581b13105b7db46df9796bb2f08f8d"
   },
   "case": {
    "argv": [
@@ -49412,6 +48204,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49455,7 +48248,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "adf060c78476cb5cf0427d4c310a92e46546b697ff824b03031e2127de12953c"
   },
   "case": {
    "argv": [
@@ -49476,6 +48269,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49551,38 +48345,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -n -l -u w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "0b8b00e4dbdbaa32",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "12d7ffae2740fac24df13e781382719d5ba22928995a2a2360d73f7e2dd1e75d"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
    "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
   },
   "case": {
@@ -49615,7 +48377,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "c725ed04a9d7b1ba0f17f9e68449fbb0fc99c2d509d74a24fe538aaf94401221"
   },
   "case": {
    "argv": [
@@ -49636,6 +48398,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49647,7 +48410,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "fefca5430fce8f64777023fa4770133aee01006a6c7460af81d5087cab56bbb4"
   },
   "case": {
    "argv": [
@@ -49668,6 +48431,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49679,7 +48443,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "30b2d7af4fa6046dd9d7a9475a7e04e0e6ba08c73fdc4f1e8e281d7acab540dd"
   },
   "case": {
    "argv": [
@@ -49700,6 +48464,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49775,7 +48540,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3303b35bd2c96e11b1f266a461d9957b3e696712e6fc815510ec25f61d2f2397"
   },
   "case": {
    "argv": [
@@ -49796,6 +48561,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49807,7 +48573,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "92908f58f40de2f767ed8825139162788baa95fdd524fcc7998268221bb9fb8a"
   },
   "case": {
    "argv": [
@@ -49828,6 +48594,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49839,7 +48606,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "757a4a3c411749e4931c763fc6056d24f4b0d3c937e7f1821315d710c3e07ae4"
   },
   "case": {
    "argv": [
@@ -49860,6 +48627,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49903,7 +48671,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "1d03d6ce174171459016c7772a26ba3727a9bed5951dc35f339e0c0a60ffe7c7"
   },
   "case": {
    "argv": [
@@ -49924,6 +48692,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49935,7 +48704,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f11d62f7973020d09b4b5d80054396a2fe72d696188345607554cab6515b2be3"
   },
   "case": {
    "argv": [
@@ -49956,6 +48725,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -49967,7 +48737,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "356b1ac80fa3f9fc2388280e147519dcdeed4694c3db37cc6cb49a42f9d78208"
   },
   "case": {
    "argv": [
@@ -49988,6 +48758,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50127,7 +48898,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d0676ed96bea36d1bf5c3f606ff80eff31f1c680b62d16ef1f151ab909e60982"
   },
   "case": {
    "argv": [
@@ -50148,6 +48919,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50159,7 +48931,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "e82505dd8d14e68b0d2dfa73a9116fc88dde68290df6cefd8182cabc3d02cc17"
   },
   "case": {
    "argv": [
@@ -50180,6 +48952,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50223,7 +48996,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d8a901259958a8a45353edd2cba93249d54438514a7f7ceaaaeff30cf865ed17"
   },
   "case": {
    "argv": [
@@ -50244,6 +49017,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50287,7 +49061,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "248db91f929e7146b410aac860f4074bdf4134764e53562057b53ad6b339c5eb"
   },
   "case": {
    "argv": [
@@ -50307,13 +49081,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f3eda2a4ff89a96c4d535758b919272b9307443923ad8d72aa47f85e73a4ae58"
   },
   "case": {
    "argv": [
@@ -50334,6 +49109,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50345,7 +49121,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "b9a7bf85e5af996ca6ac644fef6c387e91956e5f65b157a70d856f34d0891e29"
   },
   "case": {
    "argv": [
@@ -50366,6 +49142,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50377,7 +49154,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "356b1ac80fa3f9fc2388280e147519dcdeed4694c3db37cc6cb49a42f9d78208"
   },
   "case": {
    "argv": [
@@ -50398,6 +49175,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50409,7 +49187,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "f1236ffe252e18bf83413602ff826e3723cb68af4d044616f4674ac5998234de"
   },
   "case": {
    "argv": [
@@ -50430,6 +49208,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50441,7 +49220,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "14fe25ccc33aeed6ffd073958ffe31039ceae59cc3a0e2b71b4df7a0920d13d3"
   },
   "case": {
    "argv": [
@@ -50462,6 +49241,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50505,7 +49285,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3d2c6f1fe16be892b735de41129c5bee1b944396ac5adcc71b7f367692c5ed91"
   },
   "case": {
    "argv": [
@@ -50526,6 +49306,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50569,7 +49350,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "1c9dc3eba65df9c54777c903e2d05650304a9577b3dd34e73975528a90a38165"
   },
   "case": {
    "argv": [
@@ -50590,6 +49371,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50601,7 +49383,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "b9a7bf85e5af996ca6ac644fef6c387e91956e5f65b157a70d856f34d0891e29"
   },
   "case": {
    "argv": [
@@ -50622,6 +49404,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50633,7 +49416,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "b9a7bf85e5af996ca6ac644fef6c387e91956e5f65b157a70d856f34d0891e29"
   },
   "case": {
    "argv": [
@@ -50654,6 +49437,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50665,7 +49449,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "086a20e45f484dc3cb9ba4baba78631f041e7677b18b9a8f2efa1122eab60f44"
   },
   "case": {
    "argv": [
@@ -50686,6 +49470,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50697,7 +49482,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "065deae73b1b60d0837d013f69979062bb8dab7122cc14ab281f607fa305ae0c"
   },
   "case": {
    "argv": [
@@ -50718,6 +49503,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50761,7 +49547,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d0676ed96bea36d1bf5c3f606ff80eff31f1c680b62d16ef1f151ab909e60982"
   },
   "case": {
    "argv": [
@@ -50782,6 +49568,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50793,7 +49580,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "965c4e75b49210c07fcbcee86498c2c3587d844b1cac8f741bb72d728e345c1d"
   },
   "case": {
    "argv": [
@@ -50814,6 +49601,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50889,7 +49677,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e7fa5be35eee70fb2528fd2ee59f9f1d819d4478f4dd33c8fecefa042d286ee0"
   },
   "case": {
    "argv": [
@@ -50910,6 +49698,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50921,7 +49710,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "efb551aa9dfd19a03ee0990316f99aeb96892d24c1d71fc1213006a38f3574f5"
   },
   "case": {
    "argv": [
@@ -50942,6 +49731,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50953,7 +49743,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "05761012a5cd67d8c00d056e8c6003b66ca356ddd524464678647e50b058e860"
   },
   "case": {
    "argv": [
@@ -50974,6 +49764,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -50985,39 +49776,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -n -l -u v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "171206620fb7cab5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "4a4c50e016f41f11d382c37b805ad9a44f6b9639b850ed082df54f47dee9b006"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "eb4c9941ee3e3c465dc7e3a3546fa26a35241d4c6d7b375438e45d6fdf063c01"
   },
   "case": {
    "argv": [
@@ -51038,6 +49797,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51049,7 +49809,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "26d49764098f55af8fe5883b85d3fdc461f8c87ddcae81a335970069664c0cc5"
   },
   "case": {
    "argv": [
@@ -51070,6 +49830,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51081,7 +49842,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "af4ef81197c52c1a682002bf810c6a972a567e62cc05a84b9e73787d1356a86e"
   },
   "case": {
    "argv": [
@@ -51102,6 +49863,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51209,7 +49971,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "24068e40dae81c7fbd4caacb2fa6b5dd3a58eba9d44a743c0a9b695737a31c22"
   },
   "case": {
    "argv": [
@@ -51230,6 +49992,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51241,7 +50004,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e308c07ec6cfa9d12d3488ead19eefc665583d002e971dd9e5d83a0b4fc7b37e"
   },
   "case": {
    "argv": [
@@ -51262,6 +50025,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51273,7 +50037,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e7fa5be35eee70fb2528fd2ee59f9f1d819d4478f4dd33c8fecefa042d286ee0"
   },
   "case": {
    "argv": [
@@ -51294,6 +50058,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51305,7 +50070,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "c55f2a4919cd3032369aff44d661b2059de49a1b1c97cfe64695eae48fee4c89"
   },
   "case": {
    "argv": [
@@ -51326,6 +50091,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51369,7 +50135,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "931af82e567b40711a167f4cefcba89ff5b6d342138c94ddedfeecfc81e5c80c"
   },
   "case": {
    "argv": [
@@ -51390,6 +50156,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51401,7 +50168,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f03b3d0c89dbe2a5381bad17cdd18cc23f05d364fc9b737210adbb3ec359fe12"
   },
   "case": {
    "argv": [
@@ -51422,6 +50189,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51433,7 +50201,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "47454516682f266d82e069a3a59a3d932f5260beee3b489a8072026309179c47"
   },
   "case": {
    "argv": [
@@ -51454,6 +50222,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51497,7 +50266,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d8a901259958a8a45353edd2cba93249d54438514a7f7ceaaaeff30cf865ed17"
   },
   "case": {
    "argv": [
@@ -51518,6 +50287,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51619,7 +50389,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "594a1cb1691c5798f868d7bfec6ffb94bbec0f43d300851eebfec62619aa819b"
   },
   "case": {
    "argv": [
@@ -51640,6 +50410,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51683,7 +50454,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "dd5dd9e5db4aba3e83f10564207f26d1bd50cb7b066f17eec58a4ebde3e89ac9"
   },
   "case": {
    "argv": [
@@ -51704,6 +50475,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51747,7 +50519,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "a4dbb24494aab9b63837dc398d14d60c6ec7be1fcf237997d14b41b2c877a948"
   },
   "case": {
    "argv": [
@@ -51768,6 +50540,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51811,7 +50584,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "3d0c5dc339ffb7024fddff85856b293e7ea2138be9b9cb720773a1f4b89f824e"
   },
   "case": {
    "argv": [
@@ -51832,6 +50605,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51875,7 +50649,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "24068e40dae81c7fbd4caacb2fa6b5dd3a58eba9d44a743c0a9b695737a31c22"
   },
   "case": {
    "argv": [
@@ -51896,6 +50670,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51907,7 +50682,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "8a55b3fbd5a32bcd52064056673046b420f5079f706c9a2c6c716c95e7773d9b"
   },
   "case": {
    "argv": [
@@ -51928,6 +50703,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -51971,7 +50747,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6a30de938aea218fd47b02178ebf0d962b0e77041a0a1e55906b703fcc832cef"
   },
   "case": {
    "argv": [
@@ -51992,6 +50768,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52003,7 +50780,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "82aa1029c391f1e05426c897a14256c8fe34c5c4b023086860eb70d83c63534c"
   },
   "case": {
    "argv": [
@@ -52023,6 +50800,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -52061,7 +50839,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "93c06b8d1536b0d16c2ca6f0dbc302d495646404783ca3370850feccf00a3e58"
   },
   "case": {
    "argv": [
@@ -52082,6 +50860,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52157,7 +50936,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "04ffb75d4812c656a13bd23941013c17d42e72b3fa76408567da3de66f1e482f"
   },
   "case": {
    "argv": [
@@ -52178,6 +50957,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52189,7 +50969,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "0287b1f5b764fb78c228ac581c28c671c8ba7ffe3cf3dc8677989aa4418ec851"
   },
   "case": {
    "argv": [
@@ -52210,6 +50990,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52221,7 +51002,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "da9e0bcdd239b98f0a33053392475b7fcafea21ca299611baf4f757afe853ed5"
   },
   "case": {
    "argv": [
@@ -52242,6 +51023,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52349,7 +51131,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f15ed4e58206f1c69f7e9a8b1dbeedd49eade2668b4abf4f216858f752d06e74"
   },
   "case": {
    "argv": [
@@ -52370,6 +51152,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52381,7 +51164,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "b5898a9a24e79137b0d3282c543b88c43ec43989ae4f3e67e8ceadd7232f89bb"
   },
   "case": {
    "argv": [
@@ -52402,6 +51185,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52567,7 +51351,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "b7a615442ece35593fb851615f80e27e928755f501163b68584f599e8816da6e"
   },
   "case": {
    "argv": [
@@ -52588,6 +51372,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52599,7 +51384,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "26d49764098f55af8fe5883b85d3fdc461f8c87ddcae81a335970069664c0cc5"
   },
   "case": {
    "argv": [
@@ -52620,6 +51405,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52663,7 +51449,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "da9e0bcdd239b98f0a33053392475b7fcafea21ca299611baf4f757afe853ed5"
   },
   "case": {
    "argv": [
@@ -52684,6 +51470,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52759,7 +51546,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "92908f58f40de2f767ed8825139162788baa95fdd524fcc7998268221bb9fb8a"
   },
   "case": {
    "argv": [
@@ -52780,6 +51567,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52823,7 +51611,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6a30de938aea218fd47b02178ebf0d962b0e77041a0a1e55906b703fcc832cef"
   },
   "case": {
    "argv": [
@@ -52844,6 +51632,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -52951,7 +51740,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "82aa1029c391f1e05426c897a14256c8fe34c5c4b023086860eb70d83c63534c"
   },
   "case": {
    "argv": [
@@ -52971,6 +51760,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -53041,39 +51831,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -n v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "28cce4bc84ff02b1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "4a4c50e016f41f11d382c37b805ad9a44f6b9639b850ed082df54f47dee9b006"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "444eb3313e98038dec6404d6af914afe8b23f2411b52788bc18c327ad1afb319"
   },
   "case": {
    "argv": [
@@ -53094,6 +51852,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53105,7 +51864,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "80f5511dd51325fb062c504ab5806e16a0fc4cd91a930c0f3ef701dd3adafd5a"
   },
   "case": {
    "argv": [
@@ -53126,6 +51885,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53163,7 +51923,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "9f609b821c390f95dc31520546c31b44e250a1c7e2d9cd688d842158344491d2"
   },
   "case": {
    "argv": [
@@ -53184,6 +51944,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53291,7 +52052,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "82aa1029c391f1e05426c897a14256c8fe34c5c4b023086860eb70d83c63534c"
   },
   "case": {
    "argv": [
@@ -53312,6 +52073,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53323,7 +52085,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f3eda2a4ff89a96c4d535758b919272b9307443923ad8d72aa47f85e73a4ae58"
   },
   "case": {
    "argv": [
@@ -53344,6 +52106,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53355,7 +52118,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "47454516682f266d82e069a3a59a3d932f5260beee3b489a8072026309179c47"
   },
   "case": {
    "argv": [
@@ -53376,6 +52139,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53387,7 +52151,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "fa4c20c30b169bf33c17ec927226f08f6d44408df47de7081d684eacc5b234e3"
   },
   "case": {
    "argv": [
@@ -53408,6 +52172,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53451,7 +52216,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e7fa5be35eee70fb2528fd2ee59f9f1d819d4478f4dd33c8fecefa042d286ee0"
   },
   "case": {
    "argv": [
@@ -53472,6 +52237,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53648,38 +52414,6 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
-    "v=global; w=global2\nf() {\nlocal -a -n v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "2e120998bc94a7e0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "2b9457c1b90421481b48d13dcbc2739487908da012ccf329de96fe76d7bf3178"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
     "v=global; w=global2\nf() {\nlocal -A -x -n -l -u v=2+3\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
    ],
    "domain": "builtins",
@@ -53707,39 +52441,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -u -n -l v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "2ef334c9f03060df",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "4a4c50e016f41f11d382c37b805ad9a44f6b9639b850ed082df54f47dee9b006"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "7f4e114fc9021a82fb9674aa7e685468b3147ab11618f678068ec7aae9c3e9b6"
   },
   "case": {
    "argv": [
@@ -53760,6 +52462,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53771,7 +52474,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "82aa1029c391f1e05426c897a14256c8fe34c5c4b023086860eb70d83c63534c"
   },
   "case": {
    "argv": [
@@ -53792,6 +52495,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53803,7 +52507,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "894ff6c48975f568cd589cc5838b2ebefc3095c802d1c7e9fbece16b932bd258"
   },
   "case": {
    "argv": [
@@ -53824,6 +52528,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -53867,7 +52572,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "0d700478981a592bca40cc6a141b0151136026fb5a80672a7cf9b54a321d061b"
   },
   "case": {
    "argv": [
@@ -53888,6 +52593,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54021,7 +52727,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "492fc58a2c78554766657c910e5f0a5920581b13105b7db46df9796bb2f08f8d"
   },
   "case": {
    "argv": [
@@ -54042,6 +52748,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54117,7 +52824,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "5f8a2be902a9239dc72160a9408c7f5dd39aa1e04556fc6ce7d2bd0687ae9db1"
   },
   "case": {
    "argv": [
@@ -54138,6 +52845,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54149,39 +52857,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -n -l -u w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "32247985bbd42051",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "12d7ffae2740fac24df13e781382719d5ba22928995a2a2360d73f7e2dd1e75d"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "8d72f9ddb67aeb5a31365432d8035eb3d503d3b1596fa38d936520f58448854a"
   },
   "case": {
    "argv": [
@@ -54201,13 +52877,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "82aa1029c391f1e05426c897a14256c8fe34c5c4b023086860eb70d83c63534c"
   },
   "case": {
    "argv": [
@@ -54228,6 +52905,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54239,7 +52917,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "0a248b447cf5d3310cd15cf699e431d87338f039a60635ca0957b99188412b7f"
   },
   "case": {
    "argv": [
@@ -54260,6 +52938,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54271,7 +52950,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "27e71155b9f7211baf9ac9bf375297c52f2aab0659b5de16f493bbe4662853fb"
   },
   "case": {
    "argv": [
@@ -54292,6 +52971,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54303,7 +52983,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "34b27771c69754eed37c93717b85282f9c448fc4ad255f0a4944377ec5698381"
   },
   "case": {
    "argv": [
@@ -54324,6 +53004,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54335,7 +53016,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e405d8af64fef5c845f350968729aca22599444e41f1ab21f907673e09d72d38"
   },
   "case": {
    "argv": [
@@ -54356,6 +53037,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54367,7 +53049,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "547e27c426068384ad027824d88c8dac4e1d797a5ffc8207ea21d6b3c1cd9c6d"
   },
   "case": {
    "argv": [
@@ -54388,6 +53070,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54527,7 +53210,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "dd5dd9e5db4aba3e83f10564207f26d1bd50cb7b066f17eec58a4ebde3e89ac9"
   },
   "case": {
    "argv": [
@@ -54548,6 +53231,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54591,7 +53275,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "086a20e45f484dc3cb9ba4baba78631f041e7677b18b9a8f2efa1122eab60f44"
   },
   "case": {
    "argv": [
@@ -54612,6 +53296,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54623,7 +53308,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "965c4e75b49210c07fcbcee86498c2c3587d844b1cac8f741bb72d728e345c1d"
   },
   "case": {
    "argv": [
@@ -54644,6 +53329,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54655,39 +53341,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -u -n -l v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "362080401a8d8b9a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "4a4c50e016f41f11d382c37b805ad9a44f6b9639b850ed082df54f47dee9b006"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "4882b0ae2f5efbff587d275444b05e9738faa1a9f7a34de0f1f9f611d5cc1b02"
   },
   "case": {
    "argv": [
@@ -54708,6 +53362,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54719,7 +53374,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d4272d73fcd271b8a4c3cbf297f74fff8c58527e1b6a88bbe5825b5383a2f7f6"
   },
   "case": {
    "argv": [
@@ -54740,6 +53395,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54783,7 +53439,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "0287b1f5b764fb78c228ac581c28c671c8ba7ffe3cf3dc8677989aa4418ec851"
   },
   "case": {
    "argv": [
@@ -54804,6 +53460,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -54943,7 +53600,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "5f8a2be902a9239dc72160a9408c7f5dd39aa1e04556fc6ce7d2bd0687ae9db1"
   },
   "case": {
    "argv": [
@@ -54964,6 +53621,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55007,7 +53665,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "c55f2a4919cd3032369aff44d661b2059de49a1b1c97cfe64695eae48fee4c89"
   },
   "case": {
    "argv": [
@@ -55028,6 +53686,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55135,7 +53794,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "757a4a3c411749e4931c763fc6056d24f4b0d3c937e7f1821315d710c3e07ae4"
   },
   "case": {
    "argv": [
@@ -55155,45 +53814,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -a -n -l -u v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "3c5c42d8aef7968f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "2b9457c1b90421481b48d13dcbc2739487908da012ccf329de96fe76d7bf3178"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3303b35bd2c96e11b1f266a461d9957b3e696712e6fc815510ec25f61d2f2397"
   },
   "case": {
    "argv": [
@@ -55214,6 +53842,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55225,7 +53854,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "2116d8c37dc051bf828d358f94c32458e6081b3c8cd6d0b6fc0cd12fb07aaded"
   },
   "case": {
    "argv": [
@@ -55246,6 +53875,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55257,7 +53887,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "757a4a3c411749e4931c763fc6056d24f4b0d3c937e7f1821315d710c3e07ae4"
   },
   "case": {
    "argv": [
@@ -55278,6 +53908,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55289,7 +53920,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d8a901259958a8a45353edd2cba93249d54438514a7f7ceaaaeff30cf865ed17"
   },
   "case": {
    "argv": [
@@ -55310,6 +53941,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55321,7 +53953,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "139d7dc1a9fef6c594ffb4e3a091e15b106645aa70dcbd5b4df4045659e5e66c"
   },
   "case": {
    "argv": [
@@ -55342,6 +53974,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55353,7 +53986,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f03b3d0c89dbe2a5381bad17cdd18cc23f05d364fc9b737210adbb3ec359fe12"
   },
   "case": {
    "argv": [
@@ -55374,6 +54007,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55417,7 +54051,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "931af82e567b40711a167f4cefcba89ff5b6d342138c94ddedfeecfc81e5c80c"
   },
   "case": {
    "argv": [
@@ -55438,6 +54072,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55449,7 +54084,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6d976c6f4a4361adcedb6a79c122cc4eea55e5600107234385332a2bdc834d03"
   },
   "case": {
    "argv": [
@@ -55470,6 +54105,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55481,7 +54117,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f11d62f7973020d09b4b5d80054396a2fe72d696188345607554cab6515b2be3"
   },
   "case": {
    "argv": [
@@ -55502,6 +54138,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55545,7 +54182,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "2116d8c37dc051bf828d358f94c32458e6081b3c8cd6d0b6fc0cd12fb07aaded"
   },
   "case": {
    "argv": [
@@ -55566,6 +54203,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55577,7 +54215,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "1a57df5672febcb80874d3abc11683499477ef054e0285844e6da9a74dd483a6"
   },
   "case": {
    "argv": [
@@ -55598,6 +54236,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55609,7 +54248,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "8eb0c99aa306c205a6b02baf196cf68f6e2821d1d6a00631317830f984d22ee9"
   },
   "case": {
    "argv": [
@@ -55630,6 +54269,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55725,7 +54365,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "248db91f929e7146b410aac860f4074bdf4134764e53562057b53ad6b339c5eb"
   },
   "case": {
    "argv": [
@@ -55746,6 +54386,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55853,7 +54494,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "1d8e40c9842867a253cb071600fbe4e3df28bbf0629c7ec954cd39b4bdf87e8d"
   },
   "case": {
    "argv": [
@@ -55874,6 +54515,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55885,7 +54527,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "c34c303603ca3c679b78d4789d32e6b9952851840977bbf7637d763859ebdaf1"
   },
   "case": {
    "argv": [
@@ -55906,6 +54548,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55949,7 +54592,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "dd5dd9e5db4aba3e83f10564207f26d1bd50cb7b066f17eec58a4ebde3e89ac9"
   },
   "case": {
    "argv": [
@@ -55970,6 +54613,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -55981,7 +54625,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "cae3f95db52305dc75a090f0c6396ccf8c20609cdfc3079fb10fa15d6c6ba77c"
   },
   "case": {
    "argv": [
@@ -56002,6 +54646,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56045,7 +54690,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "aad56418b6efcc072c3fa698eff0104f9918f38b732f2b6ea2566654b595f8e4"
   },
   "case": {
    "argv": [
@@ -56066,6 +54711,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56109,7 +54755,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "4b5dd7c2c4fb6c63576bd6ea9adb686b96aed2a42f198a69e5635806849e49e8"
   },
   "case": {
    "argv": [
@@ -56130,6 +54776,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56173,7 +54820,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "8eb0c99aa306c205a6b02baf196cf68f6e2821d1d6a00631317830f984d22ee9"
   },
   "case": {
    "argv": [
@@ -56194,6 +54841,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56237,7 +54885,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "67164c5782dcffe1703b27bf82fb6beee55e92b1170c1b440dd4290561b4755e"
   },
   "case": {
    "argv": [
@@ -56258,6 +54906,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56269,7 +54918,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "ae22f2e08a0df33e4ba56d9f67edf08901cd7f89014497ed8385b93762f97357"
   },
   "case": {
    "argv": [
@@ -56290,6 +54939,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56365,7 +55015,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "8362ee1ade0e39373c8386135280d3969b202453706662edb44741df91d3b034"
   },
   "case": {
    "argv": [
@@ -56386,6 +55036,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56461,7 +55112,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3a682dd1c9db8a33e4b2c76cdc06cf589d14c183b11e59dec40fae311adc6f76"
   },
   "case": {
    "argv": [
@@ -56482,6 +55133,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56493,7 +55145,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "345ff5959c52e2b44fb61da19749d846e55e25fe80449cb1cb7088ee1b92dee1"
   },
   "case": {
    "argv": [
@@ -56513,6 +55165,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -56551,7 +55204,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "ca9e1f0cb2a30d3a5fb51c5da6f68a5cf9af294e3846307e51a9129b41b54036"
   },
   "case": {
    "argv": [
@@ -56571,6 +55224,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -56641,7 +55295,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "c55f2a4919cd3032369aff44d661b2059de49a1b1c97cfe64695eae48fee4c89"
   },
   "case": {
    "argv": [
@@ -56662,6 +55316,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56673,7 +55328,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "492fc58a2c78554766657c910e5f0a5920581b13105b7db46df9796bb2f08f8d"
   },
   "case": {
    "argv": [
@@ -56694,6 +55349,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56737,7 +55393,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "248db91f929e7146b410aac860f4074bdf4134764e53562057b53ad6b339c5eb"
   },
   "case": {
    "argv": [
@@ -56758,6 +55414,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56769,7 +55426,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e308c07ec6cfa9d12d3488ead19eefc665583d002e971dd9e5d83a0b4fc7b37e"
   },
   "case": {
    "argv": [
@@ -56790,6 +55447,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56801,7 +55459,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "236f31ae4e793a46d5a3c42e4a2c4e721dc8d9ae3728c717c3b8498d2a8ba470"
   },
   "case": {
    "argv": [
@@ -56822,6 +55480,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56833,7 +55492,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "3e3cda14f62909f9b0659fc08562af986ff79a9b5acb98a7821089d2868ed4cb"
   },
   "case": {
    "argv": [
@@ -56854,6 +55513,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56865,7 +55525,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "139d7dc1a9fef6c594ffb4e3a091e15b106645aa70dcbd5b4df4045659e5e66c"
   },
   "case": {
    "argv": [
@@ -56886,6 +55546,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -56993,7 +55654,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "aaa3127c982b5709ab190111a766e8dd20d5c3d69e653db2f190b7528b82e31a"
   },
   "case": {
    "argv": [
@@ -57014,6 +55675,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57089,7 +55751,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "345ff5959c52e2b44fb61da19749d846e55e25fe80449cb1cb7088ee1b92dee1"
   },
   "case": {
    "argv": [
@@ -57109,13 +55771,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f03b3d0c89dbe2a5381bad17cdd18cc23f05d364fc9b737210adbb3ec359fe12"
   },
   "case": {
    "argv": [
@@ -57136,6 +55799,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57211,7 +55875,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "cfdc2535c8d2b3cd1c9113448c1d82def0710a0bbe4d2b7cb1088d952195a416"
   },
   "case": {
    "argv": [
@@ -57232,6 +55896,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57307,7 +55972,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "236f31ae4e793a46d5a3c42e4a2c4e721dc8d9ae3728c717c3b8498d2a8ba470"
   },
   "case": {
    "argv": [
@@ -57328,6 +55993,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57397,7 +56063,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "92908f58f40de2f767ed8825139162788baa95fdd524fcc7998268221bb9fb8a"
   },
   "case": {
    "argv": [
@@ -57418,6 +56084,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57493,7 +56160,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "18aa32d4fd803da3f6165c7a70e4195df6741253dad1b2d40161641b930aac10"
   },
   "case": {
    "argv": [
@@ -57514,6 +56181,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57525,7 +56193,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "0ac73eff44feeb2993b65f2ccc96a48b1ca72308508df7e2bd8db63a632075f4"
   },
   "case": {
    "argv": [
@@ -57546,6 +56214,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57717,7 +56386,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f43b1bea5c1faa71f3812224cfd4a9f4dbdab70240cb9f25e18661a3b57f0058"
   },
   "case": {
    "argv": [
@@ -57738,6 +56407,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57749,7 +56419,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "a4dbb24494aab9b63837dc398d14d60c6ec7be1fcf237997d14b41b2c877a948"
   },
   "case": {
    "argv": [
@@ -57770,6 +56440,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57781,7 +56452,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "f1236ffe252e18bf83413602ff826e3723cb68af4d044616f4674ac5998234de"
   },
   "case": {
    "argv": [
@@ -57802,42 +56473,11 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "21e86683a147c11af071ddb1b1977a3f5b00668eafb2128b950a010bfffcc69c"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -n -l -u v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "56abc2edb32a424c",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "4a4c50e016f41f11d382c37b805ad9a44f6b9639b850ed082df54f47dee9b006"
   },
   "utility": "local"
  },
@@ -57909,7 +56549,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6a30de938aea218fd47b02178ebf0d962b0e77041a0a1e55906b703fcc832cef"
   },
   "case": {
    "argv": [
@@ -57930,6 +56570,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -57973,39 +56614,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -n v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "588d9b92719c37b5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "4a4c50e016f41f11d382c37b805ad9a44f6b9639b850ed082df54f47dee9b006"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "331b96e3494776a6039990c89439d4efdf8629adc7d40ce1badf065c5780ee09"
   },
   "case": {
    "argv": [
@@ -58026,6 +56635,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58037,7 +56647,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "455514444f41aaf9a408b4f0e6ad5c063f33f3ce133696d8177d11a6d1ffb791"
   },
   "case": {
    "argv": [
@@ -58058,6 +56668,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58069,7 +56680,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e7fa5be35eee70fb2528fd2ee59f9f1d819d4478f4dd33c8fecefa042d286ee0"
   },
   "case": {
    "argv": [
@@ -58090,6 +56701,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58165,7 +56777,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "cfdc2535c8d2b3cd1c9113448c1d82def0710a0bbe4d2b7cb1088d952195a416"
   },
   "case": {
    "argv": [
@@ -58186,6 +56798,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58255,7 +56868,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "3e3cda14f62909f9b0659fc08562af986ff79a9b5acb98a7821089d2868ed4cb"
   },
   "case": {
    "argv": [
@@ -58275,6 +56888,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -58345,7 +56959,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "aaa3127c982b5709ab190111a766e8dd20d5c3d69e653db2f190b7528b82e31a"
   },
   "case": {
    "argv": [
@@ -58366,6 +56980,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58377,7 +56992,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "13f64c85285ebcb6299a0e7632b0079e20e5f03564c99a4c25c19b49cb4fc2d6"
   },
   "case": {
    "argv": [
@@ -58398,6 +57013,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58409,7 +57025,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "139d7dc1a9fef6c594ffb4e3a091e15b106645aa70dcbd5b4df4045659e5e66c"
   },
   "case": {
    "argv": [
@@ -58430,6 +57046,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58473,7 +57090,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "1c9dc3eba65df9c54777c903e2d05650304a9577b3dd34e73975528a90a38165"
   },
   "case": {
    "argv": [
@@ -58494,6 +57111,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58537,7 +57155,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f43b1bea5c1faa71f3812224cfd4a9f4dbdab70240cb9f25e18661a3b57f0058"
   },
   "case": {
    "argv": [
@@ -58558,6 +57176,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58569,7 +57188,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "0bf4a8cf414ed21ccd0b47c687915ee4a8932620dcaded6030e92e184136eae8"
   },
   "case": {
    "argv": [
@@ -58590,6 +57209,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58633,7 +57253,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3cd76b0fd05d1b9c8f02ea2920954807d7b7d28978876cda86f2737c61b44153"
   },
   "case": {
    "argv": [
@@ -58654,6 +57274,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58729,7 +57350,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "ca9e1f0cb2a30d3a5fb51c5da6f68a5cf9af294e3846307e51a9129b41b54036"
   },
   "case": {
    "argv": [
@@ -58750,6 +57371,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58761,7 +57383,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "cce5a3943829dca997d1f682df54217e1c0a7e9b5431ca0577fd5a38710ad05c"
   },
   "case": {
    "argv": [
@@ -58782,6 +57404,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58825,7 +57448,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "aad56418b6efcc072c3fa698eff0104f9918f38b732f2b6ea2566654b595f8e4"
   },
   "case": {
    "argv": [
@@ -58845,13 +57468,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "cae3f95db52305dc75a090f0c6396ccf8c20609cdfc3079fb10fa15d6c6ba77c"
   },
   "case": {
    "argv": [
@@ -58871,6 +57495,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -58909,7 +57534,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "eaedfc6016c3870bdb23d912d07e996c05c035494473b69639e4e3030b18839a"
   },
   "case": {
    "argv": [
@@ -58930,6 +57555,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58941,7 +57567,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6baa9abd17d514cea46902ef59e2a4300bb2995dad0fea0e413c8597ac80fffe"
   },
   "case": {
    "argv": [
@@ -58962,6 +57588,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -58973,7 +57600,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "0fec10144ea8e08598272d1b2e90083d7f207972c32f33ac41c1ae322c4a2fcf"
   },
   "case": {
    "argv": [
@@ -58994,6 +57621,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59037,7 +57665,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e308c07ec6cfa9d12d3488ead19eefc665583d002e971dd9e5d83a0b4fc7b37e"
   },
   "case": {
    "argv": [
@@ -59058,6 +57686,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59101,7 +57730,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "cb3183f15203bac4bffc2d2b03fd38ace71e2b7c826479dd5152a4d19cb4b058"
   },
   "case": {
    "argv": [
@@ -59121,13 +57750,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "9f609b821c390f95dc31520546c31b44e250a1c7e2d9cd688d842158344491d2"
   },
   "case": {
    "argv": [
@@ -59148,6 +57778,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59191,7 +57822,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d7f8a291158bdc712113ae6c084ab66e6f1e27305cde38f93bcfe220aea3ad70"
   },
   "case": {
    "argv": [
@@ -59212,6 +57843,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59287,7 +57919,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "c359c3fb1b050b31fb875854fe530b018cdce76e56e9056bae3e91674404d9e2"
   },
   "case": {
    "argv": [
@@ -59308,6 +57940,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59319,7 +57952,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "1d8e40c9842867a253cb071600fbe4e3df28bbf0629c7ec954cd39b4bdf87e8d"
   },
   "case": {
    "argv": [
@@ -59340,6 +57973,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59351,7 +57985,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "ca9e1f0cb2a30d3a5fb51c5da6f68a5cf9af294e3846307e51a9129b41b54036"
   },
   "case": {
    "argv": [
@@ -59372,6 +58006,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59415,7 +58050,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "faaaf583e91667be4a99b1e7f61a6572332f7732170c048764e5db509154cb0c"
   },
   "case": {
    "argv": [
@@ -59436,6 +58071,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59447,7 +58083,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d7f8a291158bdc712113ae6c084ab66e6f1e27305cde38f93bcfe220aea3ad70"
   },
   "case": {
    "argv": [
@@ -59468,6 +58104,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59505,7 +58142,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "adf060c78476cb5cf0427d4c310a92e46546b697ff824b03031e2127de12953c"
   },
   "case": {
    "argv": [
@@ -59526,6 +58163,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59537,7 +58175,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "67da619d80c04655a883ee56acca6d9e3ec5f56401c7f40041e81b239727f185"
   },
   "case": {
    "argv": [
@@ -59558,42 +58196,11 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "21e86683a147c11af071ddb1b1977a3f5b00668eafb2128b950a010bfffcc69c"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -n w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "66eb3d3b19ba6ce5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "12d7ffae2740fac24df13e781382719d5ba22928995a2a2360d73f7e2dd1e75d"
   },
   "utility": "local"
  },
@@ -59633,7 +58240,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "61744a22e23b4592a56995d0f8734114a3bb970e085617e4bc2ea2144bd6da02"
   },
   "case": {
    "argv": [
@@ -59654,6 +58261,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59697,7 +58305,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "aad56418b6efcc072c3fa698eff0104f9918f38b732f2b6ea2566654b595f8e4"
   },
   "case": {
    "argv": [
@@ -59718,6 +58326,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59729,7 +58338,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "248db91f929e7146b410aac860f4074bdf4134764e53562057b53ad6b339c5eb"
   },
   "case": {
    "argv": [
@@ -59750,6 +58359,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59761,7 +58371,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "14fe25ccc33aeed6ffd073958ffe31039ceae59cc3a0e2b71b4df7a0920d13d3"
   },
   "case": {
    "argv": [
@@ -59782,6 +58392,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59793,7 +58404,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "d27b5c92c5a6e5d71085ad2776bd45cfb5c37fc76044c2b6a7cc34c3aa6614e5"
   },
   "case": {
    "argv": [
@@ -59814,6 +58425,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -59921,7 +58533,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d8a901259958a8a45353edd2cba93249d54438514a7f7ceaaaeff30cf865ed17"
   },
   "case": {
    "argv": [
@@ -59941,6 +58553,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -60011,7 +58624,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "faaaf583e91667be4a99b1e7f61a6572332f7732170c048764e5db509154cb0c"
   },
   "case": {
    "argv": [
@@ -60032,6 +58645,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60043,7 +58657,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "b5898a9a24e79137b0d3282c543b88c43ec43989ae4f3e67e8ceadd7232f89bb"
   },
   "case": {
    "argv": [
@@ -60064,6 +58678,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60075,7 +58690,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "b95490db660846183abf90dfeca90a658673c99af8cef737c6f5c1117b5500a9"
   },
   "case": {
    "argv": [
@@ -60096,6 +58711,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60171,7 +58787,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3303b35bd2c96e11b1f266a461d9957b3e696712e6fc815510ec25f61d2f2397"
   },
   "case": {
    "argv": [
@@ -60192,6 +58808,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60203,7 +58820,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "34b27771c69754eed37c93717b85282f9c448fc4ad255f0a4944377ec5698381"
   },
   "case": {
    "argv": [
@@ -60224,6 +58841,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60235,7 +58853,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "27e71155b9f7211baf9ac9bf375297c52f2aab0659b5de16f493bbe4662853fb"
   },
   "case": {
    "argv": [
@@ -60256,6 +58874,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60395,7 +59014,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "ac456c2aa8e914e52c04cfea502a2f703bd67f03eccd06d881cf2c53b789be2b"
   },
   "case": {
    "argv": [
@@ -60416,6 +59035,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60459,7 +59079,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "d4bcfc786e48f79340507d5a8ee5f50c912a57bfb2c6faee9f023ec6b69c9e90"
   },
   "case": {
    "argv": [
@@ -60480,6 +59100,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60491,7 +59112,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6baa9abd17d514cea46902ef59e2a4300bb2995dad0fea0e413c8597ac80fffe"
   },
   "case": {
    "argv": [
@@ -60512,6 +59133,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60523,7 +59145,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "05761012a5cd67d8c00d056e8c6003b66ca356ddd524464678647e50b058e860"
   },
   "case": {
    "argv": [
@@ -60544,6 +59166,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60555,7 +59178,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "b9a7bf85e5af996ca6ac644fef6c387e91956e5f65b157a70d856f34d0891e29"
   },
   "case": {
    "argv": [
@@ -60576,6 +59199,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60587,7 +59211,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e308c07ec6cfa9d12d3488ead19eefc665583d002e971dd9e5d83a0b4fc7b37e"
   },
   "case": {
    "argv": [
@@ -60608,6 +59232,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60644,38 +59269,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "b7d2a1b62072f9882a5c4b24c86a6f9ef7d3a374dea24fc9aa567fc97490e668"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -n -a w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "6f8b67292e8a89a7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "5c486b1ff1083c793412584c0144ca4897281e0fd066df0098b7514a04b1d561"
   },
   "utility": "local"
  },
@@ -60747,7 +59340,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "0287b1f5b764fb78c228ac581c28c671c8ba7ffe3cf3dc8677989aa4418ec851"
   },
   "case": {
    "argv": [
@@ -60768,6 +59361,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60843,7 +59437,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f03b3d0c89dbe2a5381bad17cdd18cc23f05d364fc9b737210adbb3ec359fe12"
   },
   "case": {
    "argv": [
@@ -60864,6 +59458,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -60875,7 +59470,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "6266d9b87f07273521b8d7d3ca4c67c1079156f7674b2ba28166b05aa8e6e9da"
   },
   "case": {
    "argv": [
@@ -60896,6 +59491,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -61035,7 +59631,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "32485052a9b925cf2e6a1e17fb5339c61b8b1ddd6585e0a94e13b04343d508ae"
   },
   "case": {
    "argv": [
@@ -61056,6 +59652,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -61099,7 +59696,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "ae22f2e08a0df33e4ba56d9f67edf08901cd7f89014497ed8385b93762f97357"
   },
   "case": {
    "argv": [
@@ -61120,6 +59717,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -61131,7 +59729,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "0fec10144ea8e08598272d1b2e90083d7f207972c32f33ac41c1ae322c4a2fcf"
   },
   "case": {
    "argv": [
@@ -61152,6 +59750,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -61259,7 +59858,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "b09aa2cae6ec3989c3c31fc3366938cf43c98061aa0241babe42fd8b23a9c159"
   },
   "case": {
    "argv": [
@@ -61280,6 +59879,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -61323,7 +59923,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "09848589dd1e4270ac90fc64d0f292f6c8e9e90d94ac9a52e23c9fd8a8b479ec"
   },
   "case": {
    "argv": [
@@ -61343,6 +59943,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -61471,7 +60072,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "93c06b8d1536b0d16c2ca6f0dbc302d495646404783ca3370850feccf00a3e58"
   },
   "case": {
    "argv": [
@@ -61492,6 +60093,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -61599,7 +60201,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "fefca5430fce8f64777023fa4770133aee01006a6c7460af81d5087cab56bbb4"
   },
   "case": {
    "argv": [
@@ -61620,6 +60222,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -61663,7 +60266,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "547e27c426068384ad027824d88c8dac4e1d797a5ffc8207ea21d6b3c1cd9c6d"
   },
   "case": {
    "argv": [
@@ -61684,6 +60287,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -61791,7 +60395,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "345ff5959c52e2b44fb61da19749d846e55e25fe80449cb1cb7088ee1b92dee1"
   },
   "case": {
    "argv": [
@@ -61812,6 +60416,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -61855,7 +60460,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3303b35bd2c96e11b1f266a461d9957b3e696712e6fc815510ec25f61d2f2397"
   },
   "case": {
    "argv": [
@@ -61876,6 +60481,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62015,7 +60621,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f15ed4e58206f1c69f7e9a8b1dbeedd49eade2668b4abf4f216858f752d06e74"
   },
   "case": {
    "argv": [
@@ -62036,6 +60642,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62047,7 +60654,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "ece427423ff61f303c4b189dee953cb5bc3baaaa44484013cc664a11514a327f"
   },
   "case": {
    "argv": [
@@ -62068,6 +60675,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62079,7 +60687,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "14fe25ccc33aeed6ffd073958ffe31039ceae59cc3a0e2b71b4df7a0920d13d3"
   },
   "case": {
    "argv": [
@@ -62100,6 +60708,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62111,7 +60720,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "27e71155b9f7211baf9ac9bf375297c52f2aab0659b5de16f493bbe4662853fb"
   },
   "case": {
    "argv": [
@@ -62132,6 +60741,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62233,7 +60843,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e405d8af64fef5c845f350968729aca22599444e41f1ab21f907673e09d72d38"
   },
   "case": {
    "argv": [
@@ -62254,6 +60864,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62323,7 +60934,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "da9e0bcdd239b98f0a33053392475b7fcafea21ca299611baf4f757afe853ed5"
   },
   "case": {
    "argv": [
@@ -62344,6 +60955,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62547,7 +61159,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f43b1bea5c1faa71f3812224cfd4a9f4dbdab70240cb9f25e18661a3b57f0058"
   },
   "case": {
    "argv": [
@@ -62568,6 +61180,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62611,7 +61224,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "894ff6c48975f568cd589cc5838b2ebefc3095c802d1c7e9fbece16b932bd258"
   },
   "case": {
    "argv": [
@@ -62632,6 +61245,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62643,7 +61257,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "26d49764098f55af8fe5883b85d3fdc461f8c87ddcae81a335970069664c0cc5"
   },
   "case": {
    "argv": [
@@ -62664,6 +61278,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62675,7 +61290,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "b5898a9a24e79137b0d3282c543b88c43ec43989ae4f3e67e8ceadd7232f89bb"
   },
   "case": {
    "argv": [
@@ -62696,6 +61311,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62739,7 +61355,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "79b61ac2eee9810ae596cba79aca3ef2125a2dbb94905dc5a2c1e211469f71f1"
   },
   "case": {
    "argv": [
@@ -62760,6 +61376,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62835,39 +61452,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -n -a w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "83231bdbd85e2838",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "5c486b1ff1083c793412584c0144ca4897281e0fd066df0098b7514a04b1d561"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6dd4eb5f9d86875e45f13471a2cf0f545963ec33bd6429ac4a3ecf260014d89c"
   },
   "case": {
    "argv": [
@@ -62888,6 +61473,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62899,7 +61485,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3303b35bd2c96e11b1f266a461d9957b3e696712e6fc815510ec25f61d2f2397"
   },
   "case": {
    "argv": [
@@ -62920,6 +61506,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -62995,7 +61582,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "c55f2a4919cd3032369aff44d661b2059de49a1b1c97cfe64695eae48fee4c89"
   },
   "case": {
    "argv": [
@@ -63016,6 +61603,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63123,7 +61711,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "1d8e40c9842867a253cb071600fbe4e3df28bbf0629c7ec954cd39b4bdf87e8d"
   },
   "case": {
    "argv": [
@@ -63143,6 +61731,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -63181,7 +61770,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "444eb3313e98038dec6404d6af914afe8b23f2411b52788bc18c327ad1afb319"
   },
   "case": {
    "argv": [
@@ -63202,6 +61791,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63213,7 +61803,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "da9e0bcdd239b98f0a33053392475b7fcafea21ca299611baf4f757afe853ed5"
   },
   "case": {
    "argv": [
@@ -63234,6 +61824,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63341,7 +61932,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "b95490db660846183abf90dfeca90a658673c99af8cef737c6f5c1117b5500a9"
   },
   "case": {
    "argv": [
@@ -63362,6 +61953,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63431,7 +62023,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3cd76b0fd05d1b9c8f02ea2920954807d7b7d28978876cda86f2737c61b44153"
   },
   "case": {
    "argv": [
@@ -63452,6 +62044,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63495,7 +62088,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d0676ed96bea36d1bf5c3f606ff80eff31f1c680b62d16ef1f151ab909e60982"
   },
   "case": {
    "argv": [
@@ -63516,6 +62109,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63559,7 +62153,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "2a55c90cb8c043cbbf6bfbffb2a85c93e9a5556c9471228219d25f3193b898af"
   },
   "case": {
    "argv": [
@@ -63580,6 +62174,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63591,7 +62186,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "13f64c85285ebcb6299a0e7632b0079e20e5f03564c99a4c25c19b49cb4fc2d6"
   },
   "case": {
    "argv": [
@@ -63612,6 +62207,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63623,7 +62219,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "c55f2a4919cd3032369aff44d661b2059de49a1b1c97cfe64695eae48fee4c89"
   },
   "case": {
    "argv": [
@@ -63644,6 +62240,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63655,7 +62252,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "09848589dd1e4270ac90fc64d0f292f6c8e9e90d94ac9a52e23c9fd8a8b479ec"
   },
   "case": {
    "argv": [
@@ -63676,6 +62273,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63687,7 +62285,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "3d0c5dc339ffb7024fddff85856b293e7ea2138be9b9cb720773a1f4b89f824e"
   },
   "case": {
    "argv": [
@@ -63708,6 +62306,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63719,7 +62318,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "0bf4a8cf414ed21ccd0b47c687915ee4a8932620dcaded6030e92e184136eae8"
   },
   "case": {
    "argv": [
@@ -63740,6 +62339,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63751,7 +62351,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "356b1ac80fa3f9fc2388280e147519dcdeed4694c3db37cc6cb49a42f9d78208"
   },
   "case": {
    "argv": [
@@ -63772,6 +62372,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63783,7 +62384,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "ecd79abc8234ba9d18ce7cae0fbdc9fb51b2331f6902c1977c40b0c04d7a0a6d"
   },
   "case": {
    "argv": [
@@ -63804,6 +62405,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -63884,38 +62486,6 @@ PINNED = r"""
   "case": {
    "argv": [
     "-c",
-    "v=global; w=global2\nf() {\nlocal -a -n v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "8f87646fecfa73fc",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "2b9457c1b90421481b48d13dcbc2739487908da012ccf329de96fe76d7bf3178"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
     "v=global; w=global2\nf() {\nlocal -a -x -n -l v=2+3\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
    ],
    "domain": "builtins",
@@ -63975,7 +62545,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "d4ed3c4633e03d46e9157a6a0bd316e9e5a4a2e033d83b5a9ee02bcff33b6609"
   },
   "case": {
    "argv": [
@@ -63996,6 +62566,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64007,7 +62578,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "8362ee1ade0e39373c8386135280d3969b202453706662edb44741df91d3b034"
   },
   "case": {
    "argv": [
@@ -64028,6 +62599,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64199,7 +62771,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "892ea3adf6374c00574d55afb530908a5ec20ac068aac8752ec13d3b5a48ec6b"
   },
   "case": {
    "argv": [
@@ -64220,6 +62792,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64295,7 +62868,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "e5b5b8f7a11fb90fa9bc8e5e43b2ccbf31d79d39387d77ff1e1a63b8d0c68571"
   },
   "case": {
    "argv": [
@@ -64316,6 +62889,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64583,7 +63157,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "06c770222adbbbd6fb0b8852bf08e32ecd252b1475bbd2e8a9ae3dbc1bfc0ad9"
   },
   "case": {
    "argv": [
@@ -64604,6 +63178,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64615,7 +63190,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "4b5dd7c2c4fb6c63576bd6ea9adb686b96aed2a42f198a69e5635806849e49e8"
   },
   "case": {
    "argv": [
@@ -64636,6 +63211,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64679,7 +63255,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "e5bf01ac8053c7d718c7790863ace408e42433e0987bc26b8acfc90e4505f341"
   },
   "case": {
    "argv": [
@@ -64700,6 +63276,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64743,7 +63320,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "ea48e23851732096bf0f8153a75a1e32b8cd6052700501b44647e2c99d241539"
   },
   "case": {
    "argv": [
@@ -64764,6 +63341,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64775,7 +63353,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "492fc58a2c78554766657c910e5f0a5920581b13105b7db46df9796bb2f08f8d"
   },
   "case": {
    "argv": [
@@ -64796,6 +63374,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64807,7 +63386,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3cd76b0fd05d1b9c8f02ea2920954807d7b7d28978876cda86f2737c61b44153"
   },
   "case": {
    "argv": [
@@ -64828,6 +63407,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64929,7 +63509,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "444eb3313e98038dec6404d6af914afe8b23f2411b52788bc18c327ad1afb319"
   },
   "case": {
    "argv": [
@@ -64950,6 +63530,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -64961,7 +63542,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "3e3cda14f62909f9b0659fc08562af986ff79a9b5acb98a7821089d2868ed4cb"
   },
   "case": {
    "argv": [
@@ -64982,6 +63563,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65057,7 +63639,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "248db91f929e7146b410aac860f4074bdf4134764e53562057b53ad6b339c5eb"
   },
   "case": {
    "argv": [
@@ -65078,6 +63660,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65089,7 +63672,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "4882b0ae2f5efbff587d275444b05e9738faa1a9f7a34de0f1f9f611d5cc1b02"
   },
   "case": {
    "argv": [
@@ -65110,6 +63693,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65121,7 +63705,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "04ffb75d4812c656a13bd23941013c17d42e72b3fa76408567da3de66f1e482f"
   },
   "case": {
    "argv": [
@@ -65142,6 +63726,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65153,7 +63738,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "fa4c20c30b169bf33c17ec927226f08f6d44408df47de7081d684eacc5b234e3"
   },
   "case": {
    "argv": [
@@ -65174,6 +63759,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65185,7 +63771,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "93c06b8d1536b0d16c2ca6f0dbc302d495646404783ca3370850feccf00a3e58"
   },
   "case": {
    "argv": [
@@ -65206,6 +63792,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65217,7 +63804,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6dd4eb5f9d86875e45f13471a2cf0f545963ec33bd6429ac4a3ecf260014d89c"
   },
   "case": {
    "argv": [
@@ -65238,6 +63825,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65313,7 +63901,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "7f4e114fc9021a82fb9674aa7e685468b3147ab11618f678068ec7aae9c3e9b6"
   },
   "case": {
    "argv": [
@@ -65334,6 +63922,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65377,7 +63966,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "cae3f95db52305dc75a090f0c6396ccf8c20609cdfc3079fb10fa15d6c6ba77c"
   },
   "case": {
    "argv": [
@@ -65398,6 +63987,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65409,7 +63999,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "ece427423ff61f303c4b189dee953cb5bc3baaaa44484013cc664a11514a327f"
   },
   "case": {
    "argv": [
@@ -65430,6 +64020,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65473,39 +64064,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -u -A -l -n v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "9a6902e8d7351a9a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "4a4c50e016f41f11d382c37b805ad9a44f6b9639b850ed082df54f47dee9b006"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "09cb03f892e79559e46ac1de7f564ad25c4e627932a2741b558281dba68734d7"
   },
   "case": {
    "argv": [
@@ -65526,6 +64085,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65659,7 +64219,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "2a55c90cb8c043cbbf6bfbffb2a85c93e9a5556c9471228219d25f3193b898af"
   },
   "case": {
    "argv": [
@@ -65680,6 +64240,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65755,7 +64316,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "27e71155b9f7211baf9ac9bf375297c52f2aab0659b5de16f493bbe4662853fb"
   },
   "case": {
    "argv": [
@@ -65776,6 +64337,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65851,7 +64413,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "3d0c5dc339ffb7024fddff85856b293e7ea2138be9b9cb720773a1f4b89f824e"
   },
   "case": {
    "argv": [
@@ -65872,6 +64434,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65915,7 +64478,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d7f8a291158bdc712113ae6c084ab66e6f1e27305cde38f93bcfe220aea3ad70"
   },
   "case": {
    "argv": [
@@ -65936,6 +64499,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65947,7 +64511,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "1d03d6ce174171459016c7772a26ba3727a9bed5951dc35f339e0c0a60ffe7c7"
   },
   "case": {
    "argv": [
@@ -65968,6 +64532,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -65979,7 +64544,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "80f5511dd51325fb062c504ab5806e16a0fc4cd91a930c0f3ef701dd3adafd5a"
   },
   "case": {
    "argv": [
@@ -66000,6 +64565,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66075,7 +64641,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "169faf91b86290c5e502a1b6d76c0f7a6d985de94984b4193523ff10d1c50162"
   },
   "case": {
    "argv": [
@@ -66096,6 +64662,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66139,7 +64706,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "0ac73eff44feeb2993b65f2ccc96a48b1ca72308508df7e2bd8db63a632075f4"
   },
   "case": {
    "argv": [
@@ -66160,6 +64727,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66235,7 +64803,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "a4dbb24494aab9b63837dc398d14d60c6ec7be1fcf237997d14b41b2c877a948"
   },
   "case": {
    "argv": [
@@ -66256,6 +64824,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66299,7 +64868,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "236f31ae4e793a46d5a3c42e4a2c4e721dc8d9ae3728c717c3b8498d2a8ba470"
   },
   "case": {
    "argv": [
@@ -66320,6 +64889,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66395,7 +64965,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e7fa5be35eee70fb2528fd2ee59f9f1d819d4478f4dd33c8fecefa042d286ee0"
   },
   "case": {
    "argv": [
@@ -66416,6 +64986,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66459,7 +65030,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "a4dbb24494aab9b63837dc398d14d60c6ec7be1fcf237997d14b41b2c877a948"
   },
   "case": {
    "argv": [
@@ -66480,6 +65051,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66523,7 +65095,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "248db91f929e7146b410aac860f4074bdf4134764e53562057b53ad6b339c5eb"
   },
   "case": {
    "argv": [
@@ -66543,13 +65115,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "0bf4a8cf414ed21ccd0b47c687915ee4a8932620dcaded6030e92e184136eae8"
   },
   "case": {
    "argv": [
@@ -66570,6 +65143,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66639,7 +65213,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "cae3f95db52305dc75a090f0c6396ccf8c20609cdfc3079fb10fa15d6c6ba77c"
   },
   "case": {
    "argv": [
@@ -66659,6 +65233,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -66697,7 +65272,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "80f5511dd51325fb062c504ab5806e16a0fc4cd91a930c0f3ef701dd3adafd5a"
   },
   "case": {
    "argv": [
@@ -66718,6 +65293,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66729,7 +65305,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "b2dd0d544ef892355789d3a2dc60814b670ed687700e8d2ba1dfa67f5588c6f1"
   },
   "case": {
    "argv": [
@@ -66750,6 +65326,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66857,7 +65434,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d4272d73fcd271b8a4c3cbf297f74fff8c58527e1b6a88bbe5825b5383a2f7f6"
   },
   "case": {
    "argv": [
@@ -66878,6 +65455,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -66953,7 +65531,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "92908f58f40de2f767ed8825139162788baa95fdd524fcc7998268221bb9fb8a"
   },
   "case": {
    "argv": [
@@ -66974,6 +65552,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67017,7 +65596,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "18aa32d4fd803da3f6165c7a70e4195df6741253dad1b2d40161641b930aac10"
   },
   "case": {
    "argv": [
@@ -67038,6 +65617,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67049,7 +65629,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "065deae73b1b60d0837d013f69979062bb8dab7122cc14ab281f607fa305ae0c"
   },
   "case": {
    "argv": [
@@ -67070,6 +65650,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67145,7 +65726,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "e5bf01ac8053c7d718c7790863ace408e42433e0987bc26b8acfc90e4505f341"
   },
   "case": {
    "argv": [
@@ -67166,6 +65747,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67177,7 +65759,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d7f8a291158bdc712113ae6c084ab66e6f1e27305cde38f93bcfe220aea3ad70"
   },
   "case": {
    "argv": [
@@ -67198,6 +65780,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67273,7 +65856,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "af4ef81197c52c1a682002bf810c6a972a567e62cc05a84b9e73787d1356a86e"
   },
   "case": {
    "argv": [
@@ -67294,6 +65877,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67305,7 +65889,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "139d7dc1a9fef6c594ffb4e3a091e15b106645aa70dcbd5b4df4045659e5e66c"
   },
   "case": {
    "argv": [
@@ -67326,6 +65910,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67369,7 +65954,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "455514444f41aaf9a408b4f0e6ad5c063f33f3ce133696d8177d11a6d1ffb791"
   },
   "case": {
    "argv": [
@@ -67390,6 +65975,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67433,7 +66019,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "547e27c426068384ad027824d88c8dac4e1d797a5ffc8207ea21d6b3c1cd9c6d"
   },
   "case": {
    "argv": [
@@ -67453,6 +66039,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -67523,7 +66110,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "8d72f9ddb67aeb5a31365432d8035eb3d503d3b1596fa38d936520f58448854a"
   },
   "case": {
    "argv": [
@@ -67544,6 +66131,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67587,7 +66175,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "eaedfc6016c3870bdb23d912d07e996c05c035494473b69639e4e3030b18839a"
   },
   "case": {
    "argv": [
@@ -67608,6 +66196,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67715,7 +66304,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "3e3cda14f62909f9b0659fc08562af986ff79a9b5acb98a7821089d2868ed4cb"
   },
   "case": {
    "argv": [
@@ -67735,13 +66324,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "578ef47ca79c6c78281024fe575645a9674568ec122f9da9d3b7f8282143cb2d"
   },
   "case": {
    "argv": [
@@ -67762,6 +66352,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67773,7 +66364,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "8362ee1ade0e39373c8386135280d3969b202453706662edb44741df91d3b034"
   },
   "case": {
    "argv": [
@@ -67794,6 +66385,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67837,7 +66429,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "d4ed3c4633e03d46e9157a6a0bd316e9e5a4a2e033d83b5a9ee02bcff33b6609"
   },
   "case": {
    "argv": [
@@ -67858,6 +66450,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67869,7 +66462,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "892ea3adf6374c00574d55afb530908a5ec20ac068aac8752ec13d3b5a48ec6b"
   },
   "case": {
    "argv": [
@@ -67890,6 +66483,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67933,39 +66527,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -a -n -l -u w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ad1bdc615b418030",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "5c486b1ff1083c793412584c0144ca4897281e0fd066df0098b7514a04b1d561"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "c55f2a4919cd3032369aff44d661b2059de49a1b1c97cfe64695eae48fee4c89"
   },
   "case": {
    "argv": [
@@ -67986,6 +66548,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -67997,7 +66560,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "345ff5959c52e2b44fb61da19749d846e55e25fe80449cb1cb7088ee1b92dee1"
   },
   "case": {
    "argv": [
@@ -68018,6 +66581,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68029,7 +66593,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "13f64c85285ebcb6299a0e7632b0079e20e5f03564c99a4c25c19b49cb4fc2d6"
   },
   "case": {
    "argv": [
@@ -68050,6 +66614,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68061,7 +66626,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f15ed4e58206f1c69f7e9a8b1dbeedd49eade2668b4abf4f216858f752d06e74"
   },
   "case": {
    "argv": [
@@ -68082,6 +66647,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68093,7 +66659,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "51dee93cac05432d6b83bd154d533ecb30834362c199cfd4905909d9fd4e48b8"
   },
   "case": {
    "argv": [
@@ -68114,6 +66680,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68253,7 +66820,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "0d700478981a592bca40cc6a141b0151136026fb5a80672a7cf9b54a321d061b"
   },
   "case": {
    "argv": [
@@ -68274,6 +66841,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68381,7 +66949,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "cb3183f15203bac4bffc2d2b03fd38ace71e2b7c826479dd5152a4d19cb4b058"
   },
   "case": {
    "argv": [
@@ -68401,13 +66969,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "09cb03f892e79559e46ac1de7f564ad25c4e627932a2741b558281dba68734d7"
   },
   "case": {
    "argv": [
@@ -68428,6 +66997,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68439,7 +67009,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "892ea3adf6374c00574d55afb530908a5ec20ac068aac8752ec13d3b5a48ec6b"
   },
   "case": {
    "argv": [
@@ -68460,6 +67030,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68503,7 +67074,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "38d0bcc510a63aeeafc0cc12c1580487cfdc012e4e35ffd82444b428b0d2694f"
   },
   "case": {
    "argv": [
@@ -68524,6 +67095,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68567,7 +67139,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "ae22f2e08a0df33e4ba56d9f67edf08901cd7f89014497ed8385b93762f97357"
   },
   "case": {
    "argv": [
@@ -68588,6 +67160,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68599,7 +67172,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "892ea3adf6374c00574d55afb530908a5ec20ac068aac8752ec13d3b5a48ec6b"
   },
   "case": {
    "argv": [
@@ -68620,6 +67193,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68631,7 +67205,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "93c06b8d1536b0d16c2ca6f0dbc302d495646404783ca3370850feccf00a3e58"
   },
   "case": {
    "argv": [
@@ -68652,6 +67226,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68759,7 +67334,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "0c6a4d17f09006f32fa8df9e77af929efcc5ada2e5c368e5b9b1f7c6dd8861f3"
   },
   "case": {
    "argv": [
@@ -68780,6 +67355,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68791,7 +67367,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "efb551aa9dfd19a03ee0990316f99aeb96892d24c1d71fc1213006a38f3574f5"
   },
   "case": {
    "argv": [
@@ -68812,6 +67388,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68855,39 +67432,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -A -n w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "b81793e60f9effae",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "12d7ffae2740fac24df13e781382719d5ba22928995a2a2360d73f7e2dd1e75d"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "c656b83ae68c1d801e7a9f6e3f821584e61b0bacac8d88bdc29357335c53f19b"
   },
   "case": {
    "argv": [
@@ -68908,6 +67453,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -68977,7 +67523,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3303b35bd2c96e11b1f266a461d9957b3e696712e6fc815510ec25f61d2f2397"
   },
   "case": {
    "argv": [
@@ -68998,6 +67544,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69009,7 +67556,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "bcd67f1298459f3c53c75d3792b12c8efb848c83f1e8fff7caa163296432acb4"
   },
   "case": {
    "argv": [
@@ -69030,6 +67577,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69169,7 +67717,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "2a55c90cb8c043cbbf6bfbffb2a85c93e9a5556c9471228219d25f3193b898af"
   },
   "case": {
    "argv": [
@@ -69190,6 +67738,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69201,7 +67750,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "757a4a3c411749e4931c763fc6056d24f4b0d3c937e7f1821315d710c3e07ae4"
   },
   "case": {
    "argv": [
@@ -69221,13 +67770,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "b2dd0d544ef892355789d3a2dc60814b670ed687700e8d2ba1dfa67f5588c6f1"
   },
   "case": {
    "argv": [
@@ -69248,6 +67798,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69259,7 +67810,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "faaaf583e91667be4a99b1e7f61a6572332f7732170c048764e5db509154cb0c"
   },
   "case": {
    "argv": [
@@ -69280,6 +67831,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69316,38 +67868,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
    "stdout": "7f6bde83ee3cefd45ff72c77b827895451490321f978fdee7c7ce3d83504d833"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -a -n w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "bf3db9e5daf5662f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "5c486b1ff1083c793412584c0144ca4897281e0fd066df0098b7514a04b1d561"
   },
   "utility": "local"
  },
@@ -69419,7 +67939,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "cb3183f15203bac4bffc2d2b03fd38ace71e2b7c826479dd5152a4d19cb4b058"
   },
   "case": {
    "argv": [
@@ -69440,6 +67960,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69451,7 +67972,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "92908f58f40de2f767ed8825139162788baa95fdd524fcc7998268221bb9fb8a"
   },
   "case": {
    "argv": [
@@ -69472,6 +67993,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69483,7 +68005,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "34b27771c69754eed37c93717b85282f9c448fc4ad255f0a4944377ec5698381"
   },
   "case": {
    "argv": [
@@ -69504,6 +68026,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69611,7 +68134,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "09848589dd1e4270ac90fc64d0f292f6c8e9e90d94ac9a52e23c9fd8a8b479ec"
   },
   "case": {
    "argv": [
@@ -69632,6 +68155,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69675,7 +68199,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "b95490db660846183abf90dfeca90a658673c99af8cef737c6f5c1117b5500a9"
   },
   "case": {
    "argv": [
@@ -69696,6 +68220,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69739,7 +68264,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "6266d9b87f07273521b8d7d3ca4c67c1079156f7674b2ba28166b05aa8e6e9da"
   },
   "case": {
    "argv": [
@@ -69760,6 +68285,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69931,7 +68457,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "9b57db5f307c39669f70fe635785f2b9abd517bce6a867b6317fb0c40002235a"
   },
   "case": {
    "argv": [
@@ -69952,6 +68478,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -69963,7 +68490,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "32485052a9b925cf2e6a1e17fb5339c61b8b1ddd6585e0a94e13b04343d508ae"
   },
   "case": {
    "argv": [
@@ -69984,6 +68511,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70027,7 +68555,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "6371296ca3c151f3552605a80a0b96cee0e4c383789516da2aeac6e3f8ef326c"
   },
   "case": {
    "argv": [
@@ -70048,6 +68576,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70091,7 +68620,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "06c770222adbbbd6fb0b8852bf08e32ecd252b1475bbd2e8a9ae3dbc1bfc0ad9"
   },
   "case": {
    "argv": [
@@ -70112,6 +68641,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70123,7 +68653,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "1d8e40c9842867a253cb071600fbe4e3df28bbf0629c7ec954cd39b4bdf87e8d"
   },
   "case": {
    "argv": [
@@ -70143,6 +68673,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -70271,39 +68802,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -u -A -l -n v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "c9a11a2e6fe9ffe1",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "4a4c50e016f41f11d382c37b805ad9a44f6b9639b850ed082df54f47dee9b006"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d4abb8ede098372314988856ebc523262e7c56e5ddc04ef816fc067370a47cc9"
   },
   "case": {
    "argv": [
@@ -70324,6 +68823,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70335,7 +68835,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "e82505dd8d14e68b0d2dfa73a9116fc88dde68290df6cefd8182cabc3d02cc17"
   },
   "case": {
    "argv": [
@@ -70356,6 +68856,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70431,7 +68932,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "c656b83ae68c1d801e7a9f6e3f821584e61b0bacac8d88bdc29357335c53f19b"
   },
   "case": {
    "argv": [
@@ -70452,6 +68953,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70463,7 +68965,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "3d0c5dc339ffb7024fddff85856b293e7ea2138be9b9cb720773a1f4b89f824e"
   },
   "case": {
    "argv": [
@@ -70484,6 +68986,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70527,7 +69030,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "49b76532bbffcf9dff81decd9f3b6f79b3cd257a738fdfc4514d2404ccf7d44d"
   },
   "case": {
    "argv": [
@@ -70548,6 +69051,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70559,7 +69063,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "965c4e75b49210c07fcbcee86498c2c3587d844b1cac8f741bb72d728e345c1d"
   },
   "case": {
    "argv": [
@@ -70580,6 +69084,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70623,7 +69128,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "61744a22e23b4592a56995d0f8734114a3bb970e085617e4bc2ea2144bd6da02"
   },
   "case": {
    "argv": [
@@ -70644,6 +69149,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70847,7 +69353,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "356b1ac80fa3f9fc2388280e147519dcdeed4694c3db37cc6cb49a42f9d78208"
   },
   "case": {
    "argv": [
@@ -70868,6 +69374,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70879,7 +69386,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "7e109269c43dea0a8a48f3630fdd318e75f71a1e717b1960cd27520b2976aea7"
   },
   "case": {
    "argv": [
@@ -70900,6 +69407,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -70911,7 +69419,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "9b57db5f307c39669f70fe635785f2b9abd517bce6a867b6317fb0c40002235a"
   },
   "case": {
    "argv": [
@@ -70932,6 +69440,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71039,7 +69548,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "79b61ac2eee9810ae596cba79aca3ef2125a2dbb94905dc5a2c1e211469f71f1"
   },
   "case": {
    "argv": [
@@ -71060,6 +69569,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71103,7 +69613,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "fb6138cf089e5c80ca7c429b623485bf3f60a3f1db077b554ff3042e95e7ceda"
   },
   "case": {
    "argv": [
@@ -71124,6 +69634,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71199,7 +69710,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "2116d8c37dc051bf828d358f94c32458e6081b3c8cd6d0b6fc0cd12fb07aaded"
   },
   "case": {
    "argv": [
@@ -71220,6 +69731,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71385,7 +69897,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "b7a615442ece35593fb851615f80e27e928755f501163b68584f599e8816da6e"
   },
   "case": {
    "argv": [
@@ -71406,6 +69918,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71417,7 +69930,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "578ef47ca79c6c78281024fe575645a9674568ec122f9da9d3b7f8282143cb2d"
   },
   "case": {
    "argv": [
@@ -71438,6 +69951,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71449,7 +69963,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "06c770222adbbbd6fb0b8852bf08e32ecd252b1475bbd2e8a9ae3dbc1bfc0ad9"
   },
   "case": {
    "argv": [
@@ -71470,6 +69984,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71481,7 +69996,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "c55f2a4919cd3032369aff44d661b2059de49a1b1c97cfe64695eae48fee4c89"
   },
   "case": {
    "argv": [
@@ -71502,6 +70017,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71609,7 +70125,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "34b27771c69754eed37c93717b85282f9c448fc4ad255f0a4944377ec5698381"
   },
   "case": {
    "argv": [
@@ -71630,6 +70146,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71641,39 +70158,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -a -n w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "d4ed059e1506366e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "5c486b1ff1083c793412584c0144ca4897281e0fd066df0098b7514a04b1d561"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "1a57df5672febcb80874d3abc11683499477ef054e0285844e6da9a74dd483a6"
   },
   "case": {
    "argv": [
@@ -71694,6 +70179,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71705,7 +70191,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "0287b1f5b764fb78c228ac581c28c671c8ba7ffe3cf3dc8677989aa4418ec851"
   },
   "case": {
    "argv": [
@@ -71726,6 +70212,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71801,7 +70288,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "d4bcfc786e48f79340507d5a8ee5f50c912a57bfb2c6faee9f023ec6b69c9e90"
   },
   "case": {
    "argv": [
@@ -71822,6 +70309,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71833,7 +70321,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "2116d8c37dc051bf828d358f94c32458e6081b3c8cd6d0b6fc0cd12fb07aaded"
   },
   "case": {
    "argv": [
@@ -71854,6 +70342,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71865,7 +70354,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "ae22f2e08a0df33e4ba56d9f67edf08901cd7f89014497ed8385b93762f97357"
   },
   "case": {
    "argv": [
@@ -71886,6 +70375,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -71961,7 +70451,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "14fe25ccc33aeed6ffd073958ffe31039ceae59cc3a0e2b71b4df7a0920d13d3"
   },
   "case": {
    "argv": [
@@ -71982,6 +70472,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72121,7 +70612,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "0bf4a8cf414ed21ccd0b47c687915ee4a8932620dcaded6030e92e184136eae8"
   },
   "case": {
    "argv": [
@@ -72142,6 +70633,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72185,7 +70677,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "e5b5b8f7a11fb90fa9bc8e5e43b2ccbf31d79d39387d77ff1e1a63b8d0c68571"
   },
   "case": {
    "argv": [
@@ -72206,6 +70698,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72217,7 +70710,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "b95490db660846183abf90dfeca90a658673c99af8cef737c6f5c1117b5500a9"
   },
   "case": {
    "argv": [
@@ -72238,6 +70731,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72281,7 +70775,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "547e27c426068384ad027824d88c8dac4e1d797a5ffc8207ea21d6b3c1cd9c6d"
   },
   "case": {
    "argv": [
@@ -72302,6 +70796,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72345,7 +70840,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "82aa1029c391f1e05426c897a14256c8fe34c5c4b023086860eb70d83c63534c"
   },
   "case": {
    "argv": [
@@ -72366,6 +70861,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72409,7 +70905,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "30b2d7af4fa6046dd9d7a9475a7e04e0e6ba08c73fdc4f1e8e281d7acab540dd"
   },
   "case": {
    "argv": [
@@ -72430,6 +70926,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72441,7 +70938,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "eb4c9941ee3e3c465dc7e3a3546fa26a35241d4c6d7b375438e45d6fdf063c01"
   },
   "case": {
    "argv": [
@@ -72462,6 +70959,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72473,7 +70971,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "faaaf583e91667be4a99b1e7f61a6572332f7732170c048764e5db509154cb0c"
   },
   "case": {
    "argv": [
@@ -72494,6 +70992,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72505,7 +71004,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "965c4e75b49210c07fcbcee86498c2c3587d844b1cac8f741bb72d728e345c1d"
   },
   "case": {
    "argv": [
@@ -72526,6 +71025,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72537,7 +71037,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "fb6138cf089e5c80ca7c429b623485bf3f60a3f1db077b554ff3042e95e7ceda"
   },
   "case": {
    "argv": [
@@ -72558,6 +71058,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72665,7 +71166,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "8d72f9ddb67aeb5a31365432d8035eb3d503d3b1596fa38d936520f58448854a"
   },
   "case": {
    "argv": [
@@ -72685,13 +71186,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "9aabba93e1719e8302045e0cfcb135d58d21097e77f18ae4bcbd79cf1a8d5d40"
   },
   "case": {
    "argv": [
@@ -72712,6 +71214,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72819,7 +71322,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "80f5511dd51325fb062c504ab5806e16a0fc4cd91a930c0f3ef701dd3adafd5a"
   },
   "case": {
    "argv": [
@@ -72840,6 +71343,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72877,7 +71381,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "30b2d7af4fa6046dd9d7a9475a7e04e0e6ba08c73fdc4f1e8e281d7acab540dd"
   },
   "case": {
    "argv": [
@@ -72898,6 +71402,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -72909,7 +71414,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d0676ed96bea36d1bf5c3f606ff80eff31f1c680b62d16ef1f151ab909e60982"
   },
   "case": {
    "argv": [
@@ -72930,6 +71435,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73005,7 +71511,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "9aabba93e1719e8302045e0cfcb135d58d21097e77f18ae4bcbd79cf1a8d5d40"
   },
   "case": {
    "argv": [
@@ -73026,6 +71532,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73037,7 +71544,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "0a248b447cf5d3310cd15cf699e431d87338f039a60635ca0957b99188412b7f"
   },
   "case": {
    "argv": [
@@ -73058,6 +71565,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73165,7 +71673,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "f15ed4e58206f1c69f7e9a8b1dbeedd49eade2668b4abf4f216858f752d06e74"
   },
   "case": {
    "argv": [
@@ -73186,6 +71694,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73197,7 +71706,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "6d976c6f4a4361adcedb6a79c122cc4eea55e5600107234385332a2bdc834d03"
   },
   "case": {
    "argv": [
@@ -73218,6 +71727,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73293,7 +71803,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "c725ed04a9d7b1ba0f17f9e68449fbb0fc99c2d509d74a24fe538aaf94401221"
   },
   "case": {
    "argv": [
@@ -73314,6 +71824,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73421,7 +71932,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "aad56418b6efcc072c3fa698eff0104f9918f38b732f2b6ea2566654b595f8e4"
   },
   "case": {
    "argv": [
@@ -73441,6 +71952,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -73479,7 +71991,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "51dee93cac05432d6b83bd154d533ecb30834362c199cfd4905909d9fd4e48b8"
   },
   "case": {
    "argv": [
@@ -73500,6 +72012,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73511,7 +72024,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "b09aa2cae6ec3989c3c31fc3366938cf43c98061aa0241babe42fd8b23a9c159"
   },
   "case": {
    "argv": [
@@ -73532,6 +72045,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73575,7 +72089,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3a682dd1c9db8a33e4b2c76cdc06cf589d14c183b11e59dec40fae311adc6f76"
   },
   "case": {
    "argv": [
@@ -73596,6 +72110,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73607,7 +72122,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "8eb0c99aa306c205a6b02baf196cf68f6e2821d1d6a00631317830f984d22ee9"
   },
   "case": {
    "argv": [
@@ -73628,6 +72143,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73703,7 +72219,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "c34c303603ca3c679b78d4789d32e6b9952851840977bbf7637d763859ebdaf1"
   },
   "case": {
    "argv": [
@@ -73724,6 +72240,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73735,7 +72252,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "ca9e1f0cb2a30d3a5fb51c5da6f68a5cf9af294e3846307e51a9129b41b54036"
   },
   "case": {
    "argv": [
@@ -73755,6 +72272,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -73825,7 +72343,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "331b96e3494776a6039990c89439d4efdf8629adc7d40ce1badf065c5780ee09"
   },
   "case": {
    "argv": [
@@ -73846,6 +72364,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73857,7 +72376,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "ea48e23851732096bf0f8153a75a1e32b8cd6052700501b44647e2c99d241539"
   },
   "case": {
    "argv": [
@@ -73878,6 +72397,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73921,7 +72441,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "b5898a9a24e79137b0d3282c543b88c43ec43989ae4f3e67e8ceadd7232f89bb"
   },
   "case": {
    "argv": [
@@ -73942,6 +72462,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73953,7 +72474,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "5d2151a0a8f780d057cd7ae676840024d0fa33846d42ef4fa8c08e2f49f675f2"
   },
   "case": {
    "argv": [
@@ -73974,6 +72495,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -73985,7 +72507,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "8eb0c99aa306c205a6b02baf196cf68f6e2821d1d6a00631317830f984d22ee9"
   },
   "case": {
    "argv": [
@@ -74006,6 +72528,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74017,7 +72540,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "cce5a3943829dca997d1f682df54217e1c0a7e9b5431ca0577fd5a38710ad05c"
   },
   "case": {
    "argv": [
@@ -74038,6 +72561,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74145,7 +72669,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "e7fa5be35eee70fb2528fd2ee59f9f1d819d4478f4dd33c8fecefa042d286ee0"
   },
   "case": {
    "argv": [
@@ -74166,6 +72690,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74177,39 +72702,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "v=global; w=global2\nf() {\nlocal -a -n -l -u w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null\n}\nf\nprintf \"after:%s\\n\" \"$v\"\n"
-   ],
-   "domain": "builtins",
-   "family": "local",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "powerset",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ea353093a91a38d9",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "5c486b1ff1083c793412584c0144ca4897281e0fd066df0098b7514a04b1d561"
-  },
-  "utility": "local"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "79b61ac2eee9810ae596cba79aca3ef2125a2dbb94905dc5a2c1e211469f71f1"
   },
   "case": {
    "argv": [
@@ -74230,6 +72723,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74433,7 +72927,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "67164c5782dcffe1703b27bf82fb6beee55e92b1170c1b440dd4290561b4755e"
   },
   "case": {
    "argv": [
@@ -74454,6 +72948,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74497,7 +72992,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "5d2151a0a8f780d057cd7ae676840024d0fa33846d42ef4fa8c08e2f49f675f2"
   },
   "case": {
    "argv": [
@@ -74518,6 +73013,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74721,7 +73217,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "4882b0ae2f5efbff587d275444b05e9738faa1a9f7a34de0f1f9f611d5cc1b02"
   },
   "case": {
    "argv": [
@@ -74742,6 +73238,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74779,7 +73276,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "8d72f9ddb67aeb5a31365432d8035eb3d503d3b1596fa38d936520f58448854a"
   },
   "case": {
    "argv": [
@@ -74800,6 +73297,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74811,7 +73309,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "d27b5c92c5a6e5d71085ad2776bd45cfb5c37fc76044c2b6a7cc34c3aa6614e5"
   },
   "case": {
    "argv": [
@@ -74832,6 +73330,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -74907,7 +73406,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "13f64c85285ebcb6299a0e7632b0079e20e5f03564c99a4c25c19b49cb4fc2d6"
   },
   "case": {
    "argv": [
@@ -74928,6 +73427,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75035,7 +73535,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "6371296ca3c151f3552605a80a0b96cee0e4c383789516da2aeac6e3f8ef326c"
   },
   "case": {
    "argv": [
@@ -75056,6 +73556,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75067,7 +73568,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "ecd79abc8234ba9d18ce7cae0fbdc9fb51b2331f6902c1977c40b0c04d7a0a6d"
   },
   "case": {
    "argv": [
@@ -75088,6 +73589,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75099,7 +73601,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "2a55c90cb8c043cbbf6bfbffb2a85c93e9a5556c9471228219d25f3193b898af"
   },
   "case": {
    "argv": [
@@ -75120,6 +73622,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75253,7 +73756,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "30b2d7af4fa6046dd9d7a9475a7e04e0e6ba08c73fdc4f1e8e281d7acab540dd"
   },
   "case": {
    "argv": [
@@ -75274,6 +73777,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75349,7 +73853,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "67da619d80c04655a883ee56acca6d9e3ec5f56401c7f40041e81b239727f185"
   },
   "case": {
    "argv": [
@@ -75370,6 +73874,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75381,7 +73886,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "bcd67f1298459f3c53c75d3792b12c8efb848c83f1e8fff7caa163296432acb4"
   },
   "case": {
    "argv": [
@@ -75402,6 +73907,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75503,7 +74009,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "0c6a4d17f09006f32fa8df9e77af929efcc5ada2e5c368e5b9b1f7c6dd8861f3"
   },
   "case": {
    "argv": [
@@ -75524,6 +74030,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75535,7 +74042,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "7e109269c43dea0a8a48f3630fdd318e75f71a1e717b1960cd27520b2976aea7"
   },
   "case": {
    "argv": [
@@ -75556,6 +74063,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75599,7 +74107,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "26d49764098f55af8fe5883b85d3fdc461f8c87ddcae81a335970069664c0cc5"
   },
   "case": {
    "argv": [
@@ -75620,6 +74128,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75663,7 +74172,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "79b61ac2eee9810ae596cba79aca3ef2125a2dbb94905dc5a2c1e211469f71f1"
   },
   "case": {
    "argv": [
@@ -75684,6 +74193,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75759,7 +74269,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "09848589dd1e4270ac90fc64d0f292f6c8e9e90d94ac9a52e23c9fd8a8b479ec"
   },
   "case": {
    "argv": [
@@ -75779,13 +74289,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "5d2151a0a8f780d057cd7ae676840024d0fa33846d42ef4fa8c08e2f49f675f2"
   },
   "case": {
    "argv": [
@@ -75806,6 +74317,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75881,7 +74393,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "cfdc2535c8d2b3cd1c9113448c1d82def0710a0bbe4d2b7cb1088d952195a416"
   },
   "case": {
    "argv": [
@@ -75902,6 +74414,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -75913,7 +74426,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d8a901259958a8a45353edd2cba93249d54438514a7f7ceaaaeff30cf865ed17"
   },
   "case": {
    "argv": [
@@ -75933,6 +74446,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
@@ -76003,7 +74517,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "d4abb8ede098372314988856ebc523262e7c56e5ddc04ef816fc067370a47cc9"
   },
   "case": {
    "argv": [
@@ -76024,6 +74538,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -76131,7 +74646,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "cfdc2535c8d2b3cd1c9113448c1d82def0710a0bbe4d2b7cb1088d952195a416"
   },
   "case": {
    "argv": [
@@ -76152,6 +74667,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -76163,7 +74679,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "547e27c426068384ad027824d88c8dac4e1d797a5ffc8207ea21d6b3c1cd9c6d"
   },
   "case": {
    "argv": [
@@ -76183,13 +74699,14 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "local"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "c359c3fb1b050b31fb875854fe530b018cdce76e56e9056bae3e91674404d9e2"
   },
   "case": {
    "argv": [
@@ -76210,6 +74727,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -76221,7 +74739,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "fb5c4d93e3445c32908d752a54df06afd0e99f4f1a858eb6f543554c00f14c27"
+   "stdout": "236f31ae4e793a46d5a3c42e4a2c4e721dc8d9ae3728c717c3b8498d2a8ba470"
   },
   "case": {
    "argv": [
@@ -76242,6 +74760,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -76253,7 +74772,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "49b76532bbffcf9dff81decd9f3b6f79b3cd257a738fdfc4514d2404ccf7d44d"
   },
   "case": {
    "argv": [
@@ -76274,6 +74793,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -76317,7 +74837,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "3cd76b0fd05d1b9c8f02ea2920954807d7b7d28978876cda86f2737c61b44153"
   },
   "case": {
    "argv": [
@@ -76338,6 +74858,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -76381,7 +74902,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "ade63bdc1081fd5c92470ff1caa2652b30db5bdfc32dbb74ab8b6e2a4325b65e"
+   "stdout": "cb3183f15203bac4bffc2d2b03fd38ace71e2b7c826479dd5152a4d19cb4b058"
   },
   "case": {
    "argv": [
@@ -76402,6 +74923,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -76509,7 +75031,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "8a55b3fbd5a32bcd52064056673046b420f5079f706c9a2c6c716c95e7773d9b"
   },
   "case": {
    "argv": [
@@ -76530,6 +75052,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -76541,7 +75064,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "20a6932237102ec42ad1139d1efb9b92fe8d1923699f4820ab724455ff47109e"
+   "stdout": "5d2151a0a8f780d057cd7ae676840024d0fa33846d42ef4fa8c08e2f49f675f2"
   },
   "case": {
    "argv": [
@@ -76562,6 +75085,7 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason": "a nameref refused takes the whole declaration with it: bash validates the -n target before it weighs the array attributes, leaves the outer name untouched when the target is not an identifier, and keeps -a or -A on the local it still creates while dropping -n. These do the checks in the other order and create a local with no attributes. The three rules are observable in every -n case the walk makes and none of them is implemented",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
@@ -76584,314 +75108,6 @@ PINNED = r"""
   "option": "-C",
   "reason_id": "r74",
   "utility": "mapfile"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff '-ø' -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "23ef873a30068d81",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "poweroff"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "4bac95887e36476b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r76",
-  "utility": "poweroff"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff '-ø' -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "50c1ce0962cbe4b5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "poweroff"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff - -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "bf65289edeefcbbe",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "poweroff"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff -- -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "c65bc0db6ed77143",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "poweroff"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff - -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "cc3aba22006c798b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "poweroff"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff -- -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "db390212e122d401",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "poweroff"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff --bogus-option -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "e47d625156014b24",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "poweroff"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ed41b191b84881d6",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r76",
-  "utility": "poweroff"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "poweroff --bogus-option -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "poweroff",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ffabe8f970724265",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "poweroff"
  },
  {
   "candidate": {
@@ -77706,314 +75922,6 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r55",
   "utility": "readonly"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot -- -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "15ff0ab818be29d4",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "reboot"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot '-ø' -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "1f03c65cca8fb3c3",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "reboot"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot -- -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "5d96c43787ba4948",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "reboot"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot '-ø' -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "633d38cef0c1422e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "reboot"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "7a67a41f5a7254b2",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r76",
-  "utility": "reboot"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "8836c976c21b6925",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r76",
-  "utility": "reboot"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot --bogus-option -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "a9b0adb11401309a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "reboot"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot - -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "b2f69087c5b705b8",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "reboot"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot - -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "d21ce28d86e39cec",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "reboot"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "c14196f132c1e9be0508ae80ab52fcb3e1d3fc05880415f3dc980971df207c9e"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "reboot --bogus-option -Z 2>/dev/null >/dev/null\nprintf \"[%s]\\n\" \"$?\"\n"
-   ],
-   "domain": "builtins",
-   "family": "reboot",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "edd6aed53779b436",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "acc07b62f23f458923737c4cd4a66bd05d1e71eb4f384003baaf2dcc760d6349"
-  },
-  "utility": "reboot"
  },
  {
   "candidate": {
@@ -79549,38 +77457,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -A -l -i -g v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "055b1537e0294cb8",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "2717ff80c9fe78e1d1e17ef51f03bf3de73bd26cb46e9d1d9647c8bef5a604f5"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -79941,38 +77817,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -i -x -A -n -g v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "12da3dedc2a5c766",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "a2e052fa0fed38465c4a3023d3b091358399e6f193941f3bab06707746444733"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -80287,38 +78131,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "6c7b1332e15df82c77fe7b198fcb8d2d691fc1e5027fda8ae3c12de695ca39de"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -a -l -r -x -g -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "1ab34f4940a9a3b9",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "fbf72ad229c5f63ff3bcfe000b97a6419fc7058829bc16478200513e63177d74"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -80435,38 +78247,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "ef8016bd3bc56e95f6f167b5c976e3c03a47f4db7549f7fa1ae11e104f6cd956"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -u -a v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "1cd5af39992fb430",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "eab7f9bd56cb7d96942a08bb933d1a2170feb16d41ffd293413bddadae6a30fc"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -80531,38 +78311,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "54e95ab2b66bda8ee09c24c1364d44636392055be68df86e458c79608eef3dfe"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -l -r -a -n -x v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "1d61287e2699ea23",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "ef63b37258ac2c825218fef71dc532636d8c9526b493efc8ed5fcb52a04bc0a7"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -80583,38 +78331,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "54e95ab2b66bda8ee09c24c1364d44636392055be68df86e458c79608eef3dfe"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -l -r -a -n -x v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "1e19df5f9c2e9dd7",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "ef63b37258ac2c825218fef71dc532636d8c9526b493efc8ed5fcb52a04bc0a7"
-  },
   "utility": "typeset"
  },
  {
@@ -80724,38 +78440,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "c60ddb05d515dbeecfde2ee34360b5870cf52131f4f4afd2391f26eb15d413ae"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6c5823fdb90d4d7812d70bac6ab48a5594b1b5f18434f648a86394ce55f770c7"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -g -A -x -l v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "22294b8c5d37caca",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5be0113d3687255ffb9a66cca80c03d2ea3de4fa5927701aaf03c1f127841212"
   },
   "utility": "typeset"
  },
@@ -81033,38 +78717,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "6c7b1332e15df82c77fe7b198fcb8d2d691fc1e5027fda8ae3c12de695ca39de"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -a -l -r -x -g -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "2d94ec402db70a02",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "fbf72ad229c5f63ff3bcfe000b97a6419fc7058829bc16478200513e63177d74"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -81200,38 +78852,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "c60ddb05d515dbeecfde2ee34360b5870cf52131f4f4afd2391f26eb15d413ae"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6c7b1332e15df82c77fe7b198fcb8d2d691fc1e5027fda8ae3c12de695ca39de"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -l -x -r -a -n v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "311c5fed360a1d73",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "aa6b8879001f3246f6fa5a19f0f6d9c4e2ac3557d582a4aafbcef36a47272f1d"
   },
   "utility": "typeset"
  },
@@ -81444,38 +79064,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -l -a -i -x v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "36607021c7138251",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6479b40a672132ce9745dd4d49d68f9cfbcbb386f0755fa909c11d6627f8fc86"
   },
   "utility": "typeset"
  },
@@ -81707,38 +79295,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "1ed21d43b962450dc8b464ce4201d963f5e026cac0e237f609a379b923f3d371"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -g -x -A -n -r v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "3c3334b2114ad218",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "2588ec49329c76319192e235beceb008590324fb30b8441eeca8c2401bfe7164"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -81796,38 +79352,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "e6855653aa9c77780f62585a09e300c69f9832eef6210351cec6deba5a359a17"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -g -r -n -A -i v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "3e1a6582c9b5f459",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "89b9fddd11d5234b261a0ccf6c717fe270b6e5a688bab9f67430903e9d0217bd"
   },
   "utility": "typeset"
  },
@@ -82061,38 +79585,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6c7b1332e15df82c77fe7b198fcb8d2d691fc1e5027fda8ae3c12de695ca39de"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -l -x -r -a -n v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "48ff7829da674d73",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "aa6b8879001f3246f6fa5a19f0f6d9c4e2ac3557d582a4aafbcef36a47272f1d"
-  },
   "utility": "typeset"
  },
  {
@@ -82761,38 +80253,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -a -n -g -i v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "5df655804115b2d0",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "0fad7b46f626bc3f81511e961ac8ad73467a64325761ddf6332447150eca3900"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -83004,38 +80464,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "adfb743cd17714966755a206e136f95a2e351f09fbc01c11fd00ec13d3e40e2d"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "ef8016bd3bc56e95f6f167b5c976e3c03a47f4db7549f7fa1ae11e104f6cd956"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -a -u -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "629962210aafe263",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "eab7f9bd56cb7d96942a08bb933d1a2170feb16d41ffd293413bddadae6a30fc"
   },
   "utility": "typeset"
  },
@@ -83351,38 +80779,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -A -i -u -x -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "69c7d7893db88224",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "065972d515c21fe0c6a926e01d436c2be33ca49a48365bdbc8c413f0b9ae666c"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -83400,32 +80796,6 @@ PINNED = r"""
   },
   "domain": "builtins",
   "id": "6a082a975ad85184",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -A -i -l -x -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "6a86bcf5432dd107",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
@@ -83640,38 +81010,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "6aa11f7954db2799a0a4922e73fde9f41931cd21f54fe3956187cbde3c63653d"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "d7e20241394eb422458d3fcd9774431d2612a43a23be264a2dc3db53e17ada42"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -g -A -x v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "709461360b4e425b",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "bad31b5dc8d2392f2812e5bbb31157212c6e8ce0fce1abedf67cbc5dda93d56a"
   },
   "utility": "typeset"
  },
@@ -84493,38 +81831,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -A -i -u -x -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "83d26f72aa8ee354",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "065972d515c21fe0c6a926e01d436c2be33ca49a48365bdbc8c413f0b9ae666c"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -84917,64 +82223,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "d7e20241394eb422458d3fcd9774431d2612a43a23be264a2dc3db53e17ada42"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -g -A -x v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "9101ee4e04935a63",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "bad31b5dc8d2392f2812e5bbb31157212c6e8ce0fce1abedf67cbc5dda93d56a"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "09fa5aca798aebd805bba8fcafdd0780e9fe0af16493854ececc1690d6a9e0df"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -r -n -l -u -A v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "91667a6e2fd6375e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -85215,38 +82463,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "f81bad568ca22719de31071421fd3567e5e1cd9e2b49e8657b983f2a17cb7e7c"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -l -x -n -a v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "9a088326f8882dff",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "192b8fe5451aac3993e8a6ac479600ac081da2a627a63a0802cfb082fd116990"
-  },
   "utility": "typeset"
  },
  {
@@ -85529,38 +82745,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -a -n -g -i v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "a3585c93c385f4cd",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "0fad7b46f626bc3f81511e961ac8ad73467a64325761ddf6332447150eca3900"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -85689,38 +82873,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "f81bad568ca22719de31071421fd3567e5e1cd9e2b49e8657b983f2a17cb7e7c"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -l -x -n -a v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "a6dfda7c42a09010",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "192b8fe5451aac3993e8a6ac479600ac081da2a627a63a0802cfb082fd116990"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -85837,32 +82989,6 @@ PINNED = r"""
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
   },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -A -i -l -x -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ab24e480bd1d041a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
   "utility": "typeset"
  },
  {
@@ -86080,38 +83206,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "6f0c22619e5f07515e98f172e3285451fd424b594308407f0ef9e77fec6f8a35"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -A -l -i -g v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "afca8e988b2f0737",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "2717ff80c9fe78e1d1e17ef51f03bf3de73bd26cb46e9d1d9647c8bef5a604f5"
   },
   "utility": "typeset"
  },
@@ -86374,32 +83468,6 @@ PINNED = r"""
   },
   "domain": "builtins",
   "id": "bc16970d29b6465a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "96016ccc47bab9c0d1868c3ab39492a14ee1e333a1b3ab8c7afe8629ab1f6b3f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -a -r -l -u -n v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "bc419a1b1e7d3b41",
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
@@ -87231,32 +84299,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "96016ccc47bab9c0d1868c3ab39492a14ee1e333a1b3ab8c7afe8629ab1f6b3f"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -a -r -l -u -n v w\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ccd011edc7a55cf5",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
   },
   "case": {
@@ -87314,38 +84356,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -g -r -n -A -i v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "ce059fe4288b0a72",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "89b9fddd11d5234b261a0ccf6c717fe270b6e5a688bab9f67430903e9d0217bd"
   },
   "utility": "typeset"
  },
@@ -87442,38 +84452,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "ef8016bd3bc56e95f6f167b5c976e3c03a47f4db7549f7fa1ae11e104f6cd956"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -u -a v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "d0a82e49e730a87f",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "eab7f9bd56cb7d96942a08bb933d1a2170feb16d41ffd293413bddadae6a30fc"
   },
   "utility": "typeset"
  },
@@ -88099,38 +85077,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "ef8016bd3bc56e95f6f167b5c976e3c03a47f4db7549f7fa1ae11e104f6cd956"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -a -u -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "triples",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "dcc7f19404eb29a4",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "eab7f9bd56cb7d96942a08bb933d1a2170feb16d41ffd293413bddadae6a30fc"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -88151,38 +85097,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r65",
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -A -i -g -l -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "de9891902604b6ac",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "2717ff80c9fe78e1d1e17ef51f03bf3de73bd26cb46e9d1d9647c8bef5a604f5"
-  },
   "utility": "typeset"
  },
  {
@@ -88267,38 +85181,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -A -i -g -l -n v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "e0ea0755d1caba86",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "2717ff80c9fe78e1d1e17ef51f03bf3de73bd26cb46e9d1d9647c8bef5a604f5"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -88324,70 +85206,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "1ed21d43b962450dc8b464ce4201d963f5e026cac0e237f609a379b923f3d371"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -g -x -A -n -r v\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "e208e06d2a49bb8e",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "2588ec49329c76319192e235beceb008590324fb30b8441eeca8c2401bfe7164"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -i -x -A -n -g v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "e2a6234209e1a75a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "a2e052fa0fed38465c4a3023d3b091358399e6f193941f3bab06707746444733"
   },
   "utility": "typeset"
  },
@@ -88851,32 +85669,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "09fa5aca798aebd805bba8fcafdd0780e9fe0af16493854ececc1690d6a9e0df"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -r -n -l -u -A v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "f32bd4a85de2d623",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r65",
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -88987,38 +85779,6 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
-   "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -l -a -i -x v=hello\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "f5fe9a0959dcf9dd",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6479b40a672132ce9745dd4d49d68f9cfbcbb386f0755fa909c11d6627f8fc86"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
    "stdout": "c0856af151b08bbda12788d77885f8e683be85c661071e30274c1d30e7075ea2"
   },
   "case": {
@@ -89096,38 +85856,6 @@ PINNED = r"""
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 1,
    "stdout": "5d94d154cc32bfa851dfe9b953a12d114970a771b2e4921809ad36ee8402018d"
-  },
-  "utility": "typeset"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "6c5823fdb90d4d7812d70bac6ab48a5594b1b5f18434f648a86394ce55f770c7"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "w=seed\ntypeset -n -g -A -x -l v=ABC\nprintf \"[%s]\\n\" \"$?\"\ndeclare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n"
-   ],
-   "domain": "builtins",
-   "family": "typeset",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "tier": "random",
-   "utility": "shell"
-  },
-  "domain": "builtins",
-  "id": "f901e623674a92c6",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "the trace attribute -t and the shape of a printed function body: every bit of the byte a name attributes live in is spoken for, so -t is refused where bash records it and writes a t in the declare -p line, and a function body is written here on one line where bash re-indents it over four",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 1,
-   "stdout": "5be0113d3687255ffb9a66cca80c03d2ea3de4fa5927701aaf03c1f127841212"
   },
   "utility": "typeset"
  },
@@ -150468,8 +147196,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "965ffba58ba64de5cbcee716e9029060c78218d447261828f6908842e8c06482"
   },
   "case": {
    "argv": [
@@ -150490,6 +147218,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason": "The standing policies these families reach at the edge of a word: an arithmetic error ends a non-interactive shell here, as POSIX asks and dash does, where bash outside POSIX mode abandons only the command and reads on, so a digit outside its base answers with this shell's status rather than with either reference's; and one language is implemented once, so under the dash name the substring form ${x:word} is read where dash calls it a bad substitution.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 127,
@@ -150564,8 +147293,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "965ffba58ba64de5cbcee716e9029060c78218d447261828f6908842e8c06482"
   },
   "case": {
    "argv": [
@@ -150586,6 +147315,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason": "The standing policies these families reach at the edge of a word: an arithmetic error ends a non-interactive shell here, as POSIX asks and dash does, where bash outside POSIX mode abandons only the command and reads on, so a digit outside its base answers with this shell's status rather than with either reference's; and one language is implemented once, so under the dash name the substring form ${x:word} is read where dash calls it a bad substitution.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 127,
@@ -150660,8 +147390,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "965ffba58ba64de5cbcee716e9029060c78218d447261828f6908842e8c06482"
   },
   "case": {
    "argv": [
@@ -150682,6 +147412,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason": "The standing policies these families reach at the edge of a word: an arithmetic error ends a non-interactive shell here, as POSIX asks and dash does, where bash outside POSIX mode abandons only the command and reads on, so a digit outside its base answers with this shell's status rather than with either reference's; and one language is implemented once, so under the dash name the substring form ${x:word} is read where dash calls it a bad substitution.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 127,
@@ -150692,8 +147423,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "965ffba58ba64de5cbcee716e9029060c78218d447261828f6908842e8c06482"
   },
   "case": {
    "argv": [
@@ -150714,6 +147445,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason": "The standing policies these families reach at the edge of a word: an arithmetic error ends a non-interactive shell here, as POSIX asks and dash does, where bash outside POSIX mode abandons only the command and reads on, so a digit outside its base answers with this shell's status rather than with either reference's; and one language is implemented once, so under the dash name the substring form ${x:word} is read where dash calls it a bad substitution.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 127,
@@ -150724,8 +147456,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "965ffba58ba64de5cbcee716e9029060c78218d447261828f6908842e8c06482"
   },
   "case": {
    "argv": [
@@ -150746,6 +147478,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason": "The standing policies these families reach at the edge of a word: an arithmetic error ends a non-interactive shell here, as POSIX asks and dash does, where bash outside POSIX mode abandons only the command and reads on, so a digit outside its base answers with this shell's status rather than with either reference's; and one language is implemented once, so under the dash name the substring form ${x:word} is read where dash calls it a bad substitution.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 127,
@@ -150756,8 +147489,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "965ffba58ba64de5cbcee716e9029060c78218d447261828f6908842e8c06482"
   },
   "case": {
    "argv": [
@@ -150778,6 +147511,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason": "The standing policies these families reach at the edge of a word: an arithmetic error ends a non-interactive shell here, as POSIX asks and dash does, where bash outside POSIX mode abandons only the command and reads on, so a digit outside its base answers with this shell's status rather than with either reference's; and one language is implemented once, so under the dash name the substring form ${x:word} is read where dash calls it a bad substitution.",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "reference": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 127,
@@ -150820,8 +147554,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -150841,13 +147575,14 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -150867,6 +147602,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
@@ -150898,8 +147634,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -150919,6 +147655,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
@@ -150976,8 +147713,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -150997,13 +147734,14 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -151023,13 +147761,14 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -151049,13 +147788,14 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -151075,6 +147815,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
@@ -151106,8 +147847,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -151127,6 +147868,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
@@ -151314,8 +148056,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "c4baed075a6e68b77c5f7b54595903b013fcce6a0a6723dfa017e86d0a8d486d"
   },
   "case": {
    "argv": [
@@ -151335,13 +148077,14 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -151361,13 +148104,14 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "c4baed075a6e68b77c5f7b54595903b013fcce6a0a6723dfa017e86d0a8d486d"
   },
   "case": {
    "argv": [
@@ -151387,6 +148131,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
@@ -151418,8 +148163,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"
+   "status": 0,
+   "stdout": "3a51c1fbb7b7c21d6aabc79adec7ed39bbc0185033b99684f99f778dc8b71029"
   },
   "case": {
    "argv": [
@@ -151439,6 +148184,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "arithmetic-errors"
  },
  {
@@ -152326,58 +149072,6 @@ PINNED = r"""
   "list": "ledger",
   "reason_id": "r235",
   "utility": "coproc"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "01edbaf3fd6493035321d915f7bc7bbb9c4397faddcf85c5bcc30bea74cdeed8"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "printf '%s' $'\\1\\u00e9' | od -An -tu1\n"
-   ],
-   "domain": "shell",
-   "family": "dollar-single-word",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "bash",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "302ca07f8bd6c7d2",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r232",
-  "utility": "dollar-single-word"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "01edbaf3fd6493035321d915f7bc7bbb9c4397faddcf85c5bcc30bea74cdeed8"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "printf '%s' $'\\1\\u00e9' | od -An -tu1\n"
-   ],
-   "domain": "shell",
-   "family": "dollar-single-word",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "85fa8e13d787a145",
-  "kind": "bug",
-  "list": "ledger",
-  "reason_id": "r232",
-  "utility": "dollar-single-word"
  },
  {
   "candidate": {
@@ -154054,7 +150748,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -154133,7 +150827,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -155567,8 +152261,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "640a945d9b9f9eafb3aee0f17537ef23269e5f4bcbe032c22c69080fe375c455"
   },
   "case": {
    "argv": [
@@ -155588,6 +152282,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "parameter-operators"
  },
  {
@@ -155723,8 +152418,8 @@ PINNED = r"""
  {
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 2,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   "status": 0,
+   "stdout": "cf01a4b91baefe5dc543fc83ef96c705a482e480747d304023b525975cfb8262"
   },
   "case": {
    "argv": [
@@ -155744,6 +152439,7 @@ PINNED = r"""
   "kind": "deliberate",
   "list": "ledger",
   "reason_id": "r230",
+  "reason_unverified": "the answer moved after a change elsewhere; this reason was not re-checked against it",
   "utility": "parameter-operators"
  },
  {
@@ -155840,7 +152536,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "75d6cb8e7a6d4be43a284d4b1796e0c0e403fce5ef8a0f16c39cd412766ea69b"
+   "stdout": "5acf00f8301b076fcd692d35135c588877e8b004f59bb9f71798c0880847e3fc"
   },
   "case": {
    "argv": [
@@ -157360,7 +154056,7 @@ PINNED = r"""
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "05c5591ca2c94b80318b4314d9807487325a32a98b4d6bd658555b6ddd8d3c28"
+   "stdout": "5d9dfcb04984278746235c34f07f730005268c66182067febcc6b0c4fd1191d4"
   },
   "case": {
    "argv": [
@@ -159186,7 +155882,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -159303,7 +155999,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -159964,7 +156660,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -160319,7 +157015,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -160960,7 +157656,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -161103,7 +157799,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -161156,7 +157852,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -161183,7 +157879,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -161294,7 +157990,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -161437,7 +158133,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -161574,7 +158270,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -163096,7 +159792,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -163447,7 +160143,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -163474,7 +160170,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -164133,7 +160829,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -164218,7 +160914,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -164381,7 +161077,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
@@ -164712,7 +161408,7 @@ PINNED = r"""
   "candidate": {
    "effects": "b72cfd2cf16b4263b46a8d9efc3d81bbbed186b2ffd1408f0936bb623d3e10e0",
    "status": 0,
-   "stdout": "122003302be43a71f5b40c9436126653f330fe31f52b3b7183df2b7c4c6401e0"
+   "stdout": "187d78d23f0fee15a36f133b774b8c15c0b28e40e0c8642494e51e4c7a6d8f55"
   },
   "case": {
    "argv": [
