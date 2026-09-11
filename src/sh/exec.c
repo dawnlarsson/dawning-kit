@@ -1634,6 +1634,25 @@ fn shell_jobs(writer write, string_address input)
 
                         if (told != JOB_SPEC_FOUND)
                         {
+                                //      bash warns when a word with no
+                                //      per-cent in front of it is read as a
+                                //      job spec at all, and then says it
+                                //      found no such job. The sign goes
+                                //      through as an argument, because the
+                                //      shared formatter has no escape for
+                                //      one of its own.
+                                if (shell_bash_compat && shell_argv[at] &&
+                                    !string_is(shell_argv[at], '%'))
+                                {
+                                        shell_diagnostic_where();
+                                        string_format(log_error,
+                                            "jobs: warning: %s: job "
+                                            "specification requires leading "
+                                            "`%s'\n", shell_argv[at],
+                                            (string_address) "%");
+                                }
+
+                                shell_diagnostic_where();
                                 answer = string_report(log_error, 1,
                                     told == JOB_SPEC_AMBIGUOUS
                                         ? "%s: %s: ambiguous job spec\n" : "%s: %s: no such job\n",
@@ -1884,6 +1903,19 @@ fn shell_disown(writer write, string_address input)
 
                 if (told != JOB_SPEC_FOUND)
                 {
+                        //      As jobs does: the warning first, and the
+                        //      sign as an argument.
+                        if (shell_bash_compat && shell_argv[at] &&
+                            !string_is(shell_argv[at], '%'))
+                        {
+                                shell_diagnostic_where();
+                                string_format(log_error,
+                                    "disown: warning: %s: job specification "
+                                    "requires leading `%s'\n", shell_argv[at],
+                                    (string_address) "%");
+                        }
+
+                        shell_diagnostic_where();
                         answer = string_report(log_error, 1,
                             told == JOB_SPEC_AMBIGUOUS
                                 ? "%s: %s: ambiguous job spec\n" : "%s: %s: no such job\n",
@@ -1927,6 +1959,16 @@ fn shell_suspend(writer write, string_address input)
                         if (which != 'f')
                                 return shell_answer(shell_letter_refused(
                                     "suspend", which, "suspend [-f]"));
+
+                //      And no operands either: a word after the options is
+                //      one word too many, whatever it says.
+                if (walk.index < shell_argc)
+                {
+                        shell_diagnostic_where();
+
+                        return shell_answer(string_report(log_error, 1,
+                            "suspend: too many arguments\n"));
+                }
         }
 
         if (!job_monitor() || !shell_is_interactive)
@@ -2519,7 +2561,12 @@ fn job_wait(writer write, string_address input)
                 {
                         if (job_specified(word, address_of found) !=
                             JOB_SPEC_FOUND)
-                                return shell_answer(string_report(log_error, 127, "wait: %s: no such job\n", word));
+                        {
+                                shell_diagnostic_where();
+
+                                return shell_answer(string_report(log_error,
+                                    127, "wait: %s: no such job\n", word));
+                        }
                 }
                 else
                 {
@@ -2529,6 +2576,8 @@ fn job_wait(writer write, string_address input)
                                 //      Bash names it as a job spec it could
                                 //      not read and answers one; dash calls
                                 //      it an illegal number and answers two.
+                                shell_diagnostic_where();
+
                                 if (shell_bash_compat)
                                         return shell_answer(string_report(
                                             log_error, 1,
@@ -3994,9 +4043,15 @@ fn shell_history(writer write, string_address input)
                 positive wanted;
 
                 if (!string_digits_exact(shell_argv[at], address_of wanted))
-                        return shell_answer(string_report(log_error, 1, "history: %s: numeric argument"
-                                      " required\n",
-                                      shell_argv[at]));
+                {
+                        shell_diagnostic_where();
+
+                        //      Two, the status a usage error carries, and
+                        //      not the one a failed listing would.
+                        return shell_answer(string_report(log_error, 2,
+                            "history: %s: numeric argument required\n",
+                            shell_argv[at]));
+                }
 
                 if (wanted < show)
                         show = wanted;
@@ -7639,7 +7694,14 @@ static b32 exec_dispatch(b32 command_word)
         }
 
         shell_status = 127;
-        string_format(log_error, "%s: not found\n", name);
+        shell_diagnostic_where();
+
+        //      The commonest line either shell writes, and the two houses
+        //      do not write it the same: bash says the command was not
+        //      found, dash says only that it was not.
+        string_format(log_error,
+                      shell_bash_compat ? "%s: command not found\n"
+                                        : "%s: not found\n", name);
 
         return shell_status;
 }

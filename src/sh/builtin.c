@@ -92,6 +92,11 @@ bool word_is(string_address word, string_address text);
 
 static COLD bool shell_option_bad(string_address name, string_address said)
 {
+        //      A long word is named by its two dashes and no more, which is
+        //      as far as the reference's own option reader got.
+        if (said[0] == '-' && said[1] == '-' && said[2])
+                said = (string_address) "--";
+
         shell_diagnostic_where();
 
         if (!shell_bash_compat)
@@ -3932,7 +3937,12 @@ COLD fn shell_cd(writer write, string_address input)
         //      Bash counts the operands and refuses a second; dash reads
         //      the first and pays no attention to what follows it.
         if (index < shell_argc && shell_bash_compat)
-                return shell_answer(string_report(log_error, 2, "cd: too many arguments\n"));
+        {
+                shell_diagnostic_where();
+
+                return shell_answer(string_report(log_error, 2,
+                    "cd: too many arguments\n"));
+        }
 
         if (!name)
         {
@@ -3993,12 +4003,12 @@ COLD fn shell_cd(writer write, string_address input)
                 //      dash says only that it could not; bash says what the
                 //      kernel said, which is the difference between a name
                 //      that is not there and one that is not readable.
+                shell_diagnostic_where();
+
                 if (!shell_bash_compat)
                         return string_format(log_error,
                                              "cd: can't cd to %s\n",
                                              shell_cd_target);
-
-                shell_diagnostic_where();
 
                 {
                         string_address why =
@@ -4416,8 +4426,12 @@ COLD fn shell_pushd(writer write, string_address input)
                             "pushd", word, "pushd [-n] [+N | -N | dir]"));
 
                 if (named)
+                {
+                        shell_diagnostic_where();
+
                         return shell_answer(string_report(
                             log_error, 1, "pushd: too many arguments\n"));
+                }
 
                 named = word;
         }
@@ -4455,7 +4469,7 @@ COLD fn shell_pushd(writer write, string_address input)
                                           (count - 1) * sizeof(list[0]));
 
                 if (!shell_dirstack_move(wanted))
-                        return shell_answer(string_report(log_error, 1, "pushd: %s: no such directory\n",
+                        return shell_answer(string_report(log_error, 1, "pushd: %s: No such file or directory\n",
                                       named));
 
                 if (!shell_dirstack_write(rotated, count))
@@ -4517,7 +4531,7 @@ COLD fn shell_pushd(writer write, string_address input)
         //      which is still the top of what is listed, so the entry the
         //      rotation brought up is written under it rather than moved to.
         if (!stack_only && !shell_dirstack_move(wanted))
-                return shell_answer(string_report(log_error, 1, "pushd: %s: no such directory\n", wanted));
+                return shell_answer(string_report(log_error, 1, "pushd: %s: No such file or directory\n", wanted));
 
         //      A rotation asked to leave the shell where it is says nothing:
         //      Bash writes the stack for a push and for a move, and a
@@ -4573,7 +4587,12 @@ COLD fn shell_popd(writer write, string_address input)
         }
 
         if (count < 2)
-                return shell_answer(string_report(log_error, 1, "popd: directory stack empty\n"));
+        {
+                shell_diagnostic_where();
+
+                return shell_answer(string_report(log_error, 1,
+                    "popd: directory stack empty\n"));
+        }
 
         if (named && !shell_dirstack_index(named, count, address_of index))
                 return shell_answer(string_report(log_error, 1, "popd: %s: directory stack index out of range\n",
@@ -4594,7 +4613,7 @@ COLD fn shell_popd(writer write, string_address input)
                 string_copy_max_end(wanted, kept[0], sizeof(wanted) - 1);
 
                 if (!shell_dirstack_move(wanted))
-                        return shell_answer(string_report(log_error, 1, "popd: %s: no such directory\n", wanted));
+                        return shell_answer(string_report(log_error, 1, "popd: %s: No such file or directory\n", wanted));
         }
 
         if (!shell_dirstack_write(kept + 1, used - 1))
@@ -4789,6 +4808,7 @@ COLD fn shell_exec(writer write, string_address input)
                         memory_free(found, found_room);
 
                 shell_answer(127);
+                shell_diagnostic_where();
                 string_format(log_error, "exec: %s: not found\n",
                               shell_argv[1]);
                 shell_stop_when_scripted(127);
@@ -5920,6 +5940,7 @@ COLD fn shell_shopt(writer write, string_address input)
                         //      answers zero for it when it was told to set
                         //      or clear one. Only the query form carries
                         //      the failure out.
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       set_options
                                           ? "shopt: %s: invalid option name\n"
@@ -10214,9 +10235,13 @@ COLD fn shell_mapfile(writer write, string_address input)
 
         //      Bash calls this "not a valid identifier" and answers one;
         //      two is what it keeps for an option it does not have.
-        if (index < shell_argc || !shell_valid_name(name, name_length))
-                return shell_answer(string_report(log_error, 1, "%s: %s: bad array name\n",
-                              shell_argv[0], name));
+        //      A word after the name is ignored, the way bash ignores it.
+        if (!shell_valid_name(name, name_length))
+        {
+                shell_name_refused(shell_argv[0], name, name_length);
+
+                return shell_answer(1);
+        }
 
         p8 attributes = shell_array_attributes(name, name_length);
         if (attributes & (SHELL_ARRAY_READONLY | SHELL_ARRAY_ASSOCIATIVE))
@@ -10652,6 +10677,56 @@ static PURE bool umask_clause_empty(string_address step)
         return empty;
 }
 
+/*
+        The byte bash would name in a symbolic mode it will not read.
+
+        A clause is [ugoa]* then one of +-= then [rwxXst] and the three
+        letters that copy another field, and a comma starts the next one.
+        Whatever stops that walk is what bash quotes, and where it stopped
+        says whether it calls it an operator or a character.
+*/
+static COLD string_address umask_symbolic_refused(string_address word,
+                                                  bool address_to operator_here)
+{
+        string_address at = word;
+
+        for (;;)
+        {
+                while (string_first_of("ugoa", string_get(at)) &&
+                       string_get(at))
+                        at++;
+
+                if (!string_first_of("+-=", string_get(at)) ||
+                    !string_get(at))
+                {
+                        address_to operator_here = true;
+
+                        return at;
+                }
+
+                at++;
+
+                while (string_first_of("rwxXstugo", string_get(at)) &&
+                       string_get(at))
+                        at++;
+
+                if (string_get(at) == ',')
+                {
+                        at++;
+                        continue;
+                }
+
+                if (string_get(at))
+                {
+                        address_to operator_here = false;
+
+                        return at;
+                }
+
+                return null;
+        }
+}
+
 bool umask_symbolic(string_address step, positive address_to mask)
 {
         positive allowed;
@@ -10764,7 +10839,10 @@ COLD fn shell_umask(writer write, string_address input)
                 //      POSIX answer two.
                 b32 refused = shell_bash_compat ? 1 : 2;
 
-                if (string_get(word) >= '0' && string_get(word) <= '7')
+                //      A leading digit means a number, whichever digit it
+                //      is: "umask 8" is a number out of range to both
+                //      shells and a mode to neither.
+                if (string_get(word) >= '0' && string_get(word) <= '9')
                 {
                         positive used;
                         positive value = string_digits_octal_max(
@@ -10773,10 +10851,17 @@ COLD fn shell_umask(writer write, string_address input)
                         word += used;
 
                         if (string_get(word))
+                        {
+                                shell_diagnostic_where();
+
                                 return shell_answer(string_report(
                                     log_error, refused,
-                                    "umask: Illegal mode: %s\n",
+                                    shell_bash_compat
+                                        ? "umask: %s: octal number out of "
+                                          "range\n"
+                                        : "umask: Illegal number: %s\n",
                                     shell_argv[index]));
+                        }
 
                         mask = value;
                 }
@@ -10785,9 +10870,32 @@ COLD fn shell_umask(writer write, string_address input)
                 //      trailing one and stops, which is where these two part.
                 else if ((shell_bash_compat && umask_clause_empty(word)) ||
                          !umask_symbolic(word, address_of mask))
-                        return shell_answer(string_report(
-                            log_error, refused, "umask: Illegal mode: %s\n",
-                            word));
+                {
+                        shell_diagnostic_where();
+
+                        if (!shell_bash_compat)
+                                return shell_answer(string_report(
+                                    log_error, refused,
+                                    "umask: Illegal mode: %s\n", word));
+
+                        {
+                                //      Two bytes: the formatter has no %c.
+                                p8 said[2];
+                                bool operator_here = false;
+                                string_address at = umask_symbolic_refused(
+                                    word, address_of operator_here);
+
+                                return shell_answer(string_report(
+                                    log_error, refused,
+                                    operator_here
+                                        ? "umask: `%s': invalid symbolic "
+                                          "mode operator\n"
+                                        : "umask: `%s': invalid symbolic "
+                                          "mode character\n",
+                                    shell_option_spelled(
+                                        said, at ? string_get(at) : end)));
+                        }
+                }
         }
 
         system_call_1(syscall(umask), mask);
@@ -10952,6 +11060,11 @@ bool trap_debug_here;
 //      Bash calls it an invalid signal specification, dash a bad trap.
 static fn trap_refused(string_address word)
 {
+        //      dash writes this one without naming the script first, alone
+        //      among its diagnostics.
+        if (shell_bash_compat)
+                shell_diagnostic_where();
+
         string_format(log_error, shell_bash_compat
                                      ? "trap: %s: invalid signal specification\n"
                                      : "trap: %s: bad trap\n",
@@ -11803,9 +11916,12 @@ COLD fn shell_alias(writer write, string_address input)
                                 alias_written(write, at);
                         }
                         else
+                        {
+                                shell_diagnostic_where();
                                 answer = string_report(log_error, 1,
                                                        "alias: %s: not found\n",
                                                        word);
+                        }
                 }
 
                 index++;
@@ -11881,8 +11997,11 @@ COLD fn shell_unalias(writer write, string_address input)
                 // A name that was never an alias is something the script asked
                 // for and did not get, which POSIX has this say so.
                 if (at >= alias_count)
+                {
+                        shell_diagnostic_where();
                         status = string_report(log_error, 1,
                                                "unalias: %s: not found\n", word);
+                }
 
                 if (at < alias_count)
                 {
@@ -13283,8 +13402,20 @@ COLD fn shell_dot(writer write, string_address input)
         if (got < 0)
         {
                 memory_free(source_text, source_room);
-                string_format(log_error, "%s: %s: cannot open\n",
-                              shell_argv[0], path);
+                shell_diagnostic_where();
+
+                //      Bash names the file and what the open said, without
+                //      its own name in front, until posix mode puts it back
+                //      and calls the file not found instead.
+                if (!shell_bash_compat)
+                        string_format(log_error, "%s: %s: not found\n",
+                                      shell_argv[0], path);
+                else if (shell_posix_on())
+                        string_format(log_error, "%s: %s: file not found\n",
+                                      shell_argv[0], path);
+                else
+                        string_format(log_error, "%s: No such file or "
+                                      "directory\n", path);
 
                 /* The executor applies special-builtin fatality only to a
                    direct invocation. That distinction is essential here:
@@ -14112,6 +14243,7 @@ fn shell_hash(writer write, string_address input)
                                 string_format(write, "%s\n", known);
                         else
                         {
+                                shell_diagnostic_where();
                                 string_format(log_error,
                                               "hash: %s: not found\n", name);
                                 bad = 1;
@@ -14134,6 +14266,7 @@ fn shell_hash(writer write, string_address input)
                 if (located != 1)
                 {
                         bad = 1;
+                        shell_diagnostic_where();
                         string_format(log_error, "hash: %s: not found\n",
                                       name);
                 }
@@ -14601,8 +14734,14 @@ static inline INLINE b32 shell_query(writer write, positive index, b32 flags,
                 if (command ? style == SHELL_KIND_LONG
                             : !terse && !path_only &&
                               !(flags & SHELL_QUERY_FORCE_PATH))
-                        string_format(shell_bash_compat ? log_error : write,
-                                      "%s: not found\n", name);
+                        if (shell_bash_compat)
+                        {
+                                shell_diagnostic_where();
+                                string_format(log_error, "type: %s: not found\n",
+                                              name);
+                        }
+                        else
+                                string_format(write, "%s: not found\n", name);
                 if (!command)
                         bad = shell_bash_compat ||
                               terse || path_only || no_functions || every
@@ -14795,8 +14934,19 @@ fn shell_command_builtin(writer write, string_address input)
                         if (found)
                                 memory_free(found, found_room);
 
-                        return shell_answer(string_report(log_error, 127, "command: %s: not found\n",
-                                      name));
+                        {
+                                shell_diagnostic_where();
+
+                                //      The line a missing command gets, and
+                                //      command does not put its own name in
+                                //      front of it.
+                                return shell_answer(string_report(log_error,
+                                    127,
+                                    shell_bash_compat
+                                        ? "%s: command not found\n"
+                                        : "%s: not found\n",
+                                    name));
+                        }
                 }
 
                 if (located == 2)
@@ -15276,9 +15426,14 @@ fn shell_ulimit(writer write, string_address input)
                         {
                                 shell_answer(shell_bash_compat ? 1 : 2);
 
-                                return string_format(log_error,
-                                                     "ulimit: bad number %s\n",
-                                                     shell_argv[index]);
+                                shell_diagnostic_where();
+
+                                return string_format(
+                                    log_error,
+                                    shell_bash_compat
+                                        ? "ulimit: %s: invalid number\n"
+                                        : "ulimit: bad number\n",
+                                    shell_argv[index]);
                         }
 
                         value = (p64)asked * shell_limit_step(chosen);
@@ -15355,6 +15510,7 @@ fn shell_builtin_run(writer write, string_address input)
         }
 
         shell_tail_command = tail;
+        shell_diagnostic_where();
         string_format(log_error, "builtin: %s: not a shell builtin\n",
                       shell_argv[0]);
         shell_answer(1);
@@ -15425,6 +15581,7 @@ fn shell_enable(writer write, string_address input)
 
                 if (at >= SHELL_COMMAND_COUNT)
                 {
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       "enable: %s: not a shell builtin\n",
                                       name);
@@ -15957,9 +16114,17 @@ fn shell_help(writer write, string_address input)
                                 shell_argv[index],
                                 string_hash_33_length(shell_argv[index])))
                         {
+                                shell_diagnostic_where();
+
+                                //      The whole line bash writes, down to
+                                //      the two spaces and the three places
+                                //      it sends the reader to look.
                                 string_format(log_error,
-                                              "help: no help topics match `%s'\n",
-                                              shell_argv[index]);
+                                    "help: no help topics match `%s'.  "
+                                    "Try `help help' or `man -k %s' or "
+                                    "`info %s'.\n",
+                                    shell_argv[index], shell_argv[index],
+                                    shell_argv[index]);
                                 answer = 1;
                         }
 
