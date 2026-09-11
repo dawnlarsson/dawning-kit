@@ -130,11 +130,12 @@ cannot move a result either way.
 
 ## Bowl
 
-Bowl runs Debian, Arch, or another Linux userspace directly on the Moonwater
-kernel. The default fast profile merges the distribution's packages with the
-host filesystem without a VM or supervisor fork; `--isolated` supplies the
-complete namespace and root view needed by package managers. Selected package
-executables can be exposed on Moonwater's global path with `bowl expose`.
+Bowl runs Debian, Arch, or another Linux package directly on the Moonwater
+kernel. The default fast profile binds only that package's loader and libc,
+leaves Moonwater's applets in place, and does not use a VM or supervisor fork;
+`--isolated` supplies the complete namespace and root view needed by package
+managers. Selected package executables can be exposed on Moonwater's global
+path with `bowl expose`.
 
 See [the Bowl runtime notes](src/bowl/README.md) for the current commands and
 installation flow.

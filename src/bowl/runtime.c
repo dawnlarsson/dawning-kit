@@ -1,17 +1,20 @@
 /*
-        Bowl runs another distribution's userspace on the Moonwater kernel.
+        Bowl runs a distribution package on the Moonwater kernel.
+
+        Bowl is the mounts and the exec, not a userspace. POSIX tools are
+        Moonwater applets; a package wins by running against those, not by
+        replacing them.
 
         There are two entry shapes because package management and ordinary
         commands want different things:
 
-          fast        overlay the distribution's package directories in a
-                      private mount view, preserving Moonwater files and the
-                      current directory; this is the default and has no
-                      supervisor fork.
+          fast        bind only the loader and libc directories the guest
+                      binary needs, then exec it by its path under the bowl
+                      root; Moonwater /bin stays; no supervisor fork.
 
           isolated    pivot into the complete distribution root with private
                       PID, UTS and IPC views; use this for apt, pacman, apk
-                      and services that expect to own a tree.
+                      while they fill a tree.
 
         Neither is instruction emulation or a syscall proxy. Once setup is
         complete, the program is an ordinary native process on this kernel.
@@ -64,25 +67,23 @@ static struct bowl_mount_point bowl_isolated_mounts[] = {
 };
 
 /*
-        Fast merged view.
+        Fast view: libraries, not commands.
 
-        /usr is the packages. /bin and /sbin cover roots that are not
-        usr-merged. /opt is optional extras. /lib and /lib64 are the loader
-        and libc from this bowl, which an empty Moonwater host does not have;
-        a later donor namespace skips those so a second bowl cannot replace
-        a shared glibc.
+        The guest binary is executed at /bowls/NAME/usr/bin/jq. ld.so still
+        looks for the interpreter and DT_NEEDED names under /lib and /usr/lib,
+        which an empty Moonwater host does not have, so those trees are bound
+        read-only from the bowl. /bin, /usr/bin and /opt stay Moonwater's:
+        overlaying them hid every native applet.
 
         /etc and /var stay Moonwater's, as do /home, /root, /tmp, /run, /dev,
-        /proc and /sys. Relative and absolute paths to user data therefore
-        keep their meaning when a package-provided command is exposed.
+        /proc and /sys. A later donor namespace skips the libc binds so a
+        second glibc bowl cannot replace a shared Arch loader.
 */
 static struct bowl_layer bowl_fast_layers[] = {
-    {"/usr", true},
-    {"/bin", false},
-    {"/sbin", false},
-    {"/opt", false},
     {"/lib", false},
     {"/lib64", false},
+    {"/usr/lib", false},
+    {"/usr/lib64", false},
     {null, false},
 };
 
@@ -377,7 +378,7 @@ static bipolar bowl_isolated_enter(string_address root)
         return bowl_isolated_populate();
 }
 
-/* Overlay only the distribution directories needed to run its programs. */
+/* Bind only the loader search paths a guest binary still spells in ELF. */
 static bipolar bowl_fast_enter(string_address root)
 {
         p8 source[BOWL_PATH_LIMIT];
@@ -424,6 +425,8 @@ static DEAD_END fn bowl_inside(string_address root,
                                string_address address_to environment,
                                bipolar native_shell, bool isolated)
 {
+        p8 installed[BOWL_PATH_LIMIT];
+        string_address run = program;
         bipolar failed;
 
         failed = system_mount(0, "/", 0, MS_REC | MS_PRIVATE, 0);
@@ -437,11 +440,26 @@ static DEAD_END fn bowl_inside(string_address root,
                 exit(1);
         }
 
+        /* Fast does not overlay /usr, so /usr/bin/jq is still Moonwater's
+           missing name. The file is the one under the bowl root. Isolated
+           has already pivoted; the guest path is the guest file. */
+        if (!isolated && native_shell < 0)
+        {
+                if (!program || program[0] != '/' ||
+                    !bowl_root_path(installed, sizeof(installed), root,
+                                    program))
+                {
+                        bowl_fail(program ? program : root, -ENAMETOOLONG);
+                        exit(1);
+                }
+                run = installed;
+        }
+
         failed = native_shell >= 0
             ? system_call_5(syscall(execveat), (positive)native_shell,
                              (positive)"", (positive)arguments,
                              (positive)environment, AT_EMPTY_PATH)
-            : system_execute(program, arguments, environment);
+            : system_execute(run, arguments, environment);
         bowl_fail(program, failed);
         exit(127);
 }

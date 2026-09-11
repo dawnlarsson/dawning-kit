@@ -1,30 +1,31 @@
 # Bowl
 
-Bowl runs another Linux distribution's userspace directly on the Moonwater
-kernel. It is compatibility through a different root filesystem, not machine
-emulation and not a security boundary.
+Bowl runs a distribution package on the Moonwater kernel. It is the mounts
+and the exec, not a userspace and not a security boundary. POSIX tools are
+Moonwater applets; a package wins by running against those, not by replacing
+them.
 
 The runtime has two profiles:
 
-- `--fast` is the default. It creates only a private mount view, overlays the
-  distribution's package directories read-only, and directly executes the
-  command. The current directory, user files, `/etc`, `/var`, devices, process
-  view and network remain Moonwater's, and there is no supervisor fork.
+- `--fast` is the default. It creates only a private mount view, binds the
+  guest loader and libc directories read-only, and executes the program by
+  its path under the bowl root. Moonwater `/bin`, `/etc`, `/var`, the current
+  directory, devices, process view and network stay as they are, and there is
+  no supervisor fork.
 - `--isolated` adds PID, UTS and IPC views, pivots into the complete
   distribution root, mounts its kernel interfaces, and supervises its first
-  process. Use it for package managers and services that expect to own a
-  complete tree.
+  process. Use it while a package manager fills a tree.
 
 With no program, both profiles execute Moonwater's `/shell`. The runtime opens
 it before changing mounts and executes that descriptor afterward, so neither a
 distribution's `dash` nor its `bash` replaces the default shell. Naming
-`/bin/sh` explicitly still runs the distribution shell when compatibility
-requires it.
+`/bin/sh` explicitly in the isolated profile still runs the distribution shell
+when a maintainer script requires it.
 
 Keep policy and setup in this directory. Shared syscall definitions remain in
 `src/platform`, and the shell only supplies the multicall command entry point.
-That boundary leaves room for image lifecycle, selectable isolation profiles,
-and Moonwater-native command shims without putting those policies in the shell.
+Missing POSIX tools that package managers and bootstraps call belong in the
+shell as applets, not as more mounts here.
 
 The performance rule is that steady-state work remains an ordinary native
 process. Namespaces select views; they do not emulate instructions or proxy
@@ -54,12 +55,31 @@ directory on Moonwater's default `PATH`. Keeping roots and launchers under
 `/bowls` lets one persistent mount carry the complete installation. The
 launcher's shebang contains the Bowl root and program path, and the kernel
 invokes `/bowl` directly—there is no wrapper shell or generated per-command
-binary. Exposed commands use the fast merged view, so `jq ./file.json` sees the
-same file and working directory as a native Moonwater command.
+binary. Exposed commands use the fast view, so `jq ./file.json` sees the same
+file and working directory as a native Moonwater command, and `tar` or `sed`
+in a script is still the native applet.
 
-The next runtime slices should preserve these rules:
+## Native tools the managers still need
 
-- add root acquisition and verification for Arch, then Debian and Alpine;
+Moonwater already has the shell, coreutils, sed, awk, grep, find, mount,
+unshare, chroot, `ip`, `host`, and plaintext `fetch`. Pacman, apt and apk
+inside `--isolated` bring their own linked downloaders and archive libraries.
+The host-side gaps that every distro bootstrap still shells out to are not
+Bowl mounts:
+
+- `tar` — unpack a bootstrap and, for Debian, debootstrap
+- gzip / xz / zstd — the compressors those tarballs actually use (Arch is
+  `.tar.zst`)
+- `ar` — `.deb` members; debootstrap will not run without it
+- HTTPS on `fetch` — mirrors refuse plaintext; until then a root is copied
+  onto the image from a machine that already has curl
+
+Do not implement pacman, apt or apk here. Do not overlay guest `/bin` to
+paper over a missing applet.
+
+The next slices should preserve these rules:
+
+- add those applets, then root acquisition for Arch, then Debian and Alpine;
 - share Arch's glibc with other glibc bowls; keep Alpine on musl;
 - discover package-owned executables so exposure can be selected after install;
 - persist prepared mount views and reduce fast entry to setns plus exec;
