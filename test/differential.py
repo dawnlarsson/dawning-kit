@@ -4655,6 +4655,104 @@ for _names, _modes in ((BUILTINS_BAD_OPTION_POSIX, ALL),
             script=builtins_bad_option_script(_name), max_flags=0))
 
 
+# --- what a builtin says when the answer is no ------------------------------
+#       The same reason the family above exists: every other family here
+#       compares a diagnostic as present or absent, and a whole surface of
+#       wrong words sat behind that for as long as it did. These are the
+#       lines a script actually meets -- a file that will not open, a name
+#       that will not be written to, a word that is no number -- compared
+#       byte for byte, in every personality that has the builtin.
+#
+#       Each entry is a whole program, because the reason is often two
+#       commands away from the complaint.
+BUILTINS_DIAGNOSTIC_POSIX = (
+    "cat < /nonexistent",
+    "echo hi > /nonexistent/here/f",
+    "exec 3< /nonexistent",
+    "readonly r=1; r=2",
+    "readonly r=1; unset r",
+    "readonly r=1; export r=2",
+    "readonly r=1; read r < /dev/null",
+    "readonly r=1; for r in 1 2; do echo \"$r\"; done",
+    "set -u; echo \"$nope\"",
+    "echo \"${nope?}\"",
+    "echo \"${nope:?}\"",
+    "x=; echo \"${x:?}\"",
+    "echo \"${nope?why}\"",
+    ". /nonexistent",
+    "exec /nonexistent",
+    "printf %d abc",
+    "printf %d 12x",
+    "test 1 -eq a",
+    "[ 1 -eq a ]",
+    "test a -eq 1",
+    "unset 1bad",
+    "unset -v 1bad",
+    "read 1bad < /dev/null",
+    "export 1bad=2",
+    "readonly 1bad=2",
+    "getopts",
+    "getopts ab 1bad",
+    "cd /nonexistent",
+    "cd /etc/hostname",
+    "umask 999",
+    "umask a+Z",
+    "umask uZ",
+    "ulimit -n 99999999999",
+    "return 1; echo after",
+    "nosuchcommand12345",
+)
+
+BUILTINS_DIAGNOSTIC_BASH = (
+    "declare 1bad=2",
+    "readonly r=1; declare r=3",
+    "f() { local 1bad; }; f",
+    "local x=1",
+    "mapfile 1bad < /dev/null",
+    "readarray 1bad < /dev/null",
+    "dirs +9",
+    "dirs -lp",
+    "dirs foo",
+    "pushd +9",
+    "pushd - -Z",
+    "popd +9",
+    "help nosuchtopic12345",
+    "history +Z",
+    "compopt - nosuch",
+    "jobs +Z",
+    "disown +Z",
+    "wait - -Z",
+    "type nosuchcommand12345",
+    "command nosuchcommand12345",
+    "hash nosuchcommand12345",
+    "enable nosuchbuiltin12345",
+    "builtin nosuchbuiltin12345",
+    "alias nosuchalias12345",
+    "unalias nosuchalias12345",
+    "shopt -s nosuchoption12345",
+    "set -o nosuchoption12345",
+    "suspend x",
+    "times -Z",
+    "fc",
+)
+
+
+def builtins_diagnostic_script(program):
+    def script(argv, stdin):
+        return program + '\nprintf "[%s]\\n" "$?"\n'
+    return script
+
+
+for _programs, _modes in ((BUILTINS_DIAGNOSTIC_POSIX, ALL),
+                          (BUILTINS_DIAGNOSTIC_BASH, BASH)):
+    for _at, _program in enumerate(_programs):
+        builtins_add(Utility(
+            "diagnostic_%s_%02d" % ("posix" if _modes is ALL else "bash", _at),
+            operands=((),), stdin=("empty",), stderr="exact", modes=_modes,
+            normalize=builtins_bad_option_normalize,
+            script=builtins_diagnostic_script(_program), max_flags=0))
+
+
 BUILTINS_UTILITIES = tuple(BUILTINS_UTILITIES)
 
 

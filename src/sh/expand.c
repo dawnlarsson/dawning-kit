@@ -30,6 +30,9 @@ positive env_names_prefix(string_address prefix, positive length,
                           string_address address_to names, positive room);
 PURE bool env_readonly(const_string name);
 bool env_assign(const_string name, const_string value);
+//      Where a diagnostic came from, written through the caller's writer:
+//      these lines go out unbuffered, so the prefix has to travel with them.
+static COLD fn shell_diagnostic_where_to(writer write);
 
 // Resolve LC_CTYPE only for character operations. Keeping this a read of the
 // live environment makes prefix assignments, locals, unset and restoration
@@ -1768,6 +1771,7 @@ static bool expand_push_parameter_as(expand_reference reference, bool quoted,
         {
                 if (shell_options & ((positive)1 << ('u' - 'a')))
                 {
+                        shell_diagnostic_where_to(writer_stderr_once);
                         string_format(writer_stderr_once,
                                       shell_bash_compat
                                           ? "%s: unbound variable\n"
@@ -5017,6 +5021,7 @@ static COLD fn expand_array_form(string_address name, positive length,
                 if (expand_failed)
                         return;
 
+                shell_diagnostic_where_to(writer_stderr_once);
                 string_format(writer_stderr_once, "%s: %s\n", name,
                               said[0] ? said
                                       : expand_unset_reason(doubled));
@@ -5368,6 +5373,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 {
                         if (shell_options & ((positive)1 << ('u' - 'a')))
                         {
+                                shell_diagnostic_where_to(writer_stderr_once);
                                 string_format(writer_stderr_once,
                                               shell_bash_compat
                                                   ? "%s: unbound variable\n"
@@ -5499,6 +5505,8 @@ static string_address expand_braced(string_address step, bool quoted)
                                 if (expand_failed)
                                         return close + 1;
 
+                                shell_diagnostic_where_to(
+                                    writer_stderr_once);
                                 string_format(writer_stderr_once, "%s: %s\n",
                                               expand_reference_text(reference),
                                               said[0] ? said

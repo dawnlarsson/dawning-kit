@@ -97,7 +97,7 @@ static COLD bool shell_option_bad(string_address name, string_address said)
         //      named by the first of its two bytes and "--bogus" by "--".
         p8 room[3];
 
-        if (said[0] && said[1] && said[2])
+        if ((said[0] == '-' || said[0] == '+') && said[1] && said[2])
         {
                 room[0] = said[0];
                 room[1] = said[1];
@@ -6210,18 +6210,24 @@ static bool shell_parameters_replaced;
         which is what the shell domain's floor means when it says the
         mechanism is missing rather than the wording.
 */
-static COLD fn shell_diagnostic_where()
+static COLD fn shell_diagnostic_where_to(writer write)
 {
         string_address self = shell_script_name && string_get(shell_script_name)
                                   ? shell_script_name : (string_address) "sh";
 
         if (shell_bash_compat && shell_is_interactive)
         {
-                string_format(log_error, "%s: ", self);
+                string_format(write, "%s: ", self);
                 return;
         }
-        string_format(log_error, shell_bash_compat ? "%s: line %p: " : "%s: %p: ",
+
+        string_format(write, shell_bash_compat ? "%s: line %p: " : "%s: %p: ",
                       self, shell_line_now());
+}
+
+static COLD fn shell_diagnostic_where()
+{
+        shell_diagnostic_where_to(log_error);
 }
 
 /*
@@ -7956,9 +7962,17 @@ COLD fn shell_local(writer write, string_address input)
                               ? "local: can only be used in a function\n"
                               : "local: not in a function\n", 0);
 
-                //      Bash answers one for this and dash two, and neither
-                //      of them stops the script over it.
-                expand_fatal_status(shell_bash_compat ? 1 : 2);
+                //      Bash answers one and carries on with the line it
+                //      was given; dash answers two and the script ends
+                //      there, because local is a special builtin to it.
+                if (shell_bash_compat)
+                {
+                        shell_answer(1);
+
+                        return;
+                }
+
+                expand_fatal_status(2);
                 return;
         }
 
@@ -9297,8 +9311,11 @@ static positive printf_integer(string_address word, bool signed_value)
                 if (shell_bash_compat)
                         shell_printf_number_refused(word);
                 else
+                {
+                        shell_diagnostic_where();
                         string_format(log_error,
                             "printf: %s: not completely converted\n", word);
+                }
 
                 printf_status = 1;
         }
@@ -9356,8 +9373,11 @@ static decimal printf_decimal(string_address word)
                 if (shell_bash_compat)
                         shell_printf_number_refused(word);
                 else
+                {
+                        shell_diagnostic_where();
                         string_format(log_error,
                             "printf: %s: not completely converted\n", word);
+                }
 
                 printf_status = 1;
         }
@@ -13613,14 +13633,21 @@ COLD fn shell_dot(writer write, string_address input)
                                 why = (string_address)
                                     "No such file or directory";
 
+                        //      A name with no slash in it was looked for
+                        //      along PATH and not found there, which is a
+                        //      different thing from a file that would not
+                        //      open, and both shells say so differently.
+                        bool searched = !string_first_of(path, '/');
+
                         if (!shell_bash_compat)
                                 string_format(log_error,
-                                    "%s: cannot open %s: %s\n",
+                                    searched ? "%s: %s: not found\n"
+                                             : "%s: cannot open %s: %s\n",
                                     shell_argv[0], path,
                                     code == ERROR_NO_ENTRY
                                         ? (string_address) "No such file"
                                         : why);
-                        else if (shell_posix_on())
+                        else if (shell_posix_on() && searched)
                                 string_format(log_error,
                                     "%s: %s: file not found\n",
                                     shell_argv[0], path);

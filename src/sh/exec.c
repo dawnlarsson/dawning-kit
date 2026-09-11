@@ -8012,8 +8012,11 @@ static PURE b32 exec_assignment_error_status(bool assignments_only,
         if (!shell_bash_compat)
                 return 2;
 
+        //      A line of its own: bash gives up the rest of the command
+        //      list it was written on and reads the next line, where this
+        //      used to end the whole script.
         if (!shell_posix_on())
-                return assignments_only ? 1 : 0;
+                return assignments_only ? EXEC_ASSIGNMENT_LINE_ABORT : 0;
 
         if (assignments_only || exec_special_builtin(command))
                 return string_is(shell_option_flags, 'c') ? 127 : 1;
