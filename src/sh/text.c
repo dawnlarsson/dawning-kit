@@ -13479,7 +13479,7 @@ static b32 text_uniq()
                                 {
                                         if (gap == UNIQ_GROUP_PREPEND ||
                                             (gap == UNIQ_GROUP_SEPARATE && shown_group))
-                                                text_put_character('\n');
+                                                text_put_character(text_delimiter);
 
                                         shown_group = true;
                                         text_put(previous, previous_length + 1);
@@ -13565,7 +13565,7 @@ static b32 text_uniq()
                         if (gap == UNIQ_GROUP_PREPEND || gap == UNIQ_GROUP_BOTH ||
                             ((gap == UNIQ_GROUP_SEPARATE || gap == UNIQ_GROUP_APPEND) &&
                              shown_group))
-                                text_put_character('\n');
+                                text_put_character(text_delimiter);
 
                         shown_group = true;
                         text_put(previous, previous_length + 1);
@@ -13574,9 +13574,15 @@ static b32 text_uniq()
 
         // append is separate with one more at the end, and both is prepend
         // with the same, which is why neither has a rule of its own above.
+        /*
+                The gap between groups is a record boundary like any other,
+                so it is written with the terminator the records are using.
+                It was a newline whatever -z asked for, which put a newline
+                in the middle of a NUL-separated stream.
+        */
         if (grouping && shown_group &&
             (gap == UNIQ_GROUP_APPEND || gap == UNIQ_GROUP_BOTH))
-                text_put_character('\n');
+                text_put_character(text_delimiter);
 
         text_close();
         return text_done(text_status);
