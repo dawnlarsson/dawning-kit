@@ -14159,19 +14159,21 @@ static bool split_output_name(split_output address_to output)
         return true;
 }
 
-static bool split_same_input(split_output address_to output)
+/* Writing over the file being read truncates it under the read, so a split
+   that would land on its own input stops before it opens. The name is not the
+   test -- a different name can still be the same file -- so identity is the
+   inode together with the device it sits on. split and csplit both ask. */
+static bool file_same_as_input(bool protect, string_address name,
+                               const file_facts address_to input)
 {
-        if (!output->protect_input)
-                return false;
-
         file_facts existing;
 
-        if (!file_look_at(output->name, address_of existing))
+        if (!protect || !file_look_at(name, address_of existing))
                 return false;
 
-        return existing.inode == output->input.inode &&
-               existing.device_major == output->input.device_major &&
-               existing.device_minor == output->input.device_minor;
+        return existing.inode == input->inode &&
+               existing.device_major == input->device_major &&
+               existing.device_minor == input->device_minor;
 }
 
 static bool split_output_open(split_output address_to output)
@@ -14180,7 +14182,8 @@ static bool split_output_open(split_output address_to output)
                 return true;
         if (!split_output_name(output))
                 return false;
-        if (split_same_input(output))
+        if (file_same_as_input(output->protect_input, output->name,
+                               address_of output->input))
                 return string_report(log_error, false,
                               "split: '%s' would overwrite input; aborting\n",
                               output->name);
@@ -14696,21 +14699,6 @@ static bool csplit_name(csplit_state address_to state, positive number)
         return true;
 }
 
-static bool csplit_same_input(csplit_state address_to state)
-{
-        if (!state->protect_input)
-                return false;
-
-        file_facts existing;
-
-        if (!file_look_at(state->name, address_of existing))
-                return false;
-
-        return existing.inode == state->input_facts.inode &&
-               existing.device_major == state->input_facts.device_major &&
-               existing.device_minor == state->input_facts.device_minor;
-}
-
 static bool csplit_section(csplit_state address_to state, positive from,
                            positive to, bool emit)
 {
@@ -14725,7 +14713,8 @@ static bool csplit_section(csplit_state address_to state, positive from,
                 return true;
         if (!csplit_name(state, state->made))
                 return false;
-        if (csplit_same_input(state))
+        if (file_same_as_input(state->protect_input, state->name,
+                               address_of state->input_facts))
                 return string_report(log_error, false,
                               "csplit: '%s' would overwrite input; aborting\n",
                               state->name);
