@@ -26,8 +26,8 @@ static struct output *output_at(int x, int y, unsigned int *index)
         list_for_each_entry(candidate, &desktop.outputs, link)
         {
                 if (point_in_rect(candidate->x, candidate->y,
-                                  (int)candidate->width,
-                                  (int)candidate->height, x, y))
+                                  (int)candidate->width, (int)candidate->height,
+                                  x, y))
                 {
                         *index = at;
                         return candidate;
@@ -55,27 +55,27 @@ static struct pane *pane_under(int x, int y, unsigned int *edges)
 
         list_for_each_entry_reverse(pane, &desktop.windows, link)
         {
-                int fx, fy, fw, fh;
+                struct drm_rect frame;
 
                 if (pane->style & (WINDOW_MINIMIZED | WINDOW_PASSTHROUGH))
                         continue;
 
-                pane_frame(pane, &fx, &fy, &fw, &fh);
+                pane_frame(pane, &frame);
 
-                if (x < fx || x >= fx + fw || y < fy || y >= fy + fh)
+                if (x < frame.x1 || x >= frame.x2 || y < frame.y1 || y >= frame.y2)
                         continue;
 
                 if (!(pane->style & WINDOW_FRAME))
                         return pane;
 
-                if (x < fx + EDGE_GRIP)
+                if (x < frame.x1 + EDGE_GRIP)
                         *edges |= EDGE_LEFT;
-                else if (x >= fx + fw - EDGE_GRIP)
+                else if (x >= frame.x2 - EDGE_GRIP)
                         *edges |= EDGE_RIGHT;
 
-                if (y < fy + EDGE_GRIP)
+                if (y < frame.y1 + EDGE_GRIP)
                         *edges |= EDGE_TOP;
-                else if (y >= fy + fh - EDGE_GRIP)
+                else if (y >= frame.y2 - EDGE_GRIP)
                         *edges |= EDGE_BOTTOM;
 
                 return pane;
@@ -122,10 +122,8 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
 {
         struct drm_rect damage[4];
         struct output *output;
-        int fx, fy, fw, fh;
 
-        pane_frame(pane, &fx, &fy, &fw, &fh);
-        drm_rect_init(&damage[0], fx, fy, fw, fh);
+        pane_frame(pane, &damage[0]);
 
         pane->x = x;
         pane->y = y;
@@ -133,8 +131,7 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
         pane->height = h;
 
         pane_regrid(pane);
-        pane_frame(pane, &fx, &fy, &fw, &fh);
-        drm_rect_init(&damage[1], fx, fy, fw, fh);
+        pane_frame(pane, &damage[1]);
 
         // The cursor is dragging this, so where it was and where it is are
         // damaged too, and its cell reaches outside the frame.
@@ -292,8 +289,8 @@ static void bar_move(struct pane *pane, int y,
 static void pane_arrange(struct pane *pane, unsigned int how,
                          int at_x, int at_y)
 {
-        int title = pane->style & WINDOW_FRAME ? canvas_title : 0;
-        int border = pane->style & WINDOW_FRAME ? canvas_border : 0;
+        int title = pane_title(pane);
+        int border = pane_border(pane);
         unsigned int display = pane->display;
         struct output *output = output_at(at_x, at_y, &display);
         int max_w, max_h, width, height, x, half;
@@ -423,7 +420,6 @@ static void drag_press(int x, int y)
         struct pane_bar_geometry bar;
         struct pane *pane = pane_under(x, y, &edges);
         struct pane *was = desktop.focused;
-        int fx, fy, fw, fh;
 
         if (!pane)
                 return;
@@ -506,9 +502,7 @@ static void drag_press(int x, int y)
                 desktop.press_pane = pane;
                 desktop.press_ns = now;
 
-                if (again && (pane->style & WINDOW_FRAME) &&
-                    point_in_rect(pane->x, pane->y, pane->width,
-                                  canvas_title, x, y))
+                if (again && pane_in_title(pane, x, y))
                 {
                         // Cleared, so a third click is a first one again
                         // rather than the window flickering under a hand that
@@ -553,9 +547,7 @@ static void drag_press(int x, int y)
                 desktop.resize_w = pane->width;
                 desktop.resize_h = pane->height;
         }
-        else if ((pane->style & WINDOW_FRAME) &&
-                 point_in_rect(pane->x, pane->y, pane->width,
-                               canvas_title, x, y))
+        else if (pane_in_title(pane, x, y))
         {
                 if (pane->arranged != PANE_FLOATING)
                         pane_restore_for_drag(pane, x, y);
@@ -571,13 +563,9 @@ redraw:
         desktop.damage_all = false;
 
         if (was && was != pane)
-        {
-                pane_frame(was, &fx, &fy, &fw, &fh);
-                desktop_damage(fx, fy, fw, fh);
-        }
+                pane_damage_frame(was);
 
-        pane_frame(pane, &fx, &fy, &fw, &fh);
-        desktop_damage(fx, fy, fw, fh);
+        pane_damage_frame(pane);
         desktop_repaint();
 }
 

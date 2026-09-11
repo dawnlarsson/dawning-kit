@@ -46,21 +46,14 @@ static int client_hotplug(struct drm_client_dev *client)
 
         mutex_lock(&desktop.lock);
 
-        if (!canvas->started || canvas_modes_changed(canvas))
+        if (!canvas->started)
         {
-                if (canvas->started)
-                {
-                        // A screen arrived, left, or only now said what it can
-                        // do. Rebuild the card from the freshly probed modes.
-                        canvas_release(canvas);
-                }
-
                 ret = canvas_start(canvas);
                 canvas->started = (ret == 0);
         }
         else
         {
-                desktop_redraw();
+                ret = canvas_rebind(canvas);
         }
 
         mutex_unlock(&desktop.lock);

@@ -51,6 +51,9 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
 {
         unsigned int row, column;
 
+        if (!w || !h)
+                return;
+
         /*
                 Whole eight-pixel tiles share the glyph floor when the bitmap
                 is entirely inside the damage and drawn at its own size.
@@ -59,8 +62,8 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
             x >= max(t->clip.x1, 0) && (long)x + w <= min(t->clip.x2, t->width) &&
             y >= max(t->clip.y1, 0) && (long)y + h <= min(t->clip.y2, t->height))
         {
-                canvas_painted += (unsigned long)h * w;
-                canvas_runs += w / 8;
+                target_mark((unsigned long)h * w);
+                canvas_runs += w / 8 - 1;
                 for (column = 0; column < w; column += 8)
                         canvas_glyph(t->pixels + (size_t)y * t->pitch + x + column,
                                      t->pitch, bits + column / 8, pitch, h, colour);
@@ -90,7 +93,6 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
                         x1 = max(max(px, t->clip.x1), 0);
                         x2 = min(min(px + (int)(run - column) * scale, t->clip.x2),
                                  t->width);
-
                         y1 = y + (int)row * scale;
                         y2 = min(min(y1 + scale, t->clip.y2), t->height);
                         y1 = max(max(y1, t->clip.y1), 0);
@@ -153,21 +155,31 @@ static const int canvas_cursor_hot[CURSOR_SHAPES][2] = {
     {0, 0}, {7, 7}, {7, 7}, {7, 7}, {7, 7},
 };
 
+static void cursor_cell(struct drm_rect *rect, int x, int y,
+                        unsigned int shape, unsigned int scale)
+{
+        int hx = canvas_cursor_hot[shape][0] * (int)scale;
+        int hy = canvas_cursor_hot[shape][1] * (int)scale;
+
+        drm_rect_init(rect, x - hx, y - hy, CURSOR_W * (int)scale,
+                      CURSOR_H * (int)scale);
+}
+
 /*
         The cursor, into whatever it is given. Two colours, so two passes of
         the same walk a glyph takes: the outline and the fill never share a
-        pixel, so which goes down first does not matter.
+        pixel, so which goes down first does not matter. (x, y) is the hotspot.
 */
 static HOT void canvas_draw_cursor(const struct target *t, int x, int y,
                                    unsigned int shape, unsigned int scale)
 {
-        x -= canvas_cursor_hot[shape][0] * (int)scale;
-        y -= canvas_cursor_hot[shape][1] * (int)scale;
+        struct drm_rect cell;
 
-        bits_draw(t, x, y, (int)scale, (const u8 *)cursor_fill[shape], 2, CURSOR_W,
-                  CURSOR_H, t->ink[INK_CURSOR]);
-        bits_draw(t, x, y, (int)scale, (const u8 *)cursor_edge[shape], 2, CURSOR_W,
-                  CURSOR_H, t->ink[INK_CURSOR_EDGE]);
+        cursor_cell(&cell, x, y, shape, scale);
+        bits_draw(t, cell.x1, cell.y1, (int)scale, (const u8 *)cursor_fill[shape],
+                  2, CURSOR_W, CURSOR_H, t->ink[INK_CURSOR]);
+        bits_draw(t, cell.x1, cell.y1, (int)scale, (const u8 *)cursor_edge[shape],
+                  2, CURSOR_W, CURSOR_H, t->ink[INK_CURSOR_EDGE]);
 }
 
 // xrgb8888 is the source of truth; argb differs only in the alpha byte.

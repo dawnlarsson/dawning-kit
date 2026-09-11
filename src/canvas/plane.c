@@ -28,10 +28,11 @@ static int plane_update(struct output *output, _Bool show, int x, int y)
 {
         struct drm_plane *plane = output->cursor_plane;
         struct drm_crtc *crtc = output->mode_set->crtc;
-        int hot = (int)output->cursor_scale;
+        struct drm_rect cell;
         struct drm_modeset_acquire_ctx ctx;
         int ret;
 
+        cursor_cell(&cell, x, y, output->cursor_shape, output->cursor_scale);
         drm_modeset_acquire_init(&ctx, 0);
 retry:
         /* Match drm_mode_cursor_common's global modeset lock order. */
@@ -43,8 +44,7 @@ retry:
         if (!ret)
                 ret = show ? plane->funcs->update_plane(
                                  plane, crtc, output->cursor_buffer->fb,
-                                 x - canvas_cursor_hot[output->cursor_shape][0] * hot,
-                                 y - canvas_cursor_hot[output->cursor_shape][1] * hot,
+                                 cell.x1, cell.y1,
                                  output->cursor_w, output->cursor_h, 0, 0,
                                  output->cursor_w << 16, output->cursor_h << 16, &ctx)
                            : plane->funcs->disable_plane(plane, &ctx);
@@ -116,8 +116,6 @@ static int plane_paint(struct output *output, unsigned int shape,
         if (drm_client_buffer_vmap_local(output->cursor_buffer, &map))
                 return -EIO;
 
-        // The plane's own buffer is a target like any other: its own size,
-        // no clip beyond itself, and a palette that is always opaque.
         t.pixels = map.vaddr;
         t.pitch = output->cursor_buffer->fb->pitches[0] / sizeof(u32);
         t.width = (int)output->cursor_w;
@@ -131,8 +129,8 @@ static int plane_paint(struct output *output, unsigned int shape,
         // Transparent everywhere the shape does not cover, or it wears a box
         // of whatever the buffer was allocated holding.
         target_rectangle(&t, 0, 0, t.width, t.height, 0x00000000);
-
-        canvas_draw_cursor(&t, canvas_cursor_hot[shape][0] * (int)fitted_scale,
+        canvas_draw_cursor(&t,
+                           canvas_cursor_hot[shape][0] * (int)fitted_scale,
                            canvas_cursor_hot[shape][1] * (int)fitted_scale,
                            shape, fitted_scale);
 

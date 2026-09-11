@@ -138,8 +138,7 @@ static void desktop_confine_cursor(int *x, int *y)
                 int dy = clamp(*y, output->y, output->y + (int)output->height - 1) - *y;
                 int distance = abs(dx) + abs(dy);
 
-                if (point_in_rect(output->x, output->y, (int)output->width,
-                                  (int)output->height, *x, *y))
+                if (!dx && !dy)
                         return;
 
                 if (distance < best)

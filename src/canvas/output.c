@@ -143,47 +143,160 @@ static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
         return 0;
 }
 
-// Whether a fresh probe would give any screen a different mode than the one it
-// is running, which is what a monitor arriving or its EDID landing late looks
-// like.
-static _Bool canvas_modes_changed(struct canvas *canvas)
+static struct output *output_for_modeset(struct canvas *canvas,
+                                         struct drm_mode_set *mode_set)
+{
+        struct output *output;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+                if (output->canvas == canvas && output->mode_set == mode_set)
+                        return output;
+
+        return NULL;
+}
+
+static struct drm_display_mode *output_mode_wh(struct drm_connector *connector,
+                                               unsigned int width,
+                                               unsigned int height)
+{
+        struct drm_display_mode *mode;
+
+        list_for_each_entry(mode, &connector->modes, head)
+        {
+                if (mode->hdisplay != (int)width || mode->vdisplay != (int)height)
+                        continue;
+                if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
+                        continue;
+                return mode;
+        }
+
+        return NULL;
+}
+
+/*
+        Puts this output's buffer back on the modeset that is scanning it.
+
+        A probe may have replaced the mode with a different size. The buffer
+        we already have is the one on the CRTC; a modeset of a new size and
+        the old framebuffer is refused, and destroying that framebuffer while
+        the CRTC still holds it blanks the scanout. So the running size is
+        restored, and a guest window that grew can wait.
+*/
+static void output_attach(struct output *output)
+{
+        struct drm_mode_set *mode_set = output->mode_set;
+        struct drm_device *dev;
+        struct drm_connector *connector;
+        struct drm_display_mode *want, *taken;
+
+        if (!mode_set || !output->buffer)
+                return;
+
+        if (!mode_set->mode)
+                return;
+
+        if (mode_set->mode->hdisplay == (int)output->width &&
+            mode_set->mode->vdisplay == (int)output->height)
+        {
+                mode_set->fb = output->buffer->fb;
+                return;
+        }
+
+        dev = output->canvas->client.dev;
+        connector = (mode_set->connectors && mode_set->num_connectors)
+                        ? mode_set->connectors[0]
+                        : NULL;
+        if (!connector)
+                return;
+
+        mutex_lock(&dev->mode_config.mutex);
+        want = output_mode_wh(connector, output->width, output->height);
+        taken = want ? drm_mode_duplicate(dev, want) : NULL;
+        mutex_unlock(&dev->mode_config.mutex);
+
+        if (!taken)
+                return;
+
+        drm_mode_destroy(dev, mode_set->mode);
+        mode_set->mode = taken;
+        mode_set->fb = output->buffer->fb;
+}
+
+static void desktop_place_outputs(void);
+static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mode_set);
+static void output_disable_modeset(struct drm_device *dev,
+                                   struct drm_mode_set *mode_set);
+
+/*
+        A hotplug after the first picture.
+
+        drm_client_modeset_probe drops every modeset's framebuffer pointer.
+        The old path treated a different mode -- or a different count of them
+        -- as a reason to destroy the buffers still on the CRTCs. That is
+        SET_SCANOUT 0. virtio-gpu then replaces the host window with
+        "Display output is not active", and a later commit does not always
+        get that window back.
+
+        Guest displays also fire a hotplug about a second after the first
+        scanout, when the host window is up. That callback runs on the DRM
+        helper workqueue. A commit from here disables every cursor plane
+        (drm_client_modeset_commit does) and can wait on that same queue,
+        so the pointer thread never runs again and the plane is left off.
+        The mode already scanning is the one the window has; leave it.
+*/
+static int canvas_rebind(struct canvas *canvas)
 {
         struct drm_client_dev *client = &canvas->client;
         struct drm_mode_set *mode_set;
         struct output *output;
-        unsigned int active = 0, mine = 0;
-        _Bool changed = false;
+        _Bool placed = false;
 
-        if (canvas_probe_modes(canvas, IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE)))
-                return false;
+        if (canvas_is_virtual(client->dev))
+                return 0;
+
+        if (canvas_probe_modes(canvas,
+                               IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE)))
+        {
+                desktop_redraw();
+                return 0;
+        }
 
         mutex_lock(&client->modeset_mutex);
-
         drm_client_for_each_modeset(mode_set, client)
         {
+                struct drm_connector *connector;
+
                 if (!mode_set->mode)
                         continue;
 
-                active++;
-
-                list_for_each_entry(output, &desktop.outputs, link)
+                output = output_for_modeset(canvas, mode_set);
+                if (output)
                 {
-                        if (output->mode_set != mode_set)
-                                continue;
-
-                        if (output->width != mode_set->mode->hdisplay ||
-                            output->height != mode_set->mode->vdisplay)
-                                changed = true;
+                        output_attach(output);
+                        continue;
                 }
-        }
 
+                connector = mode_set->num_connectors ? mode_set->connectors[0]
+                                                     : NULL;
+                pr_info("[moonwater canvas] " "screen %s %ux%u at %u Hz, drawn %ux, %u mode(s) offered\n", connector && connector->name ? connector->name : "?", mode_set->mode->hdisplay, mode_set->mode->vdisplay, drm_mode_vrefresh(mode_set->mode), desktop.scale, connector ? output_mode_count(connector) : 0);
+
+                output = output_add(canvas, mode_set);
+                if (!output)
+                {
+                        output_disable_modeset(client->dev, mode_set);
+                        continue;
+                }
+
+                list_add_tail(&output->link, &desktop.outputs);
+                placed = true;
+        }
         mutex_unlock(&client->modeset_mutex);
 
-        list_for_each_entry(output, &desktop.outputs, link)
-                if (output->canvas == canvas)
-                        mine++;
+        if (placed)
+                desktop_place_outputs();
 
-        return changed || active != mine;
+        desktop_redraw();
+        return 0;
 }
 
 static void desktop_place_outputs(void)
@@ -306,12 +419,10 @@ static void output_drop(struct output *output)
         Puts every output's buffer back on the modeset that scans it out.
 
         A probe releases every modeset, and releasing one takes its framebuffer
-        away -- and canvas_modes_changed probes to answer a question, so the
-        answer alone is enough to lose it. A modeset carrying a mode and no
-        framebuffer is refused, the whole commit with it, and what stays on the
-        screen is whatever was there before this ever ran: on a machine that
-        inherits the firmware's picture that is a cursor moving over it and
-        nothing else.
+        away. A modeset carrying a mode and no framebuffer is refused, the
+        whole commit with it, and what stays on the screen is whatever was
+        there before this ever ran: on a machine that inherits the firmware's
+        picture that is a cursor moving over it and nothing else.
 
         So it is set before every commit rather than once when the output was
         made. Whoever cleared it, and for whatever reason, it is right again by

@@ -98,7 +98,7 @@ static void pane_place(struct pane *pane)
                 WRITE_ONCE(pane->shared->display_height, output->height);
         }
 
-        title = pane->style & WINDOW_FRAME ? canvas_title : 0;
+        title = pane_title(pane);
 
         if (pane->style & WINDOW_FULLSCREEN)
         {
@@ -152,7 +152,7 @@ static void pane_size(struct pane *pane)
         if (!output || !(pane->style & WINDOW_FULLSCREEN))
                 return;
 
-        title = pane->style & WINDOW_FRAME ? canvas_title : 0;
+        title = pane_title(pane);
 
         pane->width = (int)min(output->width, pane->max_width);
         pane->height = (int)min(output->height - min(output->height, (unsigned int)title),
@@ -209,26 +209,21 @@ static unsigned long canvas_pane_budget(void)
 
         Here rather than there, so that freeing a pane is the whole of
         forgetting one and a third caller cannot be written that forgets to.
+        Who gets the keys instead is the caller's: window_release hands them
+        to the window underneath, and nothing is left to hand them to when
+        the module is going away.
 */
 static void pane_free(struct pane *pane)
 {
-        if (desktop.dragging == pane)
-                desktop.dragging = NULL;
+        struct pane **held[] = {
+                &desktop.dragging, &desktop.resizing, &desktop.barring,
+                &desktop.press_pane, &desktop.focused,
+        };
+        unsigned int i;
 
-        if (desktop.resizing == pane)
-                desktop.resizing = NULL;
-
-        if (desktop.barring == pane)
-                desktop.barring = NULL;
-
-        if (desktop.press_pane == pane)
-                desktop.press_pane = NULL;
-
-        // Who gets the keys instead is the caller's: window_release hands
-        // them to the window underneath, and nothing is left to hand them to
-        // when the module is going away.
-        if (desktop.focused == pane)
-                desktop.focused = NULL;
+        for (i = 0; i < ARRAY_SIZE(held); i++)
+                if (*held[i] == pane)
+                        *held[i] = NULL;
 
         list_del(&pane->link);
         canvas_pane_bytes -= pane->bytes;
@@ -1086,7 +1081,7 @@ static void desktop_gather_panes(void)
         }
 }
 
-static void desktop_damage(int x, int y, int w, int h)
+static void desktop_damage_rect(const struct drm_rect *r)
 {
         if (desktop.damage_all)
                 return;
@@ -1097,7 +1092,29 @@ static void desktop_damage(int x, int y, int w, int h)
                 return;
         }
 
-        drm_rect_init(&desktop.damage[desktop.damage_count++], x, y, w, h);
+        desktop.damage[desktop.damage_count++] = *r;
+}
+
+static void desktop_damage(int x, int y, int w, int h)
+{
+        struct drm_rect r;
+
+        drm_rect_init(&r, x, y, w, h);
+        desktop_damage_rect(&r);
+}
+
+static void pane_damage_frame(struct pane *pane)
+{
+        struct drm_rect frame;
+
+        pane_frame(pane, &frame);
+        desktop_damage_rect(&frame);
+}
+
+static void pane_damage_was_and_now(struct pane *pane, const struct drm_rect *was)
+{
+        desktop_damage_rect(was);
+        pane_damage_frame(pane);
 }
 
 // The rectangle a run of changed cell rows covers, in desktop coordinates.
@@ -1106,8 +1123,7 @@ static void desktop_damage(int x, int y, int w, int h)
 static void pane_damage_rows(struct pane *pane, unsigned int row, unsigned int count)
 {
         desktop_damage(pane->x,
-                       pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0) +
-                           (int)row * canvas_cell_h,
+                       pane->y + pane_title(pane) + (int)row * canvas_cell_h,
                        pane->width, (int)count * canvas_cell_h);
 }
 
@@ -1122,9 +1138,10 @@ static void pane_damage_rows(struct pane *pane, unsigned int row, unsigned int c
 */
 static void pane_damage_bar(struct pane *pane)
 {
-        desktop_damage(pane->x + pane->width - canvas_bar,
-                       pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0),
-                       canvas_bar, (int)pane->rows * canvas_cell_h);
+        struct drm_rect gutter;
+
+        pane_gutter_rect(pane, &gutter);
+        desktop_damage_rect(&gutter);
 }
 
 /*
@@ -1149,7 +1166,7 @@ static void desktop_refresh_panes(void)
                 unsigned int was_z = (unsigned int)pane->z;
                 unsigned int was_style = pane->style;
                 unsigned int was_sequence = pane->sequence;
-                int fx, fy, fw, fh;
+                struct drm_rect was;
 
                 /*
                         The compositor's own. There is no page to read back, so
@@ -1162,8 +1179,7 @@ static void desktop_refresh_panes(void)
                         {
                                 pane->view_moved = false;
                                 pane->damage_rows = 0;
-                                pane_frame(pane, &fx, &fy, &fw, &fh);
-                                desktop_damage(fx, fy, fw, fh);
+                                pane_damage_frame(pane);
                                 continue;
                         }
 
@@ -1197,25 +1213,23 @@ static void desktop_refresh_panes(void)
                         continue;
                 }
 
-                pane_frame(pane, &fx, &fy, &fw, &fh);
+                pane_frame(pane, &was);
                 pane_refresh(pane);
 
                 /*
                         The wheel or a keystroke moved the view, which changes
                         every row of it.
 
-                        Both rectangles, because pane_refresh has run since fx
-                        was taken and the program may have moved the window in
-                        the same pass. Damaging only where it was left the rows
-                        it moved to undrawn, which is the trail the reshaped
-                        path below damages twice to avoid.
+                        Both rectangles, because pane_refresh has run since the
+                        old frame was taken and the program may have moved the
+                        window in the same pass. Damaging only where it was
+                        left the rows it moved to undrawn, which is the trail
+                        the reshaped path below damages twice to avoid.
                 */
                 if (pane->view_moved)
                 {
                         pane->view_moved = false;
-                        desktop_damage(fx, fy, fw, fh);
-                        pane_frame(pane, &fx, &fy, &fw, &fh);
-                        desktop_damage(fx, fy, fw, fh);
+                        pane_damage_was_and_now(pane, &was);
                         continue;
                 }
 
@@ -1253,9 +1267,7 @@ static void desktop_refresh_panes(void)
                 // whole than to reason about.
                 if (reshaped || !pane->cells || !pane->damage_rows)
                 {
-                        desktop_damage(fx, fy, fw, fh);
-                        pane_frame(pane, &fx, &fy, &fw, &fh);
-                        desktop_damage(fx, fy, fw, fh);
+                        pane_damage_was_and_now(pane, &was);
                         continue;
                 }
 

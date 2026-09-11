@@ -36,6 +36,8 @@
 
 #> arch x86_64
 SYM_FUNC_START(canvas_glyph)
+        test    %r8, %r8
+        jz      9f
         shl     $2, %rsi                # pitch, pixels to bytes
 
 1:      movzbl  (%rdx), %eax
@@ -53,11 +55,13 @@ SYM_FUNC_START(canvas_glyph)
 2:      add     %rsi, %rdi
         dec     %r8
         jnz     1b
-        RET
+9:      RET
 SYM_FUNC_END(canvas_glyph)
 
 #> arch x86_64
 SYM_FUNC_START(canvas_cell)
+        test    %rcx, %rcx
+        jz      9f
         shl     $2, %rsi                # pitch, pixels to bytes
 
         #
@@ -131,11 +135,12 @@ SYM_FUNC_START(canvas_cell)
         jnz     1b
 
         add     $256, %rsp
-        RET
+9:      RET
 SYM_FUNC_END(canvas_cell)
 
 #> arch arm64
 SYM_FUNC_START(canvas_cell)
+        cbz     x3, 9f
         lsl     x1, x1, #2
 
         // The same sixteen entry table of pixel pairs; see the x86_64 block
@@ -171,11 +176,12 @@ SYM_FUNC_START(canvas_cell)
         b.ne    1b
 
         add     sp, sp, #256
-        ret
+9:      ret
 SYM_FUNC_END(canvas_cell)
 
 #> arch riscv64
 SYM_FUNC_START(canvas_cell)
+        beqz    a3, 9f
         slli    a1, a1, 2
 
         # The same sixteen entry table of pixel pairs; see the x86_64 block
@@ -230,9 +236,7 @@ SYM_FUNC_START(canvas_cell)
         add     a0, a0, a1
         addi    a3, a3, -1
         bnez    a3, 1b
-
-        addi    sp, sp, 256
-        ret
+        j       8f
 
         # A word at a time, which needs no alignment the caller has not
         # already given. The table is read as words out of the same entries.
@@ -265,8 +269,8 @@ SYM_FUNC_START(canvas_cell)
         addi    a3, a3, -1
         bnez    a3, 3b
 
-        addi    sp, sp, 256
-        ret
+8:      addi    sp, sp, 256
+9:      ret
 SYM_FUNC_END(canvas_cell)
 
 #> arch other
@@ -276,6 +280,7 @@ SYM_FUNC_END(canvas_cell)
 
 #> arch arm64
 SYM_FUNC_START(canvas_glyph)
+        cbz     x4, 9f
         lsl     x1, x1, #2
 
 1:      ldrb    w6, [x2]
@@ -291,11 +296,12 @@ SYM_FUNC_START(canvas_glyph)
 2:      add     x0, x0, x1
         subs    x4, x4, #1
         b.ne    1b
-        ret
+9:      ret
 SYM_FUNC_END(canvas_glyph)
 
 #> arch riscv64
 SYM_FUNC_START(canvas_glyph)
+        beqz    a4, 9f
         slli    a1, a1, 2
 
 1:      lbu     a6, 0(a2)
@@ -312,7 +318,7 @@ SYM_FUNC_START(canvas_glyph)
 2:      add     a0, a0, a1
         addi    a4, a4, -1
         bnez    a4, 1b
-        ret
+9:      ret
 SYM_FUNC_END(canvas_glyph)
 
 #> arch other

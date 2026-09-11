@@ -16,29 +16,18 @@
         curve, and a band that is not at a corner is a plain run of pixels.
 */
 
-// The cell the cursor occupies on the desktop, which moves with the hotspot of
-// whichever shape it is wearing.
-static void cursor_cell(struct drm_rect *rect, int x, int y,
-                        unsigned int shape, unsigned int scale)
-{
-        drm_rect_init(rect, x - canvas_cursor_hot[shape][0] * (int)scale,
-                 y - canvas_cursor_hot[shape][1] * (int)scale,
-                 CURSOR_W * (int)scale, CURSOR_H * (int)scale);
-}
-
 // Whether any of these desktop rectangles reaches this output. Early, because
 // it is the one overlap question everything from cursor cells to damage asks.
 static PURE _Bool output_touched(struct output *output, const struct drm_rect *damage,
                                  unsigned int count)
 {
+        struct drm_rect screen;
         unsigned int i;
 
+        drm_rect_init(&screen, output->x, output->y, (int)output->width,
+                      (int)output->height);
         for (i = 0; i < count; i++)
-                if (rects_overlap(damage[i].x1, damage[i].y1,
-                                  damage[i].x2 - damage[i].x1,
-                                  damage[i].y2 - damage[i].y1,
-                                  output->x, output->y,
-                                  (int)output->width, (int)output->height))
+                if (drm_rects_overlap(&damage[i], &screen))
                         return true;
 
         return false;
@@ -53,11 +42,15 @@ struct shape
 // One run of one row, already clipped. Everything that draws ends here.
 static void target_row(const struct target *t, int y, int x1, int x2, u32 colour)
 {
+        if ((unsigned int)y >= (unsigned int)t->height)
+                return;
+
+        x1 = max(x1, 0);
+        x2 = min(x2, t->width);
         if (x2 <= x1)
                 return;
 
-        canvas_painted += (unsigned long)(x2 - x1);
-        canvas_runs++;
+        target_mark((unsigned long)(x2 - x1));
         memory_fill_u32(t->pixels + (size_t)y * t->pitch + x1,
                         (unsigned long)(x2 - x1), colour);
 }
@@ -66,10 +59,21 @@ static void target_row(const struct target *t, int y, int x1, int x2, u32 colour
 static void target_rectangle(const struct target *t, int x, int y, int w, int h,
                               u32 colour)
 {
+        if (x < 0)
+        {
+                w += x;
+                x = 0;
+        }
+        if (y < 0)
+        {
+                h += y;
+                y = 0;
+        }
+        w = min(w, t->width - x);
+        h = min(h, t->height - y);
         if (w <= 0 || h <= 0)
                 return;
-        canvas_painted += (unsigned long)w * h;
-        canvas_runs++;
+        target_mark((unsigned long)w * h);
         canvas_rect_fill(t->pixels + (size_t)y * t->pitch + x, t->pitch,
                          (unsigned long)w, (unsigned long)h, colour);
 }
@@ -107,21 +111,40 @@ static _Bool shape_span(const struct target *t, const struct shape *shape,
         wide and a hundred and ninety rows tall, which was 4560 calls a compose
         before this, each of them to write two pixels.
 */
+static _Bool shape_band_rows(const struct target *t, int band_y, int band_h,
+                             int *top, int *bottom)
+{
+        *top = max(max(band_y, t->clip.y1), 0);
+        *bottom = min(min(band_y + band_h, t->clip.y2), t->height);
+        return *bottom > *top;
+}
+
+static void shape_fill_rows(const struct target *t, const struct shape *shape,
+                            int band_x, int band_w, int y, int stop, u32 colour)
+{
+        int x1, x2;
+
+        for (; y < stop; y++)
+                if (shape_span(t, shape, band_x, band_w, y, &x1, &x2))
+                        target_row(t, y, x1, x2, colour);
+}
+
 static void shape_fill(const struct target *t, const struct shape *shape,
                        int band_x, int band_y, int band_w, int band_h, u32 colour)
 {
-        int top = max(max(band_y, t->clip.y1), 0);
-        int bottom = min(min(band_y + band_h, t->clip.y2), t->height);
+        int top, bottom, x1, x2;
+        int curve_top, curve_bottom;
+
+        if (!shape_band_rows(t, band_y, band_h, &top, &bottom))
+                return;
+
         // Clamped to the band, not just to the shape: a titlebar starts below
         // the shape's top, and a rectangle measured from the shape would paint
         // the whole window.
-        int curve_top = clamp(shape->y + shape->radius, top, bottom);
-        int curve_bottom = clamp(shape->y + shape->h - shape->radius, top, bottom);
-        int y, x1, x2;
+        curve_top = clamp(shape->y + shape->radius, top, bottom);
+        curve_bottom = clamp(shape->y + shape->h - shape->radius, top, bottom);
 
-        for (y = top; y < curve_top; y++)
-                if (shape_span(t, shape, band_x, band_w, y, &x1, &x2))
-                        target_row(t, y, x1, x2, colour);
+        shape_fill_rows(t, shape, band_x, band_w, top, curve_top, colour);
 
         if (curve_bottom > curve_top)
         {
@@ -133,26 +156,24 @@ static void shape_fill(const struct target *t, const struct shape *shape,
                                   curve_bottom - curve_top, colour);
         }
 
-        for (y = curve_bottom; y < bottom; y++)
-                if (shape_span(t, shape, band_x, band_w, y, &x1, &x2))
-                        target_row(t, y, x1, x2, colour);
+        shape_fill_rows(t, shape, band_x, band_w, curve_bottom, bottom, colour);
 }
 
 static void shape_blit(const struct target *t, const struct shape *shape,
                        int band_x, int band_y, int band_w, int band_h,
                        const u32 *source, unsigned int source_pitch)
 {
-        int top = max(max(band_y, t->clip.y1), 0);
-        int bottom = min(min(band_y + band_h, t->clip.y2), t->height);
-        int y, x1, x2;
+        int top, bottom, y, x1, x2;
+
+        if (!shape_band_rows(t, band_y, band_h, &top, &bottom))
+                return;
 
         for (y = top; y < bottom; y++)
         {
                 if (!shape_span(t, shape, band_x, band_w, y, &x1, &x2))
                         continue;
 
-                canvas_painted += (unsigned long)(x2 - x1);
-                canvas_runs++;
+                target_mark((unsigned long)(x2 - x1));
                 canvas_row_blit(t->pixels + (size_t)y * t->pitch + x1,
                                 source + (size_t)(y - band_y) * source_pitch +
                                     (x1 - band_x),
@@ -160,13 +181,6 @@ static void shape_blit(const struct target *t, const struct shape *shape,
         }
 }
 
-/*
-        A window made of text.
-
-        Runs of one paper colour go out as one rectangle, since a terminal is
-        mostly one colour behind everything, and then the glyphs. Only the
-        cells the damage reaches.
-*/
 /*
         One cell, background and glyph together.
 
@@ -184,8 +198,7 @@ static void cell_draw(const struct target *t, const struct shape *shape,
         if (direct && x >= max(t->clip.x1, 0) &&
             x + WINDOW_CELL_W <= min(t->clip.x2, t->width))
         {
-                canvas_painted += WINDOW_CELL_W * WINDOW_CELL_H;
-                canvas_runs++;
+                target_mark(WINDOW_CELL_W * WINDOW_CELL_H);
                 canvas_cell(t->pixels + (size_t)y * t->pitch + x, t->pitch,
                             bits, WINDOW_CELL_H, ink, paper);
                 return;
@@ -208,6 +221,7 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                             int used, int first, int last)
 {
         int column = first;
+        int cell_w = canvas_cell_w;
         const unsigned char *font_data = NULL;
         size_t glyph_size = 0;
         _Bool direct = glyph_is_cell() && desktop.scale == 1 &&
@@ -237,7 +251,7 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
 
                 if (character > ' ' && character <= 126)
                 {
-                        cell_draw(t, shape, x + column * canvas_cell_w, y,
+                        cell_draw(t, shape, x + column * cell_w, y,
                                   &cells[column],
                                   direct ? font_data + (size_t)character * glyph_size
                                          : NULL,
@@ -259,8 +273,8 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                                 break;
                 }
 
-                shape_fill(t, shape, x + column * canvas_cell_w, y,
-                           (run - column) * canvas_cell_w, canvas_cell_h, paper);
+                shape_fill(t, shape, x + column * cell_w, y,
+                           (run - column) * cell_w, canvas_cell_h, paper);
 
                 column = run;
         }
@@ -272,8 +286,8 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
                 being shown in.
         */
         if (column < last)
-                shape_fill(t, shape, x + column * canvas_cell_w, y,
-                           (last - column) * canvas_cell_w, canvas_cell_h,
+                shape_fill(t, shape, x + column * cell_w, y,
+                           (last - column) * cell_w, canvas_cell_h,
                            canvas_terminal[0] | t->opaque);
 }
 
@@ -364,18 +378,6 @@ static void compose_cells(struct pane *pane, const struct target *t,
 }
 
 /*
-        A pane, in target coordinates.
-
-        The frame is drawn as the parts of it something is not about to cover:
-        the strip above the titlebar, the strip below the contents, and the two
-        sides. Painting the whole rectangle and covering it up cost 47824
-        pixels a window where 2224 could be seen.
-
-        The sides are shape_fill with a band that stops at the contents, which
-        is why there is no separate border function: the band clamp already
-        measures from the row's inset, so a side follows the curve for free.
-*/
-/*
         The bar down the right of a window that has more than it is showing.
 
         The grid ends before its reserved gutter, so every cell stays visible.
@@ -400,14 +402,16 @@ struct pane_bar_geometry
 static _Bool pane_bar(struct pane *pane, struct pane_bar_geometry *bar)
 {
         unsigned int first, shown, total;
+        struct drm_rect gutter;
 
         if (!pane_extent(pane, &first, &shown, &total) || !total)
                 return false;
 
-        bar->width = canvas_bar;
-        bar->height = (int)pane->rows * canvas_cell_h;
-        bar->x = pane->x + (int)pane->width - bar->width;
-        bar->y = pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0);
+        pane_gutter_rect(pane, &gutter);
+        bar->x = gutter.x1;
+        bar->y = gutter.y1;
+        bar->width = drm_rect_width(&gutter);
+        bar->height = drm_rect_height(&gutter);
         bar->total = total;
 
         bar->thumb_span = max((int)((unsigned long)bar->height * shown / total),
@@ -421,25 +425,17 @@ static _Bool pane_bar(struct pane *pane, struct pane_bar_geometry *bar)
 }
 
 static void compose_bar(struct pane *pane, const struct target *t,
-                        const struct shape *shape, int x, int y)
+                        const struct shape *shape)
 {
         struct pane_bar_geometry bar;
-        int width = canvas_bar;
-        int height = (int)pane->rows * canvas_cell_h;
-        int left = x + pane->width - width;
+        struct drm_rect gutter;
 
-        /*
-                Cursor damage is ordinarily one cell nowhere near this bar.
-                pane_bar walks the whole 512-line ring, including two runtime
-                divisions a line, just to discover geometry that cannot reach
-                that damage. Reject by the bar's fixed bounding box first;
-                the expensive extent remains exact whenever any bar pixel can
-                survive the clip.
-        */
-        if (!rects_overlap(left, y, width, height,
-                           t->clip.x1, t->clip.y1,
-                           t->clip.x2 - t->clip.x1,
-                           t->clip.y2 - t->clip.y1))
+        pane_gutter_rect(pane, &gutter);
+        gutter.x1 -= t->x;
+        gutter.x2 -= t->x;
+        gutter.y1 -= t->y;
+        gutter.y2 -= t->y;
+        if (!drm_rects_overlap(&gutter, &t->clip))
                 return;
 
         if (!pane_bar(pane, &bar))
@@ -454,18 +450,24 @@ static void compose_bar(struct pane *pane, const struct target *t,
 
 static void compose_pane(struct pane *pane, const struct target *t)
 {
-        _Bool framed = pane->style & WINDOW_FRAME;
-        int title = framed ? canvas_title : 0;
+        int title = pane_title(pane);
         int x = pane->x - t->x;
         int y = pane->y - t->y;
         int bottom = y + title + pane->height;
         struct shape shape;
-        int fx, fy, fw, fh;
+        struct drm_rect frame, local_frame;
+        int cx, cy, side, reserved;
+        _Bool has_close;
 
         if (pane->style & WINDOW_MINIMIZED)
                 return;
 
-        pane_frame(pane, &fx, &fy, &fw, &fh);
+        pane_frame(pane, &frame);
+        local_frame = frame;
+        local_frame.x1 -= t->x;
+        local_frame.x2 -= t->x;
+        local_frame.y1 -= t->y;
+        local_frame.y2 -= t->y;
 
         /*
                 Nothing at all for a window the damage does not touch, and for
@@ -473,60 +475,55 @@ static void compose_pane(struct pane *pane, const struct target *t)
                 pane laid out its own text on every mouse move, whether or not
                 a pixel of it could land.
         */
-        if (!rects_overlap(fx - t->x, fy - t->y, fw, fh,
-                           t->clip.x1, t->clip.y1,
-                           t->clip.x2 - t->clip.x1, t->clip.y2 - t->clip.y1))
+        if (!drm_rects_overlap(&local_frame, &t->clip))
                 return;
 
-        shape.x = fx - t->x;
-        shape.y = fy - t->y;
-        shape.w = fw;
-        shape.h = fh;
+        shape.x = local_frame.x1;
+        shape.y = local_frame.y1;
+        shape.w = drm_rect_width(&local_frame);
+        shape.h = drm_rect_height(&local_frame);
         shape.radius = min(pane->edge, min(shape.w, shape.h) / 2);
 
-        if (framed)
+        if (title)
         {
-                u32 frame = t->ink[INK_FRAME];
+                u32 frame_ink = t->ink[INK_FRAME];
+                int span = title + pane->height;
+                struct {
+                        int x, y, w, h;
+                } chrome[] = {
+                        {shape.x, shape.y, shape.w, y - shape.y},
+                        {shape.x, bottom, shape.w, shape.y + shape.h - bottom},
+                        {shape.x, y, x - shape.x, span},
+                        {x + pane->width, y, shape.x + shape.w - (x + pane->width),
+                         span},
+                };
+                unsigned int i;
 
-                shape_fill(t, &shape, shape.x, shape.y, shape.w, y - shape.y, frame);
-                shape_fill(t, &shape, shape.x, bottom, shape.w,
-                           shape.y + shape.h - bottom, frame);
-                shape_fill(t, &shape, shape.x, y, x - shape.x, title + pane->height, frame);
-                shape_fill(t, &shape, x + pane->width, y,
-                           shape.x + shape.w - (x + pane->width),
-                           title + pane->height, frame);
+                for (i = 0; i < ARRAY_SIZE(chrome); i++)
+                        shape_fill(t, &shape, chrome[i].x, chrome[i].y,
+                                   chrome[i].w, chrome[i].h, frame_ink);
 
                 shape_fill(t, &shape, x, y, pane->width, title,
                            t->ink[pane->state & WINDOW_FOCUSED ? INK_TITLE_LIT
                                                               : INK_TITLE]);
 
-                {
-                        int cx, cy, side;
-                        /*
-                                What the button takes out of the title's room.
-                                Without this a long title is centred under the
-                                X and reads as one word short.
-                        */
-                        int reserved = canvas_cell_w;
+                reserved = canvas_cell_w;
+                has_close = pane_close_box(pane, &cx, &cy, &side);
+                if (has_close)
+                        reserved = side + canvas_border * 2;
 
-                        if (pane_close_box(pane, &cx, &cy, &side))
-                                reserved = side + canvas_border * 2;
+                if (pane->title_length)
+                        text_draw(t, x + canvas_cell_w, y,
+                                  pane->width - canvas_cell_w - reserved, title,
+                                  pane->title, pane->title_length,
+                                  TEXT_CENTRE | TEXT_MIDDLE, (int)desktop.scale,
+                                  t->ink[INK_TEXT]);
 
-                        if (pane->title_length)
-                                text_draw(t, x + canvas_cell_w, y,
-                                          pane->width - canvas_cell_w - reserved,
-                                          title, pane->title, pane->title_length,
-                                          TEXT_CENTRE | TEXT_MIDDLE,
-                                          (int)desktop.scale, t->ink[INK_TEXT]);
-
-                        // Centred in its square at the size of a glyph, so it
-                        // sits with the title rather than over it.
-                        if (pane_close_box(pane, &cx, &cy, &side))
-                                bits_draw(t, cx - t->x + (side - canvas_cell_w) / 2,
-                                          cy - t->y + (side - canvas_cell_w) / 2,
-                                          (int)desktop.scale, close_bits, 1, 8, 8,
-                                          t->ink[INK_TEXT]);
-                }
+                if (has_close)
+                        bits_draw(t, cx - t->x + (side - canvas_cell_w) / 2,
+                                  cy - t->y + (side - canvas_cell_w) / 2,
+                                  (int)desktop.scale, close_bits, 1, 8, 8,
+                                  t->ink[INK_TEXT]);
         }
 
         if (pane->cells)
@@ -546,7 +543,7 @@ static void compose_pane(struct pane *pane, const struct target *t)
                         shape_fill(t, &shape, x, y + title + gh, min(gw, pane->width),
                                    pane->height - gh, t->ink[INK_BODY]);
 
-                compose_bar(pane, t, &shape, x, y + title);
+                compose_bar(pane, t, &shape);
         }
         else if (pane->pixels)
                 shape_blit(t, &shape, x, y + title, pane->width, pane->height,
@@ -617,7 +614,8 @@ static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
         {
                 unsigned int kept = 0;
                 struct drm_rect cut;
-                int fx, fy, fw, fh, radius;
+                struct drm_rect frame;
+                int radius;
 
                 if (!count)
                         return;
@@ -625,10 +623,13 @@ static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
                 if (pane->style & WINDOW_MINIMIZED)
                         continue;
 
-                pane_frame(pane, &fx, &fy, &fw, &fh);
-                radius = min(pane->edge, min(fw, fh) / 2);
-                drm_rect_init(&cut, fx + radius - t->x, fy + radius - t->y,
-                         fw - radius * 2, fh - radius * 2);
+                pane_frame(pane, &frame);
+                radius = min(pane->edge, min(drm_rect_width(&frame),
+                                             drm_rect_height(&frame)) / 2);
+                drm_rect_init(&cut, frame.x1 + radius - t->x,
+                         frame.y1 + radius - t->y,
+                         drm_rect_width(&frame) - radius * 2,
+                         drm_rect_height(&frame) - radius * 2);
 
                 for (i = 0; i < count; i++)
                 {
@@ -687,23 +688,24 @@ static HOT void compose_clip(const struct target *t)
 // damage. The clip is in target coordinates; the rectangle asked for is in
 // desktop ones.
 static PURE struct target target_of(struct output *output, u32 *pixels,
-                                    int rx, int ry, int rw, int rh)
+                                    const struct drm_rect *r)
 {
-        struct target t;
-
-        t.pixels = pixels;
-        t.pitch = output->buffer->fb->pitches[0] / sizeof(u32);
-        t.width = (int)output->width;
-        t.height = (int)output->height;
-        t.x = output->x;
-        t.y = output->y;
-        t.opaque = output->opaque;
-        t.ink = output->palette;
-
-        t.clip.x1 = max(rx - output->x, 0);
-        t.clip.y1 = max(ry - output->y, 0);
-        t.clip.x2 = min(rx + rw - output->x, t.width);
-        t.clip.y2 = min(ry + rh - output->y, t.height);
+        struct target t = {
+                .pixels = pixels,
+                .pitch = output->buffer->fb->pitches[0] / sizeof(u32),
+                .width = (int)output->width,
+                .height = (int)output->height,
+                .x = output->x,
+                .y = output->y,
+                .opaque = output->opaque,
+                .ink = output->palette,
+                .clip = {
+                        .x1 = max(r->x1 - output->x, 0),
+                        .y1 = max(r->y1 - output->y, 0),
+                        .x2 = min(r->x2 - output->x, (int)output->width),
+                        .y2 = min(r->y2 - output->y, (int)output->height),
+                },
+        };
 
         return t;
 }
@@ -714,9 +716,9 @@ static PURE struct target target_of(struct output *output, u32 *pixels,
         of writes. The rectangle is in desktop coordinates.
 */
 static void compose_rect(struct output *output, u32 *pixels,
-                         int rx, int ry, int rw, int rh)
+                         const struct drm_rect *r)
 {
-        struct target t = target_of(output, pixels, rx, ry, rw, rh);
+        struct target t = target_of(output, pixels, r);
 
         if (t.clip.x2 > t.clip.x1 && t.clip.y2 > t.clip.y1)
                 compose_clip(&t);
@@ -728,7 +730,7 @@ static void compose_rect(struct output *output, u32 *pixels,
 */
 static void output_draw_cursor(struct output *output, u32 *pixels)
 {
-        struct drm_rect cell;
+        struct drm_rect cell, screen;
         struct target t;
 
         cursor_cell(&cell, desktop.cursor_x, desktop.cursor_y,
@@ -739,9 +741,9 @@ static void output_draw_cursor(struct output *output, u32 *pixels)
         if (!output->cursor_shown)
                 return;
 
-        t = target_of(output, pixels, output->x, output->y,
-                      (int)output->width, (int)output->height);
-
+        drm_rect_init(&screen, output->x, output->y, (int)output->width,
+                      (int)output->height);
+        t = target_of(output, pixels, &screen);
         canvas_draw_cursor(&t, desktop.cursor_x - output->x,
                            desktop.cursor_y - output->y,
                            desktop.cursor_shape, desktop.cursor_scale);
@@ -838,16 +840,12 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
                 four: where its frame was and is, where the cursor was and is,
                 and those chain.
         */
-        flush = merged[kept++] = damage[0];
+        flush = damage[0];
+        memory_copy_apart(merged, (address_any)damage, count * sizeof(*damage));
+        kept = count;
 
-        for (i = 1; i < count; i++)
-        {
-                merged[kept++] = damage[i];
-                flush.x1 = min(flush.x1, damage[i].x1);
-                flush.y1 = min(flush.y1, damage[i].y1);
-                flush.x2 = max(flush.x2, damage[i].x2);
-                flush.y2 = max(flush.y2, damage[i].y2);
-        }
+        for (i = 1; i < kept; i++)
+                canvas_rect_join(&flush, &merged[i]);
 
         for (joined = true; joined;)
         {
@@ -856,18 +854,10 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
                 for (i = 0; i < kept && !joined; i++)
                         for (j = i + 1; j < kept; j++)
                         {
-                                if (!rects_overlap(merged[i].x1, merged[i].y1,
-                                                   merged[i].x2 - merged[i].x1,
-                                                   merged[i].y2 - merged[i].y1,
-                                                   merged[j].x1, merged[j].y1,
-                                                   merged[j].x2 - merged[j].x1,
-                                                   merged[j].y2 - merged[j].y1))
+                                if (!drm_rects_overlap(&merged[i], &merged[j]))
                                         continue;
 
-                                merged[i].x1 = min(merged[i].x1, merged[j].x1);
-                                merged[i].y1 = min(merged[i].y1, merged[j].y1);
-                                merged[i].x2 = max(merged[i].x2, merged[j].x2);
-                                merged[i].y2 = max(merged[i].y2, merged[j].y2);
+                                canvas_rect_join(&merged[i], &merged[j]);
 
                                 merged[j] = merged[--kept];
                                 joined = true;
@@ -879,10 +869,7 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
         started = ktime_get_ns();
 
         for (i = 0; i < kept; i++)
-                compose_rect(output, pixels,
-                             merged[i].x1, merged[i].y1,
-                             merged[i].x2 - merged[i].x1,
-                             merged[i].y2 - merged[i].y1);
+                compose_rect(output, pixels, &merged[i]);
 
         output_draw_cursor(output, pixels);
 
@@ -905,15 +892,16 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
 static void compose_output(struct output *output)
 {
         struct iosys_map map;
+        struct drm_rect screen;
         u32 *pixels;
 
         if (!output_map(output, &map))
                 return;
 
         pixels = map.vaddr;
-
-        compose_rect(output, pixels, output->x, output->y,
-                     (int)output->width, (int)output->height);
+        drm_rect_init(&screen, output->x, output->y, (int)output->width,
+                      (int)output->height);
+        compose_rect(output, pixels, &screen);
 
         output_draw_cursor(output, pixels);
 

@@ -437,7 +437,8 @@ void canvas_row_blit(u32 *at, const u32 *from, unsigned long count, u32 opaque);
 
         The origin is where the target sits on the desktop, so drawing can be
         in desktop coordinates and land in target ones. The clip is the damage,
-        in target coordinates.
+        in target coordinates. Stores still cut to the buffer: a clip that
+        lies about the size is a write into whatever follows the scanout.
 */
 struct target
 {
@@ -463,10 +464,21 @@ static CONST struct canvas *canvas_from_client(struct drm_client_dev *client)
         return container_of(client, struct canvas, client);
 }
 
-static CONST _Bool rects_overlap(int ax, int ay, int aw, int ah,
-                                 int bx, int by, int bw, int bh)
+/* pure, not const: it reads the rectangles through its pointers. A const
+   function may examine nothing but its argument values, so the compiler is
+   free to treat the memory behind them as unread -- and it does. */
+static inline PURE _Bool drm_rects_overlap(const struct drm_rect *a,
+                                           const struct drm_rect *b)
 {
-        return ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
+        return a->x1 < b->x2 && b->x1 < a->x2 && a->y1 < b->y2 && b->y1 < a->y2;
+}
+
+static inline void canvas_rect_join(struct drm_rect *a, const struct drm_rect *b)
+{
+        a->x1 = min(a->x1, b->x1);
+        a->y1 = min(a->y1, b->y1);
+        a->x2 = max(a->x2, b->x2);
+        a->y2 = max(a->y2, b->y2);
 }
 
 static inline CONST _Bool point_in_rect(int x, int y, int width, int height,
@@ -481,19 +493,40 @@ static inline CONST _Bool point_in_rect(int x, int y, int width, int height,
 #define canvas_border (2 * (int)desktop.scale)
 #define canvas_cell_w (WINDOW_CELL_W * (int)desktop.scale)
 #define canvas_cell_h (WINDOW_CELL_H * (int)desktop.scale)
-// A cell window reserves this strip beside its grid, even without scrollback.
 #define canvas_bar (10 * (int)desktop.scale)
 
-// The border and titlebar a framed window wears, and nothing when it does not.
-static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)
-{
-        int title = pane->style & WINDOW_FRAME ? canvas_title : 0;
-        int border = pane->style & WINDOW_FRAME ? canvas_border : 0;
+#define pane_title(pane) \
+        ((pane)->style & WINDOW_FRAME ? canvas_title : 0)
+#define pane_border(pane) \
+        ((pane)->style & WINDOW_FRAME ? canvas_border : 0)
+#define target_mark(pixels) \
+        do { canvas_painted += (pixels); canvas_runs++; } while (0)
 
-        *x = pane->x - border;
-        *y = pane->y - border;
-        *w = pane->width + border * 2;
-        *h = pane->height + title + border * 3;
+// The border and titlebar a framed window wears, and nothing when it does not.
+static void pane_frame(const struct pane *pane, struct drm_rect *frame)
+{
+        int title = pane_title(pane);
+        int border = pane_border(pane);
+
+        drm_rect_init(frame, pane->x - border, pane->y - border,
+                      pane->width + border * 2,
+                      pane->height + title + border * 3);
+}
+
+/* pure for the same reason: it reads the pane behind the pointer. */
+static inline PURE _Bool pane_in_title(const struct pane *pane, int x, int y)
+{
+        int title = pane_title(pane);
+
+        return title &&
+               point_in_rect(pane->x, pane->y, pane->width, title, x, y);
+}
+
+static void pane_gutter_rect(const struct pane *pane, struct drm_rect *gutter)
+{
+        drm_rect_init(gutter, pane->x + pane->width - canvas_bar,
+                      pane->y + pane_title(pane), canvas_bar,
+                      (int)pane->rows * canvas_cell_h);
 }
 
 /*
@@ -537,7 +570,7 @@ static _Bool pane_close_box(struct pane *pane, int *x, int *y, int *side)
 {
         int box = canvas_title - canvas_border * 2;
 
-        if (!(pane->style & WINDOW_FRAME) || !pane->shared || box <= 0)
+        if (!pane_title(pane) || !pane->shared || box <= 0)
                 return false;
 
         if (pane->width < box + canvas_cell_w * 2)
