@@ -1965,9 +1965,14 @@ fn shell_suspend(writer write, string_address input)
                 if (walk.index < shell_argc)
                 {
                         shell_diagnostic_where();
-
-                        return shell_answer(string_report(log_error, 1,
+                        shell_answer(string_report(log_error, 1,
                             "suspend: too many arguments\n"));
+
+                        //      And takes the script with it: bash never
+                        //      reaches the next command after this one.
+                        shell_stop_when_scripted(1);
+
+                        return;
                 }
         }
 
@@ -2575,16 +2580,23 @@ fn job_wait(writer write, string_address input)
                         {
                                 //      Bash names it as a job spec it could
                                 //      not read and answers one; dash calls
-                                //      it an illegal number and answers two.
+                                //      it an illegal number, answers two and
+                                //      reads no further.
                                 shell_diagnostic_where();
 
-                                if (shell_bash_compat)
+                                if (!shell_bash_compat)
                                         return shell_answer(string_report(
-                                            log_error, 1,
-                                            "wait: `%s': not a pid or valid job spec\n",
+                                            log_error, 2,
+                                            "wait: Illegal number: %s\n",
                                             word));
 
-                                return shell_answer(string_report(log_error, 2, "wait: Illegal number: %s\n", word));
+                                //      Every word gets its own line: bash
+                                //      walks the rest of them and answers
+                                //      one at the end.
+                                answer = string_report(log_error, 1,
+                                    "wait: `%s': not a pid or valid job spec\n",
+                                    word);
+                                continue;
                         }
 
                         found = job_find(pid, true);

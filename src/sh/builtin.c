@@ -92,10 +92,18 @@ bool word_is(string_address word, string_address text);
 
 static COLD bool shell_option_bad(string_address name, string_address said)
 {
-        //      A long word is named by its two dashes and no more, which is
-        //      as far as the reference's own option reader got.
-        if (said[0] == '-' && said[1] == '-' && said[2])
-                said = (string_address) "--";
+        //      The reference's own option reader names one byte behind the
+        //      sign, and a long word by its two dashes and no more: "-ø" is
+        //      named by the first of its two bytes and "--bogus" by "--".
+        p8 room[3];
+
+        if (said[0] && said[1] && said[2])
+        {
+                room[0] = said[0];
+                room[1] = said[1];
+                room[2] = end;
+                said = room;
+        }
 
         shell_diagnostic_where();
 
@@ -4469,8 +4477,12 @@ COLD fn shell_pushd(writer write, string_address input)
                                           (count - 1) * sizeof(list[0]));
 
                 if (!shell_dirstack_move(wanted))
-                        return shell_answer(string_report(log_error, 1, "pushd: %s: No such file or directory\n",
-                                      named));
+                {
+                        shell_diagnostic_where();
+
+                        return shell_answer(string_report(log_error, 1,
+                            "pushd: %s: No such file or directory\n", named));
+                }
 
                 if (!shell_dirstack_write(rotated, count))
                         return shell_answer(string_report(log_error, 1, "pushd: directory stack full\n"));
@@ -4531,7 +4543,12 @@ COLD fn shell_pushd(writer write, string_address input)
         //      which is still the top of what is listed, so the entry the
         //      rotation brought up is written under it rather than moved to.
         if (!stack_only && !shell_dirstack_move(wanted))
-                return shell_answer(string_report(log_error, 1, "pushd: %s: No such file or directory\n", wanted));
+        {
+                shell_diagnostic_where();
+
+                return shell_answer(string_report(log_error, 1,
+                    "pushd: %s: No such file or directory\n", wanted));
+        }
 
         //      A rotation asked to leave the shell where it is says nothing:
         //      Bash writes the stack for a push and for a move, and a
@@ -8104,6 +8121,12 @@ static COLD fn shell_marked(writer write, p8 mark)
                 {
                         shell_name_refused(command, word, length);
                         exec_special_error_note();
+
+                        //      Under posix the refusal takes the script
+                        //      with it, so bash never reaches the next word
+                        //      to complain about that one too.
+                        if (shell_posix_on())
+                                return shell_answer(1);
 
                         //      Bash names the word it will not have and goes
                         //      on to the next one -- "export - v=1" leaves v
@@ -13809,14 +13832,23 @@ static bool shell_completion_refused(string_address command,
 {
         // Two bytes: the shared formatter has no %c.
         p8 room[2];
-        shell_option_walk walk = {1, null, 0, true};
+        //      Only compopt reads a + word as options: to complete and bind
+        //      a "+Z" is a name, and bash takes it for one without a word
+        //      of complaint.
+        shell_option_walk walk = {1, null, 0, word_is(command, "compopt")};
         p8 option;
 
         while (shell_option_letter(address_of walk, address_of option))
         {
                 if (!string_first_of(letters, option))
                 {
-                        shell_answer(shell_letter_refused(command, option,
+                        //      The sign the letter came under, not a dash
+                        //      every time: compopt reads +o as readily as
+                        //      -o and names back what it was given.
+                        p8 said[3] = {walk.direction ? walk.direction : '-',
+                                      option, end};
+
+                        shell_answer(shell_option_refused(command, said,
                                                           usage));
                         return true;
                 }
@@ -13824,6 +13856,7 @@ static bool shell_completion_refused(string_address command,
                 if (string_first_of(valued, option) &&
                     !shell_option_argument(address_of walk))
                 {
+                        shell_diagnostic_where();
                         string_report(log_error, 2,
                                       "%s: -%s: option requires an argument\n",
                                       command,
@@ -13893,9 +13926,13 @@ static COLD fn shell_compopt(writer write, string_address input)
         //      No completion is being executed and no name has a
         //      specification, which is the pair of things Bash says here.
         if (first < shell_argc)
-                return shell_answer(string_report(
-                    log_error, 1, "compopt: %s: no completion specification\n",
+        {
+                shell_diagnostic_where();
+
+                return shell_answer(string_report(log_error, 1,
+                    "compopt: %s: no completion specification\n",
                     shell_argv[first]));
+        }
 
         shell_answer(string_report(
             log_error, 1,
@@ -15364,6 +15401,17 @@ fn shell_ulimit(writer write, string_address input)
                 picked_count = 1;
         }
 
+        //      One value and no more: dash counts the operands it was
+        //      left with before it reads any of them, and bash reads the
+        //      first and pays no attention to the rest.
+        if (!shell_bash_compat && index + 1 < shell_argc)
+        {
+                shell_diagnostic_where();
+
+                return shell_answer(string_report(log_error, 2,
+                    "ulimit: too many arguments\n"));
+        }
+
         if (index >= shell_argc)
         {
                 for (positive at = 0; at < picked_count; at++)
@@ -16110,7 +16158,10 @@ fn shell_help(writer write, string_address input)
         if (index < shell_argc)
         {
                 for (; index < shell_argc; index++)
-                        if (!shell_command_builtin_here(
+                        //      A dash on its own is an option word with no
+                        //      letters in it, not a topic to look for.
+                        if (!word_is(shell_argv[index], "-") &&
+                            !shell_command_builtin_here(
                                 shell_argv[index],
                                 string_hash_33_length(shell_argv[index])))
                         {
