@@ -19582,6 +19582,30 @@ static bool rm_ask;
 static bool rm_ask_once;
 static bool rm_preserve_all;
 static bool rm_loud;
+/*
+        "." and ".." name the directory a relative path is measured from and
+        the one above it, so removing either is a request to remove what the
+        name itself stands on. The reference refuses them by name -- before
+        the kernel is asked, and whatever -f says -- and names the operand as
+        it was written rather than as it resolved.
+*/
+static PURE bool rm_dot_operand(string_address path)
+{
+        positive length = string_length(path);
+        positive at;
+
+        while (length > 1 && path[length - 1] == '/')
+                length--;
+
+        at = length;
+
+        while (at && path[at - 1] != '/')
+                at--;
+
+        return (length - at == 1 && path[at] == '.') ||
+               (length - at == 2 && path[at] == '.' && path[at + 1] == '.');
+}
+
 static bool rm_one_system;
 static bool rm_careful;
 static bool rm_preserve_root;
@@ -20006,8 +20030,18 @@ static b32 file_rm()
         {
                 string_address path = program_argument((b32)first++);
                 file_facts facts;
-                bipolar looked = file_look_code(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW,
-                                                address_of facts);
+                bipolar looked;
+
+                if (rm_dot_operand(path))
+                {
+                        string_format(log_error, "rm: refusing to remove '.' or"
+                                      " '..' directory: skipping '%s'\n", path);
+                        rm_status = 1;
+                        continue;
+                }
+
+                looked = file_look_code(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW,
+                                        address_of facts);
 
                 if (looked < 0)
                 {
