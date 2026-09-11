@@ -4,12 +4,14 @@
         There are two entry shapes because package management and ordinary
         commands want different things:
 
-          fast    overlay the distribution's runtime directories in a private
-                  mount view, preserving Moonwater files and the current
-                  directory; this is the default and has no supervisor fork.
+          fast        overlay the distribution's package directories in a
+                      private mount view, preserving Moonwater files and the
+                      current directory; this is the default and has no
+                      supervisor fork.
 
-          system  pivot into the complete distribution root with private PID,
-                  UTS and IPC views; use this for apt, pacman and services.
+          isolated    pivot into the complete distribution root with private
+                      PID, UTS and IPC views; use this for apt, pacman, apk
+                      and services that expect to own a tree.
 
         Neither is instruction emulation or a syscall proxy. Once setup is
         complete, the program is an ordinary native process on this kernel.
@@ -18,7 +20,7 @@
 #define bowl_label TERM_BOLD "[Bowl]" TERM_RESET " "
 
 static const p8 bowl_usage_text[] = bowl_label
-    "usage: bowl [--fast|--system] <root> [program [argument...]]\n"
+    "usage: bowl [--fast|--isolated] <root> [program [argument...]]\n"
     bowl_label "       bowl expose <root> <program> [name]\n";
 
 #define BOWL_NATIVE_SHELL "/shell"
@@ -49,8 +51,8 @@ struct bowl_layer
         bool required;
 };
 
-/* Filesystems expected by a complete distribution root. */
-static struct bowl_mount_point bowl_system_mounts[] = {
+/* Filesystems expected by a complete isolated root. */
+static struct bowl_mount_point bowl_isolated_mounts[] = {
     {"proc", "/proc", "proc", MS_NOSUID | MS_NOEXEC | MS_NODEV},
     {"sysfs", "/sys", "sysfs", MS_NOSUID | MS_NOEXEC | MS_NODEV},
     {"devtmpfs", "/dev", "devtmpfs", MS_NOSUID},
@@ -62,23 +64,25 @@ static struct bowl_mount_point bowl_system_mounts[] = {
 };
 
 /*
-        The distribution portions of a fast merged view.
+        Fast merged view.
 
-        /home, /root, /tmp, /run, /dev, /proc and /sys deliberately remain
-        Moonwater's. Relative and absolute paths to user data therefore keep
-        their meaning when a package-provided command is exposed system-wide.
-        /usr is the only mandatory layer; the others vary across usr-merged
-        Debian, Arch and minimal roots.
+        /usr is the packages. /bin and /sbin cover roots that are not
+        usr-merged. /opt is optional extras. /lib and /lib64 are the loader
+        and libc from this bowl, which an empty Moonwater host does not have;
+        a later donor namespace skips those so a second bowl cannot replace
+        a shared glibc.
+
+        /etc and /var stay Moonwater's, as do /home, /root, /tmp, /run, /dev,
+        /proc and /sys. Relative and absolute paths to user data therefore
+        keep their meaning when a package-provided command is exposed.
 */
 static struct bowl_layer bowl_fast_layers[] = {
     {"/usr", true},
-    {"/lib", false},
-    {"/lib64", false},
     {"/bin", false},
     {"/sbin", false},
-    {"/etc", false},
-    {"/var", false},
     {"/opt", false},
+    {"/lib", false},
+    {"/lib64", false},
     {null, false},
 };
 
@@ -134,6 +138,44 @@ static bool bowl_named_root(string_address root)
         return !string_equals(name, "bin") && bowl_name(name, false);
 }
 
+static b32 bowl_usage(void)
+{
+        log((address_any)bowl_usage_text, sizeof(bowl_usage_text) - 1);
+        log_flush();
+        return 1;
+}
+
+static b32 bowl_fail(string_address what, bipolar failed)
+{
+        string_format(log, bowl_label "%s: %b\n", what, failed);
+        log_flush();
+        return 1;
+}
+
+static b32 bowl_refuse(string_address message)
+{
+        string_format(log, bowl_label "%s", message);
+        log_flush();
+        return 1;
+}
+
+/*
+        Bind a tree over a host path and remount it read-only.
+
+        One mount with MS_RDONLY is ignored on bind; the kernel takes the
+        readonly bit from a remount of the same target.
+*/
+static bipolar bowl_bind_ro(string_address source, string_address target)
+{
+        bipolar failed = system_mount(source, target, 0, MS_BIND | MS_REC, 0);
+
+        if (failed)
+                return failed;
+
+        return system_mount(0, target, 0,
+                            MS_BIND | MS_REC | MS_REMOUNT | MS_RDONLY, 0);
+}
+
 /*
         Install one kernel-interpreted launcher.
 
@@ -163,11 +205,7 @@ static b32 bowl_expose(positive count,
         bipolar failed;
 
         if (count < 4 || count > 5)
-        {
-                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
-                log_flush();
-                return 1;
-        }
+                return bowl_usage();
 
         root = arguments[2];
         program = arguments[3];
@@ -175,33 +213,19 @@ static b32 bowl_expose(positive count,
 
         if (!bowl_named_root(root) || !program || program[0] != '/' ||
             !program[1])
-        {
-                string_format(log, bowl_label
-                              "expose needs /bowls/NAME and an absolute "
-                              "program path\n");
-                log_flush();
-                return 1;
-        }
+                return bowl_refuse("expose needs /bowls/NAME and an absolute "
+                                   "program path\n");
 
         for (string_address at = program; *at; at++)
                 if (*at <= ' ')
-                {
-                        string_format(log, bowl_label
-                                      "%s: whitespace cannot be encoded in "
-                                      "an exposed path\n", program);
-                        log_flush();
-                        return 1;
-                }
+                        return bowl_refuse("whitespace cannot be encoded in "
+                                           "an exposed path\n");
 
         if (count != 5)
                 path_tail_copy(inferred, sizeof(inferred), program);
 
         if (!bowl_name(name, true))
-        {
-                string_format(log, bowl_label "%s: invalid command name\n", name);
-                log_flush();
-                return 1;
-        }
+                return bowl_refuse("invalid command name\n");
 
         root_length = string_length(root);
         program_length = string_length(program);
@@ -211,29 +235,17 @@ static b32 bowl_expose(positive count,
         if (line_length >= sizeof(line) ||
             !bowl_root_path(installed, sizeof(installed), root, program) ||
             sizeof(BOWL_EXPOSE_DIRECTORY) + name_length >= sizeof(launcher))
-        {
-                string_format(log, bowl_label "exposed path is too long\n");
-                log_flush();
-                return 1;
-        }
+                return bowl_refuse("exposed path is too long\n");
 
         failed = system_access_at(AT_FDCWD, installed, BOWL_ACCESS_EXECUTE);
         if (failed < 0)
-        {
-                string_format(log, bowl_label "%s: %b\n", installed, failed);
-                log_flush();
-                return 1;
-        }
+                return bowl_fail(installed, failed);
 
         failed = bowl_mkdir(BOWL_ROOT_DIRECTORY);
         if (!failed)
                 failed = bowl_mkdir(BOWL_EXPOSE_DIRECTORY);
         if (failed < 0)
-        {
-                string_format(log, bowl_label "%s: %b\n", BOWL_EXPOSE_DIRECTORY, failed);
-                log_flush();
-                return 1;
-        }
+                return bowl_fail(BOWL_EXPOSE_DIRECTORY, failed);
 
         path_join(launcher, sizeof(launcher), BOWL_EXPOSE_DIRECTORY, name);
         memory_copy(line, BOWL_EXPOSE_PREFIX, prefix_length);
@@ -248,21 +260,14 @@ static b32 bowl_expose(positive count,
             FILE_WRITE | FILE_EXCLUSIVE | O_CLOEXEC, 0755);
 
         if (handle < 0)
-        {
-                string_format(log, bowl_label "%s: %b\n", launcher, handle);
-                log_flush();
-                return 1;
-        }
+                return bowl_fail(launcher, handle);
 
         if (system_write_all((positive)handle, line, line_length) !=
             line_length)
         {
                 system_close(handle);
                 system_remove_at(AT_FDCWD, launcher, 0);
-                string_format(log, bowl_label "%s: could not write launcher\n",
-                              launcher);
-                log_flush();
-                return 1;
+                return bowl_refuse("could not write launcher\n");
         }
 
         system_close(handle);
@@ -271,9 +276,7 @@ static b32 bowl_expose(positive count,
         if (failed < 0)
         {
                 system_remove_at(AT_FDCWD, launcher, 0);
-                string_format(log, bowl_label "%s: %b\n", launcher, failed);
-                log_flush();
-                return 1;
+                return bowl_fail(launcher, failed);
         }
 
         string_format(log, bowl_label "%s -> %s%s\n", launcher, root,
@@ -317,18 +320,38 @@ static bool bowl_launcher(string_address encoded, p8 address_to root,
         return true;
 }
 
+static bipolar bowl_isolated_populate(void)
+{
+        for (positive i = 0; bowl_isolated_mounts[i].target; i++)
+        {
+                struct bowl_mount_point address_to point =
+                    bowl_isolated_mounts + i;
+                bipolar failed;
+
+                failed = bowl_mkdir(point->target);
+                if (!failed)
+                        failed = system_mount(point->source, point->target,
+                                              point->filesystem, point->flags, 0);
+
+                if (failed)
+                {
+                        bowl_fail(point->target, failed);
+                        return failed;
+                }
+        }
+
+        return 0;
+}
+
 /*
-        Replace the root for the complete system profile.
+        Replace the root for the isolated profile.
 
         The bind makes the new root a mount point. pivot_root with the same
         path twice stacks the old root there, where it can be detached without
         requiring a writable put_old directory inside the distribution.
 */
-static bipolar bowl_system_populate();
-
-static bipolar bowl_system_enter(string_address root)
+static bipolar bowl_isolated_enter(string_address root)
 {
-        p8 name[64];
         bipolar failed;
 
         failed = system_mount(root, root, 0, MS_BIND | MS_REC, 0);
@@ -351,37 +374,7 @@ static bipolar bowl_system_enter(string_address root)
         if (failed)
                 return failed;
 
-        failed = bowl_system_populate();
-        if (failed)
-                return failed;
-
-        path_tail_copy(name, sizeof(name), root);
-        return system_call_2(syscall(sethostname), (positive)name,
-                             string_length((string_address)name));
-}
-
-static bipolar bowl_system_populate()
-{
-        for (positive i = 0; bowl_system_mounts[i].target; i++)
-        {
-                struct bowl_mount_point address_to point =
-                    bowl_system_mounts + i;
-                bipolar failed;
-
-                failed = bowl_mkdir(point->target);
-                if (!failed)
-                        failed = system_mount(point->source, point->target,
-                                              point->filesystem, point->flags, 0);
-
-                if (failed)
-                {
-                        string_format(log, bowl_label "%s: %b\n", point->target, failed);
-                        log_flush();
-                        return failed;
-                }
-        }
-
-        return 0;
+        return bowl_isolated_populate();
 }
 
 /* Overlay only the distribution directories needed to run its programs. */
@@ -409,8 +402,7 @@ static bipolar bowl_fast_enter(string_address root)
                 if (failed < 0)
                         return failed;
 
-                failed = system_mount(source, layer->path, 0,
-                                      MS_BIND | MS_REC, 0);
+                failed = bowl_bind_ro(source, layer->path);
                 if (failed)
                         return failed;
         }
@@ -423,28 +415,25 @@ static b32 bowl_launch_failed(bipolar native_shell, string_address what,
 {
         if (native_shell >= 0)
                 system_close(native_shell);
-        string_format(log, bowl_label "%s: %b\n", what, failed);
-        log_flush();
-        return 1;
+        return bowl_fail(what, failed);
 }
 
 static DEAD_END fn bowl_inside(string_address root,
                                string_address program,
                                string_address address_to arguments,
                                string_address address_to environment,
-                               bipolar native_shell, bool system_profile)
+                               bipolar native_shell, bool isolated)
 {
         bipolar failed;
 
         failed = system_mount(0, "/", 0, MS_REC | MS_PRIVATE, 0);
         if (!failed)
-                failed = system_profile ? bowl_system_enter(root)
-                                        : bowl_fast_enter(root);
+                failed = isolated ? bowl_isolated_enter(root)
+                                  : bowl_fast_enter(root);
 
         if (failed)
         {
-                string_format(log, bowl_label "%s: %b\n", root, failed);
-                log_flush();
+                bowl_fail(root, failed);
                 exit(1);
         }
 
@@ -453,14 +442,13 @@ static DEAD_END fn bowl_inside(string_address root,
                              (positive)"", (positive)arguments,
                              (positive)environment, AT_EMPTY_PATH)
             : system_execute(program, arguments, environment);
-        string_format(log, bowl_label "%s: %b\n", program, failed);
-        log_flush();
+        bowl_fail(program, failed);
         exit(127);
 }
 
 static b32 bowl_launch(string_address root, string_address program,
                        string_address address_to arguments,
-                       bool system_profile)
+                       bool isolated)
 {
         string_address native_arguments[] = {BOWL_NATIVE_SHELL, null};
         string_address fallback_environment[] = {"TERM=ansi",
@@ -470,15 +458,10 @@ static b32 bowl_launch(string_address root, string_address program,
         bipolar native_shell = -1;
         bipolar failed;
         bipolar child;
-        positive ended = 0;
-        bool child_ended = false;
+        positive status = 0;
 
         if (!root || root[0] != '/')
-        {
-                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
-                log_flush();
-                return 1;
-        }
+                return bowl_usage();
 
         if (!environment)
                 environment = fallback_environment;
@@ -497,14 +480,14 @@ static b32 bowl_launch(string_address root, string_address program,
         }
 
         failed = system_call_1(syscall(unshare), CLONE_NEWNS |
-            (system_profile ? CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWPID : 0));
+            (isolated ? CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWPID : 0));
         if (failed)
                 return bowl_launch_failed(native_shell,
-                    system_profile ? "cannot make system views"
-                                   : "cannot make a mount view", failed);
+                    isolated ? "cannot make isolated views"
+                             : "cannot make a mount view", failed);
 
         /* Success never returns: this process becomes the command. */
-        if (!system_profile)
+        if (!isolated)
                 bowl_inside(root, program, arguments, environment,
                             native_shell, false);
 
@@ -520,19 +503,8 @@ static b32 bowl_launch(string_address root, string_address program,
         if (native_shell >= 0)
                 system_close(native_shell);
 
-        for (;;)
-        {
-                positive status = 0;
-                bipolar reaped = system_wait4_retry(-1, address_of status,
-                                                    0, null);
-                if (reaped < 0)
-                        return child_ended ? wait_status_code(ended) : 1;
-                if (reaped == child)
-                {
-                        ended = status;
-                        child_ended = true;
-                }
-        }
+        failed = system_wait4_retry(child, address_of status, 0, null);
+        return failed < 0 ? 1 : wait_status_code(status);
 }
 
 static b32 bowl_main()
@@ -543,39 +515,27 @@ static b32 bowl_main()
         string_address root;
         string_address program = null;
         string_address address_to command_arguments = null;
-        bool system_profile = false;
+        bool isolated = false;
         p8 launcher_root[BOWL_PATH_LIMIT];
 
         if (!arguments || count < 2)
-        {
-                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
-                log_flush();
-                return 1;
-        }
+                return bowl_usage();
 
         if (string_equals(arguments[1], "expose"))
                 return bowl_expose(count, arguments);
 
-        if (string_equals(arguments[1], "--system"))
+        if (string_equals(arguments[1], "--isolated"))
         {
-                system_profile = true;
+                isolated = true;
                 root_at++;
         }
         else if (string_equals(arguments[1], "--fast"))
                 root_at++;
         else if (arguments[1][0] == '-' && arguments[1][1] == '-')
-        {
-                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
-                log_flush();
-                return 1;
-        }
+                return bowl_usage();
 
         if (root_at >= count)
-        {
-                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
-                log_flush();
-                return 1;
-        }
+                return bowl_usage();
 
         root = arguments[root_at];
 
@@ -585,11 +545,7 @@ static b32 bowl_main()
                 if (root_at != 1 || count < 3 ||
                     !bowl_launcher(root, launcher_root,
                                    sizeof(launcher_root), address_of program))
-                {
-                        string_format(log, bowl_label "invalid exposed command\n");
-                        log_flush();
-                        return 1;
-                }
+                        return bowl_refuse("invalid exposed command\n");
 
                 root = launcher_root;
                 arguments[2] = program;
@@ -601,5 +557,5 @@ static b32 bowl_main()
                 command_arguments = arguments + root_at + 1;
         }
 
-        return bowl_launch(root, program, command_arguments, system_profile);
+        return bowl_launch(root, program, command_arguments, isolated);
 }

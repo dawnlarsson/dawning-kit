@@ -7,12 +7,13 @@ emulation and not a security boundary.
 The runtime has two profiles:
 
 - `--fast` is the default. It creates only a private mount view, overlays the
-  distribution's runtime directories, and directly executes the command. The
-  current directory, user files, devices, process view and network remain
-  Moonwater's, and there is no supervisor fork.
-- `--system` adds PID, UTS and IPC views, pivots into the complete distribution
-  root, mounts its kernel interfaces, and supervises its first process. Use it
-  for package managers and services that expect to own a complete system.
+  distribution's package directories read-only, and directly executes the
+  command. The current directory, user files, `/etc`, `/var`, devices, process
+  view and network remain Moonwater's, and there is no supervisor fork.
+- `--isolated` adds PID, UTS and IPC views, pivots into the complete
+  distribution root, mounts its kernel interfaces, and supervises its first
+  process. Use it for package managers and services that expect to own a
+  complete tree.
 
 With no program, both profiles execute Moonwater's `/shell`. The runtime opens
 it before changing mounts and executes that descriptor afterward, so neither a
@@ -33,10 +34,10 @@ bowl is created, not on every command invocation.
 ## First system-wide command
 
 Place an unpacked root at `/bowls/debian` or `/bowls/arch`, install a package in
-the complete profile, then expose one of its executables:
+the isolated profile, then expose one of its executables:
 
 ```sh
-bowl --system /bowls/debian /usr/bin/apt-get install -y jq
+bowl --isolated /bowls/debian /usr/bin/apt-get install -y jq
 bowl expose /bowls/debian /usr/bin/jq
 jq --version
 ```
@@ -44,7 +45,7 @@ jq --version
 The Arch equivalent is:
 
 ```sh
-bowl --system /bowls/arch /usr/bin/pacman -S --noconfirm jq
+bowl --isolated /bowls/arch /usr/bin/pacman -S --noconfirm jq
 bowl expose /bowls/arch /usr/bin/jq
 ```
 
@@ -58,7 +59,8 @@ same file and working directory as a native Moonwater command.
 
 The next runtime slices should preserve these rules:
 
-- add root acquisition and verification for Debian and Arch;
+- add root acquisition and verification for Arch, then Debian and Alpine;
+- share Arch's glibc with other glibc bowls; keep Alpine on musl;
 - discover package-owned executables so exposure can be selected after install;
 - persist prepared mount views and reduce fast entry to setns plus exec;
 - move only measured hot operations behind a stable kernel interface.

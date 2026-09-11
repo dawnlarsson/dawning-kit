@@ -19654,8 +19654,8 @@ def harness_floodlight(argv):
     #
     #   awk builds it out of the program text, and program text arrives in
     #   files and variables: system() and "cmd" | getline are the avenue.
-    #   bowl, script and setarch each end at a shell by design. Those five
-    #   stay shut, and this is what says so.
+    #   script and setarch each end at a shell by design. Those stay shut.
+    #   bowl is named, like chroot: the line says which program runs.
     #
     #   find and xargs are not that shape and were denied here until it was
     #   measured: they take the command on their own command line and put
@@ -19665,10 +19665,14 @@ def harness_floodlight(argv):
     #   They keep their rows, because a machine that wants them shut should
     #   still say it here, and the check below is what notices if a row goes
     #   missing rather than changing value.
-    for name in ('awk', 'bowl', 'script', 'setarch'):
+    for name in ('awk', 'script', 'setarch'):
         check(declared.get(name) == '0',
               '%s reaches a shell or builds a command out of what it reads, '
               'and must be denied by default' % name)
+
+    check(declared.get('bowl') == '1',
+          'bowl runs the program the line named, like chroot, and must be '
+          'allowed to exec by default')
 
     for name in ('find', 'xargs'):
         check(name in declared,

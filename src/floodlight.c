@@ -131,7 +131,7 @@ static const struct rule baseline[] = {
 	{ "awk", SPAWN, 0 },       /* DERIVED: system(), "cmd" | getline */
 	{ "find", SPAWN, 1 },      /* NAMED: -exec runs what the line named */
 	{ "xargs", SPAWN, 1 },     /* NAMED: likewise, with data in the args */
-	{ "bowl", SPAWN, 0 },      /* SHELL: another distribution's userspace */
+	{ "bowl", SPAWN, 1 },      /* NAMED: runs the program the line named */
 	{ "script", SPAWN, 0 },    /* SHELL: the session it records is a shell */
 	{ "setarch", SPAWN, 0 },   /* SHELL: falls back to /bin/sh given no command */
 	{ "init", SPAWN, 1 },      /* SHELL: PID 1 starts everything; refusing it
