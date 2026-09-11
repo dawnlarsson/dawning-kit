@@ -12234,6 +12234,22 @@ static b32 text_cut()
         b32 kinds = cut_lists;
         string_address separator = file_option_value(address_of taking, 'O');
         positive separator_length = separator ? string_length(separator) : 0;
+
+        /*
+                --output-delimiter= with nothing after it is a NUL between
+                the fields and not nothing at all. An empty word is how a
+                command line hands over the one byte it cannot spell, and
+                the reference reads it that way; joining with nothing loses
+                the boundary the option was asked for.
+        */
+        if (separator && !separator_length)
+        {
+                static const p8 separator_nul[1] = {0};
+
+                separator = (string_address)separator_nul;
+                separator_length = 1;
+        }
+
         string_address said = file_option_value(address_of taking,
                                                 by_blanks ? 'F'
                                                 : by_field ? 'f'

@@ -742,6 +742,16 @@ b32 main()
            kernel vector published by the startup shim; clone-and-reentry can
            deliberately replace it without forging another initial stack. */
         shell_env_init(environ);
+
+        /*      getopts already reads OPTERR and already treats an unset one
+                as asking to complain, which is what a 1 means. Bash
+                publishes the 1 as well, under --posix too, so a script that
+                reads it back sees a number rather than nothing. It has to
+                come after the table exists or it is written into nothing,
+                and it is an ordinary assignment so an inherited OPTERR and
+                anything the script does to it both still win. */
+        if (shell_bash_compat && !env_get("OPTERR"))
+                env_assign("OPTERR", "1");
         if (shell_bash_compat && env_get("POSIXLY_CORRECT"))
                 shell_posix_changed(true);
         if (shell_bash_compat && !shell_posix_variable())

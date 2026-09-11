@@ -13198,7 +13198,15 @@ static const file_long pathchk_longs[] = {
 // the rule first and the file after it.
 static COLD bool pathchk_bad(string_address path, string_address why)
 {
-        string_format(log_error, "pathchk: %s: %s\n", path, why);
+        /*      A name of no bytes written bare leaves the sentence with a
+                hole in it -- "pathchk: : No such file or directory" names
+                nothing at all. The reference quotes it so the emptiness is
+                something the reader can see. */
+        if (!string_get(path))
+                string_format(log_error, "pathchk: '': %s\n", why);
+        else
+                string_format(log_error, "pathchk: %s: %s\n", path, why);
+
         return false;
 }
 
