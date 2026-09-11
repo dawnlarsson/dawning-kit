@@ -17874,8 +17874,10 @@ typedef b64 ptrdiff_t;
 */
 #if ARM64
 #define O_DIRECTORY 040000
+#define O_NOFOLLOW 0100000
 #else
 #define O_DIRECTORY 0200000
+#define O_NOFOLLOW 0400000
 #endif
 #define AT_FDCWD -100
 #define O_TRUNC 01000

@@ -1966,6 +1966,37 @@ bool file_walk_open(file_walk address_to walk, bipolar directory, string_address
         return walk->handle >= 0;
 }
 
+/* The same open, for an entry the walk itself found rather than one somebody
+   named.
+
+   file_is_directory has already said this name is a directory and not a
+   symlink, and it asked with AT_SYMLINK_NOFOLLOW so that answer is right.
+   It is also one syscall old. Anything that can write the directory being
+   walked can, in the window between the two calls, take the subdirectory away
+   and leave a symlink under the same name -- and the plain open would follow
+   it, because O_DIRECTORY is satisfied by whatever it lands on. chmod -R and
+   chown -R walk trees their owner controls while running as somebody else,
+   which is the whole of that attack and why the recursive chowns have their
+   own CVEs.
+
+   O_NOFOLLOW makes the race fail closed: if the name became a symlink the
+   open returns ELOOP and the caller reports it instead of descending out of
+   the tree. Nothing that was not a race changes, because the stat above
+   already refused every symlink this could have followed. Paths a user named
+   still go through file_walk_open and still follow, which is what naming one
+   means. */
+static bool file_walk_open_found(file_walk address_to walk, bipolar directory,
+                                 string_address name)
+{
+        walk->handle = system_open_at(directory, name,
+                                     FILE_READ | O_DIRECTORY | O_NOFOLLOW);
+        walk->error = walk->handle < 0 ? walk->handle : 0;
+        walk->have = 0;
+        walk->at = 0;
+
+        return walk->handle >= 0;
+}
+
 /* Callers keep their chosen buffer size and error policy. Kernel getdents
    records are trusted here; storage's defensive input walk is separate. */
 static inline INLINE struct linux_dirent64 address_to file_directory_next(
@@ -2073,12 +2104,23 @@ typedef fn(address_to file_visit)(bipolar directory, string_address name,
 */
 static bool file_change_after_contents;
 
+/* True while a visit is a name the walk reached, not one the user typed. A
+   symlink the user names is theirs to mean; one found under a -R walk is not,
+   and chown/chgrp must act on the link rather than follow it out of the tree
+   unless -L or -H said to. This is the whole of the recursive-chown symlink
+   attack, and its default has to be the safe one. */
+static bool file_change_descended;
+
 static fn file_change_walk_as(bipolar directory, string_address name,
                               string_address shown, positive depth,
                               string_address program, b32 address_to status,
                               file_visit visit, bool report_walk_errors)
 {
         bool here = file_is_directory(directory, name);
+
+        //      A name reached below the top of the walk is a descendant, and
+        //      the depth is what says so: the roots enter at FILE_MAX_DEPTH.
+        file_change_descended = depth != FILE_MAX_DEPTH;
 
         if (!here || !file_change_after_contents)
                 visit(directory, name, shown);
@@ -2096,7 +2138,7 @@ static fn file_change_walk_as(bipolar directory, string_address name,
 
         file_walk walk;
 
-        if (!file_walk_open(address_of walk, directory, name))
+        if (!file_walk_open_found(address_of walk, directory, name))
         {
                 if (report_walk_errors)
                 {
@@ -2144,7 +2186,10 @@ static fn file_change_walk_as(bipolar directory, string_address name,
         file_walk_close(address_of walk);
 
         if (file_change_after_contents)
+        {
+                file_change_descended = depth != FILE_MAX_DEPTH;
                 visit(directory, name, shown);
+        }
 }
 
 // The operand list those three read, which is the same list every time: each
@@ -2174,7 +2219,10 @@ static fn file_change_paths(positive first, positive count, bool recursive,
                         file_change_walk_as(AT_FDCWD, path, path, FILE_MAX_DEPTH,
                                             program, status, visit, false);
                 else
+                {
+                        file_change_descended = false;
                         visit(AT_FDCWD, path, path);
+                }
         }
 
         log_flush();
@@ -10906,7 +10954,15 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
 
 static fn chown_one(bipolar directory, string_address name, string_address shown)
 {
-        positive through = chown_dereference_option == 'h' ? AT_SYMLINK_NOFOLLOW : 0;
+        //      -h acts on the link everywhere. Otherwise a link the walk
+        //      descended into is followed only where -L or -H asked for it;
+        //      the default over a tree the caller does not fully control is
+        //      to change the link and not what it aims at. A link the caller
+        //      named keeps the old following default.
+        positive through = chown_dereference_option == 'h'
+                || (file_change_descended && chown_traverse_option != 'L'
+                    && chown_traverse_option != 'H')
+            ? AT_SYMLINK_NOFOLLOW : 0;
         file_facts facts;
         bipolar looked = file_look_code(directory, name, through, address_of facts);
         bool known = looked == 0;
