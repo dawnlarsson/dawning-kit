@@ -7491,20 +7491,9 @@ static COLD fn exec_return_bash()
 
         if (!exec_function_depth && !shell_source_depth)
         {
-                //      dash returns from the top level without a word,
-                //      and the script ends there with the status it was
-                //      given, the way exit would have.
-                if (!shell_bash_compat)
-                {
-                        shell_status = (b32)((positive)value & 0xff);
-                        shell_trap_exit();
-                        log_flush();
-                        exit(shell_status);
-                }
-
-                //      Bash says it cannot, and quotes the name while it
-                //      does; under posix the refusal is fatal, because
-                //      return is a special builtin.
+                //      Bash says it cannot return from here, and quotes the
+                //      name while it does; under posix the refusal is
+                //      fatal, because return is a special builtin.
                 shell_diagnostic_where();
                 log_error("return: can only `return' from a function or "
                           "sourced script\n", 0);
@@ -7629,6 +7618,16 @@ bool exec_control_builtin(string_address name, bool run)
                 shell_status = 2;
                 exec_abort_line(shell_status);
                 return true;
+        }
+
+        //      dash returns from the top level without a word, and the
+        //      script ends there with the status it was handed, the way
+        //      exit would have ended it.
+        if (!exec_function_depth && !shell_source_depth)
+        {
+                shell_trap_exit();
+                log_flush();
+                exit(shell_status);
         }
 
         exec_signal = EXEC_SIGNAL_RETURN;
