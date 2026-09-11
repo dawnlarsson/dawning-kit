@@ -3669,10 +3669,12 @@ static bool history_wanted(string_address text, positive length)
 
         if (erase)
                 for (positive at = 0; at < history_used;)
+                {
                         if (!string_compare(history_text[at], text))
                                 history_drop(at, 1);
                         else
                                 at++;
+                }
 
         return true;
 }

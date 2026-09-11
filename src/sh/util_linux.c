@@ -4226,7 +4226,7 @@ static positive ul_lsclock_relative(p8 address_to into, timespec value)
             {31557600, 4, 'y'}, {86400, 3, 'd'}, {3600, 2, 'h'},
             {60, 2, 'm'}, {1, 2, 's'},
         };
-        positive seconds = value.tv_sec < 0 ? 0 : (positive)value.tv_sec;
+        positive seconds = (bipolar)value.tv_sec < 0 ? 0 : (positive)value.tv_sec;
         positive used = 0, parts = 0;
         for (positive at = 0; at < array_count(units); at++)
         {

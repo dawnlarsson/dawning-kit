@@ -7464,7 +7464,7 @@ static fn shell_declare(writer write, string_address input)
                 b32 attributes = state.set &
                                  (DECLARE_EXPORT | DECLARE_READONLY);
 
-                if ((state.set & DECLARE_FUNCTION_NAMES) && bodies ||
+                if (((state.set & DECLARE_FUNCTION_NAMES) && bodies) ||
                     (state.set & ~(DECLARE_FUNCTION_NAMES |
                                    DECLARE_FUNCTION_BODY | DECLARE_PRINT |
                                    DECLARE_EXPORT | DECLARE_READONLY)) ||
@@ -11470,7 +11470,7 @@ COLD fn shell_eval(writer write, string_address input)
         bool room = true;
         positive syntax = shell_syntax_generation;
 
-        if (shell_argc < 2 || !run_line)
+        if (shell_argc < 2)
                 return shell_answer(0);
 
         //      Bash reads eval's words for options first, so "eval --"

@@ -1575,7 +1575,6 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         }
 
         storage_mount_table_release(address_of table);
-done_early:
         array_store_release(operand, operand_room, operands);
         return failed;
 
