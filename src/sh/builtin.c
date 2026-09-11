@@ -4818,6 +4818,28 @@ COLD fn shell_logout(writer write, string_address input)
 
 // The rootfs lives in RAM. Whatever is still in flight is all there is, so it
 // goes out to whatever backing store there is before the machine stops.
+/*
+        An option nobody knows is not a reason to stop the machine.
+
+        These read nothing at all, so `poweroff -Z` synced the disks and
+        called reboot(2): a typed option was a shutdown. The reference reads
+        its line first and refuses it before anything irreversible happens,
+        which is the only safe order for a command whose whole effect is
+        irreversible. Nothing here is understood yet, so anything written
+        after the name is refused rather than guessed at -- for a machine
+        stop, refusing the word nobody implemented is the safe direction.
+*/
+static COLD bool shell_stop_refused(string_address name)
+{
+        if (shell_argc < 2)
+                return false;
+
+        string_report(log_error, 1, "%s: unrecognized option '%s'\n", name,
+                      shell_argv[1]);
+        shell_answer(1);
+        return true;
+}
+
 fn shell_stop(writer write, positive command)
 {
         write(str("Syncing...\n"));
@@ -4827,17 +4849,28 @@ fn shell_stop(writer write, positive command)
 
         bipolar result = system_call_4(syscall(reboot), REBOOT_MAGIC, REBOOT_MAGIC_SECOND, command, 0);
 
+        /*      Reached only when the machine did not stop, so this is a
+                failure and answers as one. It used to say so on the error
+                stream and then answer 0, which is a script being told the
+                machine went down when it is still running. */
         string_format(write, "Cannot stop the machine: %b\n", result);
         log_flush();
+        shell_answer(1);
 }
 
 COLD fn shell_reboot(writer write, string_address input)
 {
+        if (shell_stop_refused((string_address) "reboot"))
+                return;
+
         shell_stop(write, REBOOT_RESTART);
 }
 
 COLD fn shell_poweroff(writer write, string_address input)
 {
+        if (shell_stop_refused((string_address) "poweroff"))
+                return;
+
         shell_stop(write, REBOOT_POWER_OFF);
 }
 
