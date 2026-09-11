@@ -4087,6 +4087,7 @@ static COLD b32 shell_dirstack_number_refused(string_address command,
                                               string_address word,
                                               string_address usage)
 {
+        shell_diagnostic_where();
         string_report(log_error, 2, "%s: %s: invalid number\n", command, word);
 
         return string_report(log_error, 2, "%s: usage: %s\n", command, usage);
@@ -4178,10 +4179,22 @@ COLD fn shell_dirs(writer write, string_address input)
                                 lines = true;
                         else
                         {
-                                p8 said[2] = {letter, end};
+                                //      A letter dirs has no use for is read
+                                //      as a stack index, which is what it
+                                //      would have been: bash refuses it as
+                                //      a number rather than an option.
+                                p8 said[3] = {'-', letter, end};
 
-                                return shell_answer(string_report(log_error, 2, "dirs: -%s: invalid option\n",
-                                              said));
+                                if (!shell_bash_compat)
+                                        return shell_answer(
+                                            shell_option_refused(
+                                                "dirs", said,
+                                                "dirs [-clpv] [+N] [-N]"));
+
+                                return shell_answer(
+                                    shell_dirstack_number_refused(
+                                        "dirs", said,
+                                        "dirs [-clpv] [+N] [-N]"));
                         }
                 }
 
@@ -10275,6 +10288,25 @@ fn shell_getopts_answer(string_address name, string_address said,
         shell_answer(assigned ? 0 : 2);
 }
 
+/*
+        getopts, called wrongly.
+
+        Bash writes its usage line with nothing before it, the way every
+        builtin's second line goes out; dash names the script and the line
+        first, and spells the line its own way.
+*/
+static COLD b32 shell_getopts_usage()
+{
+        if (shell_bash_compat)
+                return string_report(log_error, 2,
+                    "getopts: usage: getopts optstring name [arg ...]\n");
+
+        shell_diagnostic_where();
+
+        return string_report(log_error, 2,
+            "getopts: Usage: getopts optstring var [arg...]\n");
+}
+
 COLD fn shell_getopts(writer write, string_address input)
 {
         string_address options;
@@ -10289,21 +10321,54 @@ COLD fn shell_getopts(writer write, string_address input)
         p8 value[2];
         bool silent;
 
-        if (shell_argc < 3)
-                return shell_answer(2);
+        positive first = 1;
 
-        options = shell_argv[1];
-        name = shell_argv[2];
+        //      Both shells read getopts' own options before the optstring,
+        //      so a leading word that looks like one is refused rather than
+        //      taken for the letters to look for.
+        if (first < shell_argc && word_is(shell_argv[first], "--"))
+                first++;
+        else if (first < shell_argc && string_is(shell_argv[first], '-') &&
+                 string_get(shell_argv[first] + 1))
+        {
+                shell_option_walk walk = {first};
+                p8 which;
+
+                if (shell_option_letter(address_of walk, address_of which))
+                        return shell_answer(shell_letter_refused(
+                            "getopts", which,
+                            "getopts optstring name [arg ...]"));
+        }
+
+        if (shell_argc - first < 2)
+                return shell_answer(shell_getopts_usage());
+
+        options = shell_argv[first];
+        name = shell_argv[first + 1];
         silent = string_is(options, ':');
 
+        //      A name that is no name at all is named back: this used to
+        //      answer two and say nothing, and a script could not tell that
+        //      from the end of the options.
         if (!shell_valid_name(name, string_length(name)))
-                return shell_answer(2);
-
-        if (shell_argc > 3)
         {
-                positive index = 3;
+                shell_diagnostic_where();
 
-                if (!shell_array_room(shell_getopts_list, shell_getopts_room, shell_argc - 3 + 1))
+                if (shell_bash_compat)
+                        return shell_answer(string_report(log_error, 1,
+                            "getopts: `%s\': not a valid identifier\n",
+                            name));
+
+                return shell_answer(string_report(log_error, 2,
+                    "getopts: %s: bad variable name\n", name));
+        }
+
+        if (shell_argc > first + 2)
+        {
+                positive index = first + 2;
+
+                if (!shell_array_room(shell_getopts_list, shell_getopts_room,
+                                      shell_argc - index + 1))
                         return shell_answer(2);
 
                 positive listed = shell_argc - index;
@@ -10707,8 +10772,10 @@ COLD fn shell_times(writer write, string_address input)
         p8 which;
 
         //      times has no options; bash still reads for one, so that a
-        //      letter is refused rather than counted as an operand.
-        if (shell_option_letter(address_of walk, address_of which))
+        //      letter is refused rather than counted as an operand. dash
+        //      reads none and prints the four times whatever it was given.
+        if (shell_bash_compat &&
+            shell_option_letter(address_of walk, address_of which))
                 return shell_answer(shell_letter_refused("times", which,
                                                          "times"));
 
@@ -11127,10 +11194,8 @@ COLD fn shell_trap(writer write, string_address input)
                         //      that ends the script: trap is special.
                         if (!shell_bash_compat)
                         {
-                                p8 said[2] = {at[0], end};
-
-                                string_format(log_error,
-                                    "trap: Illegal option -%s\n", said);
+                                shell_letter_refused("trap", at[0],
+                                    "trap [-Plp] [[action] signal_spec ...]");
                                 exec_special_error_note();
 
                                 return shell_answer(2);
@@ -11161,12 +11226,8 @@ COLD fn shell_trap(writer write, string_address input)
                         //      called; the word is never read as an operand,
                         //      so `trap -x INT` sets nothing.
                         {
-                                p8 said[2] = {at[0], end};
-
-                                string_format(log_error,
-                                    "trap: -%s: invalid option\n", said);
-                                string_format(log_error, "trap: usage: trap "
-                                    "[-Plp] [[action] signal_spec ...]\n");
+                                shell_letter_refused("trap", at[0],
+                                    "trap [-Plp] [[action] signal_spec ...]");
 
                                 if (shell_posix_on())
                                         exec_special_error_note();
