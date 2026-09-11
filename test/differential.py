@@ -952,31 +952,24 @@ def _pin_span(text):
     return begin, end
 
 
-#       A pinned row is one of two very different things, and the tally used
-#       to show neither.
+#       A pinned row already says which of two things it is, and the tally
+#       used to show neither.
 #
-#       Some rows are policy: this shell answers differently on purpose, and
-#       the row is the decision. Others are work the walk found and nobody
-#       closed -- a real divergence, pinned so the lane could go green, with
-#       a reason that says as much in prose. Both made the run say "everything
-#       agrees", so the second kind became invisible: $'\u00e9' and the status
-#       of an arithmetic error were each found by the engine, pinned with one
-#       of the phrasings below, and stayed wrong for as long as nobody read
-#       the ledger.
+#       kind "deliberate" is a decision: this shell answers differently on
+#       purpose and the row records why. kind "bug" is a divergence nobody
+#       closed, pinned so the lane could go green. Both make a run say
+#       "everything agrees", so the second became invisible: $'\u00e9' and the
+#       status of an arithmetic error were each found by this engine, pinned
+#       as bugs, and stayed wrong for as long as nobody opened the ledger.
 #
-#       These are the phrasings already in the tree, plus the marker a new row
-#       is recorded with. Matching one does not fail a run -- the row is still
-#       pinned -- but the count is printed beside the tally every time, so
-#       carried work is a number that someone has to watch rather than a
-#       silence.
-LEDGER_OPEN = re.compile(
-    r"^OPEN:|did not close|left standing|remaining difference|does not implement|"
-    r"not implemented|this pass left|corners these families found", re.I)
+#       Counting them does not fail a run -- the rows are still pinned, and a
+#       gate that always speaks is one nobody reads -- but carried work is now
+#       a number in front of whoever reads the output rather than a silence.
 
 
 def ledger_open_rows(rows):
-    """The pinned rows that are carried work rather than a decision."""
-    return [row for row in rows if LEDGER_OPEN.search(row.get("reason") or "")]
+    """The pinned rows that are a divergence nobody closed, not a decision."""
+    return [row for row in rows if row.get("kind") == "bug"]
 
 
 def load_rows(which):
@@ -1622,9 +1615,9 @@ def main(argv=None):
                                 if row.get("domain") in specs])
     if carried:
         share = collections.Counter(row.get("domain", "?") for row in carried)
-        print("  ledger carries " + str(len(carried)) + " open divergence(s): " +
+        print("  ledger carries " + str(len(carried)) + " pinned as bugs: " +
               ", ".join(f"{name}={count}" for name, count in sorted(share.items())) +
-              " -- pinned, not fixed")
+              " -- found, not fixed")
     if not all_total:
         print("  differential NOT RUN -- no case had both programs")
         return 2
