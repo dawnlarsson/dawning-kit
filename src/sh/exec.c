@@ -4857,6 +4857,25 @@ static bool exec_redirect_apply(b32 index)
                         return false;
 
                 /*
+                        rbash: the redirections that can make a file or cut
+                        one down. A duplication says nothing about the file
+                        system -- 2>&1 and >&2 move a descriptor that is
+                        already open -- and reading makes nothing, so both
+                        stand here as they stand in bash.
+                */
+                if (shell_restricted &&
+                    (want->op == OP_GREAT || want->op == OP_DGREAT ||
+                     want->op == OP_CLOBBER || want->op == OP_LESSGREAT ||
+                     want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT))
+                {
+                        exec_redirect_status = 1;
+                        string_format(log_error,
+                                      "%s: restricted: cannot redirect "
+                                      "output\n", target);
+                        return false;
+                }
+
+                /*
                         The descriptor is put aside before anything is opened.
 
                         open hands back the lowest free descriptor, which is
@@ -7504,6 +7523,19 @@ static b32 exec_dispatch(b32 command_word)
                 if (shell_builtin(null, named))
                         return shell_status;
                 shell_tail_command = tail;
+        }
+
+        //      rbash: a name with a slash in it names a program directly
+        //      and walks past whatever PATH the restriction left. A builtin
+        //      or a function never carries one, so this is the last moment
+        //      before the name becomes a path.
+        if (shell_restricted && string_first_of(name, '/'))
+        {
+                shell_status = 1;
+                string_format(log_error,
+                              "%s: restricted: cannot specify `/' in command "
+                              "names\n", name);
+                return shell_status;
         }
 
         {
