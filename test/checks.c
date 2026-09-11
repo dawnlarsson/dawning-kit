@@ -8470,6 +8470,116 @@ static p32 reference_checksum_bsd16(address_any block, positive size, p32 sum)
         return sum;
 }
 
+static p64 reference_rotl64(p64 value, p8 rot)
+{
+        return (value << rot) | (value >> (64 - rot));
+}
+
+static p64 reference_xxh64_round(p64 acc, p64 lane)
+{
+        return reference_rotl64(acc + lane * 0xC2B2AE3D27D4EB4Full, 31) *
+               0x9E3779B185EBCA87ull;
+}
+
+static p64 reference_xxh64_load64(p8 address_to p)
+{
+        return (p64)p[0] | ((p64)p[1] << 8) | ((p64)p[2] << 16) |
+               ((p64)p[3] << 24) | ((p64)p[4] << 32) | ((p64)p[5] << 40) |
+               ((p64)p[6] << 48) | ((p64)p[7] << 56);
+}
+
+static p32 reference_xxh64_load32(p8 address_to p)
+{
+        return (p32)p[0] | ((p32)p[1] << 8) | ((p32)p[2] << 16) |
+               ((p32)p[3] << 24);
+}
+
+static p64 reference_xxh64_merge(p64 acc, p64 lane)
+{
+        acc ^= reference_xxh64_round(0, lane);
+        return acc * 0x9E3779B185EBCA87ull + 0x85EBCA77C2B2AE63ull;
+}
+
+static p64 reference_xxh64(address_any block, positive size, p64 seed)
+{
+        p8 address_to p = block;
+        p64 acc;
+        p64 remaining = size;
+
+        if (size >= 32)
+        {
+                p64 a = seed + 0x9E3779B185EBCA87ull + 0xC2B2AE3D27D4EB4Full;
+                p64 b = seed + 0xC2B2AE3D27D4EB4Full;
+                p64 c = seed;
+                p64 d = seed - 0x9E3779B185EBCA87ull;
+
+                while (remaining >= 32)
+                {
+                        a = reference_xxh64_round(a, reference_xxh64_load64(p));
+                        b = reference_xxh64_round(b, reference_xxh64_load64(p + 8));
+                        c = reference_xxh64_round(c, reference_xxh64_load64(p + 16));
+                        d = reference_xxh64_round(d, reference_xxh64_load64(p + 24));
+                        p += 32;
+                        remaining -= 32;
+                }
+
+                acc = reference_rotl64(a, 1) + reference_rotl64(b, 7) +
+                      reference_rotl64(c, 12) + reference_rotl64(d, 18);
+                acc = reference_xxh64_merge(acc, a);
+                acc = reference_xxh64_merge(acc, b);
+                acc = reference_xxh64_merge(acc, c);
+                acc = reference_xxh64_merge(acc, d);
+        }
+        else
+                acc = seed + 0x27D4EB2F165667C5ull;
+
+        acc += size;
+
+        while (remaining >= 8)
+        {
+                acc ^= reference_xxh64_round(0, reference_xxh64_load64(p));
+                acc = reference_rotl64(acc, 27) * 0x9E3779B185EBCA87ull +
+                      0x85EBCA77C2B2AE63ull;
+                p += 8;
+                remaining -= 8;
+        }
+
+        if (remaining >= 4)
+        {
+                acc ^= (p64)reference_xxh64_load32(p) * 0x9E3779B185EBCA87ull;
+                acc = reference_rotl64(acc, 23) * 0xC2B2AE3D27D4EB4Full +
+                      0x165667B19E3779F9ull;
+                p += 4;
+                remaining -= 4;
+        }
+
+        while (remaining)
+        {
+                acc ^= (p64)address_to p * 0x27D4EB2F165667C5ull;
+                acc = reference_rotl64(acc, 11) * 0x9E3779B185EBCA87ull;
+                p++;
+                remaining--;
+        }
+
+        acc ^= acc >> 33;
+        acc *= 0xC2B2AE3D27D4EB4Full;
+        acc ^= acc >> 29;
+        acc *= 0x165667B19E3779F9ull;
+        acc ^= acc >> 32;
+        return acc;
+}
+
+fn reference_copy_match(address_any dest, positive offset, positive length)
+{
+        p8 address_to at = dest;
+
+        while (length--)
+        {
+                address_to at = address_to(at - offset);
+                at++;
+        }
+}
+
 p8 address_to reference_copy_end(p8 address_to destination, address_any source,
                                  positive size)
 {
@@ -8975,6 +9085,50 @@ fn check_checksums()
                              memory_checksum_bsd16(at + split, size - split,
                                                    first),
                              reference_checksum_bsd16(at, size, seed));
+                }
+
+        same("hash_xxh64", "empty seed 0", hash_xxh64(null, 0, 0),
+             0xEF46DB3751D8E999ull);
+        same("hash_xxh64", "one byte seed 0", hash_xxh64("a", 1, 0),
+             0xD24EC4F1A98C6E5Bull);
+
+        for (positive size = 0; size <= 1024; size++)
+                for (positive residue = 0; residue < 32; residue++)
+                {
+                        p8 address_to at = pattern + residue;
+                        p64 seed;
+
+                        for (positive i = 0; i < size; i++)
+                                at[i] = (p8)next();
+
+                        seed = next();
+                        seed = (seed << 32) | next();
+                        same("hash_xxh64", "all small sizes, residues, and seeds",
+                             hash_xxh64(size ? at : null, size, seed),
+                             reference_xxh64(size ? at : null, size, seed));
+                }
+}
+
+fn check_copy_match()
+{
+        static positive offsets[] = {1, 2, 3, 7, 8, 15, 16, 31, 32, 64};
+
+        for (positive e = 0; e < EDGE_COUNT; e++)
+                for (positive o = 0; o < sizeof(offsets) / sizeof(offsets[0]); o++)
+                {
+                        positive size = edges[e];
+                        positive gap = offsets[o];
+
+                        if (size + gap + 128 > ROOM)
+                                continue;
+
+                        memory_copy_apart(mine, pattern, ROOM);
+                        memory_copy_apart(theirs, pattern, ROOM);
+
+                        memory_copy_match(mine + 64, gap, size);
+                        reference_copy_match(theirs + 64, gap, size);
+                        same_bytes("memory_copy_match", "in-buffer LZ", mine,
+                                   theirs, ROOM);
                 }
 }
 
@@ -17925,6 +18079,7 @@ b32 main()
         check_reverse();
         check_translate();
         check_checksums();
+        check_copy_match();
         check_move();
         check_copy_fast_end();
         check_copy_end();
@@ -39425,6 +39580,122 @@ b32 main(void)
         return test_report(null);
 }
 #endif /* CHECK_tar */
+
+#ifdef CHECK_zstd
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#define ZSTD_CORE_ONLY
+#include "../src/sh/zstd.c"
+#undef ZSTD_CORE_ONLY
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+static p8 zstd_empty_sum[] = {
+        0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x00, 0x01, 0x00, 0x00, 0x99, 0xe9,
+        0xd8, 0x51};
+static p8 zstd_empty[] = {0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x00, 0x01, 0x00, 0x00};
+static p8 zstd_abc[] = {0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x03, 0x2d, 0x00,
+                        0x00, 0x18, 0x61, 0x62, 0x63, 0x00};
+static p8 zstd_rle[] = {0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x05, 0x2b, 0x00,
+                        0x00, 0x41};
+static p8 zstd_dict[] = {0x28, 0xb5, 0x2f, 0xfd, 0x21, 0x01, 0x00, 0x01,
+                         0x00, 0x00};
+static p8 zstd_host_a[] = {0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x09, 0x00,
+                           0x00, 0x61, 0x5b, 0x6e, 0x8c, 0xa9};
+static p8 zstd_host_abc[] = {0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x19, 0x00,
+                             0x00, 0x61, 0x62, 0x63, 0x99, 0x09, 0x77, 0xad};
+static p8 zstd_host_hello[] = {
+        0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x61, 0x00, 0x00, 0x68, 0x65,
+        0x6c, 0x6c, 0x6f, 0x20, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0x0a, 0x8c,
+        0x6d, 0x7d, 0x20};
+static p8 zstd_host_repeat[] = {
+        0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x55, 0x00, 0x00, 0x20, 0x61,
+        0x62, 0x63, 0x61, 0x01, 0x00, 0xda, 0x8e, 0x08, 0x57, 0x43, 0xdd,
+        0xc7};
+
+static bool zstd_decoded_is(p8 address_to src, positive src_len,
+                            string_address want)
+{
+        p8 into[64];
+        bipolar n = zstd_inflate(src, src_len, into, sizeof(into));
+        positive want_len = string_length(want);
+
+        return n == (bipolar)want_len &&
+               !memory_compare(into, want, want_len);
+}
+
+static fn frames(void)
+{
+        p8 into[64];
+        bipolar n;
+
+        n = zstd_inflate(zstd_empty_sum, sizeof(zstd_empty_sum), into,
+                         sizeof(into));
+        check("an empty frame with a content checksum", n == 0);
+
+        n = zstd_inflate(zstd_empty, sizeof(zstd_empty), into, sizeof(into));
+        check("an empty frame without a checksum", n == 0);
+
+        check("raw literals and no sequences are the block",
+              zstd_decoded_is(zstd_abc, sizeof(zstd_abc), "abc"));
+
+        check("an RLE block repeats its byte",
+              zstd_decoded_is(zstd_rle, sizeof(zstd_rle), "AAAAA"));
+
+        check("a host raw frame of one byte",
+              zstd_decoded_is(zstd_host_a, sizeof(zstd_host_a), "a"));
+        check("a host raw frame of three bytes",
+              zstd_decoded_is(zstd_host_abc, sizeof(zstd_host_abc), "abc"));
+        check("a host raw frame with a newline",
+              zstd_decoded_is(zstd_host_hello, sizeof(zstd_host_hello),
+                              "hello world\n"));
+        check("a host compressed frame with matches",
+              zstd_decoded_is(zstd_host_repeat, sizeof(zstd_host_repeat),
+                              "abcabcabcabcabcabcabcabcabcabc"));
+
+        n = zstd_inflate(null, 0, into, sizeof(into));
+        check("empty input is empty output", n == 0);
+
+        n = zstd_inflate(zstd_dict, sizeof(zstd_dict), into, sizeof(into));
+        check("a dictionary id is refused", n < 0);
+
+        {
+                p8 both[sizeof(zstd_abc) * 2];
+
+                memory_copy(both, zstd_abc, sizeof(zstd_abc));
+                memory_copy(both + sizeof(zstd_abc), zstd_abc, sizeof(zstd_abc));
+                n = zstd_inflate(both, sizeof(both), into, sizeof(into));
+                check("concatenated frames join",
+                      n == 6 && !memory_compare(into, "abcabc", 6));
+        }
+
+        {
+                p8 skip[4 + 4 + sizeof(zstd_abc)];
+
+                skip[0] = 0x50;
+                skip[1] = 0x2a;
+                skip[2] = 0x4d;
+                skip[3] = 0x18;
+                skip[4] = 0;
+                skip[5] = 0;
+                skip[6] = 0;
+                skip[7] = 0;
+                memory_copy(skip + 8, zstd_abc, sizeof(zstd_abc));
+                check("a skippable frame is skipped",
+                      zstd_decoded_is(skip, sizeof(skip), "abc"));
+        }
+
+        n = zstd_inflate(zstd_abc, 3, into, sizeof(into));
+        check("a truncated magic fails", n < 0);
+}
+
+b32 main(void)
+{
+        frames();
+        return test_report(null);
+}
+#endif /* CHECK_zstd */
 
 #ifdef CHECK_reuse_shell
 #include "../src/compiler_memory.c"

@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        267 routines (257 public, 10 local), 266 of them on all three and 1 local to one.
+        270 routines (259 public, 11 local), 268 of them on all three and 2 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -135,6 +135,8 @@
           file_valid                     public  yes     yes     yes
           file_write                     public  yes     yes     yes
           get_cpu_time                   public  yes     yes     yes
+          hash_xxh64                     public  yes     yes     yes
+          hash_xxh64_load8               local   --      --      yes
           host_into                      public  yes     yes     yes
           library_close                  public  yes     yes     yes
           library_get                    public  yes     yes     yes
@@ -154,6 +156,7 @@
           memory_copy_apart              public  yes     yes     yes
           memory_copy_apart_end          public  yes     yes     yes
           memory_copy_end                public  yes     yes     yes
+          memory_copy_match              public  yes     yes     yes
           memory_copy_source_first       public  yes     yes     yes
           memory_copy_until              public  yes     yes     yes
           memory_count                   public  yes     yes     yes
@@ -341,6 +344,7 @@
           writer_stderr_once             public  yes     yes     yes
 
         Private to one machine, by choice:
+          hash_xxh64_load8 -- local to riscv64
           memory_span_byte_wide -- local to x86_64
 */
 
@@ -6081,33 +6085,37 @@ __asm__(
     /* LZ match: dest[i] = dest[i-offset] for length bytes. Disjoint
        copies (length <= offset) are memory_copy_apart. Offset 1 is
        memory_fill. Overlap copies min(32, offset) at a time so a
-       32-byte load never reads the bytes it is about to write. */
+       32-byte load never reads the bytes it is about to write.
+
+       The chunk cannot live in r11 across memory_copy_apart: that
+       register is caller-saved. rbx holds it. r15 is the fifth push
+       that keeps the stack 16-byte aligned for the call. */
     ASM_FUNC(memory_copy_match)
     "test %rdx, %rdx\n   jz .Lmatch_x64_done\n"
     "cmp %rsi, %rdx\n   jbe .Lmatch_x64_apart\n"
     "cmp $1, %rsi\n   je .Lmatch_x64_fill\n"
-    "push %r12\n   push %r13\n   push %r14\n"
+    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
     "mov %rdi, %r12\n   mov %rsi, %r13\n   mov %rdx, %r14\n"
     "cmp $8, %r13\n   jb .Lmatch_x64_tiny\n"
     ".balign 16\n.Lmatch_x64_loop:\n"
-    "mov %r13, %r11\n   cmp $32, %r11\n   jbe .Lmatch_x64_cap\n   mov $32, %r11\n"
+    "mov %r13, %rbx\n   cmp $32, %rbx\n   jbe .Lmatch_x64_cap\n   mov $32, %rbx\n"
     ".Lmatch_x64_cap:\n"
-    "cmp %r14, %r11\n   jbe .Lmatch_x64_do\n   mov %r14, %r11\n"
+    "cmp %r14, %rbx\n   jbe .Lmatch_x64_do\n   mov %r14, %rbx\n"
     ".Lmatch_x64_do:\n"
     "mov %r12, %rdi\n   mov %r12, %rsi\n   sub %r13, %rsi\n"
-    "mov %r11, %rdx\n   call memory_copy_apart\n"
-    "add %r11, %r12\n   sub %r11, %r14\n"
+    "mov %rbx, %rdx\n   call memory_copy_apart\n"
+    "add %rbx, %r12\n   sub %rbx, %r14\n"
     "cmp %r13, %r14\n   ja .Lmatch_x64_loop\n"
     "mov %r12, %rdi\n   mov %r12, %rsi\n   sub %r13, %rsi\n"
     "mov %r14, %rdx\n"
-    "pop %r14\n   pop %r13\n   pop %r12\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
     "jmp memory_copy_apart\n"
     ".Lmatch_x64_tiny:\n"
     "sub %r13, %r12\n"
     ".Lmatch_x64_byte:\n"
     "movzbl (%r12), %eax\n   mov %al, (%r12,%r13)\n"
     "inc %r12\n   dec %r14\n   jnz .Lmatch_x64_byte\n"
-    "pop %r14\n   pop %r13\n   pop %r12\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
     ASM_RET
     ".Lmatch_x64_fill:\n   movzbl -1(%rdi), %esi\n   jmp memory_fill\n"
     ".Lmatch_x64_apart:\n   mov %rdi, %rax\n   sub %rsi, %rax\n"

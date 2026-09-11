@@ -61,7 +61,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl tar reuse_shell audit regex slurp wait writer native probe stack checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl tar zstd reuse_shell audit regex slurp wait writer native probe stack checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
 
 describe()
 {
@@ -80,6 +80,7 @@ describe()
         fixed) echo "exact decimal records, rounding and bounded batches on three machines" ;;
         bowl) echo "Bowl root and launcher parsing without mounts or process launches" ;;
         tar) echo "tar header checksum, octal fields and safe path stripping" ;;
+        zstd) echo "RFC 8878 decode of empty, raw, RLE and checksum frames" ;;
         audit) echo "the verified builtin repairs, as pure-state regressions" ;;
         regex) echo "fixed-graph searches against their VM fallback, with captures and resource limits on three machines" ;;
         reuse_shell) echo "shared utility formatting, bounded sinks and skip edge policies" ;;
@@ -2699,6 +2700,7 @@ lane_socket() { freestanding_checks_lane socket socket; }
 lane_net() { freestanding_checks_lane net net; }
 lane_bowl() { freestanding_checks_lane bowl bowl; }
 lane_tar() { freestanding_checks_lane tar tar; }
+lane_zstd() { freestanding_checks_lane zstd zstd; }
 lane_reuse_shell() { freestanding_checks_lane reuse_shell reuse_shell; }
 
 #       Pure-state regressions for the verified enable, formatter and signal
