@@ -19353,6 +19353,7 @@ static b32 file_install()
         this tree builds for it; a flags word of zero is the same operation.
 */
 static bool mv_newer_only;
+static bool mv_exchange;
 static b32 mv_status;
 static bool mv_ask;
 static bool mv_never_clobber;
@@ -19426,14 +19427,35 @@ static fn mv_one(string_address source, string_address destination)
                 return;
         }
 
+        /*
+                --exchange swaps the two names rather than replacing one with
+                the other. It is the same call with the kernel's exchange
+                flag, which is why nothing else here has to know: the flag
+                either arrives or it does not, and a swap that the kernel
+                cannot do comes back as an ordinary failure below.
+        */
         bipolar done = system_rename_at(
-            AT_FDCWD, source, AT_FDCWD, destination, 0);
+            AT_FDCWD, source, AT_FDCWD, destination,
+            mv_exchange ? HARDLINK_RENAME_EXCHANGE : 0);
 
         if (done == 0)
         {
                 if (mv_loud)
-                        string_format(log, "renamed '%s' -> '%s'\n", source, destination);
+                        string_format(log, mv_exchange
+                                          ? "exchanged '%s' <-> '%s'\n"
+                                          : "renamed '%s' -> '%s'\n",
+                                      source, destination);
 
+                return;
+        }
+
+        //      A swap names both sides, because neither of them is the one
+        //      that was being replaced.
+        if (mv_exchange)
+        {
+                string_format(log_error, "mv: cannot exchange '%s' and '%s': %s\n",
+                              source, destination, file_reason(done));
+                mv_status = 1;
                 return;
         }
 
@@ -19482,6 +19504,7 @@ static const file_long mv_longs[] = {
     {(string_address) "backup", 'B'},
     {(string_address) "context", 'Z'},
     {(string_address) "debug", 'v'},
+    {(string_address) "exchange", 'X'},
     {(string_address) "force", 'f'},
     {(string_address) "no-copy", 'c'},
     {(string_address) "strip-trailing-slashes", 'w'},
@@ -19505,7 +19528,9 @@ static b32 file_mv()
 
         file_taking taking = {
             .program = (string_address) "mv",
-            .allowed = (string_address) "bcfinSTtuvwZ",
+            //      X carries --exchange, which has no letter of its own
+            //      in the reference either.
+            .allowed = (string_address) "bcfinSTtuvwXZ",
             .valued = (string_address) "tS",
             //      mv's --context takes no value at all, unlike cp's and
             //      mkdir's, so Z is not among the ones that may carry one.
@@ -19531,6 +19556,7 @@ static b32 file_mv()
         mv_ask = mv_collision_option == 'i';
         mv_never_clobber = mv_collision_option == 'n';
         mv_loud = (taking.flags & FILE_FLAG('v')) != 0;
+        mv_exchange = (taking.flags & FILE_FLAG('X')) != 0;
 
         string_address into = file_option_value(address_of taking, 't');
 
