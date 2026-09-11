@@ -62,14 +62,13 @@ in a script is still the native applet.
 ## Native tools the managers still need
 
 Moonwater already has the shell, coreutils, sed, awk, grep, find, mount,
-unshare, chroot, `ip`, `host`, and plaintext `fetch`. Pacman, apt and apk
-inside `--isolated` bring their own linked downloaders and archive libraries.
-The host-side gaps that every distro bootstrap still shells out to are not
-Bowl mounts:
+unshare, chroot, `ip`, `host`, plaintext `fetch`, and uncompressed `tar`.
+Pacman, apt and apk inside `--isolated` bring their own linked downloaders
+and archive libraries. The host-side gaps that every distro bootstrap still
+shells out to are not Bowl mounts:
 
-- `tar` — unpack a bootstrap and, for Debian, debootstrap
 - gzip / xz / zstd — the compressors those tarballs actually use (Arch is
-  `.tar.zst`)
+  `.tar.zst`); `tar` itself is native
 - `ar` — `.deb` members; debootstrap will not run without it
 - HTTPS on `fetch` — mirrors refuse plaintext; until then a root is copied
   onto the image from a machine that already has curl

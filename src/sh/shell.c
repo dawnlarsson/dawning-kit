@@ -655,6 +655,7 @@ fn exec_function_import_environment(string_address address_to environment);
 
 #include "lex.c"
 #include "file.c"
+#include "tar.c"
 #include "snapshot.c"
 #include "storage_blkid.c"
 #include "storage_discovery.c"

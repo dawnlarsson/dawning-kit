@@ -39322,6 +39322,110 @@ b32 main(void)
 }
 #endif /* CHECK_bowl */
 
+#ifdef CHECK_tar
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#define TAR_PARSE_ONLY
+#include "../src/sh/tar.c"
+#undef TAR_PARSE_ONLY
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+static fn checksums(void)
+{
+        p8 block[TAR_BLOCK];
+
+        memory_fill(block, 0, TAR_BLOCK);
+        check("a zero block sums to zero", tar_header_zero(block));
+
+        block[0] = 'a';
+        block[156] = '0';
+        memory_copy(block + 257, "ustar", 5);
+        block[263] = '0';
+        block[264] = '0';
+        tar_header_put_checksum(block);
+        check("a ustar header checksums with memory_sum_bytes",
+              tar_header_ok(block) && !tar_header_zero(block));
+
+        block[0] = 'b';
+        check("a flipped name fails the checksum", !tar_header_ok(block));
+}
+
+static fn fields(void)
+{
+        p8 mode[8];
+        p8 size[12];
+        p64 value = 1;
+
+        memory_fill(mode, 0, sizeof(mode));
+        memory_copy(mode, "0000644", 7);
+        check("an octal mode field",
+              tar_field_value(mode, 8, address_of value) && value == 0644);
+
+        memory_fill(mode, ' ', sizeof(mode));
+        check("a blank field is zero",
+              tar_field_value(mode, 8, address_of value) && value == 0);
+
+        memory_fill(size, 0, sizeof(size));
+        size[0] = 0x80;
+        size[11] = 7;
+        check("a GNU base-256 size",
+              tar_field_value(size, 12, address_of value) && value == 7);
+
+        check("empty file needs no padding", tar_padded(0) == 0);
+        check("one byte occupies a block", tar_padded(1) == TAR_BLOCK);
+        check("a full block is itself", tar_padded(TAR_BLOCK) == TAR_BLOCK);
+        check("one past a block occupies two",
+              tar_padded(TAR_BLOCK + 1) == TAR_BLOCK * 2);
+}
+
+static fn paths(void)
+{
+        p8 into[64];
+        p8 prefix[TAR_PREFIX + 1];
+        p8 name[TAR_NAME + 1];
+
+        check("strip one component",
+              tar_safe_path("usr/bin/jq", 1, false, into, sizeof(into), null) &&
+                  string_equals(into, "bin/jq"));
+        check("strip two components",
+              tar_safe_path("usr/bin/jq", 2, false, into, sizeof(into), null) &&
+                  string_equals(into, "jq"));
+        check("strip past the name",
+              !tar_safe_path("usr/bin/jq", 3, false, into, sizeof(into), null));
+        check("a leading slash is dropped",
+              tar_safe_path("/etc/hosts", 0, false, into, sizeof(into), null) &&
+                  string_equals(into, "etc/hosts"));
+        check("dotdot is refused",
+              !tar_safe_path("../etc/passwd", 0, false, into, sizeof(into), null));
+        check("an interior dotdot is refused",
+              !tar_safe_path("a/../b", 0, false, into, sizeof(into), null));
+        check("a leading dot is skipped",
+              tar_safe_path("./a", 0, false, into, sizeof(into), null) &&
+                  string_equals(into, "a"));
+        check("an absolute name can be kept",
+              tar_safe_path("/etc/hosts", 0, true, into, sizeof(into), null) &&
+                  string_equals(into, "/etc/hosts"));
+
+        memory_fill(prefix, 0, sizeof(prefix));
+        memory_fill(name, 0, sizeof(name));
+        memory_copy(prefix, "usr", 3);
+        memory_copy(name, "bin/jq", 6);
+        check("ustar prefix and name join",
+              tar_join_name(prefix, name, into, sizeof(into)) &&
+                  string_equals(into, "usr/bin/jq"));
+}
+
+b32 main(void)
+{
+        checksums();
+        fields();
+        paths();
+        return test_report(null);
+}
+#endif /* CHECK_tar */
+
 #ifdef CHECK_reuse_shell
 #include "../src/compiler_memory.c"
 #include "../src/spark.c"
