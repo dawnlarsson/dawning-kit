@@ -4340,6 +4340,12 @@ fn shell_fc(writer write, string_address input)
                 if (listing && at >= shell_argc)
                         return shell_answer(0);
 
+                //      Bash keeps quiet about an empty history whatever was
+                //      asked of it: there is no line to name, so there is
+                //      nothing it could say was not found.
+                if (shell_bash_compat)
+                        return shell_answer(0);
+
                 return shell_answer(string_report(log_error, 1, "fc: no command found\n"));
         }
 

@@ -13927,11 +13927,17 @@ static COLD fn shell_compopt(writer write, string_address input)
         //      specification, which is the pair of things Bash says here.
         if (first < shell_argc)
         {
-                shell_diagnostic_where();
+                //      One line per name: bash walks them all and answers
+                //      one at the end.
+                while (first < shell_argc)
+                {
+                        shell_diagnostic_where();
+                        string_format(log_error,
+                            "compopt: %s: no completion specification\n",
+                            shell_argv[first++]);
+                }
 
-                return shell_answer(string_report(log_error, 1,
-                    "compopt: %s: no completion specification\n",
-                    shell_argv[first]));
+                return shell_answer(1);
         }
 
         shell_answer(string_report(
