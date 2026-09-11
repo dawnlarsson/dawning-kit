@@ -4,8 +4,9 @@
         The kernel does not extract archives. The header checksum is
         memory_sum_bytes; a seekable regular member is copy_file_range
         then sendfile, the same floors cp uses. Create walks with
-        openat and statx on the directory fd. Compression is a later
-        applet, not a guest bind of gzip.
+        openat and statx on the directory fd. Extract restores setuid
+        only for -p or root, the same rule GNU uses. Compression is a
+        later applet, not a guest bind of gzip.
 */
 
 #define TAR_BLOCK 512
@@ -286,6 +287,7 @@ struct tar_options
         positive strip;
         bool verbose;
         bool absolute;
+        bipolar permissions;
         positive first;
 };
 
@@ -299,6 +301,7 @@ static bool tar_pax_has_path;
 static bool tar_pax_has_link;
 static bool tar_pax_has_size;
 static b32 tar_status;
+static bool tar_preserve;
 
 /*
         GNU default blocking is twenty 512-byte blocks (10 KiB). One 64 KiB
@@ -859,7 +862,7 @@ static bool tar_extract_regular(bipolar archive, string_address path,
 
         made = system_open_at_mode(AT_FDCWD, path,
                                    FILE_WRITE | O_CLOEXEC | O_NOFOLLOW,
-                                   mode & 07777);
+                                   mode & 0777);
         if (made < 0)
         {
                 tar_fail(path, made);
@@ -873,7 +876,9 @@ static bool tar_extract_regular(bipolar archive, string_address path,
                 return false;
         }
 
-        system_call_2(syscall(fchmod), (positive)made, mode & 07777);
+        if (tar_preserve)
+                system_call_2(syscall(fchmod), (positive)made, mode & 07777);
+
         system_close(made);
         return true;
 }
@@ -894,6 +899,8 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
         {
                 if (!tar_parents(path, true))
                         tar_fail(path, -ERROR_NOT_DIRECTORY);
+                else if (tar_preserve)
+                        system_change_mode_at(AT_FDCWD, path, mode & 07777);
 
                 tar_skip(archive, tar_padded(size), seekable);
                 return;
@@ -939,9 +946,12 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                 {
                         made = system_call_4(syscall(mknodat), AT_FDCWD,
                                              (positive)path,
-                                             (mode & 07777) | MODE_PIPE, 0);
+                                             (mode & 0777) | MODE_PIPE, 0);
                         if (made < 0)
                                 tar_fail(path, made);
+                        else if (tar_preserve)
+                                system_change_mode_at(AT_FDCWD, path,
+                                                      mode & 07777);
                 }
 
                 tar_skip(archive, tar_padded(size), seekable);
@@ -958,10 +968,13 @@ static fn tar_extract_member(bipolar archive, p8 type, string_address path,
                 {
                         made = system_call_4(syscall(mknodat), AT_FDCWD,
                                              (positive)path,
-                                             (mode & 07777) | kind,
+                                             (mode & 0777) | kind,
                                              file_device((p32)major, (p32)minor));
                         if (made < 0)
                                 tar_fail(path, made);
+                        else if (tar_preserve)
+                                system_change_mode_at(AT_FDCWD, path,
+                                                      mode & 07777);
                 }
 
                 tar_skip(archive, tar_padded(size), seekable);
@@ -1039,6 +1052,11 @@ static b32 tar_read_archive(struct tar_options address_to options)
 
         seekable = system_seek(handle, 0, FILE_SEEK_CUR) >= 0;
         tar_advise(handle);
+        /* GNU: -p / root restores MODE_ALL; otherwise only 0777 & ~umask. */
+        tar_preserve = options->permissions < 0
+                           ? false
+                           : (options->permissions > 0 ||
+                              system_call_1(syscall(geteuid), 0) == 0);
 
         if (options->directory)
         {
@@ -1536,7 +1554,7 @@ static bool tar_cluster_letter(p8 letter)
 {
         return letter == 'x' || letter == 't' || letter == 'c' ||
                letter == 'f' || letter == 'v' || letter == 'C' ||
-               letter == 'P' || tar_compression_letter(letter);
+               letter == 'P' || letter == 'p' || tar_compression_letter(letter);
 }
 
 static fn tar_refuse_compression(void)
@@ -1575,6 +1593,12 @@ static bool tar_take_letter(struct tar_options address_to options, p8 letter,
         if (letter == 'P')
         {
                 options->absolute = true;
+                return true;
+        }
+
+        if (letter == 'p')
+        {
+                options->permissions = 1;
                 return true;
         }
 
@@ -1687,14 +1711,30 @@ static bool tar_take_long(struct tar_options address_to options,
                 return true;
         }
 
+        if ((name_length == 20 &&
+             !memory_compare(name, "preserve-permissions", 20)) ||
+            (name_length == 16 &&
+             !memory_compare(name, "same-permissions", 16)))
+        {
+                options->permissions = 1;
+                return true;
+        }
+
+        if (name_length == 19 &&
+            !memory_compare(name, "no-same-permissions", 19))
+        {
+                options->permissions = -1;
+                return true;
+        }
+
         if ((name_length == 4 && !memory_compare(name, "gzip", 4)) ||
             (name_length == 6 && !memory_compare(name, "gunzip", 6)) ||
             (name_length == 5 && !memory_compare(name, "bzip2", 5)) ||
             (name_length == 2 && !memory_compare(name, "xz", 2)) ||
             (name_length == 4 && !memory_compare(name, "zstd", 4)) ||
             (name_length == 8 && !memory_compare(name, "compress", 8)) ||
-            (name_length == 14 && !memory_compare(name, "auto-compress", 14)) ||
-            (name_length == 21 && !memory_compare(name, "use-compress-program", 21)))
+            (name_length == 13 && !memory_compare(name, "auto-compress", 13)) ||
+            (name_length == 20 && !memory_compare(name, "use-compress-program", 20)))
         {
                 tar_refuse_compression();
                 return false;
@@ -1722,7 +1762,7 @@ static bool tar_take_long(struct tar_options address_to options,
             (name_length == 7 && !memory_compare(name, "version", 7)))
         {
                 if (name_length == 4)
-                        string_format(log, "Usage: tar [-ctx] [-f ARCHIVE] [-C DIR] "
+                        string_format(log, "Usage: tar [-ctx] [-f ARCHIVE] [-C DIR] [-p] "
                                            "[--strip-components N] [FILE...]\n");
                 else
                         string_format(log, "tar from dawning-kit\n");
