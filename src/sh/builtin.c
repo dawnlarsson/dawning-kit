@@ -5849,7 +5849,16 @@ static COLD fn shell_option_row(writer write, string_address name, bool on,
         }
 }
 
-fn shell_options_listed(writer write, bool as_commands)
+/*
+        The set options, as bash writes them.
+
+        want is nought for all of them, one for the ones that are on and
+        minus one for the ones that are off, which is what shopt -s -o and
+        shopt -u -o ask for: the same list in the same order, with the rest
+        left out, rather than a second walk over two tables in the order
+        they happen to be stored in.
+*/
+fn shell_options_listed_wanted(writer write, bool as_commands, bipolar want)
 {
         positive index = 0;
 
@@ -5886,6 +5895,9 @@ fn shell_options_listed(writer write, bool as_commands)
                                      shell_extra_on(option);
                         }
 
+                        if ((want > 0 && !on) || (want < 0 && on))
+                                continue;
+
                         shell_option_row(write, names[at], on,
                                          as_commands ? (on ? "set -o " : "set +o ") : null,
                                          15, '\t');
@@ -5907,6 +5919,12 @@ fn shell_options_listed(writer write, bool as_commands)
                 index++;
         }
 }
+
+fn shell_options_listed(writer write, bool as_commands)
+{
+        shell_options_listed_wanted(write, as_commands, 0);
+}
+
 
 bool shell_option_named(string_address word, bool on)
 {
@@ -6015,6 +6033,17 @@ COLD fn shell_shopt(writer write, string_address input)
                 // shopt -o with nothing named is the view set -o writes, in
                 // the same order and the same field; only -s or -u filtering
                 // needs the table walk below.
+                //      Bash writes the same list whichever of the three
+                //      was asked for, in the same order, with the ones in
+                //      the other state left out.
+                if (set_options && shell_bash_compat)
+                {
+                        shell_options_listed_wanted(write, as_commands,
+                                                    set ? 1 : unset ? -1 : 0);
+
+                        return shell_answer(0);
+                }
+
                 if (set_options && !set && !unset)
                 {
                         shell_options_listed(write, as_commands);
