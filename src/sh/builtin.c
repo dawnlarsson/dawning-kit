@@ -2070,9 +2070,39 @@ COLD string_address shell_reference_element_value(
                    : null;
 }
 
+/*
+        rbash holds four names readonly.
+
+        PATH decides what a bare name reaches, SHELL and ENV and BASH_ENV
+        decide what runs on the way in; letting any of them be written is
+        letting the restriction be written. Bash marks them readonly rather
+        than refusing the assignment by name, so everything that already asks
+        this question -- an assignment, export, unset, a declaration command
+        -- refuses them without a check of its own.
+*/
+static PURE bool env_restricted_name(const_string name, positive length)
+{
+        static const string_address held[] = {
+            (string_address) "PATH", (string_address) "SHELL",
+            (string_address) "ENV", (string_address) "BASH_ENV"};
+        positive at;
+
+        if (!shell_restricted || !name)
+                return false;
+
+        for (at = 0; at < array_count(held); at++)
+                if (string_length(held[at]) == length &&
+                    !memory_compare(held[at], (address_any)name, length))
+                        return true;
+
+        return false;
+}
+
 static PURE bool env_assignment_readonly_destination(const_string name,
     positive length, positive hash, env_variable address_to destination)
 {
+        if (env_restricted_name(name, length))
+                return true;
         if (!name || (!readonly_count && (!destination ||
             !(destination->attributes & SHELL_ARRAY_READONLY))))
                 return false;
@@ -2095,6 +2125,9 @@ PURE bool env_readonly_hashed_span(const_string name, positive length,
                                    positive hash)
 {
         positive found;
+
+        if (env_restricted_name(name, length))
+                return true;
 
         if (!name || !readonly_count)
                 return false;
@@ -3728,6 +3761,14 @@ COLD fn shell_cd(writer write, string_address input)
         // Two bytes each: the formatter has no %c, so an option letter is
         // spelled here and named as a string.
         p8 room[2];
+
+        //      rbash: the working directory is the first thing a restricted
+        //      shell keeps, because everything reached by a relative name
+        //      follows from it.
+        if (shell_restricted)
+                return shell_answer(
+                    string_report(log_error, 1, "cd: restricted\n"));
+
         shell_option_walk walk = {1};
         p8 letter;
         bool physical = shell_physical_on();
@@ -4475,6 +4516,13 @@ COLD fn shell_exec(writer write, string_address input)
         // Two bytes each: the formatter has no %c, so an option letter is
         // spelled here and named as a string.
         p8 room[2];
+
+        //      rbash: replacing the shell would replace the restriction
+        //      with whatever was named.
+        if (shell_restricted)
+                return shell_answer(
+                    string_report(log_error, 1, "exec: restricted\n"));
+
         p8 address_to found = null;
         positive found_room = 0;
         string_address address_to environment;
@@ -5942,9 +5990,17 @@ COLD fn shell_set(writer write, string_address input)
                                         //      way.
                                         if (!on && shell_restricted)
                                         {
+                                                //      The words are the
+                                                //      usage refusal's; the
+                                                //      status is not. This
+                                                //      one is the restriction
+                                                //      speaking rather than a
+                                                //      mistyped option, and
+                                                //      bash answers 1 for it.
+                                                shell_set_refused_letter('+',
+                                                                         'r');
                                                 shell_answer(
-                                                    shell_set_refused_letter(
-                                                        '+', 'r'));
+                                                    shell_bash_compat ? 1 : 2);
                                                 exec_special_error_note();
                                                 return;
                                         }
@@ -7129,9 +7185,17 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                 held_attributes = saved_global ? saved_global->binding.variable.attributes
                                   : global_meta ? global_meta->attributes : shell_variable_attributes(word, length);
 
+                /*
+                        A name that already holds an array, asked to become a
+                        reference: refused outright, and it keeps what it
+                        holds. Asking for both kinds at once is a different
+                        question and is weighed below, after the reference's
+                        own target has been read -- bash looks at the target
+                        first, so `declare -an r="bad name"` is a bad name and
+                        not a bad combination.
+                */
                 if ((state->attributes_set & SHELL_ARRAY_NAMEREF) &&
-                    ((held_attributes & SHELL_ARRAY_EITHER) ||
-                     (scoped && (state->attributes_set & SHELL_ARRAY_EITHER))))
+                    (held_attributes & SHELL_ARRAY_EITHER))
                 {
                         string_format(log_error, "%s: %s: reference variable cannot be an array\n",
                                       shell_argv[0], word);
@@ -7190,6 +7254,26 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                         failed = true;
                         goto next;
                 }
+                /*
+                        Both kinds asked for, and the target read and found
+                        good. bash weighs the array and drops the reference:
+                        what it makes is an array. Under a scope it says the
+                        two cannot be combined and makes the array anyway, so
+                        the complaint and the drop go together.
+                */
+                if ((set & SHELL_ARRAY_NAMEREF) && (set & SHELL_ARRAY_EITHER))
+                {
+                        if (scoped)
+                        {
+                                string_format(log_error, "%s: %s: reference variable cannot be an array\n",
+                                              shell_argv[0], word);
+                                failed = true;
+                        }
+
+                        set &= (p8)~SHELL_ARRAY_NAMEREF;
+                        state->attributes_set &= (p8)~SHELL_ARRAY_NAMEREF;
+                }
+
                 if ((set & SHELL_ARRAY_NAMEREF) && !(set & SHELL_ARRAY_INTEGER))
                         clear |= SHELL_ARRAY_INTEGER;
                 // Integer evaluation always rejects a new binding; its RHS
@@ -12832,6 +12916,13 @@ COLD fn shell_dot(writer write, string_address input)
         }
 
         path = shell_argv[first];
+
+        //      rbash: a name with a slash in it reaches outside whatever PATH
+        //      was left, which is the whole of what the restriction holds.
+        if (shell_restricted && string_first_of(path, '/'))
+                return shell_answer(string_report(log_error, 1,
+                                                  ".: %s: restricted\n", path));
+
         handle = shell_source_open(path, address_of found, address_of found_room,
                                    address_of no_room);
 
@@ -13615,6 +13706,13 @@ fn shell_hash(writer write, string_address input)
                         if (!given)
                                 return shell_answer(string_report(log_error, 2, "hash: -p: option requires an "
                                                  "argument\n"));
+
+                        //      rbash: naming a path for a command is the same
+                        //      reach a slash in the name would have been.
+                        if (shell_restricted)
+                                return shell_answer(string_report(
+                                    log_error, 1, "hash: %s: restricted\n",
+                                    given));
                 }
                 else
                         return shell_answer(string_report(log_error, 2, "hash: -%s: invalid option\n",
@@ -14271,7 +14369,15 @@ fn shell_command_builtin(writer write, string_address input)
                         at_length = true;
                 }
                 else if (option == 'p')
+                {
+                        //      rbash: -p is the standard PATH, which is a way
+                        //      back to the directories the restriction took.
+                        if (shell_restricted)
+                                return shell_answer(string_report(
+                                    log_error, 1, "command: -p: restricted\n"));
+
                         standard_path = true;
+                }
                 else
                         return shell_answer(string_report(log_error, 2, "command: -%s: invalid option\n",
                                       shell_option_spelled(room, option)));
