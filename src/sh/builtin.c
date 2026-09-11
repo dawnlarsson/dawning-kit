@@ -11770,6 +11770,21 @@ fn shell_return(writer write, string_address input)
         shell_answer(shell_status);
 }
 
+bool exec_control_builtin(string_address name, bool run);
+
+/*
+        break and continue.
+
+        The work is the executor's, because leaving a loop means unwinding C
+        frames it owns. They are named here so that they carry a disabled
+        flag like every other builtin: `enable` lists them, and `enable -n
+        break` sends the name back out to PATH the way the reference does.
+*/
+fn shell_break(writer write, string_address input)
+{
+        exec_control_builtin(shell_argv[0], true);
+}
+
 
 /*
         The utilities, which are programs that do not need to be.
@@ -13517,29 +13532,35 @@ static COLD fn shell_bind(writer write, string_address input)
 }
 
 shell_command shell_commands[] = {
-    {":", shell_true},
+    //      Byte order, because `enable` writes this list as it
+    //      stands and the reference writes a sorted one: '.' is
+    //      0x2e and ':' is 0x3a, so the two of them led it wrong.
     {".", shell_dot},
+    {":", shell_true},
     {"[", shell_test},
     {"alias", shell_alias},
     {"bg", shell_bg},
     {"bind", shell_bind},
     {"blkid", shell_blkid},
-    {"caller", shell_caller},
+    {"break", shell_break},
     {"builtin", shell_builtin_run},
-    {"compgen", shell_compgen},
-    {"complete", shell_complete},
-    {"compopt", shell_compopt},
+    {"caller", shell_caller},
     {"cd", shell_cd},
     {"clear", shell_clear},
     {"command", shell_command_builtin},
+    {"compgen", shell_compgen},
+    {"complete", shell_complete},
+    {"compopt", shell_compopt},
+    {"continue", shell_break},
     {"declare", shell_declare},
-    {"disown", shell_disown},
     {"dirs", shell_dirs},
+    {"disown", shell_disown},
     {"echo", shell_echo},
     {"enable", shell_enable},
     {"eval", shell_eval},
     {"exec", shell_exec},
     {"exit", shell_exit},
+    {"export", shell_export},
     {"false", shell_false},
     {"fc", shell_fc},
     {"fg", shell_fg},
@@ -13547,20 +13568,22 @@ shell_command shell_commands[] = {
     {"findmnt", shell_findmnt},
     {"getopts", shell_getopts},
     {"hash", shell_hash},
+    {"help", shell_help},
     {"history", shell_history},
     {"jobs", shell_jobs},
     {"kill", shell_kill},
     {"let", shell_let},
+    {"local", shell_local},
     {"logout", shell_logout},
+    {"mapfile", shell_mapfile},
     {"mount", shell_mount},
     {"mountpoint", shell_mountpoint},
     {"popd", shell_popd},
     {"poweroff", shell_poweroff},
-    {"pushd", shell_pushd},
     {"printf", shell_printf},
+    {"pushd", shell_pushd},
     {"pwd", shell_pwd},
     {"read", shell_read},
-    {"mapfile", shell_mapfile},
     {"readarray", shell_mapfile},
     {"readonly", shell_readonly},
     {"reboot", shell_reboot},
@@ -13573,9 +13596,9 @@ shell_command shell_commands[] = {
     {"test", shell_test},
     {"times", shell_times},
     {"trap", shell_trap},
+    {"true", shell_true},
     {"type", shell_type},
     {"typeset", shell_declare},
-    {"true", shell_true},
     {"ulimit", shell_ulimit},
     {"umask", shell_umask},
     {"umount", shell_umount},
@@ -13583,9 +13606,6 @@ shell_command shell_commands[] = {
     {"unset", shell_unset},
     {"wait", job_wait},
     {"which", shell_which},
-    {"help", shell_help},
-    {"local", shell_local},
-    {"export", shell_export},
     {null, null},
 };
 
