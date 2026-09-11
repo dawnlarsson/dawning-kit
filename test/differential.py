@@ -952,6 +952,33 @@ def _pin_span(text):
     return begin, end
 
 
+#       A pinned row is one of two very different things, and the tally used
+#       to show neither.
+#
+#       Some rows are policy: this shell answers differently on purpose, and
+#       the row is the decision. Others are work the walk found and nobody
+#       closed -- a real divergence, pinned so the lane could go green, with
+#       a reason that says as much in prose. Both made the run say "everything
+#       agrees", so the second kind became invisible: $'\u00e9' and the status
+#       of an arithmetic error were each found by the engine, pinned with one
+#       of the phrasings below, and stayed wrong for as long as nobody read
+#       the ledger.
+#
+#       These are the phrasings already in the tree, plus the marker a new row
+#       is recorded with. Matching one does not fail a run -- the row is still
+#       pinned -- but the count is printed beside the tally every time, so
+#       carried work is a number that someone has to watch rather than a
+#       silence.
+LEDGER_OPEN = re.compile(
+    r"^OPEN:|did not close|left standing|remaining difference|does not implement|"
+    r"not implemented|this pass left|corners these families found", re.I)
+
+
+def ledger_open_rows(rows):
+    """The pinned rows that are carried work rather than a decision."""
+    return [row for row in rows if LEDGER_OPEN.search(row.get("reason") or "")]
+
+
 def load_rows(which):
     """The pinned rows of one list ("ledger", "regression" or "unstable")."""
     if _pins_are_json():
@@ -1589,6 +1616,15 @@ def main(argv=None):
     print(f"  differential {all_passed} of {all_total}; failure classes={distinct}, "
           f"invalid oracles={invalid}, unstable={sum(unstable.values())}, "
           f"not run={sum(absent.values())}")
+    #       What the ledger is carrying for the domains this run walked, so a
+    #       green lane still says how much divergence it is holding down.
+    carried = ledger_open_rows([row for row in load_rows("ledger")
+                                if row.get("domain") in specs])
+    if carried:
+        share = collections.Counter(row.get("domain", "?") for row in carried)
+        print("  ledger carries " + str(len(carried)) + " open divergence(s): " +
+              ", ".join(f"{name}={count}" for name, count in sorted(share.items())) +
+              " -- pinned, not fixed")
     if not all_total:
         print("  differential NOT RUN -- no case had both programs")
         return 2
