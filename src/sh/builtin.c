@@ -7278,6 +7278,25 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                     previous_variable->permanent || previous_variable->attributes ||
                     env_variable_has_value(previous_variable));
                 p8 previous_attributes = existed ? previous_variable->attributes : 0;
+                /*
+                        A reference to itself. Following it would be a loop
+                        with one link in it, so bash refuses the declaration
+                        by name rather than leaving a name that cannot be
+                        read. Said before the target is weighed for being a
+                        name at all, because "it is this one" is the more
+                        particular complaint of the two.
+                */
+                if ((set & SHELL_ARRAY_NAMEREF) && mark && !append &&
+                    string_get(mark + 1) && !string_compare(mark + 1, word))
+                {
+                        string_format(log_error,
+                                      "%s: %s: nameref variable self "
+                                      "references not allowed\n",
+                                      shell_argv[0], word);
+                        failed = true;
+                        goto next;
+                }
+
                 if ((set & SHELL_ARRAY_NAMEREF) &&
                     ((mark && !append && string_get(mark + 1) &&
                       !shell_declare_target_valid(mark + 1)) ||
