@@ -6629,6 +6629,12 @@ COLD fn shell_unset(writer write, string_address input)
 
                                 if (shell_bash_compat)
                                 {
+                                        //      A special builtin refused a name takes
+                                        //      the script with it under posix, and
+                                        //      nowhere else.
+                                        if (shell_posix_on())
+                                                exec_special_error_note();
+
                                         shell_answer(1);
                                         return;
                                 }
@@ -6727,6 +6733,12 @@ COLD fn shell_unset(writer write, string_address input)
 
                         if (shell_bash_compat)
                         {
+                                //      A special builtin refused a name takes
+                                //      the script with it under posix, and
+                                //      nowhere else.
+                                if (shell_posix_on())
+                                        exec_special_error_note();
+
                                 shell_answer(1);
                                 return;
                         }
