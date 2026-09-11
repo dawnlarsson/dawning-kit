@@ -5633,12 +5633,21 @@ static bool text_tab_add(positive value)
         if (text_tab_stop_count == TEXT_TAB_STOP_MAX)
                 return string_diagnostic(&text_diagnostic, 0, null, "too many tab stops");
 
-        // A list with something in it replaces the eight-column default; a
-        // list with nothing in it -- expand -t , -- leaves it standing.
+        /*
+                A list with something in it replaces the eight-column
+                default; a list with nothing in it -- expand -t , -- leaves
+                it standing. A repeat the caller asked for is not the
+                default and is not replaced: -t +4 -t 4 is a stop at four
+                and every four after it, and clearing the repeat when the
+                explicit stop arrived left the stops after the first one
+                falling wherever the empty list put them.
+        */
         if (!text_tab_custom)
         {
                 text_tab_custom = true;
-                text_tab_repeat = 0;
+
+                if (!text_tab_repeat_said)
+                        text_tab_repeat = 0;
         }
 
         text_tab_stops[text_tab_stop_count++] = value;
