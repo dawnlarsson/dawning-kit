@@ -1013,12 +1013,32 @@ static PURE string_address env_variable_value(env_variable address_to variable)
                    ? variable->text + variable->name_length + 1 : null;
 }
 
-static shell_binding env_saved_state(const_string name, positive length)
+/* Written where it lands, not returned.
+
+   A shell_binding is wider than a register pair, so returning one by value
+   put it in the caller's frame and the caller read it straight back out. That
+   reload was 91% of exec_keep_value's samples and exec_keep_value was 8.7% of
+   an assignment-heavy run, so it looked like most of the cost of every
+   assignment this shell performs. Every caller already had somewhere to put
+   the answer, so the destination comes in instead.
+
+   Measured, it is not faster: 1,005,575,692 cycles against 1,003,790,403,
+   which is +0.18% and inside the noise of nine alternating runs. The round
+   trip is gone -- exec_keep_value falls to 0.9% and the samples land in
+   env_find_hashed_span, which doubles -- so the stall was real and the core
+   was already hiding it behind the lookup it waits on. Kept because a
+   forty-byte struct should not travel through the frame to reach a field it
+   was going straight into, not because it bought time. Do not spend the
+   afternoon here again expecting it to. */
+static fn env_saved_state(shell_binding address_to into, const_string name,
+                          positive length)
 {
         positive found = env_find_span(name, length);
-        return (shell_binding){(string_address)name,
-            found < shell_var_count ? shell_vars[found] : (env_variable){
-                .hash = env_name_hash(name, length), .name_length = length}};
+
+        into->name = (string_address)name;
+        into->variable = found < shell_var_count ? shell_vars[found]
+            : (env_variable){.hash = env_name_hash(name, length),
+                             .name_length = length};
 }
 
 static bool shell_binding_hold(shell_binding address_to saved, positive extra)
@@ -6445,7 +6465,7 @@ static b32 local_remember(string_address name)
         positive length = string_length(name);
         shell_pipe_status_wanted(name, length);
         shell_binding address_to saved = &local_table[local_count].binding;
-        *saved = env_saved_state(name, length);
+        env_saved_state(saved, name, length);
         bool option_scope = local_getopts_scope(name, length);
         if (!shell_binding_hold(saved, option_scope ? sizeof(shell_getopts_state) : 0))
                 return -1;

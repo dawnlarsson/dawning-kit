@@ -6924,7 +6924,7 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
                     kept, word, (positive)(bracket - word), bracket + 1,
                     length - (positive)(bracket - word) - 2);
 
-        kept->binding = env_saved_state(word, length);
+        env_saved_state(address_of kept->binding, word, length);
 
         /* The common case stays the original one-probe save. A nameref alone
            takes the cold second probe needed to save the target that the
@@ -6958,7 +6958,7 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
 
                 word = (string_address)resolved_name;
                 length = resolved_length;
-                kept->binding = env_saved_state(word, length);
+                env_saved_state(address_of kept->binding, word, length);
         }
 
 held:
