@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        270 routines (259 public, 11 local), 268 of them on all three and 2 local to one.
+        271 routines (260 public, 11 local), 269 of them on all three and 2 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -342,6 +342,7 @@
           writer_fill                    public  yes     yes     yes
           writer_stderr                  public  yes     yes     yes
           writer_stderr_once             public  yes     yes     yes
+          zstd_huffman_stream            public  yes     yes     yes
 
         Private to one machine, by choice:
           hash_xxh64_load8 -- local to riscv64
@@ -6084,8 +6085,11 @@ __asm__(
 
     /* LZ match: dest[i] = dest[i-offset] for length bytes. Disjoint
        copies (length <= offset) are memory_copy_apart. Offset 1 is
-       memory_fill. Overlap copies min(32, offset) at a time so a
-       32-byte load never reads the bytes it is about to write.
+       memory_fill. Overlap copies `offset` bytes at a time: the source
+       and destination then abut, so a vector load never reads a byte
+       this store is about to write, and a long --long match is one
+       memcpy per period rather than 32-byte calls across an 8 MiB
+       stride.
 
        The chunk cannot live in r11 across memory_copy_apart: that
        register is caller-saved. rbx holds it. r15 is the fifth push
@@ -6098,8 +6102,7 @@ __asm__(
     "mov %rdi, %r12\n   mov %rsi, %r13\n   mov %rdx, %r14\n"
     "cmp $8, %r13\n   jb .Lmatch_x64_tiny\n"
     ".balign 16\n.Lmatch_x64_loop:\n"
-    "mov %r13, %rbx\n   cmp $32, %rbx\n   jbe .Lmatch_x64_cap\n   mov $32, %rbx\n"
-    ".Lmatch_x64_cap:\n"
+    "mov %r13, %rbx\n"
     "cmp %r14, %rbx\n   jbe .Lmatch_x64_do\n   mov %r14, %rbx\n"
     ".Lmatch_x64_do:\n"
     "mov %r12, %rdi\n   mov %r12, %rsi\n   sub %r13, %rsi\n"
@@ -6123,6 +6126,69 @@ __asm__(
     ".Lmatch_x64_done:\n"
     ASM_RET
     ASM_END(memory_copy_match)
+
+    /* zstd Huffman: dest[need] from a backward bitstream. cell[i] is
+       the symbol in the low 8 bits and the bit count in the high 8.
+       max_bits is the table log. A tail shorter than tableLog indexes
+       with zero padding, the same shift Facebook BIT_lookBits uses. */
+    ASM_FUNC(zstd_huffman_stream)
+    "test %rsi, %rsi\n   jz .Lzstd_huff_x64_ok_empty\n"
+    "test %rcx, %rcx\n   jz .Lzstd_huff_x64_fail_empty\n"
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "mov %rdi, %r12\n   mov %rsi, %r13\n   mov %r8, %r14\n   mov %r9, %r15\n"
+    "mov %rdx, %rbp\n   lea (%rdx,%rcx), %r9\n   lea 8(%rdx), %r8\n"
+    "movzbl -1(%r9), %edx\n   test %edx, %edx\n   jz .Lzstd_huff_x64_fail\n"
+    "cmp $8, %rcx\n   jb .Lzstd_huff_x64_small\n"
+    "lea -8(%r9), %r11\n   mov (%r11), %rbx\n"
+    "bsr %edx, %eax\n   mov $8, %r10d\n   sub %eax, %r10d\n"
+    "jmp .Lzstd_huff_x64_loop\n"
+    ".Lzstd_huff_x64_small:\n"
+    "xor %ebx, %ebx\n   xor %r11d, %r11d\n   mov %rcx, %rsi\n"
+    ".Lzstd_huff_x64_small_i:\n"
+    "movzbl (%rbp,%r11), %eax\n   lea 0(,%r11,8), %ecx\n"
+    "shl %cl, %rax\n   or %rax, %rbx\n   inc %r11\n   cmp %rsi, %r11\n   jb .Lzstd_huff_x64_small_i\n"
+    "mov $8, %ecx\n   sub %esi, %ecx\n   shl $3, %ecx\n"
+    "bsr %edx, %eax\n   mov $8, %r10d\n   sub %eax, %r10d\n   add %ecx, %r10d\n"
+    "mov %rbp, %r11\n"
+    ".Lzstd_huff_x64_loop:\n"
+    "mov $64, %eax\n   sub %r15d, %eax\n   cmp %eax, %r10d\n   jbe .Lzstd_huff_x64_look\n"
+    "cmp $64, %r10d\n   ja .Lzstd_huff_x64_fail\n"
+    "cmp %r8, %r11\n   jae .Lzstd_huff_x64_fast\n"
+    "cmp %rbp, %r11\n   je .Lzstd_huff_x64_look\n"
+    "mov %r10d, %eax\n   shr $3, %eax\n   mov %r11, %rsi\n   sub %rax, %rsi\n"
+    "cmp %rbp, %rsi\n   jae .Lzstd_huff_x64_reok\n"
+    "mov %r11, %rax\n   sub %rbp, %rax\n   mov %rbp, %rsi\n"
+    ".Lzstd_huff_x64_reok:\n"
+    "mov %rsi, %r11\n   shl $3, %eax\n   sub %eax, %r10d\n"
+    "mov %r9, %rsi\n   sub %r11, %rsi\n   cmp $8, %rsi\n   jb .Lzstd_huff_x64_part\n"
+    "mov (%r11), %rbx\n   jmp .Lzstd_huff_x64_look\n"
+    ".Lzstd_huff_x64_fast:\n"
+    "mov %r10, %rax\n   shr $3, %rax\n   sub %rax, %r11\n   and $7, %r10d\n"
+    "mov (%r11), %rbx\n   jmp .Lzstd_huff_x64_look\n"
+    ".Lzstd_huff_x64_part:\n"
+    "xor %ebx, %ebx\n   xor %ecx, %ecx\n"
+    ".Lzstd_huff_x64_part_i:\n"
+    "cmp %rsi, %rcx\n   jae .Lzstd_huff_x64_look\n"
+    "movzbl (%r11,%rcx), %eax\n   lea 0(,%rcx,8), %edi\n   xchg %ecx, %edi\n"
+    "shl %cl, %rax\n   xchg %ecx, %edi\n   or %rax, %rbx\n   inc %rcx\n"
+    "jmp .Lzstd_huff_x64_part_i\n"
+    ".Lzstd_huff_x64_look:\n"
+    "cmp $64, %r10d\n   jae .Lzstd_huff_x64_fail\n"
+    "mov %rbx, %rax\n   mov %r10d, %ecx\n   shl %cl, %rax\n"
+    "mov $64, %ecx\n   sub %r15d, %ecx\n   shr %cl, %rax\n"
+    "movzwl (%r14,%rax,2), %edx\n   test %dh, %dh\n   jz .Lzstd_huff_x64_fail\n"
+    "mov %dl, (%r12)\n   inc %r12\n   movzbl %dh, %ecx\n   add %ecx, %r10d\n"
+    "dec %r13\n   jnz .Lzstd_huff_x64_loop\n"
+    "xor %eax, %eax\n"
+    ".Lzstd_huff_x64_done:\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
+    ASM_RET
+    ".Lzstd_huff_x64_fail:\n   mov $-1, %rax\n   jmp .Lzstd_huff_x64_done\n"
+    ".Lzstd_huff_x64_ok_empty:\n   xor %eax, %eax\n"
+    ASM_RET
+    ".Lzstd_huff_x64_fail_empty:\n   mov $-1, %rax\n"
+    ASM_RET
+    ASM_END(zstd_huffman_stream)
     // Exact memmove semantics, followed by one terminator, with the end handed
     // back. The copy core stays single-sourced: keeping dst+n on the stack is
     // enough to survive its caller-saved register use. A real call is required
@@ -10574,8 +10640,7 @@ __asm__(
     "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n"
     "cmp x20, #8\n   b.lo .Lmatch_arm64_tiny\n"
     ".balign 16\n.Lmatch_arm64_loop:\n"
-    "mov x2, x20\n   cmp x2, #32\n   b.ls .Lmatch_arm64_cap\n   mov x2, #32\n"
-    ".Lmatch_arm64_cap:\n"
+    "mov x2, x20\n"
     "cmp x2, x21\n   b.ls .Lmatch_arm64_do\n   mov x2, x21\n"
     ".Lmatch_arm64_do:\n"
     "str x2, [sp, #32]\n   mov x0, x19\n   sub x1, x19, x20\n"
@@ -10597,6 +10662,73 @@ __asm__(
     ".Lmatch_arm64_done:\n"
     ASM_RET
     ASM_END(memory_copy_match)
+
+    /* See the x86_64 body. */
+    ASM_FUNC(zstd_huffman_stream)
+    "cbz x1, .Lzstd_huff_arm64_ok_empty\n"
+    "cbz x3, .Lzstd_huff_arm64_fail_empty\n"
+    "stp x19, x20, [sp, #-80]!\n   stp x21, x22, [sp, #16]\n"
+    "stp x23, x24, [sp, #32]\n   stp x25, x26, [sp, #48]\n"
+    "stp x27, x28, [sp, #64]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x4\n   mov x22, x5\n"
+    "mov x26, x2\n   add x27, x2, x3\n   add x28, x2, #8\n"
+    "ldrb w8, [x27, #-1]\n   cbz w8, .Lzstd_huff_arm64_fail\n"
+    "cmp x3, #8\n   b.lo .Lzstd_huff_arm64_small\n"
+    "sub x25, x27, #8\n   ldr x23, [x25]\n"
+    "clz w9, w8\n   mov w24, #31\n   sub w24, w24, w9\n"
+    "mov w9, #8\n   sub w24, w9, w24\n"
+    "b .Lzstd_huff_arm64_loop\n"
+    ".Lzstd_huff_arm64_small:\n"
+    "mov x23, xzr\n   mov x9, xzr\n"
+    ".Lzstd_huff_arm64_small_i:\n"
+    "ldrb w10, [x26, x9]\n   lsl x11, x9, #3\n   lsl x10, x10, x11\n"
+    "orr x23, x23, x10\n   add x9, x9, #1\n   cmp x9, x3\n"
+    "b.lo .Lzstd_huff_arm64_small_i\n"
+    "mov w9, #8\n   sub w9, w9, w3\n   lsl w9, w9, #3\n"
+    "clz w10, w8\n   mov w24, #31\n   sub w24, w24, w10\n"
+    "mov w10, #8\n   sub w24, w10, w24\n   add w24, w24, w9\n"
+    "mov x25, x26\n"
+    ".Lzstd_huff_arm64_loop:\n"
+    "mov w9, #64\n   sub w9, w9, w22\n   cmp w24, w9\n"
+    "b.ls .Lzstd_huff_arm64_look\n"
+    "cmp w24, #64\n   b.hi .Lzstd_huff_arm64_fail\n"
+    "cmp x25, x28\n   b.hs .Lzstd_huff_arm64_fast\n"
+    "cmp x25, x26\n   b.eq .Lzstd_huff_arm64_look\n"
+    "lsr w9, w24, #3\n   sub x10, x25, x9\n"
+    "cmp x10, x26\n   b.hs .Lzstd_huff_arm64_reok\n"
+    "sub x9, x25, x26\n   mov x10, x26\n"
+    ".Lzstd_huff_arm64_reok:\n"
+    "mov x25, x10\n   lsl w9, w9, #3\n   sub w24, w24, w9\n"
+    "sub x10, x27, x25\n   cmp x10, #8\n   b.lo .Lzstd_huff_arm64_part\n"
+    "ldr x23, [x25]\n   b .Lzstd_huff_arm64_look\n"
+    ".Lzstd_huff_arm64_fast:\n"
+    "lsr x9, x24, #3\n   sub x25, x25, x9\n   and w24, w24, #7\n"
+    "ldr x23, [x25]\n   b .Lzstd_huff_arm64_look\n"
+    ".Lzstd_huff_arm64_part:\n"
+    "mov x23, xzr\n   mov x9, xzr\n"
+    ".Lzstd_huff_arm64_part_i:\n"
+    "cmp x9, x10\n   b.hs .Lzstd_huff_arm64_look\n"
+    "ldrb w11, [x25, x9]\n   lsl x12, x9, #3\n   lsl x11, x11, x12\n"
+    "orr x23, x23, x11\n   add x9, x9, #1\n"
+    "b .Lzstd_huff_arm64_part_i\n"
+    ".Lzstd_huff_arm64_look:\n"
+    "cmp w24, #64\n   b.hs .Lzstd_huff_arm64_fail\n"
+    "lsl x0, x23, x24\n   mov x1, #64\n   sub x1, x1, x22\n   lsr x0, x0, x1\n"
+    "ldrh w0, [x21, x0, lsl #1]\n   lsr w1, w0, #8\n   cbz w1, .Lzstd_huff_arm64_fail\n"
+    "strb w0, [x19], #1\n   add w24, w24, w1\n"
+    "subs x20, x20, #1\n   b.ne .Lzstd_huff_arm64_loop\n"
+    "mov x0, xzr\n"
+    ".Lzstd_huff_arm64_done:\n"
+    "ldp x27, x28, [sp, #64]\n   ldp x25, x26, [sp, #48]\n"
+    "ldp x23, x24, [sp, #32]\n   ldp x21, x22, [sp, #16]\n"
+    "ldp x19, x20, [sp], #80\n"
+    ASM_RET
+    ".Lzstd_huff_arm64_fail:\n   mov x0, #-1\n   b .Lzstd_huff_arm64_done\n"
+    ".Lzstd_huff_arm64_ok_empty:\n   mov x0, xzr\n"
+    ASM_RET
+    ".Lzstd_huff_arm64_fail_empty:\n   mov x0, #-1\n"
+    ASM_RET
+    ASM_END(zstd_huffman_stream)
     // memory_copy_end: exact overlap-aware copy, one terminator, and dst+n.
     // The x86_64 block carries the contract; a normal bl is both smaller and
     // friendlier to the return predictor than manufacturing a replacement LR.
@@ -14140,8 +14272,7 @@ __asm__(
     "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n"
     "li t0, 8\n   bltu s1, t0, .Lmatch_rv_tiny\n"
     ".balign 16\n.Lmatch_rv_loop:\n"
-    "mv a2, s1\n   li t0, 32\n   bleu a2, t0, .Lmatch_rv_cap\n   li a2, 32\n"
-    ".Lmatch_rv_cap:\n"
+    "mv a2, s1\n"
     "bleu a2, s2, .Lmatch_rv_do\n   mv a2, s2\n"
     ".Lmatch_rv_do:\n"
     "mv a0, s0\n   sub a1, s0, s1\n   sd a2, 32(sp)\n"
@@ -14165,6 +14296,95 @@ __asm__(
     ".Lmatch_rv_done:\n"
     ASM_RET
     ASM_END(memory_copy_match)
+
+    /* See the x86_64 body. clz is not on the RV floor, so the end-mark
+       high bit is a short walk down from 7. Loads are bytes: an unaligned
+       ld is not in the IMAFD contract. */
+    ASM_FUNC(zstd_huffman_stream)
+    "beqz a1, .Lzstd_huff_rv_ok_empty\n"
+    "beqz a3, .Lzstd_huff_rv_fail_empty\n"
+    "addi sp, sp, -96\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n   sd s1, 16(sp)\n"
+    "sd s2, 24(sp)\n   sd s3, 32(sp)\n   sd s4, 40(sp)\n   sd s5, 48(sp)\n"
+    "sd s6, 56(sp)\n   sd s7, 64(sp)\n   sd s8, 72(sp)\n   sd s9, 80(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n   mv s2, a4\n   mv s3, a5\n"
+    "mv s7, a2\n   add s8, a2, a3\n   addi s9, a2, 8\n"
+    "lbu t0, -1(s8)\n   beqz t0, .Lzstd_huff_rv_fail\n"
+    "li t1, 8\n   bltu a3, t1, .Lzstd_huff_rv_small\n"
+    "addi s6, s8, -8\n"
+    "lbu t2, 0(s6)\n   lbu t3, 1(s6)\n   lbu t4, 2(s6)\n   lbu t5, 3(s6)\n"
+    "slli t3, t3, 8\n   slli t4, t4, 16\n   slli t5, t5, 24\n"
+    "or t2, t2, t3\n   or t2, t2, t4\n   or t2, t2, t5\n"
+    "lbu t3, 4(s6)\n   lbu t4, 5(s6)\n   lbu t5, 6(s6)\n   lbu t6, 7(s6)\n"
+    "slli t3, t3, 32\n   slli t4, t4, 40\n   slli t5, t5, 48\n   slli t6, t6, 56\n"
+    "or t2, t2, t3\n   or t2, t2, t4\n   or t2, t2, t5\n   or s4, t2, t6\n"
+    "li t1, 7\n"
+    ".Lzstd_huff_rv_hb1:\n   srl t2, t0, t1\n   andi t2, t2, 1\n"
+    "bnez t2, .Lzstd_huff_rv_hb1d\n   addi t1, t1, -1\n   bgez t1, .Lzstd_huff_rv_hb1\n"
+    ".Lzstd_huff_rv_hb1d:\n   li t2, 8\n   sub s5, t2, t1\n"
+    "j .Lzstd_huff_rv_loop\n"
+    ".Lzstd_huff_rv_small:\n"
+    "mv t6, a3\n   li s4, 0\n   li t3, 0\n"
+    ".Lzstd_huff_rv_small_i:\n"
+    "add t4, s7, t3\n   lbu t4, 0(t4)\n   slli t5, t3, 3\n   sll t4, t4, t5\n"
+    "or s4, s4, t4\n   addi t3, t3, 1\n   bltu t3, t6, .Lzstd_huff_rv_small_i\n"
+    "li t1, 8\n   sub t1, t1, t6\n   slli t1, t1, 3\n"
+    "li t2, 7\n"
+    ".Lzstd_huff_rv_hb2:\n   srl t3, t0, t2\n   andi t3, t3, 1\n"
+    "bnez t3, .Lzstd_huff_rv_hb2d\n   addi t2, t2, -1\n   bgez t2, .Lzstd_huff_rv_hb2\n"
+    ".Lzstd_huff_rv_hb2d:\n   li t3, 8\n   sub s5, t3, t2\n   add s5, s5, t1\n"
+    "mv s6, s7\n"
+    ".Lzstd_huff_rv_loop:\n"
+    "li t1, 64\n   sub t1, t1, s3\n   bleu s5, t1, .Lzstd_huff_rv_look\n"
+    "li t1, 64\n   bgtu s5, t1, .Lzstd_huff_rv_fail\n"
+    "bgeu s6, s9, .Lzstd_huff_rv_fast\n"
+    "beq s6, s7, .Lzstd_huff_rv_look\n"
+    "srli t1, s5, 3\n   sub t2, s6, t1\n"
+    "bgeu t2, s7, .Lzstd_huff_rv_reok\n"
+    "sub t1, s6, s7\n   mv t2, s7\n"
+    ".Lzstd_huff_rv_reok:\n"
+    "mv s6, t2\n   slli t1, t1, 3\n   sub s5, s5, t1\n"
+    "sub t6, s8, s6\n   li t1, 8\n   bltu t6, t1, .Lzstd_huff_rv_part\n"
+    "lbu t2, 0(s6)\n   lbu t3, 1(s6)\n   lbu t4, 2(s6)\n   lbu t5, 3(s6)\n"
+    "slli t3, t3, 8\n   slli t4, t4, 16\n   slli t5, t5, 24\n"
+    "or t2, t2, t3\n   or t2, t2, t4\n   or t2, t2, t5\n"
+    "lbu t3, 4(s6)\n   lbu t4, 5(s6)\n   lbu t5, 6(s6)\n   lbu t1, 7(s6)\n"
+    "slli t3, t3, 32\n   slli t4, t4, 40\n   slli t5, t5, 48\n   slli t1, t1, 56\n"
+    "or t2, t2, t3\n   or t2, t2, t4\n   or t2, t2, t5\n   or s4, t2, t1\n"
+    "j .Lzstd_huff_rv_look\n"
+    ".Lzstd_huff_rv_fast:\n"
+    "srli t1, s5, 3\n   sub s6, s6, t1\n   andi s5, s5, 7\n"
+    "lbu t2, 0(s6)\n   lbu t3, 1(s6)\n   lbu t4, 2(s6)\n   lbu t5, 3(s6)\n"
+    "slli t3, t3, 8\n   slli t4, t4, 16\n   slli t5, t5, 24\n"
+    "or t2, t2, t3\n   or t2, t2, t4\n   or t2, t2, t5\n"
+    "lbu t3, 4(s6)\n   lbu t4, 5(s6)\n   lbu t5, 6(s6)\n   lbu t1, 7(s6)\n"
+    "slli t3, t3, 32\n   slli t4, t4, 40\n   slli t5, t5, 48\n   slli t1, t1, 56\n"
+    "or t2, t2, t3\n   or t2, t2, t4\n   or t2, t2, t5\n   or s4, t2, t1\n"
+    "j .Lzstd_huff_rv_look\n"
+    ".Lzstd_huff_rv_part:\n"
+    "li s4, 0\n   li t3, 0\n"
+    ".Lzstd_huff_rv_part_i:\n"
+    "bgeu t3, t6, .Lzstd_huff_rv_look\n"
+    "add t4, s6, t3\n   lbu t4, 0(t4)\n   slli t5, t3, 3\n   sll t4, t4, t5\n"
+    "or s4, s4, t4\n   addi t3, t3, 1\n   j .Lzstd_huff_rv_part_i\n"
+    ".Lzstd_huff_rv_look:\n"
+    "li t1, 64\n   bgeu s5, t1, .Lzstd_huff_rv_fail\n"
+    "sll t0, s4, s5\n   li t1, 64\n   sub t1, t1, s3\n   srl t0, t0, t1\n"
+    "slli t0, t0, 1\n   add t0, s2, t0\n   lhu t0, 0(t0)\n"
+    "srli t1, t0, 8\n   beqz t1, .Lzstd_huff_rv_fail\n"
+    "sb t0, 0(s0)\n   addi s0, s0, 1\n   add s5, s5, t1\n"
+    "addi s1, s1, -1\n   bnez s1, .Lzstd_huff_rv_loop\n"
+    "li a0, 0\n"
+    ".Lzstd_huff_rv_done:\n"
+    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
+    "ld s3, 32(sp)\n   ld s4, 40(sp)\n   ld s5, 48(sp)\n   ld s6, 56(sp)\n"
+    "ld s7, 64(sp)\n   ld s8, 72(sp)\n   ld s9, 80(sp)\n   addi sp, sp, 96\n"
+    ASM_RET
+    ".Lzstd_huff_rv_fail:\n   li a0, -1\n   j .Lzstd_huff_rv_done\n"
+    ".Lzstd_huff_rv_ok_empty:\n   li a0, 0\n"
+    ASM_RET
+    ".Lzstd_huff_rv_fail_empty:\n   li a0, -1\n"
+    ASM_RET
+    ASM_END(zstd_huffman_stream)
     // memory_copy_end: exact overlap-aware copy, one terminator, and dst+n.
     // The x86_64 block carries the contract; the only state across the shared
     // core is the end pointer and the caller's return address.
@@ -17124,6 +17344,12 @@ PURE READS(1, 2) p64 hash_xxh64(address_any block, positive size, p64 seed);
 /* dest[i] = dest[i - offset] for length bytes. offset must be nonzero
    when length is. dest[-offset, length) must be a valid span. */
 fn memory_copy_match(address_any dest, positive offset, positive length);
+/* dest[need] from a zstd backward Huffman stream. cell[i] holds the
+   symbol in the low 8 bits and the bit count in the high 8. max_bits
+   is the table log. Zero need is success without a read. */
+WRITES(1, 2) READS(3, 4)
+bipolar zstd_huffman_stream(address_any dest, positive need, address_any src,
+                            positive size, address_any cell, positive max_bits);
 PURE positive2 string_hash_33_length(string_address source);
 PURE positive memory_span_byte(address_any block, p8 value, positive size);
 // Returns {bytes, characters}, bounded by both size and count. Invalid UTF-8

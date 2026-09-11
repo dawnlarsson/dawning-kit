@@ -13,6 +13,7 @@
 #define ZSTD_WINDOW_MAX (1u << 27)
 #define ZSTD_BLOCK_MAX (1u << 17)
 #define ZSTD_IN 262144
+#define ZSTD_OUT 131072
 #define ZSTD_FSE_MAX 512
 #define ZSTD_HUF_MAX 2048
 
@@ -77,8 +78,7 @@ typedef struct
 {
         p8 max_bits;
         bool valid;
-        p8 symbol[ZSTD_HUF_MAX];
-        p8 bits[ZSTD_HUF_MAX];
+        p16 cell[ZSTD_HUF_MAX];
 } zstd_huff;
 
 typedef struct
@@ -123,6 +123,9 @@ static p8 address_to zstd_out_mem;
 static positive zstd_out_cap;
 static positive zstd_out_used;
 static bipolar zstd_out_fd;
+static p8 zstd_out_buf[ZSTD_OUT];
+static positive zstd_out_fill;
+static bool zstd_hold_emit;
 static bool zstd_hashing;
 static zstd_xxh zstd_hash;
 static p64 zstd_decoded;
@@ -455,10 +458,15 @@ static bool zstd_bits_open(zstd_bits address_to b, p8 address_to src,
 
 static p64 zstd_bits_look(zstd_bits address_to b, p8 n)
 {
-        if (!n)
+        /*
+                Facebook BIT_lookBits: shift the unread high bits to the top
+                and take n of them. When fewer than n remain, the extra low
+                bits are zeros, which is how a Huffman tail shorter than
+                tableLog still indexes the table.
+        */
+        if (!n || b->consumed >= 64)
                 return 0;
-        return (b->bits >> ((64 - b->consumed - n) & 63)) &
-               (((p64)1 << n) - 1);
+        return (b->bits << b->consumed) >> (64 - n);
 }
 
 static fn zstd_bits_skip(zstd_bits address_to b, p8 n)
@@ -880,10 +888,8 @@ static bool zstd_huff_from_weights(zstd_huff address_to huff, p8 address_to weig
                         if (start + span > ((positive)1 << max_bits))
                                 return zstd_fail("zstd Huffman table overflow");
                         for (i = 0; i < span; i++)
-                        {
-                                huff->symbol[start + i] = (p8)s;
-                                huff->bits[start + i] = bits;
-                        }
+                                huff->cell[start + i] =
+                                    (p16)s | ((p16)bits << 8);
                         start += span;
                 }
         }
@@ -959,33 +965,11 @@ static bool zstd_huff_read(p8 address_to src, positive src_len,
 static bool zstd_huff_stream(zstd_huff address_to huff, p8 address_to into,
                              positive need, p8 address_to src, positive size)
 {
-        zstd_bits bits;
-        positive n = 0;
-
         if (!need)
                 return true;
-        if (!zstd_bits_open(address_of bits, src, size))
-                return false;
-
-        while (n < need)
-        {
-                p8 bits_n;
-                p64 index;
-
-                if (bits.consumed > 64 - huff->max_bits)
-                {
-                        if (zstd_bits_reload(address_of bits) == ZSTD_BITS_OVERFLOW)
-                                return zstd_fail("zstd Huffman over-read");
-                }
-                index = zstd_bits_look(address_of bits, huff->max_bits);
-                bits_n = huff->bits[index];
-                if (!bits_n)
-                        return zstd_fail("zstd Huffman invalid code");
-                into[n++] = huff->symbol[index];
-                zstd_bits_skip(address_of bits, bits_n);
-        }
-
-        return zstd_bits_ok(address_of bits);
+        if (zstd_huffman_stream(into, need, src, size, huff->cell, huff->max_bits))
+                return zstd_fail("zstd Huffman over-read");
+        return true;
 }
 
 static bool zstd_huff_four(zstd_huff address_to huff, p8 address_to into,
@@ -1013,16 +997,26 @@ static bool zstd_huff_four(zstd_huff address_to huff, p8 address_to into,
         n1 = (need + 3) / 4;
         n4 = need - 3 * n1;
         p = src + 6;
-        if (!zstd_huff_stream(huff, into, n1, p, s1))
-                return false;
-        p += s1;
-        if (!zstd_huff_stream(huff, into + n1, n1, p, s2))
-                return false;
-        p += s2;
-        if (!zstd_huff_stream(huff, into + n1 + n1, n1, p, s3))
-                return false;
-        p += s3;
-        return zstd_huff_stream(huff, into + 3 * n1, n4, p, s4);
+        if (zstd_huffman_stream(into, n1, p, s1, huff->cell, huff->max_bits) ||
+            zstd_huffman_stream(into + n1, n1, p + s1, s2, huff->cell,
+                                huff->max_bits) ||
+            zstd_huffman_stream(into + n1 + n1, n1, p + s1 + s2, s3, huff->cell,
+                                huff->max_bits) ||
+            zstd_huffman_stream(into + 3 * n1, n4, p + s1 + s2 + s3, s4,
+                                huff->cell, huff->max_bits))
+                return zstd_fail("zstd Huffman over-read");
+        return true;
+}
+
+static bool zstd_flush(void)
+{
+        if (!zstd_out_fill || zstd_out_fd < 0)
+                return true;
+        if (system_write_all((positive)zstd_out_fd, zstd_out_buf,
+                             zstd_out_fill) != (bipolar)zstd_out_fill)
+                return zstd_fail("zstd: write failed");
+        zstd_out_fill = 0;
+        return true;
 }
 
 static bool zstd_emit(p8 address_to p, positive n)
@@ -1043,10 +1037,20 @@ static bool zstd_emit(p8 address_to p, positive n)
                 return true;
         }
 
-        if (zstd_out_fd >= 0)
+        if (zstd_out_fd < 0)
+                return true;
+
+        while (n)
         {
-                if (system_write_all((positive)zstd_out_fd, p, n) != (bipolar)n)
-                        return zstd_fail("zstd: write failed");
+                positive room = ZSTD_OUT - zstd_out_fill;
+                positive chunk = n < room ? n : room;
+
+                memory_copy(zstd_out_buf + zstd_out_fill, p, chunk);
+                zstd_out_fill += chunk;
+                p += chunk;
+                n -= chunk;
+                if (zstd_out_fill == ZSTD_OUT && !zstd_flush())
+                        return false;
         }
 
         return true;
@@ -1076,7 +1080,7 @@ static bool zstd_put(p8 address_to p, positive n)
         if (!zstd_window_room(n))
                 return false;
         memory_copy(zstd_window + zstd_pos, p, n);
-        if (!zstd_emit(zstd_window + zstd_pos, n))
+        if (!zstd_hold_emit && !zstd_emit(zstd_window + zstd_pos, n))
                 return false;
         zstd_pos += n;
         return true;
@@ -1089,7 +1093,7 @@ static bool zstd_put_fill(p8 value, positive n)
         if (!zstd_window_room(n))
                 return false;
         memory_fill(zstd_window + zstd_pos, value, n);
-        if (!zstd_emit(zstd_window + zstd_pos, n))
+        if (!zstd_hold_emit && !zstd_emit(zstd_window + zstd_pos, n))
                 return false;
         zstd_pos += n;
         return true;
@@ -1103,8 +1107,9 @@ static bool zstd_put_match(positive offset, positive n)
                 return zstd_fail("zstd match past the window");
         if (!zstd_window_room(n))
                 return false;
+        prefetch_read(zstd_window + zstd_pos - offset);
         memory_copy_match(zstd_window + zstd_pos, offset, n);
-        if (!zstd_emit(zstd_window + zstd_pos, n))
+        if (!zstd_hold_emit && !zstd_emit(zstd_window + zstd_pos, n))
                 return false;
         zstd_pos += n;
         return true;
@@ -1491,7 +1496,7 @@ static bool zstd_window_open(positive window)
         if (!window)
                 return true;
 
-        cap = window + ZSTD_BLOCK_MAX + 64;
+        cap = window * 2 + ZSTD_BLOCK_MAX + 64;
         zstd_window = (p8 address_to)memory(cap);
         if (!zstd_window || system_failed(zstd_window))
         {
@@ -1705,9 +1710,22 @@ static bool zstd_frame(void)
                                 return false;
                         if (lit_used > size)
                                 return zstd_fail("zstd literals overran the block");
-                        if (!zstd_sequences(zstd_comp + lit_used, size - lit_used,
-                                            zstd_lit_buf, lit_len))
+                        if (!zstd_window_room(zstd_block_limit))
                                 return false;
+                        {
+                                positive at = zstd_pos;
+                                bool ok;
+
+                                zstd_hold_emit = true;
+                                ok = zstd_sequences(zstd_comp + lit_used,
+                                                    size - lit_used, zstd_lit_buf,
+                                                    lit_len);
+                                zstd_hold_emit = false;
+                                if (!ok)
+                                        return false;
+                                if (!zstd_emit(zstd_window + at, zstd_pos - at))
+                                        return false;
+                        }
                 }
 
                 if (last)
@@ -1752,6 +1770,8 @@ static bool zstd_stream(void)
 
         zstd_decoded = 0;
         zstd_out_used = 0;
+        zstd_out_fill = 0;
+        zstd_hold_emit = false;
         zstd_why = null;
 
         for (;;)
@@ -1823,6 +1843,8 @@ static bipolar zstd_inflate(p8 address_to src, positive src_len,
         zstd_out_cap = dst_cap;
         zstd_out_fd = -1;
         ok = zstd_stream();
+        if (ok)
+                ok = zstd_flush();
         zstd_window_close();
         zstd_out_mem = null;
         return ok ? (bipolar)zstd_out_used : -1;
@@ -1881,6 +1903,8 @@ static b32 zstd_one(bipolar in, bipolar out)
         zstd_out_mem = null;
         zstd_out_fd = out;
         ok = zstd_stream();
+        if (ok)
+                ok = zstd_flush();
         zstd_window_close();
         if (!ok)
         {
