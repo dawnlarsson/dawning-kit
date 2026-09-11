@@ -1884,7 +1884,8 @@ static b32 zstd_one(bipolar in, bipolar out)
         zstd_window_close();
         if (!ok)
         {
-                zstd_refuse(zstd_why ? zstd_why : "decode failed");
+                zstd_refuse(zstd_why ? zstd_why
+                                     : (string_address) "decode failed");
                 return zstd_status ? zstd_status : 1;
         }
         return 0;
