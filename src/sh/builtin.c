@@ -74,6 +74,83 @@ static string_address shell_option_spelled(string_address room, p8 letter)
         return room;
 }
 
+/*
+        A letter no builtin would take.
+
+        The two houses answer a bad option differently: dash names it and
+        stops, while bash names it and then writes the line that says how
+        the builtin is called. Thirty builtins refuse a letter, and none of
+        them should have to know that, so the wording lives here. The answer
+        says whether a usage line is still owed, because a few builtins
+        spell their own name into it and cannot hand over a fixed string.
+
+        The option arrives already spelled, sign and all, since declare and
+        its family refuse a +x as readily as a -x.
+*/
+static COLD fn shell_diagnostic_where();
+bool word_is(string_address word, string_address text);
+
+static COLD bool shell_option_bad(string_address name, string_address said)
+{
+        shell_diagnostic_where();
+
+        if (!shell_bash_compat)
+        {
+                string_report(log_error, 2, "%s: Illegal option %s\n", name,
+                              said);
+                return false;
+        }
+
+        string_format(log_error, "%s: %s: invalid option\n", name, said);
+        return true;
+}
+
+static COLD bool shell_letter_bad(string_address name, p8 letter)
+{
+        p8 said[3] = {'-', letter, end};
+
+        return shell_option_bad(name, said);
+}
+
+//      The whole complaint, for the builtins whose usage line is one string.
+static COLD b32 shell_option_refused(string_address name, string_address said,
+                                     string_address usage)
+{
+        if (shell_option_bad(name, said))
+                string_format(log_error, "%s: usage: %s\n", name, usage);
+
+        return 2;
+}
+
+static COLD b32 shell_letter_refused(string_address name, p8 letter,
+                                     string_address usage)
+{
+        p8 said[3] = {'-', letter, end};
+
+        return shell_option_refused(name, said, usage);
+}
+
+/*
+        Which usage line declare's family writes.
+
+        One body serves declare, typeset and local, and bash gives each of
+        them its own line: local takes no attribute list worth printing,
+        and typeset's differs from declare's by a pair of brackets.
+*/
+static COLD string_address shell_declare_usage(string_address name)
+{
+        if (word_is(name, "local"))
+                return (string_address) "local [option] name[=value] ...";
+
+        if (word_is(name, "typeset"))
+                return (string_address) "typeset [-aAfFgiIlnrtux] "
+                    "name[=value] ... or typeset -p [-aAfFilnrtux] "
+                    "[name ...]";
+
+        return (string_address) "declare [-aAfFgiIlnrtux] [name[=value] ...] "
+            "or declare -p [-aAfFilnrtux] [name ...]";
+}
+
 typedef struct
 {
         bipolar offset;
@@ -3802,8 +3879,9 @@ COLD fn shell_cd(writer write, string_address input)
                 else if (letter == 'e' && shell_bash_compat)
                         error_if_unnamed = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "cd: bad option: -%s\n",
-                                                        shell_option_spelled(room, letter)));
+                        return shell_answer(shell_letter_refused(
+                            "cd", letter,
+                            "cd [-L|[-P [-e]]] [-@] [dir]"));
         }
 
         positive index = walk.index;
@@ -4554,8 +4632,9 @@ COLD fn shell_exec(writer write, string_address input)
                 }
                 else
                 {
-                        string_format(log_error, "exec: -%s: invalid option\n",
-                                      shell_option_spelled(room, which));
+                        shell_letter_refused("exec", which,
+                            "exec [-cl] [-a name] [command [argument ...]] "
+                            "[redirection ...]");
                         exec_special_error_note();
                         return shell_answer(2);
                 }
@@ -4689,8 +4768,8 @@ COLD fn shell_pwd(writer write, string_address input)
                 else if (letter == 'P')
                         physical = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "pwd: bad option: -%s\n",
-                                                        shell_option_spelled(room, letter)));
+                        return shell_answer(shell_letter_refused(
+                            "pwd", letter, "pwd [-LP]"));
         }
 
         if (!physical && shell_directory_holds())
@@ -5630,8 +5709,8 @@ COLD fn shell_shopt(writer write, string_address input)
                 else if (which == 'o')
                         set_options = true;
                 else
-                        return shell_answer(string_report(log_error, 2, "shopt: -%s: invalid option\n",
-                                                        shell_option_spelled(room, which)));
+                        return shell_answer(shell_letter_refused(
+                            "shopt", which, "shopt [-pqsu] [-o] [optname ...]"));
         }
 
         positive index = walk.index;
@@ -6208,8 +6287,8 @@ COLD fn shell_unset(writer write, string_address input)
                 {
                         // A special builtin, so a letter it does not have
                         // ends the script, as the reference shell's does.
-                        string_format(log_error, "unset: Illegal option -%s\n",
-                                      shell_option_spelled(room, letter));
+                        shell_letter_refused("unset", letter,
+                            "unset [-f] [-v] [-n] [name ...]");
                         exec_special_error_note();
                         shell_answer(2);
                         return;
@@ -6626,10 +6705,17 @@ static bool shell_declare_options(shell_declare_state address_to state)
 
                 if (!flag)
                 {
-                        string_format(log_error, "%s: %s%s: invalid option\n",
-                                      shell_argv[0],
-                                      shell_option_spelled(sign, direction),
-                                      shell_option_spelled(room, value));
+                        {
+                                //      The sign is part of the word bash
+                                //      names: `declare +Z` is refused as
+                                //      +Z, not as -Z.
+                                p8 said[3] = {direction, value, end};
+
+                                if (shell_option_bad(shell_argv[0], said))
+                                        string_format(log_error,
+                                            "%s: usage: %s\n", shell_argv[0],
+                                            shell_declare_usage(shell_argv[0]));
+                        }
                         shell_answer(2);
                         return false;
                 }
@@ -7570,7 +7656,10 @@ COLD fn shell_local(writer write, string_address input)
 
         if (!local_depth)
         {
-                log_error("local: not in a function\n", 0);
+                shell_diagnostic_where();
+                log_error(shell_bash_compat
+                              ? "local: can only be used in a function\n"
+                              : "local: not in a function\n", 0);
                 expand_fatal_status(2);
                 return;
         }
@@ -7803,8 +7892,13 @@ static COLD fn shell_marked(writer write, p8 mark)
                         //      a special builtin refused its options takes a
                         //      script with it wherever POSIX says so.
                         exec_special_error_note();
-                        return shell_answer(string_report(log_error, 2, "%s: -%s: invalid option\n",
-                                      command, shell_option_spelled(room, option)));
+                        return shell_answer(shell_letter_refused(
+                            command, option,
+                            word_is(command, "export")
+                                ? "export [-fn] [name[=value] ...] or "
+                                  "export -p [-f]"
+                                : "readonly [-aAf] [name[=value] ...] or "
+                                  "readonly -p"));
                 }
         }
 
@@ -9250,8 +9344,8 @@ fn shell_printf(writer write, string_address input)
                         continue;
                 }
 
-                return shell_answer(string_report(log_error, 2, "printf: %s: bad option\n",
-                              option));
+                return shell_answer(shell_option_refused(
+                    "printf", option, "printf [-v var] format [arguments]"));
         }
 
         if (shell_argc <= first)
@@ -9593,7 +9687,11 @@ COLD fn shell_read(writer write, string_address input)
                 }
                 p8 said[2] = {which, end};
                 if (!string_first_of("pnNdtaui", which))
-                        return shell_answer(string_report(log_error, 2, "read: bad option: -%s\n", said));
+                        return shell_answer(shell_letter_refused(
+                            "read", which,
+                            "read [-Eers] [-a array] [-d delim] [-i text] "
+                            "[-n nchars] [-N nchars] [-p prompt] "
+                            "[-t timeout] [-u fd] [name ...]"));
                 string_address value = shell_option_argument(address_of options);
                 if (!value)
                         return shell_answer(string_report(log_error, 2, "read: option -%s wants a value\n", said));
@@ -9941,8 +10039,16 @@ COLD fn shell_mapfile(writer write, string_address input)
                 }
                 p8 said[2] = {which, end};
                 if (!string_first_of("nsOduc", which))
-                        return shell_answer(string_report(log_error, 2, "%s: bad option: -%s\n",
-                                      shell_argv[0], said));
+                {
+                        if (shell_letter_bad(shell_argv[0], which))
+                                string_format(log_error,
+                                    "%s: usage: %s [-d delim] [-n count] "
+                                    "[-O origin] [-s count] [-t] [-u fd] "
+                                    "[-C callback] [-c quantum] [array]\n",
+                                    shell_argv[0], shell_argv[0]);
+
+                        return shell_answer(2);
+                }
                 string_address value = shell_option_argument(address_of options);
                 if (!value)
                         return shell_answer(string_report(log_error, 2, "%s: option -%s wants a value\n",
@@ -10474,9 +10580,8 @@ COLD fn shell_umask(writer write, string_address input)
                 else if (option == 'p' && shell_bash_compat)
                         reproducible = true;
                 else
-                        return shell_answer(string_report(
-                            log_error, 2, "umask: -%s: invalid option\n",
-                            shell_option_spelled(room, option)));
+                        return shell_answer(shell_letter_refused(
+                            "umask", option, "umask [-p] [-S] [mode]"));
         }
 
         index = walk.index;
@@ -10598,6 +10703,14 @@ fn shell_time_written(writer write, bipolar ticks)
 COLD fn shell_times(writer write, string_address input)
 {
         shell_clocks clocks;
+        shell_option_walk walk = {1};
+        p8 which;
+
+        //      times has no options; bash still reads for one, so that a
+        //      letter is refused rather than counted as an operand.
+        if (shell_option_letter(address_of walk, address_of which))
+                return shell_answer(shell_letter_refused("times", which,
+                                                         "times"));
 
         memory_fill(address_of clocks, 0, sizeof(clocks));
         system_call_1(syscall(times), (positive)address_of clocks);
@@ -11484,7 +11597,8 @@ COLD fn shell_alias(writer write, string_address input)
                 if (word_is(word, "--"))
                         break;
                 if (!word_is(word, "-p"))
-                        return shell_answer(string_report(log_error, 2, "alias: invalid option\n"));
+                        return shell_answer(shell_option_refused(
+                            "alias", word, "alias [-p] [name[=value] ... ]"));
                 prefixed = listed = true;
         }
 
@@ -11561,12 +11675,9 @@ COLD fn shell_unalias(writer write, string_address input)
         {
                 if (option != 'a')
                 {
-                        string_report(log_error, 2,
-                                      "unalias: -%s: invalid option\n",
-                                      shell_option_spelled(room, option));
-                        return shell_answer(string_report(
-                            log_error, 2,
-                            "unalias: usage: unalias [-a] name [name ...]\n"));
+                        return shell_answer(shell_letter_refused(
+                            "unalias", option,
+                            "unalias [-a] name [name ...]"));
                 }
 
                 all = true;
@@ -11669,11 +11780,8 @@ COLD fn shell_eval(writer write, string_address input)
                 while (shell_option_letter(address_of walk, address_of option))
                 {
                         exec_special_error_note();
-                        string_report(log_error, 2,
-                                      "eval: -%s: invalid option\n",
-                                      shell_option_spelled(room_spelled, option));
-                        return shell_answer(string_report(
-                            log_error, 2, "eval: usage: eval [arg ...]\n"));
+                        return shell_answer(shell_letter_refused(
+                            "eval", option, "eval [arg ...]"));
                 }
 
                 index = walk.index;
@@ -12963,13 +13071,14 @@ COLD fn shell_dot(writer write, string_address input)
                 if (shell_option_letter(address_of walk, address_of option))
                 {
                         exec_special_error_note();
-                        string_report(log_error, 2, "%s: -%s: invalid option\n",
-                                      shell_argv[0],
-                                      shell_option_spelled(room, option));
-                        return shell_answer(string_report(
-                            log_error, 2,
-                            "%s: usage: %s [-p path] filename [arguments]\n",
-                            shell_argv[0], shell_argv[0]));
+
+                        if (shell_letter_bad(shell_argv[0], option))
+                                string_format(log_error,
+                                    "%s: usage: %s [-p path] filename "
+                                    "[arguments]\n", shell_argv[0],
+                                    shell_argv[0]);
+
+                        return shell_answer(2);
                 }
         }
         if (first >= shell_argc)
@@ -13348,7 +13457,6 @@ fn shell_type(writer write, string_address input);
 COLD fn shell_command_builtin(writer write, string_address input);
 COLD fn shell_hash(writer write, string_address input);
 COLD fn shell_ulimit(writer write, string_address input);
-bool exec_control_builtin(string_address name, bool run);
 
 /*
         Bash's `let` is the command-shaped spelling of the arithmetic engine
@@ -13420,11 +13528,8 @@ static bool shell_completion_refused(string_address command,
         {
                 if (!string_first_of(letters, option))
                 {
-                        string_report(log_error, 2, "%s: -%s: invalid option\n",
-                                      command,
-                                      shell_option_spelled(room, option));
-                        shell_answer(string_report(log_error, 2, "%s: usage: %s\n",
-                                                   command, usage));
+                        shell_answer(shell_letter_refused(command, option,
+                                                          usage));
                         return true;
                 }
 
@@ -13518,6 +13623,7 @@ static COLD fn shell_bind(writer write, string_address input)
 
         //      Bash says this once per call before it does anything else,
         //      whatever the words are, when readline was never started.
+        shell_diagnostic_where();
         log_error("bind: warning: line editing not enabled\n", 0);
 
         if (shell_completion_refused(
@@ -13787,8 +13893,9 @@ fn shell_hash(writer write, string_address input)
                                     given));
                 }
                 else
-                        return shell_answer(string_report(log_error, 2, "hash: -%s: invalid option\n",
-                                                        shell_option_spelled(room, which)));
+                        return shell_answer(shell_letter_refused(
+                            "hash", which,
+                            "hash [-lr] [-p pathname] [-dt] [name ...]"));
         }
 
         positive index = walk.index;
@@ -14396,7 +14503,8 @@ COLD fn shell_type(writer write, string_address input)
                 {
                         p8 said[2] = {which, end};
 
-                        return shell_answer(string_report(log_error, 2, "type: -%s: invalid option\n", said));
+                        return shell_answer(shell_letter_refused(
+                            "type", which, "type [-afptP] name [name ...]"));
                 }
         }
 
@@ -14451,8 +14559,9 @@ fn shell_command_builtin(writer write, string_address input)
                         standard_path = true;
                 }
                 else
-                        return shell_answer(string_report(log_error, 2, "command: -%s: invalid option\n",
-                                      shell_option_spelled(room, option)));
+                        return shell_answer(shell_letter_refused(
+                            "command", option,
+                            "command [-pVv] command [arg ...]"));
         }
 
         index = walk.index;
@@ -14907,15 +15016,10 @@ fn shell_ulimit(writer write, string_address input)
 
                         if (!limit->name)
                         {
-                                shell_answer(2);
-
-                                {
-                                        p8 said[2] = {which, end};
-
-                                        return string_format(
-                                            log_error,
-                                            "ulimit: Illegal option -%s\n", said);
-                                }
+                                return shell_answer(shell_letter_refused(
+                                    "ulimit", which,
+                                    "ulimit [-SHabcdefiklmnpqrstuvxPRT] "
+                                    "[limit]"));
                         }
 
                         chosen = limit;
@@ -15069,11 +15173,8 @@ fn shell_builtin_run(writer write, string_address input)
         //      and the name behind it is the builtin to run.
         while (shell_option_letter(address_of walk, address_of option))
         {
-                string_report(log_error, 2, "builtin: -%s: invalid option\n",
-                              shell_option_spelled(room, option));
-                return shell_answer(string_report(
-                    log_error, 2,
-                    "builtin: usage: builtin [shell-builtin [arg ...]]\n"));
+                return shell_answer(shell_letter_refused(
+                    "builtin", option, "builtin [shell-builtin [arg ...]]"));
         }
 
         index = walk.index;
@@ -15134,8 +15235,9 @@ fn shell_enable(writer write, string_address input)
                         return shell_answer(string_report(log_error, 2, "enable: not supported\n"));
                 }
                 else
-                        return shell_answer(string_report(log_error, 2, "enable: -%s: invalid option\n",
-                                                        shell_option_spelled(room, which)));
+                        return shell_answer(shell_letter_refused(
+                            "enable", which,
+                            "enable [-a] [-dnps] [-f filename] [name ...]"));
         }
 
         positive index = walk.index;
@@ -15372,15 +15474,12 @@ fn shell_compgen(writer write, string_address input)
                         // Two bytes: the shared formatter has no %c.
                         p8 room[2];
 
-                        string_report(log_error, 2,
-                                      "compgen: -%s: invalid option\n",
-                                      shell_option_spelled(room, which));
-                        return shell_answer(string_report(
-                            log_error, 2,
-                            "compgen: usage: compgen [-V varname] [-abcdefgjksuv] "
-                            "[-o option] [-A action] [-G globpat] [-W wordlist] "
-                            "[-F function] [-C command] [-X filterpat] "
-                            "[-P prefix] [-S suffix] [word]\n"));
+                        return shell_answer(shell_letter_refused(
+                            "compgen", which,
+                            "compgen [-V varname] [-abcdefgjksuv] "
+                            "[-o option] [-A action] [-G globpat] "
+                            "[-W wordlist] [-F function] [-C command] "
+                            "[-X filterpat] [-P prefix] [-S suffix] [word]"));
                 }
 
                 index++;
@@ -15682,9 +15781,9 @@ fn shell_help(writer write, string_address input)
                         if (!string_is(letter, 'd') && !string_is(letter, 's') &&
                             !string_is(letter, 'm'))
                         {
-                                string_format(log_error, "help: -%s: invalid option\n",
-                                              shell_option_spelled(room, string_get(letter)));
-                                return shell_answer(2);
+                                return shell_answer(shell_letter_refused(
+                                    "help", string_get(letter),
+                                    "help [-dms] [pattern ...]"));
                         }
 
                 index++;

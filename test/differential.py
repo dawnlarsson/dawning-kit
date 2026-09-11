@@ -8360,7 +8360,14 @@ def shell_exec_loop_control_transition(rng):
     """Both item sources retain outer-loop control and parameter ownership."""
     kind = rng.choice(("for", "select"))
     explicit = rng.choice(("", " in first '' 'two words'"))
-    action = rng.choice((":", "false", "break", "continue", "break 2", "continue 2"))
+    #       The counted forms include the ones no loop can honour: a count
+    #       of zero or below, a word that is no number, and one past every
+    #       loop there is. Each shell answers those differently, and that
+    #       difference only shows from inside a loop.
+    action = rng.choice((":", "false", "break", "continue", "break 2",
+                         "continue 2", "break 0", "continue 0", "break -1",
+                         "break xyz", "continue nine", "break 99999999999",
+                         "break 9"))
     script = ("set -- first '' 'two words'\nhits=0\n"
               "for outer in one two; do\n" + kind + " inner" + explicit + "; do\n"
               "hits=$((hits+1)); printf '%s:<%s>:%s\\n' \"$outer\" \"$inner\" \"$hits\"\n"
@@ -9982,6 +9989,10 @@ shell_SESSION_FATALS = (
     'set -u; echo "$unset_here"; echo SAME-LINE',
     'return 3; echo SAME-LINE',
     'break; echo SAME-LINE',
+    'continue; echo SAME-LINE',
+    'break 0; echo SAME-LINE',
+    'break xyz; echo SAME-LINE',
+    'continue -1; echo SAME-LINE',
     'f() { return 1 2; echo RAN-BAD; }; f; echo SAME-LINE',
     'exit bad; echo SAME-LINE',
     'let 1/0; echo SAME-LINE',

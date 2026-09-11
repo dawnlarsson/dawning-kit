@@ -1614,8 +1614,10 @@ fn shell_jobs(writer write, string_address input)
                                 return shell_jobs_replaced(at);
                         }
                 default:
-                        return shell_answer(string_report(log_error, 2, "jobs: -%s: invalid option\n",
-                                      (p8[]){letter, end}));
+                        return shell_answer(shell_letter_refused(
+                            "jobs", letter,
+                            "jobs [-lnprs] [jobspec ...] or "
+                            "jobs -x command [args]"));
                 }
 
         job_reap();
@@ -1824,8 +1826,9 @@ fn shell_disown(writer write, string_address input)
                         keep = true;
                         break;
                 default:
-                        return shell_answer(string_report(log_error, 2, "disown: -%s: invalid option\n",
-                                      (p8[]){letter, end}));
+                        return shell_answer(shell_letter_refused(
+                            "disown", letter,
+                            "disown [-h] [-ar] [jobspec ... | pid ...]"));
                 }
 
         job_reap();
@@ -1912,6 +1915,19 @@ fn shell_suspend(writer write, string_address input)
 {
         (void)write;
         (void)input;
+
+        {
+                //      The option walk comes first, because bash refuses a
+                //      letter it does not have before it weighs whether it
+                //      could suspend at all.
+                shell_option_walk walk = {1};
+                p8 which;
+
+                while (shell_option_letter(address_of walk, address_of which))
+                        if (which != 'f')
+                                return shell_answer(shell_letter_refused(
+                                    "suspend", which, "suspend [-f]"));
+        }
 
         if (!job_monitor() || !shell_is_interactive)
                 return shell_answer(string_report(log_error, 1, "suspend: cannot suspend: no job control\n"));
@@ -2414,8 +2430,9 @@ fn job_wait(writer write, string_address input)
                         if (letter == 'p')
                                 break;
 
-                        return shell_answer(string_report(log_error, 2,
-                            "wait: -%s: invalid option\n", (p8[]){letter, end}));
+                        return shell_answer(shell_letter_refused(
+                            "wait", letter,
+                            "wait [-fn] [-p var] [id ...]"));
                 }
 
                 for (at = 1; string_get(word + at); at++)
@@ -3964,8 +3981,11 @@ fn shell_history(writer write, string_address input)
                 }
 
                 default:
-                        return shell_answer(string_report(log_error, 2, "history: -%s: invalid option\n",
-                                      (p8[]){letter, end}));
+                        return shell_answer(shell_letter_refused(
+                            "history", letter,
+                            "history [-c] [-d offset] [n] or "
+                            "history -anrw [filename] or "
+                            "history -ps arg [arg...]"));
                 }
         }
 
@@ -4227,8 +4247,11 @@ fn shell_fc(writer write, string_address input)
                                 again = true;
                                 break;
                         default:
-                                return shell_answer(string_report(log_error, 2, "fc: -%s: invalid option\n",
-                                              (p8[]){string_get(shell_argv[at] + step), end}));
+                                return shell_answer(shell_letter_refused(
+                                    "fc",
+                                    string_get(shell_argv[at] + step),
+                                    "fc [-e ename] [-lnr] [first] [last] or "
+                                    "fc -s [pat=rep] [command]"));
                         }
 
                 at++;
@@ -7377,15 +7400,59 @@ bool exec_control_builtin(string_address name, bool run)
                 if (!run)
                         return true;
 
+                //      Bash reads the loop depth before it reads the count,
+                //      so a word that is no number at all goes unmentioned
+                //      when there was no loop to leave. It answers zero
+                //      either way, and only says why outside posix mode.
+                if (shell_bash_compat && !exec_loop_depth)
+                {
+                        if (!shell_posix_on())
+                                string_format(log_error,
+                                              "%s: only meaningful in a "
+                                              "`for', `while', or `until' "
+                                              "loop\n", name);
+                        shell_status = 0;
+                        return true;
+                }
+
                 if (shell_argc > 1 &&
                     !exec_control_number(shell_argv[1], false,
                                          address_of levels))
                 {
-                        string_format(log_error, "%s: Illegal number: %s\n",
-                                      name, shell_argv[1]);
-                        shell_status = 2;
-                        exec_abort_line(shell_status);
-                        return true;
+                        bipolar counted = 0;
+                        bool numeric = shell_bash_compat &&
+                                       exec_control_integer(shell_argv[1],
+                                                            address_of counted);
+
+                        //      A count past the field is still a count, and
+                        //      bash leaves every loop it holds for it. Only
+                        //      zero and below are out of range, and those
+                        //      leave every loop too, saying so and failing.
+                        if (numeric && counted > 0)
+                                levels = (b32)exec_loop_depth;
+                        else if (numeric)
+                        {
+                                string_format(log_error,
+                                              "%s: %s: loop count out of "
+                                              "range\n", name, shell_argv[1]);
+                                exec_signal = EXEC_SIGNAL_BREAK;
+                                exec_signal_level = (b32)exec_loop_depth;
+                                shell_status = 1;
+                                return true;
+                        }
+                        else
+                        {
+                                string_format(log_error,
+                                              shell_bash_compat
+                                                  ? "%s: %s: numeric "
+                                                    "argument required\n"
+                                                  : "%s: Illegal number: "
+                                                    "%s\n",
+                                              name, shell_argv[1]);
+                                shell_status = 2;
+                                exec_abort_line(shell_status);
+                                return true;
+                        }
                 }
 
                 if (exec_loop_depth)
