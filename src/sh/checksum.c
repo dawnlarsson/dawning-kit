@@ -754,13 +754,28 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
 
                 digest_at = at;
                 at += digits;
-                // One space, then the mode marker: a second space, or the
-                // asterisk of a binary record.
-                if (text_line[at] != ' ' ||
-                    (text_line[at + 1] != ' ' && text_line[at + 1] != '*'))
+
+                /*
+                        One blank, then a mode marker if one is there.
+
+                        The reference takes a space or a tab after the digest
+                        and then a second space or the asterisk of a binary
+                        record, if either follows -- so "digest name" reads as
+                        well as "digest  name", and a third space is the first
+                        byte of the name rather than another separator.
+                        Requiring the pair refused every manifest written with
+                        a single space, which is most of the ones written by
+                        hand rather than by the tool.
+                */
+                if (at >= text_line_length ||
+                    (text_line[at] != ' ' && text_line[at] != '\t'))
                         return false;
 
-                at += 2;
+                at++;
+
+                if (at < text_line_length &&
+                    (text_line[at] == ' ' || text_line[at] == '*'))
+                        at++;
 
                 text_line[text_line_length] = end;
                 name = text_line + at;
