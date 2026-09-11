@@ -8505,6 +8505,32 @@ RETURNS_NONNULL string_address printf_escape(writer write, string_address step)
                 }
         }
 
+        //      \uHHHH and \UHHHHHHHH, in the format, a %b argument and
+        //      echo -e alike, the way $'...' reads them. Without digits the
+        //      two bytes stand for themselves, as a bare \x does above.
+        if (string_is(step, 'u') || string_is(step, 'U'))
+        {
+                p8 letter = string_get(step);
+                positive wide = letter == 'u' ? 4 : 8;
+                positive used;
+                positive code = string_digits_hexadecimal_escape_max(
+                    step + 1, wide, address_of used);
+
+                if (used)
+                {
+                        p8 bytes[CODE_POINT_MAX_BYTES];
+                        positive count =
+                            shell_code_point_bytes(letter, wide, code, bytes);
+
+                        step += used + 1;
+
+                        if (code)
+                                write(bytes, count);
+
+                        return step;
+                }
+        }
+
         value = string_get(step);
 
         // Only in a %b argument. In the format itself the reference shell

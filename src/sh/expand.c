@@ -1710,6 +1710,7 @@ static string_address expand_value_of(expand_reference reference, p8 address_to 
 }
 
 static COLD fn expand_fatal_status(b32 status);
+static COLD fn expand_slice_error();
 static string_address expand_tilde(string_address step, bool assignment);
 
 /*
@@ -3467,7 +3468,12 @@ static string_address expand_arithmetic(string_address step, bool quoted)
                 {
                         string_format(writer_stderr_once,
                                       "arithmetic: %s\n", ready);
-                        expand_fatal_status(2);
+                        /*      The same status a bad slice subscript takes.
+                                Both are an expansion that could not produce a
+                                word, both end the line, and bash answers 1
+                                for either while a posix shell answers 2. This
+                                said 2 in both personalities. */
+                        expand_slice_error();
 
                         return stop + 2;
                 }
@@ -4312,6 +4318,77 @@ static const b8 expand_ansi_plain[STRING_SET_BYTES] = {
 /* $'...' and ${value@E} interpret the same escapes. Only source has a closing
    quote and doubles a backslash used as a control operand. A decoded NUL
    discards the rest of this value, never the following word's suffix. */
+/*
+        A code point, as the bytes this locale spells it in.
+
+        Bash writes the escape back out when it cannot spell one -- uppercase,
+        and padded to the width the letter asked for -- rather than dropping
+        it or writing a replacement, so \u00e9 in the C locale stays \u00E9
+        and can still be read by whatever does know the encoding.
+*/
+#define CODE_POINT_MAX_BYTES 10
+static positive shell_code_point_bytes(p8 letter, positive wide, positive code,
+                                       p8 address_to out)
+{
+        positive used = 0;
+        positive at;
+
+        if (code < 0x80)
+        {
+                out[used++] = (p8)code;
+                return used;
+        }
+
+        if (code <= 0x10ffff && shell_utf8_on())
+        {
+                if (code < 0x800)
+                {
+                        out[used++] = (p8)(0xc0 | (code >> 6));
+                }
+                else
+                {
+                        if (code < 0x10000)
+                        {
+                                out[used++] = (p8)(0xe0 | (code >> 12));
+                        }
+                        else
+                        {
+                                out[used++] = (p8)(0xf0 | (code >> 18));
+                                out[used++] =
+                                    (p8)(0x80 | ((code >> 12) & 0x3f));
+                        }
+
+                        out[used++] = (p8)(0x80 | ((code >> 6) & 0x3f));
+                }
+
+                out[used++] = (p8)(0x80 | (code & 0x3f));
+                return used;
+        }
+
+        out[used++] = '\\';
+        out[used++] = letter;
+
+        for (at = wide; at--;)
+        {
+                p8 digit = (p8)((code >> (at * 4)) & 15);
+
+                out[used++] = (p8)(digit < 10 ? '0' + digit : 'A' + digit - 10);
+        }
+
+        return used;
+}
+
+static fn expand_push_code_point(p8 letter, positive wide, positive code,
+                                 p8 mark)
+{
+        p8 bytes[CODE_POINT_MAX_BYTES];
+        positive used = shell_code_point_bytes(letter, wide, code, bytes);
+        positive at;
+
+        for (at = 0; at < used; at++)
+                expand_push(bytes[at], mark);
+}
+
 static string_address expand_ansi(string_address at, p8 mark, bool source)
 {
         bool discard = false;
@@ -4352,6 +4429,38 @@ static string_address expand_ansi(string_address at, p8 mark, bool source)
                                 expand_push('\\', mark);
                         if (used)
                                 value = (p8)number;
+                }
+                else if (value == 'u' || value == 'U')
+                {
+                        positive wide = value == 'u' ? 4 : 8;
+                        positive used;
+                        positive code = string_digits_hexadecimal_escape_max(
+                            at + 1, wide, address_of used);
+
+                        at += used + 1;
+
+                        //      No digits at all: the two characters stand for
+                        //      themselves, the way \x with no digits does.
+                        if (!used)
+                        {
+                                if (!discard)
+                                {
+                                        expand_push('\\', mark);
+                                        expand_push(value, mark);
+                                }
+                                continue;
+                        }
+
+                        if (!code)
+                        {
+                                discard = true;
+                                continue;
+                        }
+
+                        if (!discard)
+                                expand_push_code_point(value, wide, code, mark);
+
+                        continue;
                 }
                 else if (value == 'c' && string_get(at + 1))
                 {
