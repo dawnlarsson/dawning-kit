@@ -5063,12 +5063,60 @@ static fn ls_mark_after(string_address directory, ls_entry address_to entry, str
                 else if (file_link_text(full, where, FILE_PATH_MAX) >= 0)
                 {
                         file_facts through;
+                        bool reached = file_look_at(full, address_of through);
+                        file_color_span target = {0};
+                        file_color_span target_reset = {0};
 
                         ls_out(" -> ", 4);
+
+                        /*
+                                The target is coloured for what it is, not for
+                                the link that names it: a link to a directory
+                                points at something blue, and one pointing at
+                                nothing is the orphan colour. The name goes in
+                                as well as the mode, so a suffix rule reads
+                                the target's own name.
+                        */
+                        if (ls_coloring)
+                        {
+                                if (!reached)
+                                {
+                                        target = ls_color_of(LS_COLOR_OR, null);
+                                }
+                                else
+                                {
+                                        ls_entry aimed = *entry;
+
+                                        aimed.mode = through.mode;
+                                        target = ls_name_color(
+                                            directory, address_of aimed,
+                                            (string_address)where);
+                                }
+
+                                if (target.text && !target.length)
+                                        target.text = null;
+                        }
+
+                        if (target.text)
+                        {
+                                target_reset = ls_color_of(LS_COLOR_RS,
+                                                           (string_address) "0");
+
+                                if (!ls_color_started)
+                                {
+                                        file_color_sgr(ls_out, target_reset);
+                                        ls_color_started = true;
+                                }
+
+                                file_color_sgr(ls_out, target);
+                        }
+
                         ls_quote(ls_out, (string_address)where);
 
-                        if (ls_indicator && ls_indicator != '/' &&
-                            file_look_at(full, address_of through))
+                        if (target.text)
+                                file_color_sgr(ls_out, target_reset);
+
+                        if (ls_indicator && ls_indicator != '/' && reached)
                         {
                                 p8 there = ls_mark(through.mode);
 
