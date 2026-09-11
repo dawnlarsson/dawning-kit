@@ -170,6 +170,52 @@ static COLD fn shell_readonly_refused(string_address in_bash,
                                     : ": is read only\n", 0);
 }
 
+//      Whether the line about a bad operand has already gone out: neither
+//      reference follows it with a second complaint about the operator
+//      that was standing beside it.
+static bool test_said;
+
+//      A word test was handed where a number belonged: bash calls it an
+//      integer it expected, dash an illegal number.
+static COLD fn shell_test_number_refused(string_address word)
+{
+        test_said = true;
+        shell_diagnostic_where();
+        string_format(log_error,
+                      shell_bash_compat ? "%s: %s: integer expected\n"
+                                        : "%s: Illegal number: %s\n",
+                      shell_argv[0], word);
+}
+
+/*
+        A program exec could not become.
+
+        bash names the file and what the kernel said and nothing else; dash
+        names itself first and keeps "not found" for a file that is not
+        there, the way it does for a command it could not find.
+*/
+static COLD fn shell_exec_refused(string_address name, bipolar answer)
+{
+        bipolar code = answer < 0 ? -answer : answer;
+        string_address why = system_error_message(code);
+
+        if (!why)
+                why = (string_address) "No such file or directory";
+
+        shell_diagnostic_where();
+
+        if (shell_bash_compat)
+        {
+                string_format(log_error, "%s: %s\n", name, why);
+
+                return;
+        }
+
+        string_format(log_error, "exec: %s: %s\n", name,
+                      code == ERROR_NO_ENTRY ? (string_address) "not found"
+                                             : why);
+}
+
 //      A word printf was handed where a number belonged. bash calls it an
 //      invalid number; dash says it expected a numeric value.
 static COLD b32 shell_printf_number_refused(string_address word)
@@ -4910,9 +4956,7 @@ COLD fn shell_exec(writer write, string_address input)
                         memory_free(found, found_room);
 
                 shell_answer(127);
-                shell_diagnostic_where();
-                string_format(log_error, "exec: %s: not found\n",
-                              shell_argv[1]);
+                shell_exec_refused(shell_argv[1], -ERROR_NO_ENTRY);
                 shell_stop_when_scripted(127);
 
                 return;
@@ -4947,11 +4991,14 @@ COLD fn shell_exec(writer write, string_address input)
 
         // From argv[1] on, so the new program is named by what it was asked
         // for and not by the word "exec".
-        shell_exec_file(found, shell_argv + 1, shell_argc - 1, environment);
+        {
+                bipolar told = shell_exec_file(found, shell_argv + 1,
+                                               shell_argc - 1, environment);
 
-        memory_free(found, found_room);
-        shell_answer(126);
-        string_format(log_error, "exec: %s: cannot run\n", shell_argv[1]);
+                memory_free(found, found_room);
+                shell_answer(126);
+                shell_exec_refused(shell_argv[1], told);
+        }
         shell_stop_when_scripted(126);
 }
 
@@ -6561,8 +6608,11 @@ COLD fn shell_unset(writer write, string_address input)
 
                         if (!shell_valid_name(word, word_length))
                         {
-                                // As above: Bash passes over what it cannot use.
-                                if (shell_bash_compat)
+                                //      Bash passes over what it cannot use,
+                                //      unless the script said -v and meant
+                                //      a variable by it, which is a name it
+                                //      will not have.
+                                if (shell_bash_compat && !variables)
                                 {
                                         index++;
                                         continue;
@@ -6570,6 +6620,13 @@ COLD fn shell_unset(writer write, string_address input)
 
                                 shell_name_refused("unset", word,
                                                    word_length);
+
+                                if (shell_bash_compat)
+                                {
+                                        shell_answer(1);
+                                        return;
+                                }
+
                                 exec_special_error_note();
                                 shell_answer(2);
                                 return;
@@ -6649,16 +6706,25 @@ COLD fn shell_unset(writer write, string_address input)
                 if (!shell_valid_name(word, word_length))
                 {
                         //      Bash steps over a name it cannot use and
-                        //      still answers zero -- "unset - v" forgets v.
-                        //      dash refuses, and being a special builtin
-                        //      takes the script with it.
-                        if (shell_bash_compat)
+                        //      still answers zero -- "unset - v" forgets v
+                        //      -- unless the script said -v and meant a
+                        //      variable by it, which is a name bash will
+                        //      not have. dash refuses either way, and being
+                        //      a special builtin takes the script with it.
+                        if (shell_bash_compat && !variables)
                         {
                                 index++;
                                 continue;
                         }
 
                         shell_name_refused("unset", word, word_length);
+
+                        if (shell_bash_compat)
+                        {
+                                shell_answer(1);
+                                return;
+                        }
+
                         exec_special_error_note();
                         shell_answer(2);
                         return;
@@ -7889,7 +7955,10 @@ COLD fn shell_local(writer write, string_address input)
                 log_error(shell_bash_compat
                               ? "local: can only be used in a function\n"
                               : "local: not in a function\n", 0);
-                expand_fatal_status(2);
+
+                //      Bash answers one for this and dash two, and neither
+                //      of them stops the script over it.
+                expand_fatal_status(shell_bash_compat ? 1 : 2);
                 return;
         }
 
@@ -8342,9 +8411,7 @@ bool test_unary(p8 op, string_address value)
 
                         if (!used || string_get(step))
                         {
-                                string_format(log_error,
-                                              "%s: Illegal number: %s\n",
-                                              shell_argv[0], value);
+                                shell_test_number_refused(value);
                                 test_bad = true;
                                 return false;
                         }
@@ -8605,8 +8672,7 @@ bool test_compare(positive kind, string_address left, string_address right)
                 //      Both references complain about the operand that is not
                 //      a number; being silent read as a false rather than an
                 //      error to anything watching the diagnostic.
-                string_format(log_error, "%s: Illegal number: %s\n",
-                              shell_argv[0], first_good ? right : left);
+                shell_test_number_refused(first_good ? right : left);
                 test_bad = true;
                 return false;
         }
@@ -8774,6 +8840,7 @@ fn shell_test(writer write, string_address input)
         test_at = 1;
         test_stop = shell_argc;
         test_bad = false;
+        test_said = false;
 
         //      Both references say why they would not read the words, and
         //      a script that only looks at the status still cares that the
@@ -8800,6 +8867,11 @@ fn shell_test(writer write, string_address input)
                         if (!test_bad)
                                 return shell_answer(value ? 0 : 1);
 
+                        if (test_said)
+                                return shell_answer(2);
+
+                        shell_diagnostic_where();
+
                         return shell_answer(string_report(
                             log_error, 2, "%s: %s: unexpected operator\n",
                             shell_argv[0], shell_argv[test_at]));
@@ -8809,6 +8881,12 @@ fn shell_test(writer write, string_address input)
         value = test_expression();
 
         if (test_bad || test_at != test_stop)
+        {
+                if (test_said)
+                        return shell_answer(2);
+
+                shell_diagnostic_where();
+
                 return shell_answer(string_report(
                     log_error, 2,
                     test_bad ? "%s: %s: unexpected operator\n"
@@ -8816,6 +8894,7 @@ fn shell_test(writer write, string_address input)
                     shell_argv[0],
                     test_at < test_stop ? shell_argv[test_at]
                                         : shell_argv[shell_argc - 1]));
+        }
 
         shell_answer(value ? 0 : 1);
 }
@@ -13523,16 +13602,32 @@ COLD fn shell_dot(writer write, string_address input)
 
                 //      Bash names the file and what the open said, without
                 //      its own name in front, until posix mode puts it back
-                //      and calls the file not found instead.
-                if (!shell_bash_compat)
-                        string_format(log_error, "%s: %s: not found\n",
-                                      shell_argv[0], path);
-                else if (shell_posix_on())
-                        string_format(log_error, "%s: %s: file not found\n",
-                                      shell_argv[0], path);
-                else
-                        string_format(log_error, "%s: No such file or "
-                                      "directory\n", path);
+                //      and calls the file not found instead. dash names
+                //      itself and says what it could not do, in the words
+                //      it uses for a redirect it could not open.
+                {
+                        bipolar code = got < 0 ? -got : got;
+                        string_address why = system_error_message(code);
+
+                        if (!why)
+                                why = (string_address)
+                                    "No such file or directory";
+
+                        if (!shell_bash_compat)
+                                string_format(log_error,
+                                    "%s: cannot open %s: %s\n",
+                                    shell_argv[0], path,
+                                    code == ERROR_NO_ENTRY
+                                        ? (string_address) "No such file"
+                                        : why);
+                        else if (shell_posix_on())
+                                string_format(log_error,
+                                    "%s: %s: file not found\n",
+                                    shell_argv[0], path);
+                        else
+                                string_format(log_error, "%s: %s\n", path,
+                                              why);
+                }
 
                 /* The executor applies special-builtin fatality only to a
                    direct invocation. That distinction is essential here:

@@ -7491,8 +7491,21 @@ static COLD fn exec_return_bash()
 
         if (!exec_function_depth && !shell_source_depth)
         {
-                log_error("return: can only return from a function or sourced script\n", 0);
+                //      dash returns from the top level without a word;
+                //      bash says it cannot, and quotes the name while it
+                //      does.
+                if (!shell_bash_compat)
+                {
+                        shell_status = (b32)((positive)value & 0xff);
+
+                        return;
+                }
+
+                shell_diagnostic_where();
+                log_error("return: can only `return' from a function or "
+                          "sourced script\n", 0);
                 shell_status = 2;
+
                 return;
         }
 
