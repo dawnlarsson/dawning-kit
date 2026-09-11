@@ -4896,6 +4896,41 @@ static bipolar exec_output_open(string_address target, bool force)
         return opened;
 }
 
+/*
+        A file a redirect could not have.
+
+        bash names the file and what the kernel said and nothing else; dash
+        says whether it was opening or creating, and has a word of its own
+        for the two commonest reasons -- a file that is not there is "No
+        such file" to a reader and a missing directory on the way to it is
+        "Directory nonexistent" to a writer.
+*/
+static COLD b32 exec_redirect_refused(p8 op, string_address target,
+                                      bipolar answer)
+{
+        bipolar code = answer < 0 ? -answer : answer;
+        string_address why = system_error_message(code);
+        bool reading = op == OP_LESS;
+
+        if (!why)
+                why = (string_address) "No such file or directory";
+
+        shell_diagnostic_where();
+
+        if (shell_bash_compat)
+                return string_report(log_error, false, "%s: %s\n", target,
+                                     why);
+
+        if (code == ERROR_NO_ENTRY)
+                why = reading ? (string_address) "No such file"
+                              : (string_address) "Directory nonexistent";
+
+        return string_report(log_error, false,
+                             reading ? "cannot open %s: %s\n"
+                                     : "cannot create %s: %s\n",
+                             target, why);
+}
+
 static bool exec_redirect_apply(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -5073,7 +5108,9 @@ static bool exec_redirect_apply(b32 index)
                 if (opened < 0)
                 {
                         exec_redirect_diagnostic_restore(redirect_mark);
-                        return string_report(log_error, false, "Cannot redirect: %s\n", target);
+
+                        return exec_redirect_refused(want->op, target,
+                                                     opened);
                 }
 
                 log_flush();
@@ -6867,7 +6904,8 @@ static bool exec_assign_value(string_address word, positive name_length,
                 positive length = string_length(mark + 1);
                 if (env_assignment_readonly_hashed_span(word, name_length, name_hash))
                 {
-                        string_format(log_error, "%s: is read only\n", word);
+                        shell_readonly_refused(null, null, word,
+                                               string_length(word));
                         *name_end = append ? '+' : '=';
                         return exec_assignment_error(assignment_error);
                 }
@@ -6884,7 +6922,8 @@ static bool exec_assign_value(string_address word, positive name_length,
                 bool readonly = env_assignment_readonly_hashed_span(word, base,
                     bracket ? env_name_hash(word, base) : name_hash);
                 if (readonly)
-                        string_format(log_error, "%s: is read only\n", word);
+                        shell_readonly_refused(null, null, word,
+                                               string_length(word));
                 if (bracket)
                         *bracket = '[';
                 if (readonly)
@@ -7096,7 +7135,8 @@ static bool exec_prefix_assign(exec_kept_value address_to kept,
 
         if (!promote && (attributes & SHELL_ARRAY_READONLY))
         {
-                string_format(log_error, "%s: is read only\n", kept->binding.name);
+                shell_readonly_refused(null, null, kept->binding.name,
+                                       string_length(kept->binding.name));
                 return exec_assignment_error(assignment_error);
         }
         if (append)
@@ -7252,7 +7292,9 @@ static bool exec_finish_prefixes(exec_kept_value address_to kept, b32 count)
                                 inherited &= (p8)~SHELL_ARRAY_EITHER;
                                 if ((target.binding.variable.attributes & SHELL_ARRAY_READONLY) &&
                                     !(source->binding.variable.attributes & SHELL_ARRAY_READONLY))
-                                        string_format(log_error, "%s: is read only\n", source->binding.name);
+                                        shell_readonly_refused(null, null,
+                                            source->binding.name,
+                                            string_length(source->binding.name));
                         }
                         written = env_value_restore(target.binding.name, base, env_variable_value(&source->binding.variable),
                             inherited | source->binding.variable.attributes, source->binding.variable.array);
@@ -8512,10 +8554,15 @@ static b32 exec_loop_items(parse_node address_to node, positive base)
 
 static COLD b32 exec_loop_assignment_error(string_address name)
 {
-        string_format(log_error,
-                      env_readonly(name) ? "%s: is read only\n"
-                                         : "%s: cannot assign\n",
-                      name);
+        if (env_readonly(name))
+                shell_readonly_refused(null, null, name,
+                                       string_length(name));
+        else
+        {
+                shell_diagnostic_where();
+                string_format(log_error, "%s: cannot assign\n", name);
+        }
+
 
         if (shell_bash_compat && !shell_posix_on())
                 return 1;

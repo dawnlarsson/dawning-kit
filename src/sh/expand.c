@@ -1768,7 +1768,11 @@ static bool expand_push_parameter_as(expand_reference reference, bool quoted,
         {
                 if (shell_options & ((positive)1 << ('u' - 'a')))
                 {
-                        string_format(writer_stderr_once, "%s: parameter not set\n", expand_reference_text(reference));
+                        string_format(writer_stderr_once,
+                                      shell_bash_compat
+                                          ? "%s: unbound variable\n"
+                                          : "%s: parameter not set\n",
+                                      expand_reference_text(reference));
                         // A command string that dies of nounset leaves 127,
                         // the same status the other unset-parameter path
                         // already gives; only the two spellings differed.
@@ -1970,8 +1974,11 @@ static bipolar arith_store(expand_reference reference, bipolar value)
                 string_address name = expand_reference_text(reference);
                 arith_bad = true;
                 string_format(writer_stderr_once,
-                              env_readonly(name) ? "%s: is read only\n"
-                                                 : "%s: cannot assign\n",
+                              !env_readonly(name)
+                                  ? "%s: cannot assign\n"
+                                  : shell_bash_compat
+                                        ? "%s: readonly variable\n"
+                                        : "%s: is read only\n",
                               name);
 
                 if (!arith_bash_mode)
@@ -4745,9 +4752,14 @@ static COLD string_address expand_subscript_key(string_address base,
 
                 if (arith_bad || index < 0)
                 {
+                        //      Bash answers one here and names the
+                        //      array alone when it was being read; the
+                        //      subscript goes in the line only when it was
+                        //      being assigned to, which this shared
+                        //      resolution cannot tell from here.
                         string_format(writer_stderr_once,
                                       "%s: bad array subscript\n", base);
-                        expand_fatal_status(2);
+                        expand_fatal_status(shell_bash_compat ? 1 : 2);
                         return null;
                 }
 
@@ -4788,6 +4800,23 @@ static COLD bool expand_assign_named(expand_reference reference, string_address 
 
 /* Scalar and per-element forms share the same modifier dispatch. The
    replacement separator is restored because array elements reuse the word. */
+/*
+        What ${x?} says when the script wrote no words of its own.
+
+        The colon form asks about a value as well as a name, and each shell
+        says so in its own order: bash calls it null or not set, dash not
+        set or null.
+*/
+static COLD string_address expand_unset_reason(bool colon)
+{
+        if (!colon)
+                return (string_address) "parameter not set";
+
+        return shell_bash_compat
+                   ? (string_address) "parameter null or not set"
+                   : (string_address) "parameter not set or null";
+}
+
 static fn expand_modifier(expand_reference reference, p8 operation, bool doubled,
                            string_address word, bool quoted, b32 parameter_mode)
 {
@@ -4989,7 +5018,8 @@ static COLD fn expand_array_form(string_address name, positive length,
                         return;
 
                 string_format(writer_stderr_once, "%s: %s\n", name,
-                              said[0] ? said : (string_address)"parameter not set");
+                              said[0] ? said
+                                      : expand_unset_reason(doubled));
                 expand_fatal_status(shell_bash_compat
                     ? (string_is(shell_option_flags, 'c') ? 127 : 1)
                     : (parameter_mode & EXPAND_PARAMETER_INDIRECT) ? 1 : 2);
@@ -5339,7 +5369,10 @@ static string_address expand_braced(string_address step, bool quoted)
                         if (shell_options & ((positive)1 << ('u' - 'a')))
                         {
                                 string_format(writer_stderr_once,
-                                              "%s: parameter not set\n", expand_reference_text(reference));
+                                              shell_bash_compat
+                                                  ? "%s: unbound variable\n"
+                                                  : "%s: parameter not set\n",
+                                              expand_reference_text(reference));
                                 expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
                                 return close + 1;
                         }
@@ -5427,9 +5460,12 @@ static string_address expand_braced(string_address step, bool quoted)
                                         name = expand_reference_text(reference);
                                         string_format(
                                             writer_stderr_once,
-                                            env_readonly(name)
-                                                ? "%s: is read only\n"
-                                                : "%s: cannot assign\n",
+                                            !env_readonly(name)
+                                                ? "%s: cannot assign\n"
+                                                : shell_bash_compat
+                                                      ? "%s: readonly "
+                                                        "variable\n"
+                                                      : "%s: is read only\n",
                                             name);
                                         expand_fatal_status(2);
                                         return close + 1;
@@ -5463,8 +5499,11 @@ static string_address expand_braced(string_address step, bool quoted)
                                 if (expand_failed)
                                         return close + 1;
 
-                                string_format(writer_stderr_once, "%s: %s\n", expand_reference_text(reference),
-                                              said[0] ? said : (string_address)"parameter not set");
+                                string_format(writer_stderr_once, "%s: %s\n",
+                                              expand_reference_text(reference),
+                                              said[0] ? said
+                                                      : expand_unset_reason(
+                                                            colon));
                                 expand_fatal_status(shell_bash_compat
                                     ? (string_is(shell_option_flags, 'c') ? 127 : 1)
                                     : (parameter_mode & EXPAND_PARAMETER_INDIRECT) ? 1 : 2);

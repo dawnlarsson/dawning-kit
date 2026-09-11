@@ -144,6 +144,77 @@ static COLD b32 shell_letter_refused(string_address name, p8 letter,
 }
 
 /*
+        A name that will not be written to.
+
+        bash calls it a readonly variable and dash says it is read only, and
+        they put a different builtin's name in front of it: dash names the
+        builtin that tried, bash names only declare's family. Whichever of
+        the two is owed is the caller's to say.
+*/
+static COLD fn shell_unset_readonly_refused(string_address name,
+                                            positive length);
+
+static COLD fn shell_readonly_refused(string_address in_bash,
+                                      string_address in_dash,
+                                      string_address name, positive length)
+{
+        string_address said = shell_bash_compat ? in_bash : in_dash;
+
+        shell_diagnostic_where();
+
+        if (said)
+                string_format(log_error, "%s: ", said);
+
+        log_error(name, length);
+        log_error(shell_bash_compat ? ": readonly variable\n"
+                                    : ": is read only\n", 0);
+}
+
+//      A word printf was handed where a number belonged. bash calls it an
+//      invalid number; dash says it expected a numeric value.
+static COLD b32 shell_printf_number_refused(string_address word)
+{
+        shell_diagnostic_where();
+
+        return string_report(log_error, 1,
+                             shell_bash_compat
+                                 ? "printf: %s: invalid number\n"
+                                 : "printf: %s: expected numeric value\n",
+                             word);
+}
+
+//      A name read could not write to. Readonly is one reason and no room
+//      the other, and only the first of them is worded by the house.
+static COLD bool shell_read_refused(string_address name)
+{
+        if (!env_readonly(name))
+        {
+                shell_diagnostic_where();
+                string_format(log_error, "read: no room for %s\n", name);
+
+                return false;
+        }
+
+        shell_readonly_refused(null, (string_address) "read", name,
+                               string_length(name));
+
+        return false;
+}
+
+//      unset says what it could not do as well as what the name is, and
+//      names itself in both houses while it is at it.
+static COLD fn shell_unset_readonly_refused(string_address name,
+                                            positive length)
+{
+        shell_diagnostic_where();
+        string_format(log_error, "unset: ");
+        log_error(name, length);
+        log_error(shell_bash_compat
+                      ? ": cannot unset: readonly variable\n"
+                      : ": is read only\n", 0);
+}
+
+/*
         A word that is no name.
 
         bash quotes the word as it was handed over, back-quote and all, and
@@ -6515,8 +6586,7 @@ COLD fn shell_unset(writer write, string_address input)
 
                         if (attributes & SHELL_ARRAY_READONLY)
                         {
-                                log_error(word, word_length);
-                                log_error(": is read only\n", 0);
+                                shell_unset_readonly_refused(word, word_length);
                                 exec_special_error_note();
                                 shell_answer(shell_bash_compat ? 1 : 2);
                                 return;
@@ -6548,8 +6618,9 @@ COLD fn shell_unset(writer write, string_address input)
                                 env_reference resolved =
                                     env_reference_span(word, base);
 
-                                log_error((string_address)resolved.name, resolved.length);
-                                log_error(": is read only\n", 0);
+                                shell_unset_readonly_refused(
+                                    (string_address)resolved.name,
+                                    resolved.length);
                                 exec_special_error_note();
                                 shell_answer(shell_bash_compat ? 1 : 2);
                                 return;
@@ -6623,8 +6694,9 @@ COLD fn shell_unset(writer write, string_address input)
                             (shell_vars[resolved.index].attributes &
                              SHELL_ARRAY_READONLY))
                         {
-                                log_error((string_address)resolved.name, resolved.length);
-                                log_error(": is read only\n", 0);
+                                shell_unset_readonly_refused(
+                                    (string_address)resolved.name,
+                                    resolved.length);
                                 exec_special_error_note();
                                 shell_answer(shell_bash_compat ? 1 : 2);
                                 return;
@@ -7624,8 +7696,8 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                                 }
                                 if (mark && readonly)
                                 {
-                                        log_error(word, length);
-                                        log_error(": is read only\n", 0);
+                                        shell_readonly_refused(shell_argv[0], shell_argv[0], word,
+                                                               length);
                                         exec_special_error_note();
                                         shell_answer(shell_bash_compat ? 1 : 2);
                                         failed = true;
@@ -7675,8 +7747,8 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
 
                 if (mark && readonly)
                 {
-                        log_error(word, length);
-                        log_error(": is read only\n", 0);
+                        shell_readonly_refused(shell_argv[0], shell_argv[0], word,
+                                               length);
                         exec_special_error_note();
                         shell_answer(shell_bash_compat ? 1 : 2);
                         failed = true;
@@ -7740,8 +7812,8 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                         if (!stored && env_assignment_readonly_destination(
                                 word, length, env_name_hash(word, length), global_scope))
                         {
-                                log_error(word, length);
-                                log_error(": is read only\n", 0);
+                                shell_readonly_refused(shell_argv[0], shell_argv[0], word,
+                                                       length);
                                 exec_special_error_note();
                                 shell_answer(shell_bash_compat ? 1 : 2);
                                 failed = true;
@@ -7749,8 +7821,8 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                         }
                         if (local_mode && !stored && env_readonly(word))
                         {
-                                log_error(word, length);
-                                log_error(": is read only\n", 0);
+                                shell_readonly_refused(shell_argv[0], shell_argv[0], word,
+                                                       length);
                                 if (name_end)
                                         *name_end = delimiter;
                                 return shell_answer(2);
@@ -8163,8 +8235,7 @@ static COLD fn shell_marked(writer write, p8 mark)
                 if (value && env_readonly(word))
                 {
                         address_to value = '=';
-                        log_error(word, length);
-                        log_error(": is read only\n", 0);
+                        shell_readonly_refused(null, command, word, length);
                         exec_special_error_note();
                         shell_answer(shell_bash_compat ? 1 : 2);
                         return;
@@ -9109,7 +9180,7 @@ static positive printf_integer(string_address word, bool signed_value)
         {
                 if (word != printf_nothing &&
                     (shell_bash_compat || string_get(word)))
-                        printf_status = string_report(log_error, 1, "printf: %s: expected numeric value\n", word);
+                        printf_status = shell_printf_number_refused(word);
                 return 0;
         }
 
@@ -9128,7 +9199,7 @@ static positive printf_integer(string_address word, bool signed_value)
 
         if (stopped == at)
         {
-                printf_status = string_report(log_error, 1, "printf: %s: expected numeric value\n", word);
+                printf_status = shell_printf_number_refused(word);
                 return 0;
         }
 
@@ -9141,8 +9212,15 @@ static positive printf_integer(string_address word, bool signed_value)
         }
         else if (string_get(stopped))
         {
-                string_format(log_error,
-                              "printf: %s: not completely converted\n", word);
+                //      A number with a tail on it is no number at all to
+                //      bash, which says so in the same words it uses for a
+                //      word that was never one.
+                if (shell_bash_compat)
+                        shell_printf_number_refused(word);
+                else
+                        string_format(log_error,
+                            "printf: %s: not completely converted\n", word);
+
                 printf_status = 1;
         }
 
@@ -9176,7 +9254,7 @@ static decimal printf_decimal(string_address word)
         {
                 if (word != printf_nothing &&
                     (shell_bash_compat || string_get(word)))
-                        printf_status = string_report(log_error, 1, "printf: %s: expected numeric value\n", word);
+                        printf_status = shell_printf_number_refused(word);
                 return 0.0;
         }
 
@@ -9187,14 +9265,21 @@ static decimal printf_decimal(string_address word)
 
         if (stopped == at)
         {
-                printf_status = string_report(log_error, 1, "printf: %s: expected numeric value\n", word);
+                printf_status = shell_printf_number_refused(word);
                 return 0.0;
         }
 
         if (string_get(stopped))
         {
-                string_format(log_error,
-                              "printf: %s: not completely converted\n", word);
+                //      A number with a tail on it is no number at all to
+                //      bash, which says so in the same words it uses for a
+                //      word that was never one.
+                if (shell_bash_compat)
+                        shell_printf_number_refused(word);
+                else
+                        string_format(log_error,
+                            "printf: %s: not completely converted\n", word);
+
                 printf_status = 1;
         }
 
@@ -9938,8 +10023,11 @@ COLD fn shell_read(writer write, string_address input)
         if (names >= shell_argc)
         {
                 if (env_readonly("REPLY"))
-                        return shell_answer(string_report(log_error, shell_bash_compat ? 1 : 2,
-                            "read: REPLY is readonly\n"));
+                {
+                        shell_read_refused((string_address) "REPLY");
+
+                        return shell_answer(shell_bash_compat ? 1 : 2);
+                }
         }
         else
         {
@@ -10055,9 +10143,7 @@ COLD fn shell_read(writer write, string_address input)
         if (!array_name && names >= shell_argc)
         {
                 if (!(env_assign("REPLY", read_line)
-                    || string_report(log_error, false, env_readonly("REPLY")
-                        ? "read: %s is readonly\n"
-                        : "read: no room for %s\n", "REPLY")))
+                    || shell_read_refused("REPLY")))
                         return shell_answer((shell_bash_compat && env_readonly("REPLY") ? 1 : 2));
 
                 return shell_answer(read_result(failed, ended, timed_out));
@@ -10073,9 +10159,7 @@ COLD fn shell_read(writer write, string_address input)
         if (exact)
         {
                 if (!array_name && !(env_assign(shell_argv[names], read_line)
-                    || string_report(log_error, false, env_readonly(shell_argv[names])
-                        ? "read: %s is readonly\n"
-                        : "read: no room for %s\n", shell_argv[names])))
+                    || shell_read_refused(shell_argv[names])))
                         return shell_answer(
                             (shell_bash_compat && env_readonly(shell_argv[names]) ? 1 : 2));
 
@@ -10092,9 +10176,7 @@ COLD fn shell_read(writer write, string_address input)
                         for (positive name = names + 1; name < shell_argc;
                              name++)
                                 if (!(env_assign(shell_argv[name], "")
-                                    || string_report(log_error, false, env_readonly(shell_argv[name])
-                                        ? "read: %s is readonly\n"
-                                        : "read: no room for %s\n", shell_argv[name])))
+                                    || shell_read_refused(shell_argv[name])))
                                         return shell_answer(
                                             (shell_bash_compat && env_readonly(shell_argv[name]) ? 1 : 2));
 
@@ -10148,9 +10230,7 @@ COLD fn shell_read(writer write, string_address input)
                         string_address field = read_field(ifs, address_of at,
                                                            names + 1 == shell_argc);
                         if (!(env_assign(shell_argv[names], field ? field : (string_address)"")
-                            || string_report(log_error, false, env_readonly(shell_argv[names])
-                                ? "read: %s is readonly\n"
-                                : "read: no room for %s\n", shell_argv[names])))
+                            || shell_read_refused(shell_argv[names])))
                                 return shell_answer((shell_bash_compat && env_readonly(shell_argv[names]) ? 1 : 2));
                         names++;
                 }
@@ -15515,11 +15595,37 @@ fn shell_ulimit(writer write, string_address input)
                 if (soft || !hard)
                         pair.soft = value;
 
-                if (ul_prlimit(0, chosen->resource, address_of pair, null) < 0)
                 {
-                        answer = shell_bash_compat ? 1 : 2;
-                        log_error(str("ulimit: error setting limit\n"));
-                        continue;
+                        bipolar told = ul_prlimit(0, chosen->resource,
+                                                  address_of pair, null);
+
+                        if (told < 0)
+                        {
+                                //      bash names the limit and what the
+                                //      kernel said; dash says only that it
+                                //      could not, with the reason after it
+                                //      in brackets.
+                                string_address why =
+                                    system_error_message(-told);
+
+                                if (!why)
+                                        why = (string_address)
+                                            "Operation not permitted";
+
+                                answer = shell_bash_compat ? 1 : 2;
+                                shell_diagnostic_where();
+
+                                if (shell_bash_compat)
+                                        string_format(log_error,
+                                            "ulimit: %s: cannot modify "
+                                            "limit: %s\n", chosen->name, why);
+                                else
+                                        string_format(log_error,
+                                            "ulimit: error setting limit "
+                                            "(%s)\n", why);
+
+                                continue;
+                        }
                 }
         }
 
