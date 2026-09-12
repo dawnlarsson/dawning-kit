@@ -574,7 +574,11 @@ static positive expand_base_positive(string_address address_to at,
                 step++;
         }
 
-        if (!used)
+        /* A leftover letter is still this constant, not a new token:
+           0xg and 0x10g are invalid hex, while 0x at a boundary is zero. */
+        if (expand_name_character(string_get(step)))
+                address_to valid = false;
+        else if (!used && base != 16)
                 address_to valid = false;
 
         address_to at = step;
@@ -1422,17 +1426,38 @@ enum
 /* Membership and whitespace are two properties of the same byte.  Keeping
    them in one table halves the hot splitter's footprint and preparation work. */
 static b8 expand_ifs_kind[256];
+static p8 expand_ifs_mb[8][4];
+static b8 expand_ifs_mb_len[8];
+static positive expand_ifs_mb_count;
 
 static fn expand_ifs_prepare()
 {
         string_address ifs = expand_ifs();
 
         memory_fill(expand_ifs_kind, 0, sizeof(expand_ifs_kind));
+        expand_ifs_mb_count = 0;
 
         while (string_get(ifs))
         {
-                p8 value = string_get(ifs++);
+                p8 value = string_get(ifs);
 
+                if (shell_utf8_on() && value >= 0x80)
+                {
+                        positive width = expand_character_step(ifs);
+
+                        if (width > 1 && width <= 4 &&
+                            expand_ifs_mb_count < array_count(expand_ifs_mb))
+                        {
+                                memory_copy(expand_ifs_mb[expand_ifs_mb_count],
+                                            ifs, width);
+                                expand_ifs_mb_len[expand_ifs_mb_count] = (b8)width;
+                                expand_ifs_mb_count++;
+                                ifs += width;
+                                continue;
+                        }
+                }
+
+                ifs++;
                 expand_ifs_kind[value] = EXPAND_IFS_MEMBER;
 
                 if (value == ' ' || value == '\t' || value == '\n')
@@ -1448,6 +1473,39 @@ static PURE bool expand_in_ifs(p8 value)
 static PURE bool expand_ifs_blank(p8 value)
 {
         return expand_ifs_kind[value] & EXPAND_IFS_BLANK;
+}
+
+/*
+        How many bytes of an IFS separator start here. ASCII stays the
+        table; a multibyte IFS character is one separator, not each of
+        its bytes.
+*/
+static positive expand_ifs_span(string_address text, positive left)
+{
+        p8 value;
+        positive width;
+        positive at;
+
+        if (!left)
+                return 0;
+
+        value = string_get(text);
+        if (expand_in_ifs(value))
+                return 1;
+
+        if (!expand_ifs_mb_count || !shell_utf8_on() || value < 0x80)
+                return 0;
+
+        width = expand_character_width(text, left);
+        if (width <= 1 || width > left)
+                return 0;
+
+        for (at = 0; at < expand_ifs_mb_count; at++)
+                if (expand_ifs_mb_len[at] == width &&
+                    !memory_compare(expand_ifs_mb[at], text, width))
+                        return width;
+
+        return 0;
 }
 
 /*
@@ -1713,6 +1771,7 @@ static string_address expand_value_of(expand_reference reference, p8 address_to 
 }
 
 static COLD fn expand_fatal_status(b32 status);
+static PURE b32 expand_nounset_status(b32 indirect);
 static COLD fn expand_slice_error();
 static string_address expand_tilde(string_address step, bool assignment);
 
@@ -1780,10 +1839,8 @@ static bool expand_push_parameter_as(expand_reference reference, bool quoted,
                         // A command string that dies of nounset leaves 127,
                         // the same status the other unset-parameter path
                         // already gives; only the two spellings differed.
-                        expand_fatal_status(
-                            shell_bash_compat
-                                ? (string_is(shell_option_flags, 'c') ? 127 : 1)
-                                : (mode & EXPAND_PARAMETER_INDIRECT) ? 1 : 2);
+                        expand_fatal_status(expand_nounset_status(
+                            mode & EXPAND_PARAMETER_INDIRECT));
                 }
 
                 return false;
@@ -2078,6 +2135,13 @@ static bipolar arith_number_of(expand_reference reference, p8 address_to scratch
                 {
                         arith_bad = true;
                         arith_unset = true;
+                        shell_diagnostic_where_to(writer_stderr_once);
+                        string_format(writer_stderr_once,
+                                      shell_bash_compat
+                                          ? "%s: unbound variable\n"
+                                          : "%s: parameter not set\n",
+                                      expand_reference_text(reference));
+                        expand_fatal_status(expand_nounset_status(false));
                 }
 
                 return 0;
@@ -2702,19 +2766,16 @@ static bipolar arith_expression()
 static bipolar arith_evaluate(string_address text)
 {
         bipolar value;
+        bool held_nounset = arith_nounset;
 
         arith_bad = false;
+        arith_unset = false;
         arith_active = true;
+        arith_nounset =
+            shell_bash_compat &&
+            (shell_options & ((positive)1 << ('u' - 'a'))) != 0;
         arith_at = text;
         arith_space();
-
-        // An arithmetic expansion contains an expression, not an optional
-        // expression. Empty input used to turn into a plausible zero.
-        if (!string_get(arith_at))
-        {
-                arith_bad = true;
-                return 0;
-        }
 
         bool held_bash_mode = arith_bash_mode;
 
@@ -2725,6 +2786,18 @@ static bipolar arith_evaluate(string_address text)
            caller opted in. */
         arith_bash_mode = arith_bash_mode || shell_bash_compat;
 
+        // An arithmetic expansion contains an expression, not an optional
+        // expression. Empty input used to turn into a plausible zero. Bash
+        // still answers 0 for `$(())`; dash refuses it.
+        if (!string_get(arith_at))
+        {
+                if (!arith_bash_mode)
+                        arith_bad = true;
+                arith_nounset = held_nounset;
+                arith_bash_mode = held_bash_mode;
+                return 0;
+        }
+
         value = arith_expression();
 
         // Every byte has to belong to the grammar. This catches comma and
@@ -2732,6 +2805,7 @@ static bipolar arith_evaluate(string_address text)
         if (string_get(arith_at))
                 arith_bad = true;
 
+        arith_nounset = held_nounset;
         arith_bash_mode = held_bash_mode;
         return value;
 }
@@ -3417,6 +3491,25 @@ static string_address expand_process(string_address step, p8 mark)
         return stop + 1;
 }
 
+/*
+        Nounset and ${name?} end the process. A -c command that dies of it
+        at the top level leaves 127; a subshell or substitution of that
+        command leaves 1, because the -c bit is still in $- either way.
+        Errexit is already a failing-command exit: with -e the same
+        expansion leaves 1 even at the top of -c. Dash answers 2, or 1
+        when the name arrived through indirection.
+*/
+static PURE b32 expand_nounset_status(b32 indirect)
+{
+        if (shell_bash_compat)
+                return (string_is(shell_option_flags, 'c') &&
+                        !shell_subshell_depth &&
+                        !(shell_options & ((positive)1 << ('e' - 'a'))))
+                           ? 127
+                           : 1;
+        return indirect ? 1 : 2;
+}
+
 static COLD fn expand_fatal_status(b32 status)
 {
         shell_status = status;
@@ -3477,8 +3570,9 @@ static string_address expand_arithmetic(string_address step, bool quoted)
 
                 if (arith_bad)
                 {
-                        string_format(writer_stderr_once,
-                                      "arithmetic: %s\n", ready);
+                        if (!arith_unset)
+                                string_format(writer_stderr_once,
+                                              "arithmetic: %s\n", ready);
                         /*      The same status a bad slice subscript takes.
                                 Both are an expansion that could not produce a
                                 word, both end the line, and bash answers 1
@@ -3651,7 +3745,8 @@ static fn expand_replace_push(string_address replacement,
                         continue;
                 }
 
-                if (string_is(at, '&'))
+                if (string_is(at, '&') &&
+                    shell_shopt_on(PATSUB_REPLACEMENT))
                 {
                         expand_push_run(run, (positive)(at - run), mark);
                         expand_push_run(matched, match_length, mark);
@@ -3964,7 +4059,8 @@ static bool expand_slice_number(string_address text, bipolar address_to value)
 
         if (arith_bad)
         {
-                string_format(writer_stderr_once, "arithmetic: %s\n", ready);
+                if (!arith_unset)
+                        string_format(writer_stderr_once, "arithmetic: %s\n", ready);
                 expand_slice_error();
                 return false;
         }
@@ -5025,9 +5121,8 @@ static COLD fn expand_array_form(string_address name, positive length,
                 string_format(writer_stderr_once, "%s: %s\n", name,
                               said[0] ? said
                                       : expand_unset_reason(doubled));
-                expand_fatal_status(shell_bash_compat
-                    ? (string_is(shell_option_flags, 'c') ? 127 : 1)
-                    : (parameter_mode & EXPAND_PARAMETER_INDIRECT) ? 1 : 2);
+                expand_fatal_status(expand_nounset_status(
+                    parameter_mode & EXPAND_PARAMETER_INDIRECT));
         }
         else if (operation != '+')
                 expand_array_sequence(name, length, form, 0, false, word,
@@ -5379,7 +5474,8 @@ static string_address expand_braced(string_address step, bool quoted)
                                                   ? "%s: unbound variable\n"
                                                   : "%s: parameter not set\n",
                                               expand_reference_text(reference));
-                                expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
+                                expand_fatal_status(expand_nounset_status(
+                                    parameter_mode & EXPAND_PARAMETER_INDIRECT));
                                 return close + 1;
                         }
 
@@ -5512,9 +5608,8 @@ static string_address expand_braced(string_address step, bool quoted)
                                               said[0] ? said
                                                       : expand_unset_reason(
                                                             colon));
-                                expand_fatal_status(shell_bash_compat
-                                    ? (string_is(shell_option_flags, 'c') ? 127 : 1)
-                                    : (parameter_mode & EXPAND_PARAMETER_INDIRECT) ? 1 : 2);
+                                expand_fatal_status(expand_nounset_status(
+                                    parameter_mode & EXPAND_PARAMETER_INDIRECT));
 
                                 return close + 1;
                         }
@@ -6586,31 +6681,46 @@ static positive expand_split(shell_words address_to out)
                         continue;
                 }
 
-                if (expand_mark[at] == MARK_FIELD && expand_in_ifs(expand_text[at]))
+                if (expand_mark[at] == MARK_FIELD)
                 {
-                        expand_emit(start, at, out);
+                        positive width = expand_ifs_span(expand_text + at,
+                                                         expand_length - at);
 
-                        while (at < expand_length && expand_mark[at] == MARK_FIELD &&
-                               expand_ifs_blank(expand_text[at]))
-                                at++;
-
-                        if (at < expand_length && expand_mark[at] == MARK_FIELD &&
-                            expand_in_ifs(expand_text[at]))
+                        if (width)
                         {
-                                at++;
+                                expand_emit(start, at, out);
 
-                                while (at < expand_length && expand_mark[at] == MARK_FIELD &&
+                                while (at < expand_length &&
+                                       expand_mark[at] == MARK_FIELD &&
                                        expand_ifs_blank(expand_text[at]))
                                         at++;
+
+                                if (at < expand_length &&
+                                    expand_mark[at] == MARK_FIELD)
+                                {
+                                        width = expand_ifs_span(
+                                            expand_text + at,
+                                            expand_length - at);
+                                        if (width)
+                                        {
+                                                at += width;
+
+                                                while (at < expand_length &&
+                                                       expand_mark[at] == MARK_FIELD &&
+                                                       expand_ifs_blank(
+                                                           expand_text[at]))
+                                                        at++;
+                                        }
+                                }
+
+                                start = at;
+
+                                // Separators at the end make no empty field after them.
+                                if (at >= expand_length)
+                                        return out->count;
+
+                                continue;
                         }
-
-                        start = at;
-
-                        // Separators at the end make no empty field after them.
-                        if (at >= expand_length)
-                                return out->count;
-
-                        continue;
                 }
 
                 at++;

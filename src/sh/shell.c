@@ -172,7 +172,8 @@ bool shell_bash_compat;
 bool shell_dash_compat;
 
 /*
-        rbash: a shell started -r or --restricted.
+        rbash: a shell started as rbash, or with -r / --restricted, or
+        that later ran set -r.
 
         Not one of the set options, because in Bash it is not one either: it
         is in $- and `set -r` turns it on, but nothing turns it off again,
@@ -181,6 +182,9 @@ bool shell_dash_compat;
         the three spellings it does not have with it.
 */
 bool shell_restricted;
+/* -r and --restricted, as opposed to the name rbash: the restriction
+   stays even when -c's $0 operand is not rbash. */
+bool shell_restricted_sticky;
 
 /*
         Whether job listings are written in dash's columns.
@@ -584,6 +588,7 @@ static string_address shell_shopt_names[] = {
 #define SHELL_SHOPT_PATSUB_REPLACEMENT 50
 #define SHELL_SHOPT_PROGCOMP 51
 #define SHELL_SHOPT_PROMPTVARS 53
+#define SHELL_SHOPT_RESTRICTED_SHELL 54
 #define SHELL_SHOPT_SOURCEPATH 56
 #define SHELL_SHOPT_SHIFT_VERBOSE 55
 #define SHELL_SHOPT_XPG_ECHO 58
@@ -606,6 +611,21 @@ positive shell_shopt_state = SHELL_SHOPT_STARTED;
 
 #define shell_shopt_on(which)                                                \
         ((shell_shopt_state & SHELL_SHOPT(which)) != 0)
+
+/*
+        rbash, -r, --restricted and set -r all enter the same state: the
+        restriction itself, and the shopt that reports how the shell was
+        started. shopt -u restricted_shell is a no-op, and set +r is an
+        error once this has run. The one thing that can still drop the
+        restriction itself (not the shopt) is -c's $0 operand: bash
+        restricts a shell whose $0 is rbash and lifts an argv0-only
+        restriction when $0 is any other name. -r is sticky through that.
+*/
+fn shell_restricted_enter()
+{
+        shell_restricted = true;
+        shell_shopt_state |= SHELL_SHOPT(RESTRICTED_SHELL);
+}
 
 /*
         The names that answer without being stored.

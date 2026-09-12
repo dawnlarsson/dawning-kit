@@ -35,6 +35,22 @@ static fn shell_stop_when_scripted(b32 status)
 }
 
 /*
+        exec of a file that will not run. Interactive shells stay; execfail
+        is the same stay for a script. Everything else ends the process,
+        which is why a mistyped exec in a script is fatal unless asked not
+        to be.
+*/
+static fn shell_exec_failed(b32 status)
+{
+        if (shell_is_interactive ||
+            (shell_bash_compat && shell_shopt_on(EXECFAIL)))
+                return;
+
+        log_flush();
+        exit(status);
+}
+
+/*
         The words as the shell tokenised them.
 
         A builtin used to be handed the rest of the line joined back into one
@@ -1497,6 +1513,10 @@ PURE string_address env_get(const_string name);
 bool env_set(const_string name, const_string value);
 bool env_assign(const_string name, const_string value);
 fn env_unset(string_address name);
+static PURE bool env_optlist_name(const_string name, positive length);
+static COLD bool env_optlist_take(string_address entry);
+static COLD string_address shell_optlist_value(bool shopts,
+                                               positive address_to value_length);
 
 /* Adopt a process-lifetime assignment without copying its bytes. */
 static bool env_borrow_assignment(string_address entry, bool replace)
@@ -1604,6 +1624,11 @@ fn shell_env_init(string_address address_to process_environment)
                    startup has initialized parser policy. Never also expose
                    its implementation-name as an ordinary variable. */
                 if (env_function_assignment(process_environment[at]))
+                        continue;
+                /* SHELLOPTS and BASHOPTS are not variables. An inherited
+                   value turns those options on; the live listing is built
+                   when something reads the name. */
+                if (env_optlist_take(process_environment[at]))
                         continue;
                 // Duplicate names are legal; keep the old last-one-wins
                 // behavior without creating a second index entry.
@@ -2074,6 +2099,8 @@ static bool env_write_destination(const_string name, positive name_len,
         bool allexport = assignment && (shell_options & SHELL_FLAG('a'));
         if (!name || !value)
                 return false;
+        if (!destination && env_optlist_name(name, name_len))
+                return false;
         if (!destination && name_len == 4 && memory_is_4(name, 'P', 'A', 'T', 'H'))
                 hash_forget();
         if (!destination && idx == shell_var_count && shell_dynamic_assign(name, name_len, value))
@@ -2338,6 +2365,8 @@ static PURE bool env_assignment_readonly_destination(const_string name,
 {
         if (env_restricted_name(name, length))
                 return true;
+        if (env_optlist_name(name, length))
+                return true;
         if (!name || (!readonly_count && (!destination ||
             !(destination->attributes & SHELL_ARRAY_READONLY))))
                 return false;
@@ -2363,6 +2392,8 @@ PURE bool env_readonly_hashed_span(const_string name, positive length,
 
         if (env_restricted_name(name, length))
                 return true;
+        if (env_optlist_name(name, length))
+                return true;
 
         if (!name || !readonly_count)
                 return false;
@@ -2377,10 +2408,14 @@ PURE bool env_readonly(const_string name)
 {
         positive2 named;
 
-        if (!name || !readonly_count)
+        if (!name)
                 return false;
 
         named = string_hash_33_length(env_reading(name));
+        if (env_restricted_name(name, named.y) || env_optlist_name(name, named.y))
+                return true;
+        if (!readonly_count)
+                return false;
         return env_readonly_hashed_span(name, named.y, named.x);
 }
 
@@ -3453,6 +3488,16 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
                 if (!memory_compare((address_any)text, "MACHTYPE", 8))
                         return shell_dynamic_said(MOONWATER_MACHTYPE,
                                                   value_length);
+
+                if (shell_bash_compat &&
+                    !memory_compare((address_any)text, "BASHOPTS", 8))
+                        return shell_optlist_value(true, value_length);
+                break;
+
+        case 9:
+                if (shell_bash_compat &&
+                    !memory_compare((address_any)text, "SHELLOPTS", 9))
+                        return shell_optlist_value(false, value_length);
                 break;
 
         case 12:
@@ -4014,8 +4059,11 @@ COLD fn shell_cd(writer write, string_address input)
         //      shell keeps, because everything reached by a relative name
         //      follows from it.
         if (shell_restricted)
+        {
+                shell_diagnostic_where();
                 return shell_answer(
                     string_report(log_error, 1, "cd: restricted\n"));
+        }
 
         shell_option_walk walk = {1};
         p8 letter;
@@ -4878,8 +4926,11 @@ COLD fn shell_exec(writer write, string_address input)
         //      rbash: replacing the shell would replace the restriction
         //      with whatever was named.
         if (shell_restricted)
+        {
+                shell_diagnostic_where();
                 return shell_answer(
                     string_report(log_error, 1, "exec: restricted\n"));
+        }
 
         p8 address_to found = null;
         positive found_room = 0;
@@ -4957,7 +5008,7 @@ COLD fn shell_exec(writer write, string_address input)
 
                 shell_answer(127);
                 shell_exec_refused(shell_argv[1], -ERROR_NO_ENTRY);
-                shell_stop_when_scripted(127);
+                shell_exec_failed(127);
 
                 return;
         }
@@ -4999,7 +5050,7 @@ COLD fn shell_exec(writer write, string_address input)
                 shell_answer(126);
                 shell_exec_refused(shell_argv[1], told);
         }
-        shell_stop_when_scripted(126);
+        shell_exec_failed(126);
 }
 
 
@@ -5858,6 +5909,31 @@ static COLD fn shell_option_row(writer write, string_address name, bool on,
         left out, rather than a second walk over two tables in the order
         they happen to be stored in.
 */
+/* The set -o names bash publishes, in the order SHELLOPTS lists them. */
+static const string_address shell_setopt_names[] = {
+    "allexport", "braceexpand", "emacs", "errexit",
+    "errtrace", "functrace", "hashall", "histexpand", "history",
+    "ignoreeof", "interactive-comments", "keyword",
+    "monitor", "noclobber", "noexec", "noglob", "nolog",
+    "notify", "nounset", "onecmd", "physical", "pipefail",
+    "posix", "privileged", "verbose", "vi", "xtrace"
+};
+
+static PURE bool shell_setopt_named_on(string_address name)
+{
+        positive option = string_table_find(name, shell_option_names,
+                                            sizeof(shell_option_names[0]),
+                                            SHELL_OPTION_NAMES);
+
+        if (option < SHELL_OPTION_NAMES)
+                return shell_option_on(option);
+
+        option = string_table_find(name, shell_extra_options,
+                                   sizeof(shell_extra_options[0]),
+                                   SHELL_EXTRA_OPTIONS);
+        return option < SHELL_EXTRA_OPTIONS && shell_extra_on(option);
+}
+
 fn shell_options_listed_wanted(writer write, bool as_commands, bipolar want)
 {
         positive index = 0;
@@ -5867,38 +5943,14 @@ fn shell_options_listed_wanted(writer write, bool as_commands, bipolar want)
                 /* A policy view over the existing state, not a second option
                    registry. Unsupported options are not advertised as if a
                    stored bit implemented their behavior. */
-                static const string_address names[] = {
-                    "allexport", "braceexpand", "emacs", "errexit",
-                    "errtrace", "functrace", "hashall", "histexpand", "history",
-                    "ignoreeof", "interactive-comments", "keyword",
-                    "monitor", "noclobber", "noexec", "noglob", "nolog",
-                    "notify", "nounset", "onecmd", "physical", "pipefail",
-                    "posix", "privileged", "verbose", "vi", "xtrace"
-                };
-
-                for (positive at = 0; at < array_count(names); at++)
+                for (positive at = 0; at < array_count(shell_setopt_names); at++)
                 {
-                        positive option = string_table_find(
-                            names[at], shell_option_names,
-                            sizeof(shell_option_names[0]), SHELL_OPTION_NAMES);
-                        bool on;
-
-                        if (option < SHELL_OPTION_NAMES)
-                                on = shell_option_on(option);
-                        else
-                        {
-                                option = string_table_find(
-                                    names[at], shell_extra_options,
-                                    sizeof(shell_extra_options[0]),
-                                    SHELL_EXTRA_OPTIONS);
-                                on = option < SHELL_EXTRA_OPTIONS &&
-                                     shell_extra_on(option);
-                        }
+                        bool on = shell_setopt_named_on(shell_setopt_names[at]);
 
                         if ((want > 0 && !on) || (want < 0 && on))
                                 continue;
 
-                        shell_option_row(write, names[at], on,
+                        shell_option_row(write, shell_setopt_names[at], on,
                                          as_commands ? (on ? "set -o " : "set +o ") : null,
                                          15, '\t');
                 }
@@ -5959,6 +6011,144 @@ static COLD PURE positive shell_shopt_find(string_address name)
 static PURE bool shell_shopt_index_on(positive which)
 {
         return (shell_shopt_state & ((positive)1 << which)) != 0;
+}
+
+/*
+        SHELLOPTS and BASHOPTS.
+
+        Bash publishes a colon-separated listing of the set and shopt names
+        that are on, in alphabetical order. They are not stored: a read
+        builds the list from the same bits set -o and shopt already keep,
+        an assignment is readonly, and a value inherited at startup turns
+        those names on rather than becoming a variable. restricted_shell
+        and login_shell name how the shell was started, so they are neither
+        imported nor listed.
+*/
+static p8 shell_optlist_text[1536];
+
+static PURE bool env_optlist_name(const_string name, positive length)
+{
+        if (!shell_bash_compat || !name)
+                return false;
+        if (length == 9 && !memory_compare((address_any)name, "SHELLOPTS", 9))
+                return true;
+        if (length == 8 && !memory_compare((address_any)name, "BASHOPTS", 8))
+                return true;
+        return false;
+}
+
+static COLD fn shell_optlist_append(positive address_to used, string_address name)
+{
+        positive length = string_length(name);
+        positive at = *used;
+
+        if (at && at < array_count(shell_optlist_text) - 1)
+                shell_optlist_text[at++] = ':';
+        if (at + length >= array_count(shell_optlist_text))
+                return;
+        memory_copy(shell_optlist_text + at, name, length);
+        *used = at + length;
+}
+
+static COLD string_address shell_optlist_value(bool shopts,
+                                               positive address_to value_length)
+{
+        positive used = 0;
+
+        if (shopts)
+        {
+                for (positive at = 0; at < SHELL_SHOPT_NAMES; at++)
+                {
+                        if (at == SHELL_SHOPT_RESTRICTED_SHELL ||
+                            at == SHELL_SHOPT_LOGIN_SHELL)
+                                continue;
+                        if (shell_shopt_index_on(at))
+                                shell_optlist_append(address_of used,
+                                                     shell_shopt_names[at]);
+                }
+        }
+        else
+        {
+                for (positive at = 0; at < array_count(shell_setopt_names); at++)
+                        if (shell_setopt_named_on(shell_setopt_names[at]))
+                                shell_optlist_append(address_of used,
+                                                     shell_setopt_names[at]);
+        }
+
+        shell_optlist_text[used] = end;
+        if (value_length)
+                address_to value_length = used;
+        return shell_optlist_text;
+}
+
+static COLD fn shell_optlist_apply(string_address list, bool shopts)
+{
+        p8 name[32];
+
+        while (list && string_get(list))
+        {
+                string_address stop = string_first_of_or_end(list, ':');
+                positive length = (positive)(stop - list);
+
+                if (length && length < array_count(name))
+                {
+                        memory_copy_end(name, list, length);
+                        if (shopts)
+                        {
+                                positive which = shell_shopt_find(name);
+
+                                if (which < SHELL_SHOPT_NAMES &&
+                                    which != SHELL_SHOPT_RESTRICTED_SHELL &&
+                                    which != SHELL_SHOPT_LOGIN_SHELL)
+                                        shell_shopt_state |= (positive)1 << which;
+                        }
+                        else
+                        {
+                                bool known = false;
+
+                                for (positive at = 0; at < array_count(shell_setopt_names);
+                                     at++)
+                                        if (word_is(name, shell_setopt_names[at]))
+                                                known = true;
+                                if (known)
+                                        shell_option_named(name, true);
+                                else
+                                {
+                                        shell_diagnostic_where();
+                                        string_format(log_error,
+                                                      "%s: invalid option name\n",
+                                                      name);
+                                }
+                        }
+                }
+                else if (length && !shopts)
+                {
+                        shell_diagnostic_where();
+                        log_error(list, length);
+                        log_error(": invalid option name\n", 0);
+                }
+
+                if (!string_is(stop, ':'))
+                        break;
+                list = stop + 1;
+        }
+}
+
+static COLD bool env_optlist_take(string_address entry)
+{
+        if (!shell_bash_compat || !entry)
+                return false;
+        if (!string_compare_max(entry, "SHELLOPTS=", 10))
+        {
+                shell_optlist_apply(entry + 10, false);
+                return true;
+        }
+        if (!string_compare_max(entry, "BASHOPTS=", 9))
+        {
+                shell_optlist_apply(entry + 9, true);
+                return true;
+        }
+        return false;
 }
 
 static COLD fn shell_shopt_said(writer write, positive which, bool as_commands)
@@ -6140,10 +6330,15 @@ COLD fn shell_shopt(writer write, string_address input)
                                 else
                                         shell_extra_told(name, set);
                         }
-                        else if (set)
-                                shell_shopt_state |= (positive)1 << which;
-                        else
-                                shell_shopt_state &= ~((positive)1 << which);
+                        else if (which != SHELL_SHOPT_RESTRICTED_SHELL)
+                        {
+                                /* restricted_shell reports how the shell
+                                   started; shopt cannot enter or leave it. */
+                                if (set)
+                                        shell_shopt_state |= (positive)1 << which;
+                                else
+                                        shell_shopt_state &= ~((positive)1 << which);
+                        }
 
                         continue;
                 }
@@ -6234,10 +6429,10 @@ static bool shell_parameters_replaced;
         leaves it out of an interactive session, where the line is the one
         the person can still see; dash spells it "1" and always writes it.
 
-        Only set writes through this. Every other diagnostic in this shell
-        is still the bare sentence with no name and no line in front of it,
-        which is what the shell domain's floor means when it says the
-        mechanism is missing rather than the wording.
+        Builtins and the executor write through this so a diagnostic carries
+        the script and the line the way both references do. What a session
+        still disagrees about is the sentence after the prefix, not the
+        prefix itself.
 */
 static COLD fn shell_diagnostic_where_to(writer write)
 {
@@ -6434,7 +6629,8 @@ COLD fn shell_set(writer write, string_address input)
                                                 exec_special_error_note();
                                                 return;
                                         }
-                                        shell_restricted = on;
+                                        if (on)
+                                                shell_restricted = true;
                                         letter++;
                                         continue;
                                 }
@@ -6573,6 +6769,14 @@ fn shell_shift(writer write, string_address input)
 
 static bool shell_unset_variable(const_string name, positive length)
 {
+        if (env_restricted_name(name, length) || env_optlist_name(name, length))
+        {
+                shell_unset_readonly_refused((string_address)name, length);
+                exec_special_error_note();
+                shell_answer(shell_bash_compat ? 1 : 2);
+                return false;
+        }
+
         b32 detached = exec_unset_prefix(name, length);
         if (detached < 0)
                 shell_answer(string_report(log_error, 2, "%s: no room\n", "unset"));
@@ -13440,9 +13644,13 @@ static bipolar shell_source_open(string_address name,
         if (!name || !string_get(name))
                 return -1;
 
-        if (string_first_of(name, '/') ||
-            (shell_bash_compat && !shell_shopt_on(SOURCEPATH)))
+        if (string_first_of(name, '/'))
                 return shell_source_direct(name);
+
+        //      sourcepath off is cwd under bash, and nothing under posix:
+        //      `. p` is not found even when p is in this directory.
+        if (shell_bash_compat && !shell_shopt_on(SOURCEPATH))
+                return shell_posix_on() ? -1 : shell_source_direct(name);
 
         value = env_get("PATH");
 
@@ -13629,8 +13837,11 @@ COLD fn shell_dot(writer write, string_address input)
         //      rbash: a name with a slash in it reaches outside whatever PATH
         //      was left, which is the whole of what the restriction holds.
         if (shell_restricted && string_first_of(path, '/'))
+        {
+                shell_diagnostic_where();
                 return shell_answer(string_report(log_error, 1,
                                                   ".: %s: restricted\n", path));
+        }
 
         handle = shell_source_open(path, address_of found, address_of found_room,
                                    address_of no_room);
@@ -14448,6 +14659,7 @@ fn shell_hash(writer write, string_address input)
         bool as_commands = false;
         bool only_path = false;
         bool forget = false;
+        bool reset = false;
         bool named_many = false;
         string_address given = null;
         p8 address_to found = null;
@@ -14459,7 +14671,10 @@ fn shell_hash(writer write, string_address input)
         while (shell_option_letter(address_of walk, address_of which))
         {
                 if (which == 'r')
+                {
                         hash_forget();
+                        reset = true;
+                }
                 else if (which == 'l')
                         as_commands = true;
                 else if (which == 't')
@@ -14476,9 +14691,12 @@ fn shell_hash(writer write, string_address input)
                         //      rbash: naming a path for a command is the same
                         //      reach a slash in the name would have been.
                         if (shell_restricted)
+                        {
+                                shell_diagnostic_where();
                                 return shell_answer(string_report(
                                     log_error, 1, "hash: %s: restricted\n",
                                     given));
+                        }
                 }
                 else
                         return shell_answer(shell_letter_refused(
@@ -14490,6 +14708,21 @@ fn shell_hash(writer write, string_address input)
         if (index >= shell_argc)
         {
                 positive at = 0;
+
+                //      Bash writes one sentence when the table is empty, and
+                //      a script counting `hash 2>&1` counts it. That sentence
+                //      is a listing, not a side-effect of -r: `hash -r` is
+                //      silent, `hash -l` on an empty table is silent, and so
+                //      is `set -o posix`. Dash writes nothing, which is the
+                //      listing this shell keeps under a POSIX name.
+                if (!hash_count)
+                {
+                        if (shell_bash_compat && !shell_posix_on() &&
+                            !as_commands && !reset)
+                                return shell_answer(string_report(
+                                    log_error, 0, "hash: hash table empty\n"));
+                        return shell_answer(0);
+                }
 
                 while (at < hash_count)
                 {
@@ -15149,8 +15382,11 @@ fn shell_command_builtin(writer write, string_address input)
                         //      rbash: -p is the standard PATH, which is a way
                         //      back to the directories the restriction took.
                         if (shell_restricted)
+                        {
+                                shell_diagnostic_where();
                                 return shell_answer(string_report(
                                     log_error, 1, "command: -p: restricted\n"));
+                        }
 
                         standard_path = true;
                 }

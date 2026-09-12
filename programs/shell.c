@@ -350,7 +350,10 @@ static positive shell_start_long_options(string_address address_to arguments,
                 else if (word_is(name, "verbose"))
                         shell_option_letter_told('v', true);
                 else if (word_is(name, "restricted"))
-                        shell_restricted = true;
+                {
+                        shell_restricted_enter();
+                        shell_restricted_sticky = true;
+                }
                 else if (word_is(name, "login"))
                         shell_shopt_state |= SHELL_SHOPT(LOGIN_SHELL);
                 else if (word_is(name, "version"))
@@ -457,7 +460,15 @@ static bool shell_start_options(string_address address_to arguments,
                                             ~SHELL_SHOPT(LOGIN_SHELL);
                         }
                         else if (value == 'r' && shell_bash_compat)
-                                shell_restricted = on;
+                        {
+                                /* Restriction goes on and stays: +r at
+                                   invocation is a no-op, including on rbash. */
+                                if (on)
+                                {
+                                        shell_restricted_enter();
+                                        shell_restricted_sticky = true;
+                                }
+                        }
                         else if (value == 'D' && shell_bash_compat)
                         {
                                 //      Every $"..." in the program, of which
@@ -644,8 +655,14 @@ b32 main()
         // personality instead of scanning the path again after the fast exit.
         if (called && *called == '-')
                 called++;
-        shell_bash_compat = called && word_is(called, "bash");
+        /* rbash is bash's restricted name: the same policy, already
+           restricted before any option is read. A leading dash was
+           stripped above, so -rbash is a login rbash. */
+        shell_bash_compat = called && (word_is(called, "bash") ||
+                                       word_is(called, "rbash"));
         shell_dash_compat = called && word_is(called, "dash");
+        if (called && word_is(called, "rbash"))
+                shell_restricted_enter();
 
         /* Bash privilege policy is decided from the entry credentials, not
            from an ID a startup file or command might later change. */
@@ -817,6 +834,20 @@ b32 main()
                 shell_script_name = process_arguments > first + 1
                                                           ? arguments[first + 1]
                                                           : arguments[0];
+                /* Bash keys live restriction on $0 for -c: a name whose
+                   last element is rbash restricts even a bash-named
+                   process, and any other name lifts an rbash argv0 unless
+                   -r made the restriction sticky. The shopt bit is how
+                   the process was started and is left alone. */
+                if (shell_bash_compat && process_arguments > first + 1 &&
+                    !shell_restricted_sticky)
+                {
+                        string_address named = shell_tool_name(shell_script_name);
+
+                        if (named && *named == '-')
+                                named++;
+                        shell_restricted = named && word_is(named, "rbash");
+                }
                 shell_option_flags = (string_address) "c";
                 script_file = true;
         }

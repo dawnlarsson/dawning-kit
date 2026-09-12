@@ -5000,6 +5000,7 @@ static bool exec_redirect_apply(b32 index)
                      want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT))
                 {
                         exec_redirect_status = 1;
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       "%s: restricted: cannot redirect "
                                       "output\n", target);
@@ -6622,13 +6623,14 @@ static COLD fn exec_trace_word(string_address word)
         log_error(str("'"));
 }
 
-static fn exec_trace(b32 count)
+static PURE bool exec_trace_on()
+{
+        return (shell_options & SHELL_XTRACE) != 0;
+}
+
+static fn exec_trace_ps4()
 {
         string_address prefix;
-        b32 at;
-
-        if (!(shell_options & SHELL_XTRACE))
-                return;
 
         prefix = env_get("PS4");
         if (!prefix)
@@ -6652,6 +6654,16 @@ static fn exec_trace(b32 count)
         }
         else
                 log_error(prefix, 0);
+}
+
+static fn exec_trace(b32 count)
+{
+        b32 at;
+
+        if (!exec_trace_on())
+                return;
+
+        exec_trace_ps4();
 
         for (at = 0; at < count; at++)
         {
@@ -6664,6 +6676,53 @@ static fn exec_trace(b32 count)
                         log_error(shell_argv[at], 0);
         }
 
+        log_error((string_address) "\n", 1);
+}
+
+/*
+        Bash writes the source of a for header once per trip, a select
+        header once when the menu is first drawn, and a case header once.
+        The words are the ones the parser kept, quotes and all, so
+        `for i in $x` traces `$x` and not what it became. Dash traces
+        only the commands inside.
+*/
+static fn exec_trace_for_header(parse_node address_to node, bool selecting)
+{
+        if (!exec_trace_on() || !shell_bash_compat)
+                return;
+
+        exec_trace_ps4();
+        log_error(selecting ? (string_address) "select " : (string_address) "for ",
+                  selecting ? 7 : 4);
+        if (node->word_count)
+                log_error(parse_words[node->word],
+                          parse_word_lengths[node->word]);
+        if (node->flags)
+        {
+                log_error((string_address) " in", 3);
+                for (positive at = 1; at < node->word_count; at++)
+                {
+                        log_error((string_address) " ", 1);
+                        log_error(parse_words[node->word + at],
+                                  parse_word_lengths[node->word + at]);
+                }
+        }
+        else
+                log_error((string_address) " in \"$@\"", 8);
+        log_error((string_address) "\n", 1);
+}
+
+static fn exec_trace_case_header(parse_node address_to node)
+{
+        if (!exec_trace_on() || !shell_bash_compat)
+                return;
+
+        exec_trace_ps4();
+        log_error((string_address) "case ", 5);
+        if (node->word_count)
+                log_error(parse_words[node->word],
+                          parse_word_lengths[node->word]);
+        log_error((string_address) " in", 3);
         log_error((string_address) "\n", 1);
 }
 
@@ -7737,6 +7796,7 @@ static b32 exec_dispatch(b32 command_word)
         if (shell_restricted && string_first_of(name, '/'))
         {
                 shell_status = 1;
+                shell_diagnostic_where();
                 string_format(log_error,
                               "%s: restricted: cannot specify `/' in command "
                               "names\n", name);
@@ -8858,7 +8918,10 @@ static b32 exec_for(b32 index, bool selecting)
         if (!count)
                 goto done;
         if (selecting)
+        {
+                exec_trace_for_header(node, true);
                 select_menu_write(base, count);
+        }
 
         for (positive at = 0; selecting || at < (positive)count;)
         {
@@ -8907,7 +8970,10 @@ static b32 exec_for(b32 index, bool selecting)
                                        : (string_address)"";
                 }
                 else
+                {
                         value = exec_items[base + at++];
+                        exec_trace_for_header(node, false);
+                }
                 if (!env_assign(name, value))
                 {
                         status = exec_loop_assignment_error(name);
@@ -8952,7 +9018,8 @@ static bool exec_arithmetic_value(string_address text,
                 return true;
         }
 
-        string_format(log_error, "arithmetic: %s\n", ready);
+        if (!arith_unset)
+                string_format(log_error, "arithmetic: %s\n", ready);
         shell_store_rewind(address_of expand_store, mark);
         return false;
 }
@@ -9659,6 +9726,7 @@ static b32 exec_case(b32 index)
                 return exec_aborted(mark);
 
         subject = exec_arena_copy(subject);
+        exec_trace_case_header(node);
 
         /*
                 An item whose predecessor ended in ;& runs without being
