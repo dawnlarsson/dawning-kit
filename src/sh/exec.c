@@ -232,6 +232,27 @@ static bool exec_source_stop(b32 address_to startup_status)
 }
 
 /*
+        Dash applies errexit to every command in a sourced file, even when
+        the `.` itself is tested: bang, if, &&. `! . ./fails` with `false`
+        in the file still ends the script. Bash carries the tested flag in,
+        so the same line continues and inverts.
+*/
+static bool exec_source_tested_hold()
+{
+        bool kept = exec_tested;
+
+        if (!shell_bash_compat)
+                exec_tested = false;
+
+        return kept;
+}
+
+static fn exec_source_tested_restore(bool kept)
+{
+        exec_tested = kept;
+}
+
+/*
         One of the three conditions the executor raises itself.
 
         Run the way a caught signal's action is run and with the same care:
@@ -7918,13 +7939,16 @@ static COLD fn exec_return_bash()
         {
                 //      Bash says it cannot return from here, and quotes the
                 //      name while it does; under posix the refusal is
-                //      fatal, because return is a special builtin.
+                //      fatal, because return is a special builtin -- unless
+                //      the command is tested. Bang inverts `! return 3` to
+                //      zero and the script continues; if and && / || are
+                //      the same question.
                 shell_diagnostic_where();
                 log_error("return: can only `return' from a function or "
                           "sourced script\n", 0);
                 shell_status = 2;
 
-                if (shell_posix_on())
+                if (shell_posix_on() && !exec_tested)
                 {
                         shell_trap_exit();
                         log_flush();

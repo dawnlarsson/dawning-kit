@@ -372,6 +372,8 @@ COLD bool shell_reference_element(
     positive address_to base_length, const_string address_to subscript,
     positive address_to subscript_length);
 static bool exec_source_stop(b32 address_to startup_status);
+static bool exec_source_tested_hold();
+static fn exec_source_tested_restore(bool kept);
 bool shell_builtin(string_address arguments, positive2 named);
 string_address shell_arguments();
 fn shell_execute_command();
@@ -14742,9 +14744,11 @@ static b32 shell_source_execute(p8 address_to text, positive filled,
         lex_frame frame;
         positive at = 0;
         positive syntax = shell_syntax_generation;
+        bool kept_tested;
 
         lex_nest_enter(address_of frame);
         shell_source_depth++;
+        kept_tested = exec_source_tested_hold();
         while (at < filled)
         {
                 p8 address_to newline = (p8 address_to)memory_first_of(
@@ -14773,6 +14777,7 @@ static b32 shell_source_execute(p8 address_to text, positive filled,
         shell_source_depth--;
         exec_input_finish();
         lex_nest_leave(address_of frame);
+        exec_source_tested_restore(kept_tested);
 
         b32 failed = (b32)(shell_syntax_generation - syntax);
         shell_syntax_generation = syntax;
