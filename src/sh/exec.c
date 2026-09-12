@@ -6593,8 +6593,10 @@ static COLD PURE bool exec_trace_quoting(string_address word)
         A byte that cannot be written as itself.
 
         In the C locale that is every control character and every byte with
-        the high bit set. A word holding one is written in the $'...'
-        spelling, which is the only one that can carry it back.
+        the high bit set. Bash 5.2 still prefers ordinary single quotes when
+        a meta is present -- a newline and a tab live in quotes -- so $'...'
+        is only for a word whose unprintable bytes would otherwise stand
+        bare.
 */
 static COLD PURE bool exec_trace_unprintable(string_address word)
 {
@@ -6647,10 +6649,12 @@ static COLD fn exec_trace_ansi(string_address word)
         log_error(str("'"));
 }
 
-/* One word as Bash writes it: bare where it can be, in single quotes where
-   it cannot, in the $'...' spelling where a quote could not carry it, and a
-   bare pair of quotes where the word is empty. A quote inside a single-quoted
-   run closes the run, is written escaped, and opens the next. */
+/* One word as Bash 5.2 writes it: bare where it can be, in single quotes
+   where a meta requires quoting -- a newline and a tab among them -- in
+   the $'...' spelling only when an unprintable byte has no meta that would
+   have taken the other spelling, and a bare pair of quotes where the word
+   is empty. A quote inside a single-quoted run closes the run, is written
+   escaped, and opens the next. */
 static COLD fn exec_trace_word(string_address word)
 {
         string_address run;
@@ -6660,32 +6664,31 @@ static COLD fn exec_trace_word(string_address word)
                 log_error(str("''"));
                 return;
         }
+        if (exec_trace_quoting(word))
+        {
+                log_error(str("'"));
+                for (run = word; string_get(run);)
+                {
+                        string_address stop = run;
+
+                        while (string_get(stop) && string_get(stop) != '\'')
+                                stop++;
+                        if (stop != run)
+                                log_error(run, (positive)(stop - run));
+                        if (!string_get(stop))
+                                break;
+                        log_error(str("'\\''"));
+                        run = stop + 1;
+                }
+                log_error(str("'"));
+                return;
+        }
         if (exec_trace_unprintable(word))
         {
                 exec_trace_ansi(word);
                 return;
         }
-        if (!exec_trace_quoting(word))
-        {
-                log_error(word, 0);
-                return;
-        }
-
-        log_error(str("'"));
-        for (run = word; string_get(run);)
-        {
-                string_address stop = run;
-
-                while (string_get(stop) && string_get(stop) != '\'')
-                        stop++;
-                if (stop != run)
-                        log_error(run, (positive)(stop - run));
-                if (!string_get(stop))
-                        break;
-                log_error(str("'\\''"));
-                run = stop + 1;
-        }
-        log_error(str("'"));
+        log_error(word, 0);
 }
 
 /* NAME= then the value, quoted the way a word is. Bash never wraps the
@@ -6899,6 +6902,67 @@ static fn exec_trace_case_header(parse_node address_to node)
                           parse_word_lengths[node->word]);
         log_error((string_address) " in", 3);
         log_error((string_address) "\n", 1);
+}
+
+/*
+        (( )) as Bash writes it: the inside between `(( ' and ` ))',
+        spaces that were in the source kept. The closing pair was taken
+        off for the evaluator, so what is handed here is already the
+        inside.
+*/
+static fn exec_trace_arith(string_address inner)
+{
+        if (!exec_trace_on() || !shell_bash_compat)
+                return;
+
+        exec_trace_ps4();
+        log_error(str("(( "));
+        log_error(inner, 0);
+        log_error(str(" ))\n"));
+}
+
+/*
+        One [[ ]] term as Bash writes it.
+
+        && and || are not printed: each unary or binary term that actually
+        runs is a line of its own, operands already expanded, empty ones a
+        pair of quotes, and everything else as it stands. A `!' that belongs
+        to this term is written; one that inverted a parenthesised group is
+        not, because that invert lives on the group and not on the term.
+*/
+static fn exec_trace_conditional_operand(string_address word)
+{
+        if (!word || !string_get(word))
+                log_error(str("''"));
+        else
+                log_error(word, 0);
+}
+
+static fn exec_trace_conditional_term(bool invert, string_address left,
+                                     string_address op, string_address right)
+{
+        if (!exec_trace_on() || !shell_bash_compat)
+                return;
+
+        exec_trace_ps4();
+        log_error(str("[[ "));
+        if (invert)
+                log_error(str("! "));
+        if (!right)
+        {
+                log_error(op, 0);
+                log_error((string_address) " ", 1);
+                exec_trace_conditional_operand(left);
+        }
+        else
+        {
+                exec_trace_conditional_operand(left);
+                log_error((string_address) " ", 1);
+                log_error(op, 0);
+                log_error((string_address) " ", 1);
+                exec_trace_conditional_operand(right);
+        }
+        log_error(str(" ]]\n"));
 }
 
 /*
@@ -9361,6 +9425,8 @@ static b32 exec_arithmetic_command(b32 index)
         if (!exec_bracket_strip(whole, address_of length, address_of held))
                 return 1;
 
+        exec_trace_arith(whole + 2);
+
         if (!string_get(whole + 2 + string_span_of_set(whole + 2, " \t\n")))
                 status = 1;
         else if (!exec_arithmetic_value(whole + 2, address_of value, "(("))
@@ -9795,7 +9861,7 @@ static PURE bool conditional_unary_operand(string_address word)
                !word_is(word, "(") && !word_is(word, ")");
 }
 
-static bool conditional_primary()
+static bool conditional_primary(bool invert)
 {
         string_address raw;
 
@@ -9847,6 +9913,8 @@ static bool conditional_primary()
 
                 if (expand_failed)
                         return false;
+
+                exec_trace_conditional_term(invert, operand, raw, null);
 
                 if (word_is(raw, "-a"))
                         return test_unary('e', operand);
@@ -9944,6 +10012,8 @@ static bool conditional_primary()
                         if (expand_failed)
                                 return false;
 
+                        exec_trace_conditional_term(invert, left, op, right);
+
                         value = conditional_regex_match(left, right,
                                                         address_of valid);
 
@@ -9968,6 +10038,8 @@ static bool conditional_primary()
 
                         if (expand_failed)
                                 return false;
+
+                        exec_trace_conditional_term(invert, left, op, right);
 
                         if (pattern)
                         {
@@ -10006,18 +10078,25 @@ static bool conditional_primary()
                 return false;
 
         raw = conditional_expand(raw, false);
-        return !expand_failed && string_get(raw) != end;
+        if (expand_failed)
+                return false;
+
+        exec_trace_conditional_term(invert, raw, (string_address) "-n", null);
+        return string_get(raw) != end;
 }
 
 static bool conditional_negation()
 {
-        if (conditional_is("!"))
+        bool invert = false;
+
+        while (conditional_is("!"))
         {
                 conditional_at++;
-                return !conditional_negation();
+                invert = !invert;
         }
 
-        return conditional_primary();
+        bool value = conditional_primary(invert);
+        return invert ? !value : value;
 }
 
 #define CONDITIONAL_LOGICAL_LEVEL(name, lower, spelling, wanted, operation)  \
