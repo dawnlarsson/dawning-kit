@@ -15288,6 +15288,7 @@ static positive shell_wait_count;
 #define SHELL_WAIT_LAST 2
 #define SHELL_WAIT_PIPEFAIL 4
 #define SHELL_WAIT_INVERT 8
+#define SHELL_WAIT_TOLD 16
 
 static PURE positive shell_wait_find_job(bipolar job)
 {
@@ -15407,12 +15408,14 @@ static COLD fn shell_wait_not_child(bipolar job)
 /* One job, waited. forget is what POSIX requires of a successful wait, and
    what wait with no operands does: the row is dropped. Bash without posix,
    and dash, leave it, so wait "$p" twice still answers. */
-static b32 shell_wait_one(bipolar job, bool address_to interrupted, bool forget)
+static b32 shell_wait_one(bipolar job, bool address_to interrupted, bool forget,
+                          bool foreground)
 {
         positive first = shell_wait_find_job(job);
         b32 status = 0;
         b32 rightmost_failure = 0;
         positive job_flags;
+        shell_wait_entry address_to last_entry = null;
 
         address_to interrupted = false;
 
@@ -15464,7 +15467,17 @@ static b32 shell_wait_one(bipolar job, bool address_to interrupted, bool forget)
                 if (code)
                         rightmost_failure = code;
                 if (entry->flags & SHELL_WAIT_LAST)
+                {
                         status = code;
+                        last_entry = entry;
+                }
+        }
+
+        if (last_entry && !(last_entry->flags & SHELL_WAIT_TOLD))
+        {
+                last_entry->flags |= SHELL_WAIT_TOLD;
+                shell_child_death(last_entry->pid, last_entry->status,
+                                  foreground);
         }
 
         if ((job_flags & SHELL_WAIT_PIPEFAIL) && rightmost_failure)
@@ -15491,7 +15504,8 @@ COLD fn shell_wait(writer write, string_address input)
                         bool interrupted;
 
                         answer = shell_wait_one(shell_wait_table[0].job,
-                                                address_of interrupted, true);
+                                                address_of interrupted, true,
+                                                false);
                         if (interrupted)
                                 return shell_answer(answer);
                 }
@@ -15511,7 +15525,7 @@ COLD fn shell_wait(writer write, string_address input)
 
                 answer = shell_wait_one((bipolar)pid,
                                         address_of interrupted,
-                                        shell_posix_on());
+                                        shell_posix_on(), false);
 
                 if (interrupted)
                         break;

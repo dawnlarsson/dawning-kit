@@ -3880,6 +3880,13 @@ static fn expand_run(string_address command, bool quoted)
 
         if (child > 0)
         {
+                /* A substitution that went through a child shell already
+                   wrote this line there. A direct spawn has no such child,
+                   and dash still names the signal the way lima 0.5.x does.
+                   Bash keeps substitutions silent. */
+                if (!shell_bash_compat)
+                        shell_child_death(child, status, true);
+
                 shell_substitution_status = wait_status_code(status);
                 shell_substitution_generation++;
                 if (shell_bash_compat)

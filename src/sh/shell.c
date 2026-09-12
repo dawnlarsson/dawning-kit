@@ -719,6 +719,7 @@ fn exec_function_import_environment(string_address address_to environment);
 #include "process_tools.c"
 #include "monitor.c"
 #include "net.c"
+fn shell_child_death(bipolar child, positive raw, bool foreground);
 #include "expand.c"
 #include "../canvas/window.c"
 #include "term.c"
@@ -1188,6 +1189,7 @@ fn shell_execute_command()
         {
                 positive status = 0;
                 system_wait4_retry(child, address_of status, 0, null);
+                shell_child_death(child, status, true);
                 shell_status = wait_status_code(status);
 
                 /*

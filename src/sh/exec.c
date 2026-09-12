@@ -77,6 +77,9 @@ static bool exec_child_process()
         written on rather than the line that called it.
 */
 static b32 exec_line;
+static b32 exec_wait_node;
+static bool exec_lastpipe_live;
+static positive exec_compound_depth;
 
 fn shell_trap_exit();
 fn exec_traps();
@@ -443,6 +446,7 @@ static p8 exec_nothing[1];
 // Where the status word sits in a listing, which is bash's column and not a
 // number of this shell's choosing: a person reads the two side by side.
 #define JOB_STATUS_WIDTH 27
+#define JOB_SIGNAL_DESC_WIDTH 24
 
 typedef struct
 {
@@ -1239,6 +1243,172 @@ static positive job_signal_named(positive number, p8 address_to into)
         positive_into_string(into + 7, number);
 
         return string_length(into);
+}
+
+/*
+        When a child dies of a signal, the line a person reads on stderr.
+
+        Dash writes the C library's word and a newline, except interrupt and
+        a broken pipe, which stay silent. A wait, a pipeline, a substitution
+        and a foreground command all share that one sentence.
+
+        Bash writes the same word for a foreground SIGTERM. A script's other
+        reported deaths are `name: line N: PID word` padded to the jobs
+        column, then the command. Interrupt and a broken pipe stay silent,
+        a substitution stays silent, and a background SIGTERM stays silent.
+        A posix `-c` command string is silent too: lima 5.2.32 prints the
+        same deaths from a posix script file, and stays quiet once posix
+        is on for a `-c` invocation.
+
+        lastpipe freezes bash's jobs list while the last stage runs, so a
+        death inside `if` / `{ }` / a loop is not written until that
+        compound has restored its redirections. The line then lands after
+        `else` rather than in `2>/dev/null`.
+*/
+static string_address job_death_command(bipolar child)
+{
+        positive at = job_find((positive)child, true);
+
+        if (at < job_count && job_table[at].text)
+                return (string_address)job_table[at].text;
+
+        if (exec_wait_node)
+        {
+                static p8 address_to text;
+                static positive room;
+
+                job_text_node(address_of text, address_of room, 0, exec_wait_node,
+                              0);
+                return text ? (string_address)text : (string_address) "";
+        }
+
+        return (string_address) "";
+}
+
+static fn job_death_short(positive number, bool dumped)
+{
+        p8 name[64];
+        positive length = job_signal_named(number, name);
+
+        log_error(name, length);
+
+        if (dumped)
+                log_error(str(" (core dumped)"));
+
+        log_error(str("\n"));
+}
+
+static fn job_death_long(bipolar child, positive number, bool dumped,
+                         string_address command)
+{
+        p8 name[64];
+        p8 digits[32];
+        positive length = job_signal_named(number, name);
+        positive width = positive_into_string(digits, (positive)child);
+
+        name[length] = end;
+        digits[width] = end;
+        shell_diagnostic_where();
+        string_to_field(log_error, digits, width < 5 ? 5 : width, ' ', false);
+        log_error(str(" "));
+        string_to_field(log_error, name, JOB_SIGNAL_DESC_WIDTH, ' ', true);
+
+        if (dumped)
+                log_error(str("(core dumped) "));
+
+        if (command)
+                log_error(command, string_length(command));
+
+        log_error(str("\n"));
+}
+
+#define CHILD_DEATH_QUEUE 4
+
+static struct
+{
+        bipolar child;
+        positive raw;
+        bool foreground;
+} child_death_queue[CHILD_DEATH_QUEUE];
+static positive child_death_queued;
+
+static fn job_death_write(bipolar child, positive raw, bool foreground)
+{
+        positive number = raw & 0x7f;
+        bool dumped = (raw & 0x80) != 0;
+
+        if (shell_bash_compat)
+        {
+                bool listed = !shell_is_interactive &&
+                              trap_action(number) == null && number != SIGTERM;
+
+                if (!listed && !foreground)
+                        return;
+
+                if (listed)
+                        job_death_long(child, number, dumped,
+                                       job_death_command(child));
+                else
+                        job_death_short(number, dumped);
+        }
+        else
+                job_death_short(number, dumped);
+
+        log_flush();
+}
+
+static fn shell_child_death_flush()
+{
+        positive at;
+
+        for (at = 0; at < child_death_queued; at++)
+                job_death_write(child_death_queue[at].child,
+                                child_death_queue[at].raw,
+                                child_death_queue[at].foreground);
+
+        child_death_queued = 0;
+}
+
+fn shell_child_death(bipolar child, positive raw, bool foreground)
+{
+        positive number;
+
+        if (child <= 0 || !(raw & 0x7f) || (raw & 0xff) == 0x7f)
+                return;
+
+        number = raw & 0x7f;
+
+        if (number == SIGNAL_INTERRUPT || number == SIGNAL_PIPE)
+                return;
+
+        if (shell_bash_compat)
+        {
+                if (shell_posix_on() && string_is(shell_option_flags, 'c'))
+                        return;
+
+                if (expand_in_substitution)
+                        return;
+
+                if (!foreground && shell_is_interactive)
+                        return;
+
+                if (exec_lastpipe_live && exec_compound_depth)
+                {
+                        if (child_death_queued < CHILD_DEATH_QUEUE)
+                        {
+                                child_death_queue[child_death_queued].child =
+                                    child;
+                                child_death_queue[child_death_queued].raw = raw;
+                                child_death_queue[child_death_queued]
+                                    .foreground = foreground;
+                                child_death_queued++;
+                        }
+
+                        return;
+                }
+        }
+
+        job_death_write(child, raw, foreground);
 }
 
 /*
@@ -2163,7 +2333,8 @@ static b32 job_wait_foreground(positive number)
         {
                 bool interrupted;
 
-                status = shell_wait_one(last, address_of interrupted, true);
+                status = shell_wait_one(last, address_of interrupted, true,
+                                        true);
                 at = job_find(number, false);
 
                 if (at < job_count)
@@ -2226,7 +2397,13 @@ static b32 job_foreground_wait(bipolar child, bipolar group, b32 node)
         job_terminal_give(job_shell_group);
 
         if ((raw & 0xff) != 0x7f)
+        {
+                if (node > 0)
+                        exec_wait_node = node;
+
+                shell_child_death(child, raw, true);
                 return wait_status_code(raw);
+        }
 
         stopped_by = (raw >> 8) & 0xff;
         answer = 128 + (b32)stopped_by;
@@ -2481,7 +2658,7 @@ static b32 job_wait_job(positive found, string_address into,
         if (into)
                 env_set_number(into, (positive)last);
 
-        answer = shell_wait_one(last, interrupted, forget);
+        answer = shell_wait_one(last, interrupted, forget, false);
         found = job_find(last, true);
 
         if (found < job_count)
@@ -2718,7 +2895,8 @@ fn job_wait(writer write, string_address input)
 
                                 answer = shell_wait_one((bipolar)pid,
                                                         address_of interrupted,
-                                                        shell_posix_on());
+                                                        shell_posix_on(),
+                                                        false);
                                 job_prune();
 
                                 if (interrupted)
@@ -8831,6 +9009,7 @@ static b32 exec_simple(b32 index)
         // The line this command was written on, which caller and $LINENO
         // answer with for as long as it runs.
         exec_line = node->line;
+        exec_wait_node = index;
         token_used = 0;
         token_overflow = false;
         // With no command name, POSIX makes the command's status that of the
@@ -10766,17 +10945,30 @@ static b32 exec_if(b32 index)
         return 0;
 }
 
-static b32 exec_child_status(bipolar child)
+static b32 exec_wait_status(bipolar child, positive flags,
+                            positive address_to raw)
 {
-        positive state = 0;
+        address_to raw = 0;
 
         if (child < 0)
                 return 1;
 
-        if (system_wait4_retry(child, address_of state, 0, null) < 0)
+        if (system_wait4_retry(child, raw, flags, null) < 0)
                 return 1;
 
-        return wait_status_code(state);
+        if ((address_to raw & 0xff) == 0x7f)
+                return 128 + (b32)((address_to raw >> 8) & 0xff);
+
+        return wait_status_code(address_to raw);
+}
+
+static b32 exec_child_status(bipolar child)
+{
+        positive state = 0;
+        b32 code = exec_wait_status(child, 0, address_of state);
+
+        shell_child_death(child, state, true);
+        return code;
 }
 
 /* Async commands inherit the interactive shell's ignored INT/QUIT state and,
@@ -11335,7 +11527,9 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
                         upstream = -1;
                         shell_tail_command = false;
+                        exec_lastpipe_live = true;
                         lastpipe_status = exec_node(child);
+                        exec_lastpipe_live = false;
                         shell_tail_command = tail;
                         lastpipe_ran = true;
                         child = parse_nodes[child].next;
@@ -11427,7 +11621,10 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         }
 
         if (lastpipe)
+        {
+                exec_lastpipe_live = true;
                 exec_redirect_restore(lastpipe_mark);
+        }
 
         if (upstream >= 0)
                 system_close(upstream);
@@ -11446,6 +11643,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
                 memory_free(children,
                             children_room * sizeof(children[0]));
+                exec_lastpipe_live = false;
                 return status;
         }
 
@@ -11471,11 +11669,10 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         for (at = 0; at < started; at++)
         {
                 b32 got;
+                positive raw = 0;
 
                 if (monitor)
                 {
-                        positive raw = 0;
-
                         if (system_wait4_retry(children[at], address_of raw,
                                                JOB_UNTRACED, null) < 0)
                                 got = 1;
@@ -11489,13 +11686,29 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                                 got = wait_status_code(raw);
                 }
                 else
-                        got = exec_child_status(children[at]);
+                        got = exec_wait_status(children[at], 0, address_of raw);
 
                 if (got)
                         rightmost_failure = got;
 
                 if (at + 1 == started)
+                {
+                        b32 stage = first;
+                        positive step = 0;
+
                         status = got;
+
+                        while (stage && step < at)
+                        {
+                                stage = parse_nodes[stage].next;
+                                step++;
+                        }
+
+                        if (stage)
+                                exec_wait_node = stage;
+
+                        shell_child_death(children[at], raw, true);
+                }
 
                 // Every stage's answer, in the order they were written
                 // in. The child ids are not wanted for anything else once
@@ -11533,6 +11746,8 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
                 memory_free(children, children_room * sizeof(children[0]));
 
+                exec_lastpipe_live = false;
+
                 if (slot >= job_count)
                         return 128 + (b32)stopped_by;
 
@@ -11558,6 +11773,8 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         }
 
         memory_free(children, children_room * sizeof(children[0]));
+
+        exec_lastpipe_live = false;
 
         return status;
 }
@@ -12223,6 +12440,8 @@ static b32 exec_node_kind(b32 index)
                 return shell_status;
         }
 
+        exec_compound_depth++;
+
         if (node->kind == NODE_ARITHMETIC)
                 status = exec_arithmetic_command(index);
         else if (node->kind == NODE_CONDITIONAL)
@@ -12253,7 +12472,12 @@ static b32 exec_node_kind(b32 index)
         else
                 status = exec_node(node->left);
 
+        exec_compound_depth--;
+
         exec_redirect_restore(mark);
+
+        if (shell_bash_compat && exec_compound_depth == 0)
+                shell_child_death_flush();
         /* lima bash 5.2 leaves process-substitution write ends open after a
            brace group. `>(sed > file)` has not seen EOF, so a later cat of
            that file is still empty; the writer finishes when this shell
