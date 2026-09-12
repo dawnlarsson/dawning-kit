@@ -3308,12 +3308,20 @@ static string_address expand_dollar_quoted_run(string_address at)
         Quote-aware closer. A dollar-single, a backslash, or a quoted run
         can hide the bracket that would otherwise close, and a POSIX
         double-quoted ${#/%} keeps a single quote as a byte.
+
+        `${...}` ends at the first unquoted `}`. A nested brace list is
+        bytes of the word, not another expansion, so `{a,b}` does not
+        raise the depth. Nested `${`, `$( )`, process substitution and
+        backticks still hide a `}` of their own. `$( )` / `$(( ))` keep
+        counting parentheses.
 */
 static COLD PURE string_address expand_bracket_end_quoted(string_address at,
                                                          p8 open, p8 close,
-                                                         bool posix_double)
+                                                         bool posix_double,
+                                                         bool parameter)
 {
         positive depth = 1;
+        bool dollar_brace = parameter && open == '{';
         bool raw_single = posix_double && open == '{' && shell_posix_on() &&
                           !lex_parameter_pattern(at);
 
@@ -3324,6 +3332,55 @@ static COLD PURE string_address expand_bracket_end_quoted(string_address at,
                 if (value == '$' && string_is(at + 1, '\''))
                 {
                         at = expand_dollar_quoted_run(at);
+                        continue;
+                }
+
+                if (dollar_brace && value == '$' &&
+                    (string_is(at + 1, '(') || string_is(at + 1, '{')))
+                {
+                        if (string_is(at + 1, '{'))
+                        {
+                                depth++;
+                                at += 2;
+                                continue;
+                        }
+
+                        {
+                                string_address stop = expand_bracket_end_quoted(
+                                    at + 2, '(', ')', false, false);
+
+                                if (!stop)
+                                        return null;
+                                at = stop + 1;
+                                continue;
+                        }
+                }
+
+                if (dollar_brace && (value == '<' || value == '>') &&
+                    string_is(at + 1, '('))
+                {
+                        string_address stop = expand_bracket_end_quoted(
+                            at + 2, '(', ')', false, false);
+
+                        if (!stop)
+                                return null;
+                        at = stop + 1;
+                        continue;
+                }
+
+                if (dollar_brace && value == '`')
+                {
+                        at++;
+                        while (string_get(at) && string_get(at) != '`')
+                        {
+                                if (string_is(at, '\\') && string_get(at + 1))
+                                        at += 2;
+                                else
+                                        at++;
+                        }
+                        if (!string_get(at))
+                                return null;
+                        at++;
                         continue;
                 }
 
@@ -3345,7 +3402,7 @@ static COLD PURE string_address expand_bracket_end_quoted(string_address at,
                         continue;
                 }
 
-                if (value == open)
+                if (value == open && !dollar_brace)
                         depth++;
 
                 if (value == close && !--depth)
@@ -3361,12 +3418,15 @@ static COLD PURE string_address expand_bracket_end_quoted(string_address at,
         $((i + 1)) and ${x#?} have none of those. Count open and close until
         the matching bracket; a quote, a backslash or a dollar starts the
         walker above again from the front, so nested depth is not lost.
+        A parameter closer does not count a bare `{`.
 */
 static inline INLINE HOT PURE string_address expand_bracket_end_mode(
-        string_address at, p8 open, p8 close, bool posix_double)
+        string_address at, p8 open, p8 close, bool posix_double,
+        bool parameter)
 {
         string_address start = at;
         positive depth = 1;
+        bool dollar_brace = parameter && open == '{';
 
         while (1)
         {
@@ -3380,10 +3440,15 @@ static inline INLINE HOT PURE string_address expand_bracket_end_mode(
                 else if (!value)
                         return null;
                 else if (value == '\'' || value == '"' || value == '\\' ||
-                         value == '$')
+                         value == '$' ||
+                         (dollar_brace &&
+                          (value == '`' ||
+                           ((value == '<' || value == '>') &&
+                            string_is(at + 1, '(')))))
                         return expand_bracket_end_quoted(start, open, close,
-                                                        posix_double);
-                else if (value == open)
+                                                        posix_double,
+                                                        parameter);
+                else if (value == open && !dollar_brace)
                         depth++;
 
                 at++;
@@ -3393,13 +3458,15 @@ static inline INLINE HOT PURE string_address expand_bracket_end_mode(
 static PURE string_address expand_bracket_end(string_address at, p8 open,
                                               p8 close)
 {
-        return expand_bracket_end_mode(at, open, close, false);
+        return expand_bracket_end_mode(at, open, close, false, false);
 }
 
 #define expand_paren_end(at) \
-        expand_bracket_end_mode((at), '(', ')', false)
+        expand_bracket_end_mode((at), '(', ')', false, false)
 #define expand_brace_end(at) \
-        expand_bracket_end_mode((at), '{', '}', false)
+        expand_bracket_end_mode((at), '{', '}', false, false)
+#define expand_parameter_end(at, posix_double) \
+        expand_bracket_end_mode((at), '{', '}', (posix_double), true)
 
 /*
         Whether this process is a substitution's child.
@@ -4028,6 +4095,27 @@ static COLD fn expand_fatal_status(b32 status)
         system_call_1(syscall(exit_group), status);
 }
 
+/*
+        Arithmetic expansion $(( )) that cannot produce a word.
+
+        Dash and bash --posix end the process: 2, or the nounset -c
+        status (127 at the top of bash --posix -c). let and (( )) are
+        commands and keep their recoverable status. Bash without posix
+        reuses a bad slice's unwind -- the family scripts `exec 2>/dev/null`
+        before the word, and that personality continues with status 1.
+        Interactive shells recover at the next line either way.
+*/
+static COLD fn expand_arithmetic_error()
+{
+        if (shell_bash_compat && !shell_posix_on())
+        {
+                expand_slice_error();
+                return;
+        }
+
+        expand_fatal_status(expand_nounset_status(false));
+}
+
 static HOT string_address expand_arithmetic_finish(string_address ready,
                                                    string_address stop,
                                                    bool quoted)
@@ -4048,14 +4136,11 @@ static HOT string_address expand_arithmetic_finish(string_address ready,
                 if (arith_bad)
                 {
                         if (!arith_unset)
+                        {
                                 shell_arith_report(writer_stderr_once, null,
                                                    ready);
-                        /*      The same status a bad slice subscript takes.
-                                Both are an expansion that could not produce a
-                                word, both end the line, and bash answers 1
-                                for either while a posix shell answers 2. This
-                                said 2 in both personalities. */
-                        expand_slice_error();
+                                expand_arithmetic_error();
+                        }
 
                         return stop + 2;
                 }
@@ -4072,7 +4157,8 @@ static COLD string_address expand_arithmetic_complex(string_address step,
                                                      bool quoted)
 {
         string_address inner = step + 3;
-        string_address stop = expand_bracket_end_quoted(inner, '(', ')', false);
+        string_address stop = expand_bracket_end_quoted(inner, '(', ')', false,
+                                                       false);
         p8 text_local[EXPAND_LOCAL_TEXT];
         string_address text;
         positive length;
@@ -5771,10 +5857,11 @@ static HOT __attribute__((noinline)) string_address expand_braced(
                 }
 
                 if (value == '{' || value == '\'' || value == '"' ||
-                    value == '\\' || value == '$')
+                    value == '\\' || value == '$' || value == '`')
                 {
                         close = expand_bracket_end_quoted(
-                            inner, '{', '}', quoted && shell_posix_on());
+                            inner, '{', '}', quoted && shell_posix_on(),
+                            true);
                         if (!close)
                         {
                                 expand_push('$', MARK_PLAIN);
@@ -7847,7 +7934,7 @@ static positive shell_expand_braces(string_address word,
 
                 if (string_is(open, '$') && string_is(open + 1, '{'))
                 {
-                        close = expand_brace_end(open + 2);
+                        close = expand_parameter_end(open + 2, false);
                         open = close ? close + 1 : open + 1;
                         continue;
                 }
@@ -8151,8 +8238,10 @@ static string_address expand_assignment_arithmetic(string_address word,
         if (arith_bad)
         {
                 if (!arith_unset)
+                {
                         shell_arith_report(writer_stderr_once, null, ready);
-                expand_slice_error();
+                        expand_arithmetic_error();
+                }
                 return (string_address) "";
         }
 

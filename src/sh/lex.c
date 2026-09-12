@@ -901,12 +901,17 @@ static string_address lex_nesting_at(string_address at, positive nesting,
 
                 // A backtick pair has the same byte at both ends, so it
                 // opens on the first one and closes on the next.
+                // `${...}` ends at the first unquoted `}`: nested
+                // substitutions are walked above, and a bare `{` is not
+                // another expansion. The opening brace still counts
+                // (depth is 0 only on that first byte). Parentheses in
+                // `$( )` / `$(( ))` keep nesting.
                 if (open == close)
                 {
                         if (c == open)
                                 depth = depth ? 0 : 1;
                 }
-                else if (c == open)
+                else if (c == open && !(open == '{' && depth))
                         depth++;
                 else if (c == close)
                         depth--;
