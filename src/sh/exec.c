@@ -306,6 +306,66 @@ static PURE bool exec_condition_reaches(positive option)
                shell_extra_on(option);
 }
 
+/*
+        DEBUG without functrace also stays out of a sourced file: the trap
+        belongs to the script that set it, not to every library `.` pulls
+        in. RETURN after `.` still uses the looser test above, because a
+        sourced file is itself a return boundary even when functrace is off.
+*/
+static PURE bool exec_debug_reaches()
+{
+        return (!exec_function_depth && !exec_forked && !shell_dot_depth) ||
+               shell_extra_on(SHELL_EXTRA_FUNCTRACE);
+}
+
+/*
+        What $BASH_COMMAND answers: the simple command about to run, in the
+        words it was written in. DEBUG reads it before those words expand,
+        and the trap action itself must not replace it.
+*/
+static p8 exec_bash_command[256];
+
+static COLD string_address exec_bash_command_value(positive address_to value_length)
+{
+        if (value_length)
+                *value_length = string_length(exec_bash_command);
+
+        return exec_bash_command;
+}
+
+static COLD fn exec_bash_command_from(parse_node address_to node)
+{
+        positive used = 0;
+        b32 at;
+
+        for (at = 0; at < node->word_count; at++)
+        {
+                b32 word = node->word + at;
+                string_address text = parse_words[word];
+                positive length = parse_word_lengths[word];
+
+                if (used && used + 1 < sizeof(exec_bash_command))
+                        exec_bash_command[used++] = ' ';
+
+                if (length > sizeof(exec_bash_command) - 1 - used)
+                        length = sizeof(exec_bash_command) - 1 - used;
+
+                if (length)
+                {
+                        memory_copy(exec_bash_command + used, text, length);
+                        used += length;
+                }
+        }
+
+        exec_bash_command[used] = end;
+}
+
+static COLD fn exec_source_return_trap()
+{
+        if (trap_return_here && exec_condition_reaches(SHELL_EXTRA_FUNCTRACE))
+                exec_trap_condition(TRAP_RETURN);
+}
+
 static fn exec_errexit(b32 status)
 {
         if (exec_line_aborted() || !status || exec_tested)
@@ -11658,9 +11718,12 @@ static b32 exec_node_kind(b32 index)
         {
                 // Before the words are expanded, which is where Bash runs it
                 // and the only place the action can use argv of its own.
-                if (trap_debug_here &&
-                    exec_condition_reaches(SHELL_EXTRA_FUNCTRACE))
+                if (trap_debug_here && !exec_condition_inside &&
+                    exec_debug_reaches())
+                {
+                        exec_bash_command_from(node);
                         exec_trap_condition(TRAP_DEBUG);
+                }
 
                 bool expand_scratch = node->redirect_count != 0;
                 b32 word_at = node->word;

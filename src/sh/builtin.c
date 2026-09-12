@@ -374,6 +374,8 @@ COLD bool shell_reference_element(
 static bool exec_source_stop(b32 address_to startup_status);
 static bool exec_source_tested_hold();
 static fn exec_source_tested_restore(bool kept);
+static string_address exec_bash_command_value(positive address_to value_length);
+static fn exec_source_return_trap();
 bool shell_builtin(string_address arguments, positive2 named);
 string_address shell_arguments();
 fn shell_execute_command();
@@ -3624,6 +3626,10 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
                 break;
 
         case 12:
+                if (shell_bash_compat &&
+                    !memory_compare((address_any)text, "BASH_COMMAND", 12))
+                        return exec_bash_command_value(value_length);
+
                 if (shell_bash_compat &&
                     !memory_compare((address_any)text, "BASH_VERSION", 12))
                         return shell_dynamic_said("5.3.15(1)-release",
@@ -14621,6 +14627,11 @@ static bool shell_path_wanted(string_address value, positive name_length,
 }
 
 static positive shell_source_depth;
+// `.` / source, and not the main script: DEBUG without functrace stays
+// out of a file the script pulled in, the same way it stays out of a
+// function. RETURN after that file is a separate question, asked once
+// the builtin has finished.
+static positive shell_dot_depth;
 
 static bipolar shell_source_direct(string_address name)
 {
@@ -14914,7 +14925,10 @@ COLD fn shell_dot(writer write, string_address input)
                    direct invocation. That distinction is essential here:
                    `command . missing` must report failure and continue. */
                 exec_special_error_note();
-                return shell_answer(shell_bash_compat ? 1 : 2);
+                shell_answer(shell_bash_compat ? 1 : 2);
+                if (shell_bash_compat)
+                        exec_source_return_trap();
+                return;
         }
 
         filled = (positive)got;
@@ -14983,7 +14997,9 @@ COLD fn shell_dot(writer write, string_address input)
                 else
                         shell_syntax_command = named;
 
+                shell_dot_depth++;
                 syntax = shell_source_execute(source_text, filled, false);
+                shell_dot_depth--;
 
                 shell_syntax_file = saved_file;
                 shell_syntax_command = saved_command;
@@ -15016,6 +15032,8 @@ COLD fn shell_dot(writer write, string_address input)
 
         // The status of the last line it ran, which is already there.
         shell_answer(shell_status);
+        if (shell_bash_compat)
+                exec_source_return_trap();
 }
 
 /* A background job remains known after the kernel has reaped it. POSIX lets a
