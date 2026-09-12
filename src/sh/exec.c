@@ -445,7 +445,7 @@ static p8 exec_nothing[1];
 
 // Where the status word sits in a listing, which is bash's column and not a
 // number of this shell's choosing: a person reads the two side by side.
-#define JOB_STATUS_WIDTH 27
+#define JOB_STATUS_WIDTH 24
 #define JOB_SIGNAL_DESC_WIDTH 24
 
 typedef struct
@@ -605,10 +605,40 @@ static fn job_monitor_stop()
         job_terminal = -1;
 }
 
+/* Dash will not turn the monitor on without a controlling terminal.
+   /dev/tty is that question: stdin being a pipe is not enough, and
+   neither is stderr. lima 0.5.x says so and leaves `m` off, status 0. */
+static bool job_tty_reachable()
+{
+        bipolar handle = system_open_at(AT_FDCWD, "/dev/tty", FILE_READ_WRITE);
+
+        if (handle < 0)
+                return false;
+
+        system_close(handle);
+        return true;
+}
+
 fn job_monitor_told(bool on)
 {
         if (on)
+        {
+                if (!shell_bash_compat && !job_tty_reachable())
+                {
+                        shell_diagnostic_where();
+                        if (shell_argv && shell_argv[0] &&
+                            string_equals(shell_argv[0], "set"))
+                                string_format(log_error,
+                                    "set: can't access tty; job control turned off\n");
+                        else
+                                string_format(log_error,
+                                    "can't access tty; job control turned off\n");
+                        shell_options &= ~SHELL_FLAG('m');
+                        return;
+                }
+
                 job_monitor_start();
+        }
         else
                 job_monitor_stop();
 }
@@ -907,7 +937,10 @@ static positive job_started(bipolar address_to children, positive count,
         entry->state = JOB_RUNNING;
         entry->status = 0;
         entry->stopped_by = 0;
-        entry->reported = true;
+        /* New jobs are news for `jobs -n`. Interactive job_report still
+           stays quiet about a running one: that was already announced by
+           the `&` line. */
+        entry->reported = false;
         entry->background = background;
         entry->nohup = false;
         entry->text = null;
@@ -1109,16 +1142,33 @@ static fn job_child_changed(bipolar pid, positive status)
         if (at < job_count)
                 job_table[at].status = status;
 
-        for (at = 0; at < job_count; at++)
+        for (at = 0; at < job_count;)
         {
                 job_entry address_to entry = job_table + at;
 
                 if (entry->state == JOB_FINISHED || !job_rows(entry->last) ||
                     job_running_children(entry->last))
+                {
+                        at++;
                         continue;
+                }
 
                 entry->state = JOB_FINISHED;
                 entry->reported = false;
+
+                /* Bash with a monitor writes a SIGKILL death on stderr
+                   and forgets the row, so `jobs` after `kill -KILL %1`
+                   is empty. Terminated jobs stay in the table for the
+                   next `jobs`. The wait table stays either way. */
+                if (shell_bash_compat && !shell_posix_on() && job_monitor() &&
+                    (entry->status & 0x7f) == 9)
+                {
+                        shell_child_death(entry->last, entry->status, false);
+                        job_drop_at(at);
+                        continue;
+                }
+
+                at++;
         }
 }
 
@@ -1481,6 +1531,20 @@ static fn job_status_text(job_entry address_to entry, bool detailed,
                 return;
         }
 
+        /* Dash and bash --posix write Done(7) against bash's Exit 7.
+           The parentheses are the whole of the difference. */
+        if (shell_dash_columns() || shell_posix_on())
+        {
+                positive at;
+
+                string_copy(into, "Done(");
+                positive_into_string(into + 5, code);
+                at = string_length(into);
+                into[at] = ')';
+                into[at + 1] = 0;
+                return;
+        }
+
         string_copy(into, "Exit ");
         positive_into_string(into + 5, code);
 }
@@ -1535,6 +1599,12 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
                                           : (string_address) "";
         bool ampersand = !shell_dash_columns() &&
                          entry->state == JOB_RUNNING && entry->background;
+
+        /* Without job control dash still numbers background children, but
+           the listing is the status column only: lima 0.5.x writes no
+           command text until `set -m` has actually taken a terminal. */
+        if (shell_dash_columns() && !shell_option_on(SHELL_OPTION_MONITOR))
+                text = (string_address) "";
 
         if (shell_dash_columns())
         {
@@ -1662,7 +1732,7 @@ fn job_report()
         {
                 job_entry address_to entry = job_table + at;
 
-                if (entry->reported)
+                if (entry->reported || entry->state == JOB_RUNNING)
                 {
                         at++;
                         continue;
@@ -1728,8 +1798,12 @@ static positive job_specified(string_address word, positive address_to found)
 
         if (string_get(text) == '-' && !string_get(text + 1))
         {
-                address_to found = job_find(job_previous, false);
-                return job_previous && address_to found < job_count
+                /* One job is both current and previous: lima bash `fg %-`
+                   with only `%1` still finds it. */
+                positive number = job_previous ? job_previous : job_current;
+
+                address_to found = job_find(number, false);
+                return number && address_to found < job_count
                            ? JOB_SPEC_FOUND
                            : JOB_SPEC_UNKNOWN;
         }
@@ -1997,7 +2071,28 @@ fn shell_fg(writer write, string_address input)
         (void)input;
 
         if (!job_monitor())
-                return shell_answer(string_report(log_error, 1, "%s: no job control\n", "fg"));
+        {
+                string_address word = shell_argc > 1 ? shell_argv[1] : null;
+
+                if (!shell_bash_compat)
+                {
+                        shell_diagnostic_where();
+                        if (word && string_get(word) == '%' &&
+                            string_get(word + 1) == '-' &&
+                            !string_get(word + 2) && !job_previous &&
+                            job_count != 1)
+                                return shell_answer(string_report(
+                                    log_error, 2, "fg: No previous job\n"));
+
+                        return shell_answer(string_report(
+                            log_error, 2,
+                            "fg: job %s not created under job control\n",
+                            word ? word : (string_address) "(null)"));
+                }
+
+                return shell_answer(string_report(log_error, 1,
+                                                 "%s: no job control\n", "fg"));
+        }
 
         job_reap();
 
@@ -2079,6 +2174,10 @@ fn shell_bg(writer write, string_address input)
                 //      the command and nothing else.
                 if (shell_dash_columns())
                         string_format(write, "[%p] %s\n", entry->number,
+                                      entry->text ? (string_address)entry->text
+                                                  : (string_address) "");
+                else if (shell_posix_on())
+                        string_format(write, "[%p] %s &\n", entry->number,
                                       entry->text ? (string_address)entry->text
                                                   : (string_address) "");
                 else
@@ -2605,12 +2704,55 @@ fn shell_kill(writer write, string_address input)
 
                 told = job_specified(word, address_of found);
 
+                if (!shell_bash_compat && !job_monitor())
+                {
+                        positive numeric = 0;
+                        string_address spec = word + 1;
+                        bool numbered =
+                            !string_get(spec) || string_get(spec) == '%' ||
+                            string_get(spec) == '+' ||
+                            (string_get(spec) == '-' && !string_get(spec + 1)) ||
+                            string_digits_exact(spec, address_of numeric);
+
+                        /* `%sleep` is not a job without a monitor.
+                           `%%` / `%1` still name the table, and then
+                           lima says "No such process" rather than killing. */
+                        if (!numbered)
+                        {
+                                shell_diagnostic_where();
+                                answer = string_report(log_error, 2,
+                                    "kill: No such job: %s\n", word);
+                                continue;
+                        }
+                }
+
                 if (told != JOB_SPEC_FOUND)
                 {
+                        shell_diagnostic_where();
+                        if (!shell_bash_compat)
+                        {
+                                answer = string_report(log_error, 2,
+                                    "kill: No such job: %s\n",
+                                    word ? word : (string_address) "current");
+                                continue;
+                        }
+
                         answer = string_report(log_error, 1,
                             told == JOB_SPEC_AMBIGUOUS
                                 ? "%s: %s: ambiguous job spec\n" : "%s: %s: no such job\n",
                             (string_address) "kill", told == JOB_SPEC_AMBIGUOUS || word ? word : (string_address)"current");
+                        continue;
+                }
+
+                /* Dash kill only follows a job spec under job control.
+                   With the monitor off, a live `%1` is still "No such
+                   process" and the child is left running, matching lima
+                   0.5.x. A spec nobody has stays "No such job" above. */
+                if (!shell_bash_compat && !job_monitor())
+                {
+                        shell_diagnostic_where();
+                        answer = string_report(log_error, 1,
+                                               "kill: No such process\n");
                         continue;
                 }
 
@@ -2855,6 +2997,11 @@ fn job_wait(writer write, string_address input)
                             JOB_SPEC_FOUND)
                         {
                                 shell_diagnostic_where();
+
+                                if (!shell_bash_compat)
+                                        return shell_answer(string_report(
+                                            log_error, 2,
+                                            "wait: No such job: %s\n", word));
 
                                 return shell_answer(string_report(log_error,
                                     127, "wait: %s: no such job\n", word));
