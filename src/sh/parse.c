@@ -993,8 +993,11 @@ static p8 address_to parse_here_scan_line(
         command substitution.  A nested lexer/parser frame then runs the exact
         normal token-to-delimiter path above; body lines use the same quoted,
         <<- and backslash-newline decisions as parse_here_line without retaining
-        a speculative body copy.  A delimiter immediately followed by `)`
-        ends the document and leaves that `)` for the substitution closer.
+        a speculative body copy.  Bash also ends a document at the delimiter
+        followed immediately by `)`, and leaves that `)` for the substitution
+        closer.  lima dash 0.5.x does not: `EOF)` is a body line, so an
+        unquoted multi-word `<<-EOF EOF` whose closer is `EOF EOF` never
+        matches delimiter `EOF` and the `)` stays inside the document.
         The returned address is the source byte after the final delimiter
         line, or the terminating null when input ended in a body.  Null
         itself means allocation/token failure.
@@ -1079,14 +1082,20 @@ static string_address parse_here_skip_bodies(string_address line,
 
                 /*
                         A here-document inside $( ) ends at a line that is
-                        exactly the delimiter, or at the delimiter followed
-                        immediately by the substitution's closer.  `EOF)` is
-                        not a body line: the document ends and the ) is left
-                        for lex_nesting, which is how lima bash 5.2 reads
+                        exactly the delimiter. Bash also ends it at the
+                        delimiter followed immediately by the substitution's
+                        closer, so `EOF)` is not a body line: the document
+                        ends and the ) is left for lex_nesting, which is how
+                        lima bash 5.2 reads
 
                             $(cat <<EOF
                             body
                             EOF)
+
+                        lima dash 0.5.x keeps `EOF)` as body text. An
+                        unquoted `<<-EOF EOF` is therefore delimiter EOF
+                        and a cat operand, and the closer `EOF EOF` does
+                        not end the document.
                 */
                 if (!document->continued && delimiter_length &&
                     length >= delimiter_length &&
@@ -1100,7 +1109,8 @@ static string_address parse_here_skip_bodies(string_address line,
                                 continue;
                         }
 
-                        if (string_is(line + delimiter_length, ')'))
+                        if (shell_bash_compat &&
+                            string_is(line + delimiter_length, ')'))
                         {
                                 parse_here_close();
                                 at = line + delimiter_length;

@@ -919,12 +919,12 @@ static string_address lex_nesting_at(string_address at, positive nesting,
                         continue;
                 }
 
-                /* Dash closes $( ) at the first unquoted ), including one
-                   that sits in a here-document body. Bash does not: the
-                   closer is the first unquoted ) that is not inside a
-                   here-document, so << must be remembered until the
-                   newline that begins the body. */
-                if (commands && shell_bash_compat && c == '<' &&
+                /* A ) that sits in a here-document body does not close
+                   $( ) on bash or on lima dash 0.5.x. Remember << until
+                   the newline that begins the body, then skip those
+                   lines. A ) still on the operator line closes, which is
+                   how dash reads $(cat <<EOF) before any body arrives. */
+                if (commands && c == '<' &&
                     lex_dless_candidate(line, step))
                         maybe_here = true;
 
