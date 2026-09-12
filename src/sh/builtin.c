@@ -14690,7 +14690,12 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
         log_flush();
 
         /* Spark starts the immutable multicall image without copying this
-           resident shell. A stock kernel takes the direct-function fork. */
+           resident shell. A stock kernel forks, and the child execs the
+           PATH file lima would have run: cat is /usr/bin/cat there. A
+           function that cats and then echoes into /bin/true is killed by
+           SIGPIPE because that exec is still in flight when true has closed
+           the pipe. Calling the utility in the fork, or execing this same
+           already-mapped image, finishes too soon and answers 4. */
         child = shell_spawn_tool(shell_argv, -1, false);
 
         if (child < 0)
@@ -14698,19 +14703,28 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
 
         if (child == 0)
         {
+                p8 address_to found = null;
+                positive found_room = 0;
+                string_address address_to environment;
+
                 /*
                         Its own signals back.
 
                         The shell ignores interrupt and quit so control-C
                         cancels the command rather than the shell, and a fork
                         inherits that -- which the spawn path undoes before it
-                        execs and this one has to undo for itself, because a
-                        builtin never execs. Without it a grep over a large
-                        tree could not be stopped.
+                        execs and this one has to undo for itself. Without it
+                        a grep over a large tree could not be stopped.
                 */
                 shell_default(SIGNAL_INTERRUPT);
                 shell_default(SIGNAL_QUIT);
                 trap_default_all();
+
+                environment = shell_environment();
+                if (environment &&
+                    shell_find_in_path_alloc(shell_argv[0], address_of found,
+                                             address_of found_room) == 1)
+                        system_execute(found, shell_argv, environment);
 
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 exit(shell_tool_call_in(which, true));

@@ -11193,6 +11193,40 @@ static b32 exec_coproc(b32 index)
         return 0;
 }
 
+/*
+        lastpipe runs a final builtin, function or compound in this shell so
+        `echo | read x` leaves x set. A path, or a name that is only a tool
+        or a PATH lookup, is still a process of its own: lima forks /bin/true
+        even with lastpipe on.
+*/
+static PURE bool exec_pipe_lastpipes(b32 index)
+{
+        parse_node address_to node = parse_nodes + index;
+        string_address name;
+        positive2 named;
+
+        if (node->kind != NODE_SIMPLE)
+                return true;
+
+        if (!node->word_count)
+                return true;
+
+        if (!(parse_word_flags[node->word] & PARSE_WORD_LITERAL) ||
+            (parse_word_flags[node->word] & PARSE_WORD_ASSIGNMENT))
+                return true;
+
+        name = parse_words[node->word];
+        if (string_first_of(name, '/'))
+                return false;
+
+        named = string_hash_33_length(name);
+        if (exec_function_slot(name, named) != positive_max)
+                return true;
+
+        return shell_command_named_hashed(name, named) ||
+               exec_control_builtin(name, false);
+}
+
 static b32 exec_pipe(b32 first, positive count, bool background,
                      bool pipefail, bool invert)
 {
@@ -11267,18 +11301,23 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                            : exec_stage_spawn(child, upstream,
                                               last ? -1 : ends[1]);
 
-                /* A final command which was not an eligible literal external
-                   is exactly the stateful lastpipe case. Run it before waiting
-                   so a producer cannot fill the pipe against an idle reader.
-                   Keep the caller's tested state: ! and conditional lists
-                   suppress -e inside their pipeline, while an untested final
-                   compound command must still stop at its first failing
-                   simple command. Tail exec is suppressed because the shell
-                   has pipeline bookkeeping left to do when the stage returns. */
-                if (made < 0 && last && lastpipe)
+                /* A final builtin, function or compound is the lastpipe
+                   case: it runs here so its state survives. An external is
+                   still a process of its own even when spark could not spawn
+                   it. Running /bin/true in the parent keeps this shell as a
+                   reader of the pipe, so a function that cats and then echoes
+                   writes into a live pipe and answers 4 instead of SIGPIPE. */
+                if (made < 0 && last && lastpipe &&
+                    exec_pipe_lastpipes(child))
                 {
                         bool tail = shell_tail_command;
 
+                        /* Keep the caller's tested state: ! and conditional
+                           lists suppress -e inside their pipeline, while an
+                           untested final compound command must still stop at
+                           its first failing simple command. Tail exec is
+                           suppressed because the shell has pipeline
+                           bookkeeping left to do when the stage returns. */
                         if (upstream >= 0 && upstream != 0)
                         {
                                 if (system_duplicate(upstream, 0, 0) < 0)
