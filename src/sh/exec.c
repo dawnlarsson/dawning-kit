@@ -6545,7 +6545,11 @@ fn shell_caller(writer write, string_address input)
                 return;
         }
 
-        if (want >= exec_frame_count)
+        //      Numbered caller is BASH_LINENO[n], FUNCNAME[n+1] and
+        //      BASH_SOURCE[n+1]. A function called from the top of -c has
+        //      no n+1 slot, so `caller 0` inside it prints nothing.
+        if (want >= exec_frame_count ||
+            (numbered && want + 1 >= exec_frame_count))
         {
                 shell_answer(1);
                 return;
@@ -6556,16 +6560,9 @@ fn shell_caller(writer write, string_address input)
         write(shown, written);
         write(" ", 1);
 
-        //      The function one frame further out than the one asked about,
-        //      which is the shell itself once the frames run out.
         if (numbered)
         {
-                string_address named =
-                    want + 1 < exec_frame_count
-                        ? exec_frames[exec_frame_count - want - 2].name
-                        : (string_address) "main";
-
-                write(named, 0);
+                write(exec_frames[exec_frame_count - want - 2].name, 0);
                 write(" ", 1);
         }
 
@@ -8126,10 +8123,13 @@ bool exec_control_builtin(string_address name, bool run)
         if (shell_argc > 1 &&
             !exec_control_number(shell_argv[1], true, address_of shell_status))
         {
+                //      Dash return is a special builtin. A non-integer is
+                //      fatal, including a value past INT_MAX. Aborting only
+                //      the line let the next -c line print end=2.
                 string_format(log_error, "return: Illegal number: %s\n",
                               shell_argv[1]);
                 shell_status = 2;
-                exec_abort_line(shell_status);
+                exec_special_error_note();
                 return true;
         }
 

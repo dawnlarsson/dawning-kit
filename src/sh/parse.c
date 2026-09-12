@@ -2014,6 +2014,52 @@ static PURE bool parse_at_compound(b32 ahead)
                 parse_look(ahead)->op == OP_LPAREN);
 }
 
+/*
+        Whether this word is an assignment, not a name that happens to
+        contain an equals.
+
+        `f=g()` is `f=g` followed by `()`, a syntax error near `(`. Treating
+        the whole spelling as a function name installed `f=g`. Bash also
+        reads `+=` that way; dash has no `+=`, so `f+=g()` is still a bad
+        function name there.
+*/
+static PURE bool parse_word_is_assignment(b32 ahead)
+{
+        parse_token address_to token = parse_look(ahead);
+        string_address text;
+        positive length;
+        positive equal;
+        positive name_length;
+        positive at;
+
+        if (token->kind != PT_WORD || !token->length)
+                return false;
+
+        text = token->text;
+        length = token->length;
+        for (equal = 0; equal < length && text[equal] != '='; equal++)
+                ;
+
+        if (equal >= length)
+                return false;
+
+        name_length = equal;
+        if (shell_bash_compat && name_length && text[name_length - 1] == '+')
+                name_length--;
+
+        if (!name_length || (text[0] >= '0' && text[0] <= '9'))
+                return false;
+
+        at = string_span_max(text, name_length, string_set_name);
+        if (!at)
+                return false;
+        if (at == name_length)
+                return true;
+
+        return text[at] == '[' && text[name_length - 1] == ']' &&
+               name_length - at > 2;
+}
+
 static b32 parse_function(bool keyword)
 {
         b32 index = parse_node_new(NODE_FUNCTION);
@@ -2118,7 +2164,8 @@ static b32 parse_command()
 
         if (parse_look(0)->kind == PT_WORD && keyword == PARSE_KEYWORD_NONE &&
             parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_LPAREN &&
-            parse_look(2)->kind == PT_OP && parse_look(2)->op == OP_RPAREN)
+            parse_look(2)->kind == PT_OP && parse_look(2)->op == OP_RPAREN &&
+            !parse_word_is_assignment(0))
                 return parse_function(false);
 
         if (keyword == PARSE_KEYWORD_IF)

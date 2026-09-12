@@ -7366,10 +7366,13 @@ COLD fn shell_unset(writer write, string_address input)
 
                         if (removed < 0)
                         {
+                                //      Bash fails this command and keeps
+                                //      going, including under posix. A
+                                //      special-builtin abort left the
+                                //      redefine unreached and stdout empty.
                                 string_format(log_error,
                                               "unset: %s: cannot unset: readonly function\n",
                                               word);
-                                exec_special_error_note();
                                 shell_answer(1);
                                 return;
                         }
