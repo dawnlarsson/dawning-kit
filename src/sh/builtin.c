@@ -12699,6 +12699,16 @@ static bool trap_inside;
    deleting the action. A child which replaces EXIT clears the marker below. */
 static bool trap_child_context;
 static bool trap_exit_inherited;
+/* Catch strings stay in the table so a bare `trap` can still list what the
+   parent had, while the handlers themselves are already default. The first
+   trap that changes a condition throws those inherited catches away, so
+   only ignores and what this process has set remain. lima 5.2 does the
+   same in a ( ) and in a pipeline child. */
+static bool trap_inherited_pending;
+/* Bash finishes a pipeline while/for/if with _exit, so an EXIT trap set
+   in that stage must not run. A group, a function, and an explicit ( )
+   still run one. dash runs the trap in every pipeline child. */
+static bool trap_omit_exit;
 
 fn trap_signal_caught(b32 number)
 {
@@ -12871,6 +12881,13 @@ fn trap_child_began()
 {
         trap_child_context = true;
         trap_exit_inherited = trap_action(0) != null;
+        trap_inherited_pending = true;
+        trap_omit_exit = false;
+}
+
+fn trap_omit_exit_set()
+{
+        trap_omit_exit = true;
 }
 
 static fn trap_write_condition(writer write, positive number,
@@ -12919,6 +12936,32 @@ static COLD fn trap_conditions_noted()
         trap_err_here = trap_action(TRAP_ERR) != null;
         trap_return_here = trap_action(TRAP_RETURN) != null;
         trap_debug_here = trap_action(TRAP_DEBUG) != null;
+}
+
+static fn trap_drop_inherited_catches()
+{
+        positive at = 0;
+        positive kept = 0;
+
+        while (at < trap_count)
+        {
+                if (!string_get(trap_table[at].action))
+                {
+                        if (kept != at)
+                                trap_table[kept] = trap_table[at];
+
+                        kept++;
+                }
+                else
+                        memory_free(trap_table[at].action,
+                                    trap_table[at].action_room);
+
+                at++;
+        }
+
+        trap_count = kept;
+        trap_exit_inherited = trap_action(0) != null;
+        trap_conditions_noted();
 }
 
 /*
@@ -13270,6 +13313,12 @@ COLD fn shell_trap(writer write, string_address input)
         // this file's to set yet.
         if (word_is(action, "-"))
                 action = null;
+
+        if (trap_inherited_pending)
+        {
+                trap_drop_inherited_catches();
+                trap_inherited_pending = false;
+        }
 
         while (index < shell_argc)
         {
@@ -14732,7 +14781,7 @@ fn shell_trap_exit()
         if (!trap_child_context)
                 history_leaving();
 
-        if (trap_exit_inherited)
+        if (trap_exit_inherited || trap_omit_exit)
         {
                 if (action)
                         memory_free(action, action_room);

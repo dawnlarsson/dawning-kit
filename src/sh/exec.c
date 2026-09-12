@@ -82,6 +82,7 @@ fn shell_trap_exit();
 fn exec_traps();
 fn job_forget();
 fn trap_child_began();
+fn trap_omit_exit_set();
 static b32 exec_child_status(bipolar child);
 static b32 job_wait_foreground(positive number);
 static fn exec_pipe_status_publish(bipolar address_to values, positive count);
@@ -10873,7 +10874,26 @@ static bipolar exec_spawn_node(b32 index, bool background)
         The parent closes both ends of every pipe it made before it waits: a
         write end still open here is an end of file the reader never sees, and
         the whole shell stops.
+
+        Bash finishes while/for/if/until/case/select in a pipeline with _exit,
+        so an EXIT trap set in that stage does not run. A group, a function
+        and an explicit ( ) still run one, which is why wrapping the while
+        in { } prints what the bare while does not. dash runs the trap in
+        every pipeline child. lastpipe is the parent, so a trap set there
+        belongs to the shell and runs when the shell itself leaves.
 */
+
+static PURE bool exec_pipe_omits_exit(b32 kind)
+{
+        if (!shell_bash_compat)
+                return false;
+
+        return kind == NODE_WHILE || kind == NODE_UNTIL || kind == NODE_FOR ||
+               kind == NODE_SELECT || kind == NODE_IF || kind == NODE_CASE ||
+               kind == NODE_CFOR || kind == NODE_ARITHMETIC ||
+               kind == NODE_CONDITIONAL || kind == NODE_FUNCTION;
+}
+
 /*
         A stage that can be spawned rather than forked, and its pid.
 
@@ -11301,6 +11321,8 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         exec_child_signals(background,
                                            background && upstream < 0);
                         exec_child_began();
+                        if (exec_pipe_omits_exit(parse_nodes[child].kind))
+                                trap_omit_exit_set();
                         if (parse_nodes[child].kind == NODE_SUBSHELL)
                                 parse_nodes[child].kind = NODE_GROUP;
                         shell_tail_command =
