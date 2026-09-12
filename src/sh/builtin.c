@@ -13736,13 +13736,19 @@ COLD fn shell_eval(writer write, string_address input)
 
         memory_free(eval_storage, eval_room);
 
-        if (shell_syntax_generation != syntax)
         {
+                b32 failed = (b32)(shell_syntax_generation - syntax);
+
                 shell_syntax_generation = syntax;
                 //      Dash eval of a syntax error is process-fatal. Bash
-                //      --posix reports it and runs the next command, even
-                //      though eval is a special builtin.
-                if (!shell_bash_compat)
+                //      --posix treats eval as a special builtin, matching
+                //      `.`: an unexpected token or an unfinished select
+                //      ends posix -c. An unfinished quoted word is the
+                //      generation +1 `.` already exempts, and `command eval`
+                //      is not special. export of a bad name is not a parse
+                //      error and still continues.
+                if (failed && (!shell_bash_compat ||
+                               (!shell_command_reader_depth && failed != 1)))
                         exec_special_error_note();
         }
 

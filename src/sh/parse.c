@@ -411,9 +411,11 @@ enum
         PARSE_KEYWORD_FOR,
         PARSE_KEYWORD_CASE,
         //      Everything from IF to OPEN begins a command and everything
-        //      from THEN to CLOSE ends a list, and two range tests below say
+        //      from THEN to IN ends a list, and two range tests below say
         //      which is which. A new word that begins a command belongs
-        //      here, in front of OPEN, and nowhere else.
+        //      here, in front of OPEN, and nowhere else. `in` is with the
+        //      closers because it cannot start a command; bang is after
+        //      them because a pipeline may begin with it.
         PARSE_KEYWORD_SELECT,
         PARSE_KEYWORD_TIME,
         PARSE_KEYWORD_COPROC,
@@ -428,6 +430,7 @@ enum
         PARSE_KEYWORD_CLOSE,
         PARSE_KEYWORD_IN,
         PARSE_KEYWORD_BANG,
+        PARSE_KEYWORD_DEND,
 };
 
 /*
@@ -462,6 +465,9 @@ static PURE HOT b32 parse_keyword(b32 ahead)
                 case byte_word_2('f', 'i'): return PARSE_KEYWORD_FI;
                 case byte_word_2('d', 'o'): return PARSE_KEYWORD_DO;
                 case byte_word_2('i', 'n'): return PARSE_KEYWORD_IN;
+                case byte_word_2(']', ']'):
+                        return shell_bash_compat ? PARSE_KEYWORD_DEND
+                                                 : PARSE_KEYWORD_NONE;
                 default: return PARSE_KEYWORD_NONE;
                 }
         case 3:
@@ -1199,7 +1205,7 @@ static PURE bool parse_at_list_end()
         keyword = parse_keyword(0);
 
         return keyword > PARSE_KEYWORD_OPEN &&
-               keyword <= PARSE_KEYWORD_CLOSE;
+               keyword <= PARSE_KEYWORD_IN;
 }
 
 /*
@@ -2245,10 +2251,24 @@ static b32 parse_command()
                 index = parse_enclosed(NODE_GROUP);
         else if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_LPAREN)
                 index = parse_enclosed(NODE_SUBSHELL);
-        else
+        else if (keyword == PARSE_KEYWORD_NONE ||
+                 keyword == PARSE_KEYWORD_TIME)
         {
+                //      `time` after `|` is an ordinary name: lima runs the
+                //      utility, because a bang is the only reserved word the
+                //      pipeline production itself consumes. At the start of
+                //      a pipeline parse_pipeline has already taken `time`.
                 compound = false;
                 index = parse_simple();
+        }
+        else
+        {
+                //      then/do/in/fi, a bang after `|`, and bash `]]` are
+                //      reserved here. lima reports a syntax error, not
+                //      command-not-found. Bang at the start of a pipeline is
+                //      consumed above this.
+                parse_fail();
+                return 0;
         }
 
 command_done:
