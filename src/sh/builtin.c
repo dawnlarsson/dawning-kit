@@ -2143,9 +2143,9 @@ static COLD string_address env_attribute_value(p8 attributes,
                 return null;
 
         if (attributes & SHELL_ARRAY_UPPER)
-                memory_to_upper_ascii(made, length);
+                expand_case_buffer(made, length, true);
         else
-                memory_to_lower_ascii(made, length);
+                expand_case_buffer(made, length, false);
 
         return made;
 }

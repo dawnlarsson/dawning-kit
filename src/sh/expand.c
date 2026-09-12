@@ -4936,6 +4936,222 @@ static fn expand_substring(expand_reference reference, string_address expression
         expand_length = expansion_start + count;
 }
 
+// Simple Unicode case, not a database. ASCII is the byte floor; Latin-1 and
+// Greek are the letters C.UTF-8 towupper/towlower actually change for the
+// values the shell walks. ß has no single-character upper form, so it stays.
+// Combining marks and emoji are not letters and are left alone.
+static CONST p32 expand_unicode_case(p32 value, bool upper)
+{
+        if (value < 0x80)
+                return upper ? byte_to_upper(value) : byte_to_lower(value);
+
+        if (upper)
+        {
+                if (value >= 0xe0 && value <= 0xfe && value != 0xf7)
+                        return value - 0x20;
+                if (value >= 0x3b1 && value <= 0x3c1)
+                        return value - 0x20;
+                if (value == 0x3c2)
+                        return 0x3a3;
+                if (value >= 0x3c3 && value <= 0x3cb)
+                        return value - 0x20;
+                if (value == 0x3ac)
+                        return 0x386;
+                if (value >= 0x3ad && value <= 0x3af)
+                        return value - 0x25;
+                if (value == 0x3cc)
+                        return 0x38c;
+                if (value == 0x3cd)
+                        return 0x38e;
+                if (value == 0x3ce)
+                        return 0x38f;
+                return value;
+        }
+
+        if (value >= 0xc0 && value <= 0xde && value != 0xd7)
+                return value + 0x20;
+        if (value >= 0x391 && value <= 0x3a1)
+                return value + 0x20;
+        if (value >= 0x3a3 && value <= 0x3ab)
+                return value + 0x20;
+        if (value == 0x386)
+                return 0x3ac;
+        if (value >= 0x388 && value <= 0x38a)
+                return value + 0x25;
+        if (value == 0x38c)
+                return 0x3cc;
+        if (value == 0x38e)
+                return 0x3cd;
+        if (value == 0x38f)
+                return 0x3ce;
+        return value;
+}
+
+static fn expand_case_span(positive start, bool upper, bool every,
+                           string_address pattern, bool default_pattern)
+{
+        positive length = expand_length - start;
+        p8 one[5];
+
+        if (!length)
+                return;
+
+        // C locale is bytes. A UTF-8 locale whose value is still ASCII uses
+        // the same path: the architecture loop does not touch the marks, and
+        // ASCII case is the Unicode case.
+        if (!shell_utf8_on() || expand_bytes_ascii(expand_text + start, length))
+        {
+                positive count = every ? length : 1;
+
+                if (default_pattern && every && count >= 32)
+                {
+                        if (upper)
+                                memory_to_upper_ascii(expand_text + start, count);
+                        else
+                                memory_to_lower_ascii(expand_text + start, count);
+                        return;
+                }
+
+                one[1] = end;
+                for (positive at = 0; at < count; at++)
+                {
+                        p8 value = expand_text[start + at];
+
+                        one[0] = value;
+
+                        if (!shell_match(pattern, one))
+                                continue;
+
+                        expand_text[start + at] =
+                            upper ? byte_to_upper(value) : byte_to_lower(value);
+                }
+                return;
+        }
+
+        // One Unicode scalar at a time. ${x^} converts the first character,
+        // not the first byte: é is É. A mapped spelling can change width, so
+        // the parallel mark array moves with the text.
+        for (positive at = start; at < expand_length; )
+        {
+                string_address past;
+                p32 scalar = expand_set_character(expand_text + at,
+                                                  expand_text + expand_length,
+                                                  true, address_of past);
+                positive width = (positive)(past - (expand_text + at));
+                bool matched = default_pattern;
+
+                if (!width)
+                        break;
+
+                if (!matched)
+                {
+                        memory_copy(one, expand_text + at, width);
+                        one[width] = end;
+                        matched = shell_match(pattern, one);
+                }
+
+                if (matched && scalar < 0x110000)
+                {
+                        p32 mapped = expand_unicode_case(scalar, upper);
+
+                        if (mapped != scalar)
+                        {
+                                p8 encoded[4];
+                                positive made = memory_utf8_encode(encoded, 4,
+                                                                   mapped);
+
+                                if (made)
+                                {
+                                        p8 mark = expand_mark[at];
+
+                                        if (made != width)
+                                        {
+                                                if (made > width)
+                                                {
+                                                        positive extra = made - width;
+
+                                                        if (!expand_room(expand_length + extra + 2))
+                                                        {
+                                                                expand_fail_state();
+                                                                return;
+                                                        }
+                                                }
+
+                                                positive tail = expand_length - at - width;
+
+                                                if (tail)
+                                                {
+                                                        memory_copy(expand_text + at + made,
+                                                                    expand_text + at + width,
+                                                                    tail);
+                                                        memory_copy(expand_mark + at + made,
+                                                                    expand_mark + at + width,
+                                                                    tail);
+                                                }
+
+                                                expand_length = expand_length + made - width;
+                                        }
+
+                                        memory_copy(expand_text + at, encoded, made);
+                                        if (made != width)
+                                                memory_fill(expand_mark + at, mark, made);
+                                        width = made;
+                                }
+                        }
+                }
+
+                at += width;
+                if (!every)
+                        break;
+        }
+}
+
+// declare -u / -l store the folded bytes. The expansion buffer is live during
+// assignment, so this walks a private copy and only overwrites a character
+// whose UTF-8 width did not change.
+static fn expand_case_buffer(p8 address_to text, positive length, bool upper)
+{
+        if (!length)
+                return;
+
+        if (!shell_utf8_on() || expand_bytes_ascii(text, length))
+        {
+                if (upper)
+                        memory_to_upper_ascii(text, length);
+                else
+                        memory_to_lower_ascii(text, length);
+                return;
+        }
+
+        for (positive at = 0; at < length; )
+        {
+                string_address past;
+                p32 scalar = expand_set_character(text + at, text + length, true,
+                                                  address_of past);
+                positive width = (positive)(past - (text + at));
+
+                if (!width)
+                        break;
+
+                if (scalar < 0x110000)
+                {
+                        p32 mapped = expand_unicode_case(scalar, upper);
+
+                        if (mapped != scalar)
+                        {
+                                p8 encoded[4];
+                                positive made = memory_utf8_encode(encoded, 4,
+                                                                   mapped);
+
+                                if (made == width)
+                                        memory_copy(text + at, encoded, made);
+                        }
+                }
+
+                at += width;
+        }
+}
+
 static fn expand_case_change(expand_reference reference, string_address pattern_text,
                              bool quoted, bool upper, bool every,
                              b32 parameter_mode)
@@ -4943,8 +5159,6 @@ static fn expand_case_change(expand_reference reference, string_address pattern_
         positive start = expand_length;
         bool default_pattern = !string_get(pattern_text);
         string_address pattern;
-        p8 one[2] = {0, 0};
-        positive count;
 
         expand_push_parameter_as(reference, quoted, parameter_mode);
 
@@ -4959,34 +5173,7 @@ static fn expand_case_change(expand_reference reference, string_address pattern_
         if (expand_failed || !pattern)
                 return;
 
-        count = every ? expand_length - start
-                      : (expand_length > start ? 1 : 0);
-
-        // With no explicit pattern the doubled forms select every byte. The
-        // scalar loop stays cheaper for short shell values; beyond that the
-        // bounded architecture loop wins without touching the parallel mark
-        // array.
-        if (default_pattern && every && count >= 32)
-        {
-                if (upper)
-                        memory_to_upper_ascii(expand_text + start, count);
-                else
-                        memory_to_lower_ascii(expand_text + start, count);
-                return;
-        }
-
-        for (positive at = 0; at < count; at++)
-        {
-                p8 value = expand_text[start + at];
-
-                one[0] = value;
-
-                if (!shell_match(pattern, one))
-                        continue;
-
-                expand_text[start + at] =
-                    upper ? byte_to_upper(value) : byte_to_lower(value);
-        }
+        expand_case_span(start, upper, every, pattern, default_pattern);
 }
 
 /*
@@ -5567,12 +5754,9 @@ static COLD fn expand_value_transform(p8 which, string_address value,
 
         start = expand_length;
         expand_push_run(value, length, mark);
-        if (which == 'U')
-                memory_to_upper_ascii(expand_text + start, length);
-        else if (which == 'L')
-                memory_to_lower_ascii(expand_text + start, length);
-        else if (which == 'u' && length)
-                expand_text[start] = byte_to_upper(expand_text[start]);
+        if (which == 'U' || which == 'L' || which == 'u')
+                expand_case_span(start, which != 'L', which != 'u',
+                                 (string_address) "?", true);
 }
 
 /*
@@ -5678,22 +5862,13 @@ static COLD fn expand_transform(expand_reference reference, string_address word,
         length = expand_length - start;
 
         //      The three case changes need no copy: the bytes are already
-        //      where they belong and only their case is wrong.
-        if (which == 'U' || which == 'L')
+        //      where they belong and only their case is wrong. UTF-8 walks
+        //      characters so é becomes É and the first-character form stops
+        //      after that scalar.
+        if (which == 'U' || which == 'L' || which == 'u')
         {
-                if (which == 'U')
-                        memory_to_upper_ascii(expand_text + start, length);
-                else
-                        memory_to_lower_ascii(expand_text + start, length);
-
-                return;
-        }
-
-        if (which == 'u')
-        {
-                if (length)
-                        expand_text[start] = byte_to_upper(expand_text[start]);
-
+                expand_case_span(start, which != 'L', which != 'u',
+                                 (string_address) "?", true);
                 return;
         }
 
