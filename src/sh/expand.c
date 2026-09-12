@@ -7181,15 +7181,15 @@ static string_address expand_braced_body(string_address step,
                 operation = seen;
                 step++;
         }
-        else if (colon)
+        else if (colon && shell_bash_compat)
                 operation = ':';
         /*
-                A colon says one of those four is coming, and nothing else.
-                ${x:1:1} is a substring in ksh and in three shells after it
-                and in no part of POSIX, and here it quietly handed back the
-                whole value -- which is the one answer that is wrong whichever
-                of the two the script was written against. dash refuses it and
-                so does this.
+                Bash reads a colon that is not one of those four as substring:
+                ${name:offset} and ${name:offset:length}, including a nested
+                expansion in the offset. Dash has none of that. A colon after
+                a name is only :- := :? :+, and a colon followed by a dollar,
+                a digit, or anything else is a bad substitution that ends the
+                process.
         */
         else if (!colon && (seen == '%' || seen == '#'))
         {
@@ -7243,8 +7243,9 @@ static string_address expand_braced_body(string_address step,
                 the unmodified value made ${x//X/-} and ${x^^} look as though
                 they had worked, with plausible but wrong data. Refuse every
                 unknown suffix just as dash does. Length form has no operator
-                tail of its own, and a colon must introduce one of :- := :?
-                or :+.
+                tail of its own. Dash has already refused a colon that did
+                not introduce :- := :? or :+; bash has already taken
+                substring.
         */
         if (!length || ((parameter_mode & EXPAND_PARAMETER_INDIRECT) &&
                         length == 1 &&
