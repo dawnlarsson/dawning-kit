@@ -9136,6 +9136,14 @@ bool test_unary(p8 op, string_address value)
         if (op == 'G')
                 return facts.group == (p32)system_call_1(syscall(getegid), 0);
 
+        if (op == 'N')
+        {
+                if (facts.modified.seconds != facts.accessed.seconds)
+                        return facts.modified.seconds > facts.accessed.seconds;
+
+                return facts.modified.nanoseconds > facts.accessed.nanoseconds;
+        }
+
         return false;
 }
 
@@ -9155,7 +9163,8 @@ PURE bool test_is_unary(string_address word)
         if ((p8)(letter - 'a') <= 25)
                 return (TEST_UNARY_LOWER & (1u << (letter - 'a'))) != 0;
 
-        return letter == 'G' || letter == 'L' || letter == 'O' || letter == 'S';
+        return letter == 'G' || letter == 'L' || letter == 'N' ||
+               letter == 'O' || letter == 'S';
 }
 
 PURE positive test_is_binary(string_address word)

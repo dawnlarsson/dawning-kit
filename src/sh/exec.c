@@ -9472,6 +9472,7 @@ static positive conditional_word_room;
 static positive conditional_word_count;
 static positive conditional_at;
 static bool conditional_bad;
+static bool conditional_runtime;
 static bool conditional_active;
 
 static bool conditional_add(string_address text, positive length)
@@ -9606,7 +9607,6 @@ static bool conditional_integer(positive kind, string_address left,
         {
                 arith_bash_mode = held;
                 arith_nounset = held_nounset;
-                conditional_bad = true;
                 return false;
         }
 
@@ -9615,10 +9615,7 @@ static bool conditional_integer(positive kind, string_address left,
         arith_nounset = held_nounset;
 
         if (arith_bad)
-        {
-                conditional_bad = true;
                 return false;
-        }
 
         return test_ordered(kind, first, second);
 }
@@ -9741,6 +9738,19 @@ static bool conditional_binary_ready()
         return true;
 }
 
+static PURE bool conditional_unary_op(string_address word)
+{
+        return test_is_unary(word) || word_is(word, "-a") ||
+               word_is(word, "-v") || word_is(word, "-o") ||
+               word_is(word, "-R");
+}
+
+static PURE bool conditional_unary_operand(string_address word)
+{
+        return !word_is(word, "&&") && !word_is(word, "||") &&
+               !word_is(word, "(") && !word_is(word, ")");
+}
+
 static bool conditional_primary()
 {
         string_address raw;
@@ -9768,14 +9778,22 @@ static bool conditional_primary()
 
         raw = conditional_word[conditional_at];
 
-        if ((test_is_unary(raw) || word_is(raw, "-a") ||
-             word_is(raw, "-v") || word_is(raw, "-o")) &&
-            conditional_at + 1 < conditional_word_count)
+        if (conditional_unary_op(raw))
         {
-                string_address operand_raw = conditional_word[conditional_at + 1];
+                string_address operand_raw;
                 string_address operand;
                 bool value = false;
 
+                if (conditional_at + 1 >= conditional_word_count ||
+                    !conditional_unary_operand(
+                        conditional_word[conditional_at + 1]))
+                {
+                        conditional_bad = true;
+                        conditional_at++;
+                        return false;
+                }
+
+                operand_raw = conditional_word[conditional_at + 1];
                 conditional_at += 2;
 
                 if (!conditional_active)
@@ -9792,6 +9810,18 @@ static bool conditional_primary()
                 if (word_is(raw, "-v"))
                         return env_get(operand) != null;
 
+                /*
+                        -R names a variable, not a path. After expansion an
+                        unset $name is empty under set +u, and that empty
+                        name is false rather than an error. -v is "set";
+                        this is "this name is a nameref".
+                */
+                if (word_is(raw, "-R"))
+                        return operand && string_get(operand) &&
+                               (shell_variable_attributes(
+                                    operand, string_length(operand)) &
+                                SHELL_ARRAY_NAMEREF) != 0;
+
                 if (word_is(raw, "-o"))
                 {
                         positive option = string_table_find(
@@ -9802,7 +9832,42 @@ static bool conditional_primary()
                                shell_option_on(option);
                 }
 
-                value = test_unary(string_get(raw + 1), operand);
+                /*
+                        Bash 5.2 [[ -t WORD ]] reads a file descriptor as
+                        digits. A non-integer is false, not an error, and
+                        not a reason to abort the script.
+                */
+                if (string_is(raw + 1, 't') && !string_get(raw + 2))
+                {
+                        bipolar descriptor;
+                        positive used;
+                        string_address step;
+                        p8 settings[64];
+
+                        if (!operand || !string_get(operand))
+                                return false;
+
+                        step = operand + string_span(operand, string_set_blanks);
+                        descriptor = string_bipolar(step, address_of used);
+                        step += used;
+                        step += string_span(step, string_set_blanks);
+                        if (!used || string_get(step))
+                                return false;
+
+                        return system_control(descriptor, BUILTIN_TCGETS,
+                                              settings) == 0;
+                }
+
+                test_bad = false;
+                {
+                        string_address held = shell_argv[0];
+
+                        shell_argv[0] = (string_address) "[[";
+                        value = test_unary(string_get(raw + 1), operand);
+                        shell_argv[0] = held;
+                }
+                if (test_bad)
+                        conditional_runtime = true;
                 return value;
         }
 
@@ -9839,7 +9904,7 @@ static bool conditional_primary()
                                                         address_of valid);
 
                         if (!valid)
-                                conditional_bad = true;
+                                conditional_runtime = true;
 
                         return value;
                 }
@@ -9887,7 +9952,7 @@ static bool conditional_primary()
                         value = test_compare(kind, left, right);
 
                         if (test_bad)
-                                conditional_bad = true;
+                                conditional_runtime = true;
 
                         return value;
                 }
@@ -9936,6 +10001,45 @@ CONDITIONAL_LOGICAL_LEVEL(conditional_expression, conditional_conjunction,
                           "||", !value, ||)
 #undef CONDITIONAL_LOGICAL_LEVEL
 
+/*
+        A malformed [[ ]] is a parse error in bash: the rest of that
+        physical line does not run, and a non-interactive top-level
+        reader leaves with status 2. Arithmetic and regex failures stay
+        ordinary command statuses so a later echo still runs.
+
+        The diagnostic waits until redirections of this command have been
+        put back. `[[ ... ]] 2>/dev/null` must not swallow a parse error,
+        because bash reports it before that redirect exists.
+*/
+static bool conditional_syntax;
+
+static COLD fn conditional_syntax_abort()
+{
+        shell_status = 2;
+        shell_syntax_generation += 2;
+        exec_abort_line(2);
+        conditional_syntax = true;
+}
+
+static COLD fn conditional_syntax_finish()
+{
+        if (!conditional_syntax)
+                return;
+
+        conditional_syntax = false;
+        shell_syntax_where();
+        log_error(str("syntax error in conditional expression\n"));
+        log_flush();
+
+        if (shell_run_depth == 1 && !shell_source_depth)
+        {
+                if (string_is(shell_option_flags, 'c'))
+                        exec_child_leave(shell_status);
+                if (!shell_is_interactive)
+                        expand_fatal_status(shell_status);
+        }
+}
+
 static b32 exec_conditional(b32 index)
 {
         shell_mark arena = shell_store_mark(address_of exec_store);
@@ -9949,6 +10053,8 @@ static b32 exec_conditional(b32 index)
                 return 2;
 
         conditional_bad = false;
+        conditional_runtime = false;
+        conditional_syntax = false;
         conditional_active = true;
         conditional_at = 0;
         expand_failed = false;
@@ -9956,18 +10062,30 @@ static b32 exec_conditional(b32 index)
 
         if (!conditional_tokenize(whole + 2))
                 conditional_bad = true;
-        else if (conditional_word_count)
+        else if (!conditional_word_count)
+                conditional_bad = true;
+        else
                 value = conditional_expression();
 
-        if (conditional_at != conditional_word_count || expand_failed)
+        if (conditional_at != conditional_word_count)
                 conditional_bad = true;
+        if (expand_failed)
+                conditional_runtime = true;
 
         if (arith_unset)
                 conditional_nounset_fatal();
 
         exec_bracket_restore(whole, length, held);
+
+        if (conditional_bad)
+        {
+                shell_store_rewind(address_of exec_store, arena);
+                conditional_syntax_abort();
+                return 2;
+        }
+
         status = exec_line_aborted() ? shell_status
-                 : arith_unset ? 1 : conditional_bad ? 2 : value ? 0 : 1;
+                 : arith_unset ? 1 : conditional_runtime ? 2 : value ? 0 : 1;
         shell_store_rewind(address_of exec_store, arena);
         return status;
 }
@@ -11403,6 +11521,9 @@ static b32 exec_node_kind(b32 index)
         exec_expansion_done(expanded, substitutions);
 
         shell_status = status;
+
+        if (conditional_syntax)
+                conditional_syntax_finish();
 
         if (node->kind == NODE_SUBSHELL || node->kind == NODE_ARITHMETIC ||
             node->kind == NODE_CONDITIONAL)
