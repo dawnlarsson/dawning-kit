@@ -601,9 +601,14 @@ static string_address expand_hold(string_address text, positive length,
         The cursor is handed back one past the last digit, because arithmetic
         reads a literal out of the middle of an expression and a variable is
         read whole -- and both have to agree about what 010 is worth.
+
+        empty_hex_ok is the one personality the two shells split on here.
+        Bash reads a bare 0x as zero. dash refuses it, both as a literal
+        and as the whole value of a name.
 */
 static positive expand_base_positive(string_address address_to at,
-                                     bool address_to valid, positive limit)
+                                     bool address_to valid, positive limit,
+                                     bool empty_hex_ok)
 {
         string_address step = address_to at;
         positive value = 0;
@@ -656,10 +661,11 @@ static positive expand_base_positive(string_address address_to at,
         }
 
         /* A leftover letter is still this constant, not a new token:
-           0xg and 0x10g are invalid hex, while 0x at a boundary is zero. */
+           0xg and 0x10g are invalid hex. A bare 0x is zero only when
+           empty_hex_ok says so -- bash, not dash. */
         if (expand_name_character(string_get(step)))
                 address_to valid = false;
-        else if (!used && base != 16)
+        else if (!used && (base != 16 || !empty_hex_ok))
                 address_to valid = false;
 
         address_to at = step;
@@ -667,9 +673,11 @@ static positive expand_base_positive(string_address address_to at,
         return value;
 }
 
-static bipolar expand_base_number(string_address address_to at, bool address_to valid)
+static bipolar expand_base_number(string_address address_to at, bool address_to valid,
+                                  bool empty_hex_ok)
 {
-        return (bipolar)expand_base_positive(at, valid, (positive)bipolar_max);
+        return (bipolar)expand_base_positive(at, valid, (positive)bipolar_max,
+                                             empty_hex_ok);
 }
 
 /*
@@ -2282,8 +2290,9 @@ static COLD bool arith_element_name(expand_reference address_to reference)
 
         Unset and empty are both zero. Anything else Bash reads as an
         expression rather than a number, so with a=b and b=7 $((a)) is seven
-        and x="1 + 2" is three -- but that is the caller's to do, and this
-        function hands back the bytes instead of evaluating them.
+        and x="1 + 2" is three. dash does not: a value that is not one
+        number is illegal. That is the caller's to do, and this function
+        hands back the bytes instead of evaluating them.
 
         Splitting it there is not tidiness. A loop counter is a name holding
         digits read tens of thousands of times, and reaching the grammar from
@@ -2341,7 +2350,8 @@ static bipolar arith_number_of(expand_reference reference, p8 address_to scratch
 
         digits = step;
         magnitude = expand_base_positive(address_of step, address_of valid,
-                                         (positive)bipolar_max + 1);
+                                         (positive)bipolar_max + 1,
+                                         arith_bash_mode);
 
         if (step == digits || !valid)
         {
@@ -2414,15 +2424,42 @@ static COLD bipolar arith_named_expression(string_address value)
         return answer;
 }
 
-// What a name is worth to the grammar, which is the number it holds or the
-// answer to the expression it holds.
+/*
+        dash names the value, not the expression, and stops. arith_said
+        keeps the later arithmetic report from writing a second sentence
+        over that.
+*/
+static COLD fn arith_illegal_number(string_address value)
+{
+        if (arith_bad)
+                return;
+
+        arith_bad = true;
+        arith_said = true;
+        shell_diagnostic_where_to(writer_stderr_once);
+        string_format(writer_stderr_once, "Illegal number: %s\n",
+                      value ? value : (string_address) "");
+}
+
+// What a name is worth to the grammar, which is the number it holds or,
+// in bash, the answer to the expression it holds. dash stops: a value
+// that is not one number is not an expression.
 static bipolar arith_value_of(expand_reference reference)
 {
         p8 scratch[32];
         string_address expression;
         bipolar value = arith_number_of(reference, scratch, address_of expression);
 
-        return expression ? arith_named_expression(expression) : value;
+        if (!expression)
+                return value;
+
+        if (!arith_bash_mode)
+        {
+                arith_illegal_number(expression);
+                return 0;
+        }
+
+        return arith_named_expression(expression);
 }
 
 /*
@@ -2780,7 +2817,8 @@ static bipolar arith_primary()
                 if (string_is(scan, '#'))
                         return arith_based(scan);
 
-                value = expand_base_number(address_of arith_at, address_of valid);
+                value = expand_base_number(address_of arith_at, address_of valid,
+                                          arith_bash_mode);
 
                 if (!valid)
                 {
