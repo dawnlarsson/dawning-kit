@@ -4259,14 +4259,16 @@ static COLD fn expand_fatal_status(b32 status)
 }
 
 /*
-        Arithmetic expansion $(( )) that cannot produce a word.
+        Arithmetic expansion $(( )) that cannot produce a word, and a
+        leftover or nested ${} that is a bad substitution.
 
         Dash and bash --posix end the process: 2, or the nounset -c
         status (127 at the top of bash --posix -c). let and (( )) are
         commands and keep their recoverable status. Bash without posix
         reuses a bad slice's unwind -- the family scripts `exec 2>/dev/null`
         before the word, and that personality continues with status 1.
-        Interactive shells recover at the next line either way.
+        Interactive shells recover at the next line either way. Invalid
+        ${!name} is not this class: bash continues under --posix too.
 */
 static COLD fn expand_arithmetic_error()
 {
@@ -4841,8 +4843,8 @@ static PURE string_address expand_substring_separator(string_address at)
 }
 
 // Bash's substring arithmetic errors abandon the current input unit, not the
-// remaining script. Reuse the executor's existing expansion unwind; native
-// and dash errors retain their fatal policy.
+// remaining script. Invalid ${!name} is the same unwind, including under
+// --posix. Native and dash errors retain their fatal policy.
 static COLD fn expand_slice_error()
 {
         if (!shell_bash_compat)
@@ -4854,6 +4856,19 @@ static COLD fn expand_slice_error()
         shell_status = 1;
         expand_failed = true;
         exec_expand_input_error();
+}
+
+/*
+        ${!name} whose value is not a parameter. Bash fails that command
+        and reads on, including under --posix; eval catches it. ${name?}
+        in a command word still ends the process.
+*/
+static COLD fn expand_indirect_error()
+{
+        if (shell_bash_compat)
+                expand_slice_error();
+        else
+                expand_fatal_status(1);
 }
 
 static bool expand_slice_number(string_address text, bipolar address_to value)
@@ -7230,7 +7245,7 @@ static string_address expand_braced_body(string_address step,
             (want_length && (operation || name_list)))
         {
                 expand_bad_substitution(whole, close);
-                expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
+                expand_arithmetic_error();
 
                 return close + 1;
         }
@@ -7341,7 +7356,7 @@ static string_address expand_braced_body(string_address step,
                                 string_format(writer_stderr_once,
                                               "%s: invalid indirect expansion\n",
                                               expand_reference_text(reference));
-                                expand_fatal_status(1);
+                                expand_indirect_error();
                                 return close + 1;
                         }
 
@@ -7362,7 +7377,7 @@ static string_address expand_braced_body(string_address step,
                         expand_where();
                         string_format(writer_stderr_once,
                                       "%s: invalid variable name\n", name);
-                        expand_fatal_status(1);
+                        expand_indirect_error();
                         return close + 1;
                 }
 
@@ -7476,7 +7491,7 @@ static string_address expand_braced_body(string_address step,
                                             writer_stderr_once,
                                             "%s: invalid indirect expansion\n",
                                             name);
-                                        expand_fatal_status(1);
+                                        expand_indirect_error();
                                         return close + 1;
                                 }
 
