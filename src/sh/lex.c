@@ -919,7 +919,13 @@ static string_address lex_nesting_at(string_address at, positive nesting,
                         continue;
                 }
 
-                if (commands && c == '<' && lex_dless_candidate(line, step))
+                /* Dash closes $( ) at the first unquoted ), including one
+                   that sits in a here-document body. Bash does not: the
+                   closer is the first unquoted ) that is not inside a
+                   here-document, so << must be remembered until the
+                   newline that begins the body. */
+                if (commands && shell_bash_compat && c == '<' &&
+                    lex_dless_candidate(line, step))
                         maybe_here = true;
 
                 // A backtick pair has the same byte at both ends, so it

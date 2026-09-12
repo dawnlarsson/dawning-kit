@@ -993,9 +993,11 @@ static p8 address_to parse_here_scan_line(
         command substitution.  A nested lexer/parser frame then runs the exact
         normal token-to-delimiter path above; body lines use the same quoted,
         <<- and backslash-newline decisions as parse_here_line without retaining
-        a speculative body copy.  The returned address is the source byte after
-        the final delimiter line, or the terminating null when input ended in a
-        body.  Null itself means allocation/token failure.
+        a speculative body copy.  A delimiter immediately followed by `)`
+        ends the document and leaves that `)` for the substitution closer.
+        The returned address is the source byte after the final delimiter
+        line, or the terminating null when input ended in a body.  Null
+        itself means allocation/token failure.
 */
 static string_address parse_here_skip_bodies(string_address line,
                                               string_address newline)
@@ -1049,7 +1051,62 @@ static string_address parse_here_skip_bodies(string_address line,
 
         while (parse_here_open())
         {
-                string_address line_end = string_first_of_or_end(at, '\n');
+                string_address line_end;
+                string_address line;
+                here_document address_to document;
+                string_address delimiter;
+                positive length;
+                positive delimiter_length;
+
+                if (!string_get(at))
+                        break;
+
+                line_end = string_first_of_or_end(at, '\n');
+                length = (positive)(line_end - at);
+                document = here_documents + here_filled;
+                line = at;
+
+                if (document->strip)
+                {
+                        positive tabs = memory_span_byte(line, '\t', length);
+
+                        line += tabs;
+                        length -= tabs;
+                }
+
+                delimiter = here_names + document->delimiter;
+                delimiter_length = string_length(delimiter);
+
+                /*
+                        A here-document inside $( ) ends at a line that is
+                        exactly the delimiter, or at the delimiter followed
+                        immediately by the substitution's closer.  `EOF)` is
+                        not a body line: the document ends and the ) is left
+                        for lex_nesting, which is how lima bash 5.2 reads
+
+                            $(cat <<EOF
+                            body
+                            EOF)
+                */
+                if (!document->continued && delimiter_length &&
+                    length >= delimiter_length &&
+                    !memory_compare(line, delimiter, delimiter_length))
+                {
+                        if (length == delimiter_length)
+                        {
+                                parse_here_close();
+                                at = string_get(line_end) ? line_end + 1
+                                                          : line_end;
+                                continue;
+                        }
+
+                        if (string_is(line + delimiter_length, ')'))
+                        {
+                                parse_here_close();
+                                at = line + delimiter_length;
+                                break;
+                        }
+                }
 
                 if (!parse_here_take_span(at, (positive)(line_end - at),
                                           false))

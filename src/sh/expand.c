@@ -3887,6 +3887,154 @@ static fn expand_run(string_address command, bool quoted)
         }
 }
 
+/*
+        Bash $(<file) is not a command: it is the file's contents, with the
+        same trailing-newline trim as any other substitution.  Spaces and
+        tabs around the operator are allowed, as is one trailing semicolon.
+        Dash has no such form; a redirect with no command stays silent.
+*/
+static bool expand_command_file(string_address text, bool quoted)
+{
+        string_address at = text;
+        string_address name;
+        string_address name_end;
+        string_address path;
+        p8 held;
+        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+        positive start = expand_length;
+        bipolar opened;
+        bool single = false;
+        bool dquote = false;
+
+        if (!shell_bash_compat)
+                return false;
+
+        while (lex_is_space(string_get(at)))
+                at++;
+
+        if (string_not(at, '<') || string_is(at + 1, '<') ||
+            string_is(at + 1, '>') || string_is(at + 1, '('))
+                return false;
+
+        at++;
+
+        while (lex_is_space(string_get(at)))
+                at++;
+
+        if (!string_get(at) || string_is(at, ';'))
+                return false;
+
+        name = at;
+
+        while (string_get(at))
+        {
+                p8 c = string_get(at);
+
+                if (single)
+                {
+                        if (c == '\'')
+                                single = false;
+                        at++;
+                        continue;
+                }
+
+                if (c == '\\' && string_get(at + 1))
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (dquote)
+                {
+                        if (c == '"')
+                                dquote = false;
+                        at++;
+                        continue;
+                }
+
+                if (c == '\'')
+                {
+                        single = true;
+                        at++;
+                        continue;
+                }
+
+                if (c == '"')
+                {
+                        dquote = true;
+                        at++;
+                        continue;
+                }
+
+                if (lex_is_space(c) || c == ';' || c == '|' || c == '&' ||
+                    c == '<' || c == '>')
+                        break;
+
+                at++;
+        }
+
+        if (single || dquote || at == name)
+                return false;
+
+        name_end = at;
+
+        while (lex_is_space(string_get(at)))
+                at++;
+
+        if (string_is(at, ';'))
+        {
+                at++;
+                while (lex_is_space(string_get(at)))
+                        at++;
+        }
+
+        if (string_get(at))
+                return false;
+
+        held = *name_end;
+        *name_end = end;
+        path = expand_capture(name, false, EXPAND_CAPTURE_TEXT);
+        *name_end = held;
+
+        if (!path)
+                return true;
+
+        opened = system_open_at(AT_FDCWD, path, FILE_READ);
+
+        if (opened < 0)
+        {
+                shell_substitution_status = 1;
+                shell_substitution_generation++;
+                if (shell_bash_compat)
+                        shell_status = 1;
+                return true;
+        }
+
+        while (1)
+        {
+                p8 block[512];
+                bipolar got = system_read_retry((positive)opened, block,
+                                                sizeof(block));
+
+                if (got <= 0)
+                        break;
+
+                expand_push_run(block, (positive)got, mark);
+        }
+
+        system_close(opened);
+
+        while (expand_length > start && expand_text[expand_length - 1] == '\n')
+                expand_length--;
+
+        shell_substitution_status = 0;
+        shell_substitution_generation++;
+        if (shell_bash_compat)
+                shell_status = 0;
+
+        return true;
+}
+
 static string_address expand_command(string_address step, bool quoted)
 {
         string_address inner = step + 2;
@@ -3915,9 +4063,66 @@ static string_address expand_command(string_address step, bool quoted)
                 return stop + 1;
         }
 
-        expand_run(text, quoted);
+        if (!expand_command_file(text, quoted))
+                expand_run(text, quoted);
 
         return stop + 1;
+}
+
+/*
+        lima dash 0.5.x re-parses a backtick body with list(2).  After the
+        first complete command, a leftover `(` is not a syntax error: the
+        list ends and the rest of the extracted text is dropped.  `\$()` is
+        that leftover -- the backslash made a literal `$` argument, and the
+        parenthesis is what stops the list -- so `echo \$(echo x)` runs as
+        `echo $`.  Bash parses the whole string and refuses the `(`.
+*/
+static fn expand_backtick_dash_cut(p8 address_to text)
+{
+        string_address step = text;
+        bool single = false;
+        bool dquote = false;
+
+        while (string_get(step))
+        {
+                p8 c = string_get(step);
+
+                if (single)
+                {
+                        if (c == '\'')
+                                single = false;
+                        step++;
+                        continue;
+                }
+
+                if (c == '\\' && string_get(step + 1))
+                {
+                        if (!dquote && string_get(step + 1) == '$' &&
+                            string_get(step + 2) == '(')
+                        {
+                                step[2] = end;
+                                return;
+                        }
+
+                        step += 2;
+                        continue;
+                }
+
+                if (dquote)
+                {
+                        if (c == '"')
+                                dquote = false;
+                        step++;
+                        continue;
+                }
+
+                if (c == '\'')
+                        single = true;
+                else if (c == '"')
+                        dquote = true;
+
+                step++;
+        }
 }
 
 static string_address expand_backtick(string_address step, bool quoted)
@@ -3963,6 +4168,9 @@ static string_address expand_backtick(string_address step, bool quoted)
         }
 
         text[length] = end;
+
+        if (!shell_bash_compat)
+                expand_backtick_dash_cut(text);
 
         expand_run(text, quoted);
 
