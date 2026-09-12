@@ -170,6 +170,10 @@ b32 shell_is_interactive;
    retain Moonwater's existing dash-compatible defaults. */
 bool shell_bash_compat;
 bool shell_dash_compat;
+/* Set by the reader when more source remains after this physical line,
+   ignoring trailing newlines. Dash's runtime "Bad fd number" names that
+   next line rather than the command's own. */
+bool shell_line_has_more;
 
 /*
         rbash: a shell started as rbash, or with -r / --restricted, or
@@ -1611,11 +1615,22 @@ fn run_lines(string_address text)
                 else
                         lex_physical_newline(false);
 
+                {
+                        string_address rest = stop;
+
+                        shell_line_has_more = false;
+                        while (string_get(rest) == '\n')
+                                rest++;
+                        if (string_get(rest))
+                                shell_line_has_more = true;
+                }
+
                 // An empty line is a line: it is a body line of a
                 // here-document, and it ends a command a backslash held open.
                 if (shell_verbose_eval_lines)
                         shell_verbose_line(at);
                 run_line(at);
+                shell_line_has_more = false;
                 if (shell_syntax_generation != syntax)
                         break;
                 at = stop;

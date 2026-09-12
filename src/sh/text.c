@@ -191,6 +191,11 @@ static b32 text_done(b32 code)
                 if (string_equals(text_name, "sed"))
                         return 4;
 
+                if (string_equals(text_name, "cat"))
+                        string_diagnostic(&text_diagnostic, 0,
+                                          (string_address) "standard output",
+                                          file_reason(-ERROR_BAD_DESCRIPTOR));
+
                 return 1;
         }
 

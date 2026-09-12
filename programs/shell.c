@@ -101,8 +101,25 @@ static positive shell_run_complete_lines(p8 address_to text, positive length,
 
                         if (history_action == HISTORY_EXPAND_RUN)
                         {
+                                positive next = (positive)(newline - text) + 1;
+                                p8 address_to rest = text + next;
+                                positive left = length - next;
+
+                                shell_line_has_more = false;
+                                while (left)
+                                {
+                                        if (*rest != '\n')
+                                        {
+                                                shell_line_has_more = true;
+                                                break;
+                                        }
+                                        rest++;
+                                        left--;
+                                }
+
                                 shell_verbose_line(ready);
                                 run_line(ready);
+                                shell_line_has_more = false;
                         }
                 }
                 at = (positive)(newline - text) + 1;

@@ -4592,7 +4592,9 @@ static b32 exec_script_fd = -1;
 static string_address address_to exec_fields;
 static positive exec_fields_room;
 
+#define F_DUPFD 0
 #define F_DUPFD_CLOEXEC 1030
+#define REDIR_VAR_FLOOR 10
 
 // The longest name a coprocess pair may be called, which is what the NAME_PID
 // buffer beside it is sized from.
@@ -5138,6 +5140,44 @@ static bipolar exec_redirect_var_fd(string_address name, positive length)
         return (bipolar)fd;
 }
 
+static bipolar exec_redirect_dup_min(bipolar from, b32 floor)
+{
+        if (from < 0)
+                return from;
+
+        return system_call_3(syscall(fcntl), (positive)from, F_DUPFD, floor);
+}
+
+/* `{name}>file` allocates a descriptor at or above 10 into that variable.
+   `{name[index]}` stores the same way the coproc close looks one up. */
+static bool exec_redirect_var_store(string_address name, positive length,
+                                    b32 fd)
+{
+        p8 digits[24];
+        positive base;
+        const_string subscript;
+        positive subscript_length;
+
+        digits[positive_into_string(digits, (positive)fd)] = end;
+
+        if (env_reference_element_span(name, length, address_of base,
+                                       address_of subscript,
+                                       address_of subscript_length) &&
+            subscript_length)
+        {
+                positive key_length;
+                string_address key = shell_expand_subscript(
+                    name, base, (string_address)subscript, subscript_length,
+                    address_of key_length);
+
+                return key && shell_array_set(name, base, key, key_length,
+                                              digits, false);
+        }
+
+        return env_assign_hashed_span(name, length,
+                                      env_name_hash(name, length), digits);
+}
+
 static bool exec_redirect_apply(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -5193,29 +5233,70 @@ static bool exec_redirect_apply(b32 index)
                         return false;
 
                 b32 fd = want->fd;
+                bool var_alloc = false;
 
                 if (want->var_length)
                 {
-                        bipolar named = exec_redirect_var_fd(want->var,
-                                                            want->var_length);
-                        p8 shown[64];
-                        positive shown_length;
+                        bool closing =
+                            (want->op == OP_GREATAND ||
+                             want->op == OP_LESSAND) &&
+                            string_is(target, '-') &&
+                            string_is(target + 1, end);
 
-                        if (named < 0)
+                        if (closing)
                         {
-                                shown_length = want->var_length < 63
-                                                   ? want->var_length
-                                                   : 63;
-                                memory_copy(shown, want->var, shown_length);
-                                shown[shown_length] = end;
-                                string_format(log_error,
-                                              "%s: ambiguous redirect\n",
-                                              shown);
-                                exec_redirect_status = 1;
+                                bipolar named = exec_redirect_var_fd(
+                                    want->var, want->var_length);
+                                p8 shown[64];
+                                positive shown_length;
+
+                                if (named < 0)
+                                {
+                                        shown_length = want->var_length < 63
+                                                           ? want->var_length
+                                                           : 63;
+                                        memory_copy(shown, want->var,
+                                                    shown_length);
+                                        shown[shown_length] = end;
+                                        string_format(log_error,
+                                                      "%s: ambiguous redirect\n",
+                                                      shown);
+                                        exec_redirect_status = 1;
+                                        return false;
+                                }
+
+                                fd = (b32)named;
+                        }
+                        else
+                                var_alloc = true;
+                }
+
+                /* Dash dups only a single digit 0-9. `>&99` and `>&$n` with
+                   n=10 are a syntax error and end the process, the way lima
+                   0.5.x does. A closed 0-9 is an ordinary runtime failure. */
+                if (!shell_bash_compat &&
+                    (want->op == OP_GREATAND || want->op == OP_LESSAND) &&
+                    !(string_is(target, '-') && string_is(target + 1, end)))
+                {
+                        p8 first = string_get(target);
+
+                        if (!(first >= '0' && first <= '9' &&
+                              !string_get(target + 1)))
+                        {
+                                /* lima dash 0.5.x has already consumed this
+                                   line's newline, so the diagnostic names
+                                   the following line when one exists. */
+                                b32 saved_line = exec_line;
+
+                                if (shell_line_has_more && exec_line)
+                                        exec_line++;
+                                shell_syntax_where();
+                                log_error(str("Syntax error: Bad fd number\n"));
+                                exec_line = saved_line;
+                                exec_redirect_status = 2;
+                                expand_fatal_status(2);
                                 return false;
                         }
-
-                        fd = (b32)named;
                 }
 
                 /*
@@ -5254,14 +5335,22 @@ static bool exec_redirect_apply(b32 index)
                         failed. The open lands wherever it lands and the dup3
                         below moves it, which is the order bash uses and the
                         only one under which those names exist.
+
+                        `{name}>file` allocates a new descriptor rather than
+                        replacing one, and `{name}>&-` closes the one stored
+                        in the variable: both persist, so they are not saved.
                 */
-                if (both)
+                if (!want->var_length)
                 {
-                        if (!exec_save_fd(1, node) || !exec_save_fd(2, node))
+                        if (both)
+                        {
+                                if (!exec_save_fd(1, node) ||
+                                    !exec_save_fd(2, node))
+                                        return false;
+                        }
+                        else if (!exec_save_fd(fd, node))
                                 return false;
                 }
-                else if (!exec_save_fd(fd, node))
-                        return false;
 
                 if (want->op == OP_DLESS)
                 {
@@ -5344,10 +5433,15 @@ static bool exec_redirect_apply(b32 index)
                                               target);
                         }
 
-                        if ((b32)source == fd)
+                        if (var_alloc)
+                        {
+                                opened = exec_redirect_dup_min((bipolar)source,
+                                                               REDIR_VAR_FLOOR);
+                        }
+                        else if ((b32)source == fd)
                                 continue;
-
-                        opened = system_duplicate(source, fd, 0);
+                        else
+                                opened = system_duplicate(source, fd, 0);
                 }
                 else if (want->op == OP_LESS)
                         opened = system_open_at(AT_FDCWD,
@@ -5369,6 +5463,36 @@ static bool exec_redirect_apply(b32 index)
 
                         return exec_redirect_refused(want->op, target,
                                                      opened);
+                }
+
+                if (var_alloc)
+                {
+                        bipolar moved = opened;
+
+                        if (want->op != OP_GREATAND && want->op != OP_LESSAND)
+                        {
+                                moved = exec_redirect_dup_min(opened,
+                                                              REDIR_VAR_FLOOR);
+                                if (moved < 0)
+                                {
+                                        system_close(opened);
+                                        exec_redirect_diagnostic_restore(
+                                            redirect_mark);
+                                        return exec_redirect_refused(want->op,
+                                                                     target,
+                                                                     moved);
+                                }
+
+                                if (moved != opened)
+                                        system_close(opened);
+                        }
+
+                        if (!exec_redirect_var_store(want->var, want->var_length,
+                                                     (b32)moved))
+                                return false;
+
+                        log_flush();
+                        continue;
                 }
 
                 log_flush();

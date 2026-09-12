@@ -11527,7 +11527,15 @@ COLD fn shell_read(writer write, string_address input)
                 if (got != 1)
                 {
                         if (got < 0)
-                                failed = true;
+                        {
+                                /* Dash answers 1 for a closed stdin, the same
+                                   as EOF. A different syscall failure stays 2. */
+                                if (!shell_bash_compat &&
+                                    got == -ERROR_BAD_DESCRIPTOR)
+                                        ended = true;
+                                else
+                                        failed = true;
+                        }
                         else
                         {
                                 ended = true;

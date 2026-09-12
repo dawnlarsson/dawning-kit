@@ -1340,6 +1340,26 @@ static PURE bool parse_redirect_brace(string_address text, positive length)
                subscript_length;
 }
 
+/* A numbered redirect prefix. Dash 0.5.x only takes a single digit 0-9:
+   `10>file` and `255>file` are that number as a word plus a stdout
+   redirect, so `exec 255>x` is `exec 255` with stdout on x. Bash,
+   including --posix, takes any fd. */
+static PURE bool parse_redirect_fd_number(string_address text, positive length,
+                                          positive address_to descriptor)
+{
+        positive parsed;
+
+        if (!length || !string_digits_exact(text, address_of parsed) ||
+            parsed > 0x7fffffff)
+                return false;
+
+        if (!shell_bash_compat && length != 1)
+                return false;
+
+        address_to descriptor = parsed;
+        return true;
+}
+
 /* Return the number of descriptor tokens before a redirect operator, or -1.
    Alias scans and the grammar must agree on this exact two-token prefix. */
 static PURE b32 parse_redirect_prefix(b32 at)
@@ -1365,8 +1385,8 @@ static PURE b32 parse_redirect_prefix(b32 at)
             !parse_redirect_operator(next->op))
                 return -1;
 
-        if (string_digits_exact(token->text, address_of descriptor) &&
-            descriptor <= 0x7fffffff)
+        if (parse_redirect_fd_number(token->text, token->length,
+                                     address_of descriptor))
                 return 1;
 
         return parse_redirect_brace(token->text, token->length) ? 1 : -1;
@@ -1683,9 +1703,8 @@ static bool parse_take_redirect(b32 index)
                         brace_length = prefix->length - 2;
                         parse_position++;
                 }
-                else if (!string_digits_exact(prefix->text,
-                                              address_of parsed) ||
-                         parsed > 0x7fffffff)
+                else if (!parse_redirect_fd_number(prefix->text, prefix->length,
+                                                   address_of parsed))
                 {
                         parse_state = PARSE_SYNTAX;
                         return false;
