@@ -42650,7 +42650,9 @@ void memory_fill_u32(u32 *p,unsigned long n,u32 v) {while(n--)*p++=v;}
 void *memory_copy_apart(void *to,const void *from,unsigned long n) {return memcpy(to,from,n);}
 void canvas_rect_fill(u32 *,unsigned long,unsigned long,unsigned long,u32);
 void canvas_glyph(u32 *,unsigned long,const u8 *,unsigned long,unsigned long,u32);
+void canvas_glyph2(u32 *,unsigned long,const u8 *,unsigned long,unsigned long,u32);
 void canvas_cell(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
+void canvas_cell2(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
 void canvas_row_blit(u32 *,const u32 *,unsigned long,u32);
 #include "canvas-cells.inc"
 
@@ -42834,6 +42836,20 @@ int main(void) {
             expected[align+r*pitch+c]=colors[(bits[r]&(0x80>>c))?a:b];
         canvas_cell(pixels+align,pitch,bits,rows,colors[a],colors[b]);
         check(!memcmp(pixels,expected,300*sizeof(*pixels)));
+    }
+    for(unsigned a=0;a<6;a++)for(unsigned b=0;b<6;b++)for(unsigned pattern=0;pattern<256;pattern++) {
+        unsigned rows=1+pattern%17,pitch=16+2*(pattern%5),align=((pattern/10)%2)*2;
+        u8 bits[17];for(unsigned r=0;r<rows;r++)bits[r]=(pattern+r*17)&255;
+        memset(pixels,0xa5,1200*sizeof(*pixels));memset(expected,0xa5,1200*sizeof(*expected));
+        for(unsigned r=0;r<rows;r++)for(unsigned c=0;c<8;c++) {
+            u32 color=colors[(bits[r]&(0x80>>c))?a:b];
+            expected[align+(2*r)*pitch+2*c]=color;
+            expected[align+(2*r)*pitch+2*c+1]=color;
+            expected[align+(2*r+1)*pitch+2*c]=color;
+            expected[align+(2*r+1)*pitch+2*c+1]=color;
+        }
+        canvas_cell2(pixels+align,pitch,bits,rows,colors[a],colors[b]);
+        check(!memcmp(pixels,expected,1200*sizeof(*pixels)));
     }
     struct font_desc face={8,16,font_bits};canvas_font=&face;
     check_pane_layout();

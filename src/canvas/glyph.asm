@@ -12,14 +12,26 @@
 #
 #       void canvas_glyph(u32 *at, unsigned long pitch, const u8 *bits,
 #                         unsigned long stride, unsigned long rows, u32 colour)
+#       void canvas_glyph2(u32 *at, unsigned long pitch, const u8 *bits,
+#                          unsigned long stride, unsigned long rows, u32 colour)
 #       void canvas_cell(u32 *at, unsigned long pitch, const u8 *bits,
 #                        unsigned long rows, u32 ink, u32 paper)
+#       void canvas_cell2(u32 *at, unsigned long pitch, const u8 *bits,
+#                         unsigned long rows, u32 ink, u32 paper)
 #
 #       canvas_cell is the same glyph with its background, written in one pass.
 #       There is one framebuffer and the display is reading it, so filling the
 #       paper and then drawing the glyph over it is every letter on the screen
 #       flashing its background whenever it is repainted. Every pixel here is
 #       stored once, already the colour it ends up.
+#
+#       The 2 variants expand each source bit into a two-by-two. Scale two is
+#       the Retina metric; compose_row used to take the long way round there,
+#       and that path was measured at nine times this table on a kernel-like
+#       compile (599 ns a cell against 65 ns for the table in C, 74 ns for
+#       the ARM64 floor, Apple M2, -O2 -fno-tree-vectorize -fno-unroll-loops).
+#       The scale-one floor already paid the same spike down on Zen, 110
+#       cycles to 71.
 #
 #       pitch is in pixels. bits is one byte a row, most significant bit
 #       leftmost, which is how the kernel's console fonts are stored, and
@@ -57,6 +69,33 @@ SYM_FUNC_START(canvas_glyph)
         jnz     1b
 9:      RET
 SYM_FUNC_END(canvas_glyph)
+
+#> arch x86_64
+SYM_FUNC_START(canvas_glyph2)
+        test    %r8, %r8
+        jz      9f
+        shl     $2, %rsi                # pitch, pixels to bytes
+
+1:      movzbl  (%rdx), %eax
+        add     %rcx, %rdx
+        test    %eax, %eax
+        jz      2f                      # a blank row, and most rows are
+
+        .irp pixel, 0, 1, 2, 3, 4, 5, 6, 7
+        test    $(0x80 >> \pixel), %al
+        jz      3f
+        mov     %r9d, (8 * \pixel)(%rdi)
+        mov     %r9d, (8 * \pixel + 4)(%rdi)
+        mov     %r9d, (8 * \pixel)(%rdi, %rsi)
+        mov     %r9d, (8 * \pixel + 4)(%rdi, %rsi)
+3:
+        .endr
+
+2:      lea     (%rdi, %rsi, 2), %rdi
+        dec     %r8
+        jnz     1b
+9:      RET
+SYM_FUNC_END(canvas_glyph2)
 
 #> arch x86_64
 SYM_FUNC_START(canvas_cell)
@@ -138,6 +177,70 @@ SYM_FUNC_START(canvas_cell)
 9:      RET
 SYM_FUNC_END(canvas_cell)
 
+#> arch x86_64
+SYM_FUNC_START(canvas_cell2)
+        test    %rcx, %rcx
+        jz      9f
+        shl     $2, %rsi                # pitch, pixels to bytes
+
+        #
+        #       Sixteen entries of four pixel pairs. Each source bit is two
+        #       pixels of the same colour, so a nibble is eight destination
+        #       pixels and a row is two loads of thirty two bytes, stored
+        #       once and then again on the next scanline.
+        #
+        mov     %r9d, %eax              # paper
+        mov     %r8d, %r8d              # ink
+        mov     %rax, %r9
+        shl     $32, %r9
+        or      %rax, %r9               # paper then paper
+        mov     %r8, %r11
+        shl     $32, %r11
+        or      %r8, %r11               # ink then ink
+
+        sub     $512, %rsp
+        .set .Lcell2_pair, 0
+        .irp b3, %r9, %r11
+        .irp b2, %r9, %r11
+        .irp b1, %r9, %r11
+        .irp b0, %r9, %r11
+        mov     \b3, .Lcell2_pair(%rsp)
+        mov     \b2, .Lcell2_pair+8(%rsp)
+        mov     \b1, .Lcell2_pair+16(%rsp)
+        mov     \b0, .Lcell2_pair+24(%rsp)
+        .set .Lcell2_pair, .Lcell2_pair+32
+        .endr
+        .endr
+        .endr
+        .endr
+
+1:      movzbl  (%rdx), %eax
+        inc     %rdx
+        mov     %eax, %r10d
+        and     $0xf0, %r10d
+        shl     $1, %r10d               # the top nibble, times thirty two
+        and     $0x0f, %eax
+        shl     $5, %eax                # the bottom nibble, times thirty two
+
+        .irp off, 0, 8, 16, 24
+        mov     \off(%rsp,%r10,1), %r8
+        mov     %r8, \off(%rdi)
+        mov     %r8, \off(%rdi,%rsi)
+        .endr
+        .irp off, 0, 8, 16, 24
+        mov     \off(%rsp,%rax,1), %r8
+        mov     %r8, (32+\off)(%rdi)
+        mov     %r8, (32+\off)(%rdi,%rsi)
+        .endr
+
+        lea     (%rdi, %rsi, 2), %rdi
+        dec     %rcx
+        jnz     1b
+
+        add     $512, %rsp
+9:      RET
+SYM_FUNC_END(canvas_cell2)
+
 #> arch arm64
 SYM_FUNC_START(canvas_cell)
         cbz     x3, 9f
@@ -178,6 +281,59 @@ SYM_FUNC_START(canvas_cell)
         add     sp, sp, #256
 9:      ret
 SYM_FUNC_END(canvas_cell)
+
+#> arch arm64
+SYM_FUNC_START(canvas_cell2)
+        cbz     x3, 9f
+        lsl     x1, x1, #2
+
+        mov     w4, w4                  // ink, top half cleared
+        mov     w5, w5                  // paper
+        orr     x6, x5, x5, lsl #32     // paper then paper
+        orr     x7, x4, x4, lsl #32     // ink then ink
+
+        sub     sp, sp, #512
+        .set .Lcell2_pair, 0
+        .irp b3, x6, x7
+        .irp b2, x6, x7
+        .irp b1, x6, x7
+        .irp b0, x6, x7
+        stp     \b3, \b2, [sp, #.Lcell2_pair]
+        stp     \b1, \b0, [sp, #.Lcell2_pair+16]
+        .set .Lcell2_pair, .Lcell2_pair+32
+        .endr
+        .endr
+        .endr
+        .endr
+
+1:      ldrb    w8, [x2], #1
+        and     x9, x8, #0xf0
+        lsl     x9, x9, #1              // the top nibble, times thirty two
+        ubfiz   x10, x8, #5, #4         // the bottom nibble, times thirty two
+        add     x9, sp, x9
+        add     x10, sp, x10
+        add     x8, x0, x1              // the duplicated row
+
+        ldp     x11, x12, [x9]
+        ldp     x13, x14, [x9, #16]
+        stp     x11, x12, [x0]
+        stp     x13, x14, [x0, #16]
+        stp     x11, x12, [x8]
+        stp     x13, x14, [x8, #16]
+        ldp     x11, x12, [x10]
+        ldp     x13, x14, [x10, #16]
+        stp     x11, x12, [x0, #32]
+        stp     x13, x14, [x0, #48]
+        stp     x11, x12, [x8, #32]
+        stp     x13, x14, [x8, #48]
+
+        add     x0, x8, x1
+        subs    x3, x3, #1
+        b.ne    1b
+
+        add     sp, sp, #512
+9:      ret
+SYM_FUNC_END(canvas_cell2)
 
 #> arch riscv64
 SYM_FUNC_START(canvas_cell)
@@ -273,6 +429,149 @@ SYM_FUNC_START(canvas_cell)
 9:      ret
 SYM_FUNC_END(canvas_cell)
 
+#> arch riscv64
+SYM_FUNC_START(canvas_cell2)
+        beqz    a3, 9f
+        slli    a1, a1, 2
+
+        slli    a4, a4, 32
+        srli    a4, a4, 32              # ink, top half cleared
+        slli    a5, a5, 32
+        srli    a5, a5, 32              # paper
+        slli    t0, a5, 32
+        or      t0, a5, t0              # paper then paper
+        slli    t1, a4, 32
+        or      t1, a4, t1              # ink then ink
+
+        addi    sp, sp, -512
+        .set .Lcell2_pair, 0
+        .irp b3, t0, t1
+        .irp b2, t0, t1
+        .irp b1, t0, t1
+        .irp b0, t0, t1
+        sd      \b3, .Lcell2_pair(sp)
+        sd      \b2, .Lcell2_pair+8(sp)
+        sd      \b1, .Lcell2_pair+16(sp)
+        sd      \b0, .Lcell2_pair+24(sp)
+        .set .Lcell2_pair, .Lcell2_pair+32
+        .endr
+        .endr
+        .endr
+        .endr
+
+        # Same alignment rule as canvas_cell: a pixel pointer is only aligned
+        # to four, and an odd pitch puts every other row half a pair out.
+        or      t4, a0, a1
+        andi    t4, t4, 7
+        bnez    t4, 3f
+
+1:      lbu     a6, 0(a2)
+        addi    a2, a2, 1
+        andi    t4, a6, 0xf0
+        slli    t4, t4, 1               # the top nibble, times thirty two
+        add     t4, sp, t4
+        andi    t5, a6, 0x0f
+        slli    t5, t5, 5               # the bottom nibble, times thirty two
+        add     t5, sp, t5
+        add     a7, a0, a1
+
+        ld      t0, 0(t4)
+        ld      t1, 8(t4)
+        ld      t2, 16(t4)
+        ld      t3, 24(t4)
+        sd      t0, 0(a0)
+        sd      t1, 8(a0)
+        sd      t2, 16(a0)
+        sd      t3, 24(a0)
+        sd      t0, 0(a7)
+        sd      t1, 8(a7)
+        sd      t2, 16(a7)
+        sd      t3, 24(a7)
+        ld      t0, 0(t5)
+        ld      t1, 8(t5)
+        ld      t2, 16(t5)
+        ld      t3, 24(t5)
+        sd      t0, 32(a0)
+        sd      t1, 40(a0)
+        sd      t2, 48(a0)
+        sd      t3, 56(a0)
+        sd      t0, 32(a7)
+        sd      t1, 40(a7)
+        sd      t2, 48(a7)
+        sd      t3, 56(a7)
+
+        add     a0, a7, a1
+        addi    a3, a3, -1
+        bnez    a3, 1b
+        j       8f
+
+3:      lbu     a6, 0(a2)
+        addi    a2, a2, 1
+        andi    t4, a6, 0xf0
+        slli    t4, t4, 1
+        add     t4, sp, t4
+        andi    t5, a6, 0x0f
+        slli    t5, t5, 5
+        add     t5, sp, t5
+        add     a7, a0, a1
+
+        lw      t0, 0(t4)
+        lw      t1, 4(t4)
+        lw      t2, 8(t4)
+        lw      t3, 12(t4)
+        sw      t0, 0(a0)
+        sw      t1, 4(a0)
+        sw      t2, 8(a0)
+        sw      t3, 12(a0)
+        sw      t0, 0(a7)
+        sw      t1, 4(a7)
+        sw      t2, 8(a7)
+        sw      t3, 12(a7)
+        lw      t0, 16(t4)
+        lw      t1, 20(t4)
+        lw      t2, 24(t4)
+        lw      t3, 28(t4)
+        sw      t0, 16(a0)
+        sw      t1, 20(a0)
+        sw      t2, 24(a0)
+        sw      t3, 28(a0)
+        sw      t0, 16(a7)
+        sw      t1, 20(a7)
+        sw      t2, 24(a7)
+        sw      t3, 28(a7)
+        lw      t0, 0(t5)
+        lw      t1, 4(t5)
+        lw      t2, 8(t5)
+        lw      t3, 12(t5)
+        sw      t0, 32(a0)
+        sw      t1, 36(a0)
+        sw      t2, 40(a0)
+        sw      t3, 44(a0)
+        sw      t0, 32(a7)
+        sw      t1, 36(a7)
+        sw      t2, 40(a7)
+        sw      t3, 44(a7)
+        lw      t0, 16(t5)
+        lw      t1, 20(t5)
+        lw      t2, 24(t5)
+        lw      t3, 28(t5)
+        sw      t0, 48(a0)
+        sw      t1, 52(a0)
+        sw      t2, 56(a0)
+        sw      t3, 60(a0)
+        sw      t0, 48(a7)
+        sw      t1, 52(a7)
+        sw      t2, 56(a7)
+        sw      t3, 60(a7)
+
+        add     a0, a7, a1
+        addi    a3, a3, -1
+        bnez    a3, 3b
+
+8:      addi    sp, sp, 512
+9:      ret
+SYM_FUNC_END(canvas_cell2)
+
 #> arch other
 
 #> shared
@@ -299,6 +598,32 @@ SYM_FUNC_START(canvas_glyph)
 9:      ret
 SYM_FUNC_END(canvas_glyph)
 
+#> arch arm64
+SYM_FUNC_START(canvas_glyph2)
+        cbz     x4, 9f
+        lsl     x1, x1, #2
+
+1:      ldrb    w6, [x2]
+        add     x2, x2, x3
+        cbz     w6, 2f                  // a blank row, and most rows are
+        add     x7, x0, x1
+
+        .irp pixel, 0, 1, 2, 3, 4, 5, 6, 7
+        tbz     w6, #(7 - \pixel), 3f
+        str     w5, [x0, #(8 * \pixel)]
+        str     w5, [x0, #(8 * \pixel + 4)]
+        str     w5, [x7, #(8 * \pixel)]
+        str     w5, [x7, #(8 * \pixel + 4)]
+3:
+        .endr
+
+2:      add     x0, x0, x1
+        add     x0, x0, x1
+        subs    x4, x4, #1
+        b.ne    1b
+9:      ret
+SYM_FUNC_END(canvas_glyph2)
+
 #> arch riscv64
 SYM_FUNC_START(canvas_glyph)
         beqz    a4, 9f
@@ -320,6 +645,33 @@ SYM_FUNC_START(canvas_glyph)
         bnez    a4, 1b
 9:      ret
 SYM_FUNC_END(canvas_glyph)
+
+#> arch riscv64
+SYM_FUNC_START(canvas_glyph2)
+        beqz    a4, 9f
+        slli    a1, a1, 2
+
+1:      lbu     a6, 0(a2)
+        add     a2, a2, a3
+        beqz    a6, 2f                  # a blank row, and most rows are
+        add     a7, a0, a1
+
+        .irp pixel, 0, 1, 2, 3, 4, 5, 6, 7
+        andi    t0, a6, (0x80 >> \pixel)
+        beqz    t0, 3f
+        sw      a5, (8 * \pixel)(a0)
+        sw      a5, (8 * \pixel + 4)(a0)
+        sw      a5, (8 * \pixel)(a7)
+        sw      a5, (8 * \pixel + 4)(a7)
+3:
+        .endr
+
+2:      slli    t0, a1, 1
+        add     a0, a0, t0
+        addi    a4, a4, -1
+        bnez    a4, 1b
+9:      ret
+SYM_FUNC_END(canvas_glyph2)
 
 #> arch other
 

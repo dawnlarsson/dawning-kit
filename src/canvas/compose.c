@@ -196,11 +196,16 @@ static void cell_draw(const struct target *t, const struct shape *shape,
                       u32 ink, u32 paper)
 {
         if (direct && x >= max(t->clip.x1, 0) &&
-            x + WINDOW_CELL_W <= min(t->clip.x2, t->width))
+            x + canvas_cell_w <= min(t->clip.x2, t->width))
         {
-                target_mark(WINDOW_CELL_W * WINDOW_CELL_H);
-                canvas_cell(t->pixels + (size_t)y * t->pitch + x, t->pitch,
-                            bits, WINDOW_CELL_H, ink, paper);
+                target_mark((unsigned long)canvas_cell_w *
+                            (unsigned long)canvas_cell_h);
+                if (desktop.scale == 1)
+                        canvas_cell(t->pixels + (size_t)y * t->pitch + x,
+                                    t->pitch, bits, WINDOW_CELL_H, ink, paper);
+                else
+                        canvas_cell2(t->pixels + (size_t)y * t->pitch + x,
+                                     t->pitch, bits, WINDOW_CELL_H, ink, paper);
                 return;
         }
 
@@ -224,11 +229,12 @@ static HOT void compose_row(const struct target *t, const struct shape *shape,
         int cell_w = canvas_cell_w;
         const unsigned char *font_data = NULL;
         size_t glyph_size = 0;
-        _Bool direct = glyph_is_cell() && desktop.scale == 1 &&
+        _Bool direct = glyph_is_cell() &&
+                       (desktop.scale == 1 || desktop.scale == 2) &&
                        y >= max(t->clip.y1, 0) &&
-                       y + WINDOW_CELL_H <= min(t->clip.y2, t->height) &&
+                       y + canvas_cell_h <= min(t->clip.y2, t->height) &&
                        !round_inset(y - shape->y, shape->h, shape->radius) &&
-                       !round_inset(y + WINDOW_CELL_H - 1 - shape->y,
+                       !round_inset(y + canvas_cell_h - 1 - shape->y,
                                     shape->h, shape->radius);
 
         /*

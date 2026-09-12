@@ -56,17 +56,33 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
 
         /*
                 Whole eight-pixel tiles share the glyph floor when the bitmap
-                is entirely inside the damage and drawn at its own size.
+                is entirely inside the damage. Scale two is the Retina metric
+                of the same floor, so a cursor, a title and a close button do
+                not go back to scanning bits into rectangles. The destination
+                rectangle is what has to fit, not the source.
         */
-        if (scale == 1 && !(w & 7) &&
-            x >= max(t->clip.x1, 0) && (long)x + w <= min(t->clip.x2, t->width) &&
-            y >= max(t->clip.y1, 0) && (long)y + h <= min(t->clip.y2, t->height))
+        if ((scale == 1 || scale == 2) && !(w & 7) &&
+            x >= max(t->clip.x1, 0) &&
+            (long)x + (long)w * scale <= min(t->clip.x2, t->width) &&
+            y >= max(t->clip.y1, 0) &&
+            (long)y + (long)h * scale <= min(t->clip.y2, t->height))
         {
-                target_mark((unsigned long)h * w);
+                target_mark((unsigned long)h * w * (unsigned long)scale *
+                            (unsigned long)scale);
                 canvas_runs += w / 8 - 1;
                 for (column = 0; column < w; column += 8)
-                        canvas_glyph(t->pixels + (size_t)y * t->pitch + x + column,
-                                     t->pitch, bits + column / 8, pitch, h, colour);
+                {
+                        u32 *at = t->pixels + (size_t)y * t->pitch + x +
+                                  (int)column * scale;
+                        const u8 *src = bits + column / 8;
+
+                        if (scale == 1)
+                                canvas_glyph(at, t->pitch, src, pitch, h,
+                                             colour);
+                        else
+                                canvas_glyph2(at, t->pitch, src, pitch, h,
+                                              colour);
+                }
                 return;
         }
 

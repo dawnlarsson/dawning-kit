@@ -138,15 +138,27 @@ static struct drm_display_mode *output_mode_wh(struct drm_connector *connector,
         return best;
 }
 
+/*
+        Largest mode that still fits, preferring prefer_refresh when it is
+        positive.
+
+        A guest cap of seventy percent of a 120 Hz panel often still lists a
+        larger 60 Hz established timing under that cap. Pixels first would
+        take it and throw the refresh away; matching the screen's rate first
+        keeps the cursor on the panel's clock.
+*/
 static struct drm_display_mode *output_mode_under(struct drm_connector *connector,
-                                                  int width, int height)
+                                                  int width, int height,
+                                                  int prefer_refresh)
 {
         struct drm_display_mode *mode, *best = NULL;
         int best_score = 0, best_refresh = 0;
+        _Bool best_preferred = false;
 
         list_for_each_entry(mode, &connector->modes, head)
         {
                 int score, refresh;
+                _Bool preferred;
 
                 if (mode->hdisplay > width || mode->vdisplay > height)
                         continue;
@@ -155,13 +167,18 @@ static struct drm_display_mode *output_mode_under(struct drm_connector *connecto
 
                 refresh = drm_mode_vrefresh(mode);
                 score = mode->hdisplay * mode->vdisplay;
-                if (best && (score < best_score ||
-                             (score == best_score && refresh <= best_refresh)))
+                preferred = prefer_refresh > 0 && refresh == prefer_refresh;
+                if (best && preferred == best_preferred &&
+                    (score < best_score ||
+                     (score == best_score && refresh <= best_refresh)))
+                        continue;
+                if (best && preferred != best_preferred && !preferred)
                         continue;
 
                 best = mode;
                 best_score = score;
                 best_refresh = refresh;
+                best_preferred = preferred;
         }
 
         return best;
@@ -208,7 +225,9 @@ static struct drm_display_mode *output_mode_take(struct drm_device *dev,
         crtc_clock still 0, the CRTC never generates vblank, and the first
         flip after the picture is on screen waits forever. The 120 Hz entry
         of a listed size is still preferred over a 60 Hz established timing
-        of the same width and height.
+        of the same width and height. When seventy percent itself is not
+        listed, the under-cap pick prefers the screen's refresh before it
+        prefers more pixels.
 */
 static struct drm_display_mode *output_guest_mode(struct drm_device *dev,
                                                   struct drm_connector *connector)
@@ -233,7 +252,7 @@ static struct drm_display_mode *output_guest_mode(struct drm_device *dev,
         if (listed)
                 return output_mode_take(dev, listed);
 
-        listed = output_mode_under(connector, w, h);
+        listed = output_mode_under(connector, w, h, drm_mode_vrefresh(screen));
         if (listed)
                 return output_mode_take(dev, listed);
 
@@ -269,7 +288,13 @@ static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
                         continue;
 
                 connector = mode_set->connectors[0];
-                if (biggest && canvas_is_virtual(dev))
+                /*
+                        A guest stays a window even when the first modeset is
+                        refused. The retry used to take the probe's preferred
+                        size, which is the host's whole screen, and that is
+                        the blow-out the seventy percent cap exists to stop.
+                */
+                if (canvas_is_virtual(dev))
                 {
                         taken = output_guest_mode(dev, connector);
                         if (!taken)
@@ -792,7 +817,9 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
         A monitor listing a mode is not a promise the link can carry it,
         especially with more than one screen sharing the bandwidth, so a
         refused commit falls back to the mode the probe would have chosen --
-        which is the one that used to be taken unconditionally.
+        which is the one that used to be taken unconditionally. A guest is
+        already capped: retrying still asks for seventy percent of the host,
+        not the probe's native size.
 */
 static int canvas_start(struct canvas *canvas)
 {

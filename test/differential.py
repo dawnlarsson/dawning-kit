@@ -15781,11 +15781,11 @@ def harness_core_state(argv):
         cells += section(text, "static const struct font_desc", "/*\n        Where one line ends.")
         cells += section(compose, "static void cell_draw", "/*\n        A window made of text.\n\n        The rows")
         (work / "canvas-cells.inc").write_text(cells)
-        (work / "canvas-ring.inc").write_text(section(compose, "static void compose_cells", "/*\n        A pane, in target coordinates."))
-        geometry = section(canvas, "static CONST _Bool rects_overlap", "// The border and titlebar")
+        (work / "canvas-ring.inc").write_text(section(compose, "static void compose_cells", "/*\n        The bar down the right of a window"))
+        geometry = section(canvas, "static inline PURE _Bool drm_rects_overlap", "// The border and titlebar")
         geometry += section(canvas, "static void pane_frame", "// Which edges")
         geometry += "#define compose_cells compose_cells_pixels\n"
-        geometry += section(compose, "static void compose_cells", "/*\n        A pane, in target coordinates.")
+        geometry += section(compose, "static void compose_cells", "/*\n        The bar down the right of a window")
         #   The close button is not this harness's subject, and asking for
         #   its square needs a shared page the pane mocked here does not
         #   have. Saying there is never one leaves the titlebar drawn exactly
