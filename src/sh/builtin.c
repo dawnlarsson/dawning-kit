@@ -11362,8 +11362,16 @@ COLD fn shell_read(writer write, string_address input)
         if (hidden)
                 quieted = read_echo_off(descriptor, address_of quiet_held);
 
+        /* -n in a UTF-8 locale is a count of characters, not bytes: two of
+           éΩ界 is éΩ. The locale is read here so an LC_ALL= on the line
+           before is visible; env_locale_touch already bumped the cache.
+           -N stays a byte count. An unfinished sequence at EOF still
+           counts as one, which is what bash stores. */
+        bool utf8_n = limited && !exact && shell_utf8_on();
+        memory_utf8_state read_utf8 = {0};
+        positive read_chars = 0;
         bool escaped = false;
-        while (!(limited && read_length >= limit))
+        while (!(limited && (utf8_n ? read_chars >= limit : read_length >= limit)))
         {
                 p8 value;
 
@@ -11390,7 +11398,11 @@ COLD fn shell_read(writer write, string_address input)
                         if (got < 0)
                                 failed = true;
                         else
+                        {
                                 ended = true;
+                                if (utf8_n && read_utf8.left)
+                                        read_chars++;
+                        }
                         break;
                 }
 
@@ -11409,7 +11421,19 @@ COLD fn shell_read(writer write, string_address input)
                 read_literal[read_length] = escaped;
                 read_line[read_length++] = value;
                 escaped = false;
+                if (utf8_n)
+                {
+                        if (!read_utf8.left &&
+                            (value < 0xc2 || value > 0xf4))
+                                read_chars++;
+                        else if (memory_utf8_feed(address_of read_utf8, value))
+                                read_chars++;
+                }
         }
+
+        bool missing = ended &&
+                       (!limited ||
+                        (utf8_n ? read_chars : read_length) < limit);
 
         read_line[read_length] = end;
         read_literal[read_length] = 0;
@@ -11436,7 +11460,7 @@ COLD fn shell_read(writer write, string_address input)
                     || shell_read_refused("REPLY")))
                         return shell_answer((shell_bash_compat && env_readonly("REPLY") ? 1 : 2));
 
-                return shell_answer(read_result(failed, ended, timed_out));
+                return shell_answer(read_result(failed, missing, timed_out));
         }
 
         /*
@@ -11470,9 +11494,7 @@ COLD fn shell_read(writer write, string_address input)
                                         return shell_answer(
                                             (shell_bash_compat && env_readonly(shell_argv[name]) ? 1 : 2));
 
-                return shell_answer(
-                    read_result(failed, ended && read_length < limit,
-                                timed_out));
+                return shell_answer(read_result(failed, missing, timed_out));
         }
 
         {
@@ -11525,7 +11547,7 @@ COLD fn shell_read(writer write, string_address input)
                         names++;
                 }
 
-        shell_answer(read_result(failed, ended, timed_out));
+        shell_answer(read_result(failed, missing, timed_out));
 }
 
 /*
