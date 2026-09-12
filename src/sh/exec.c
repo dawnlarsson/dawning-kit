@@ -6710,40 +6710,84 @@ static COLD fn exec_trace_assignment(string_address word)
 }
 
 static bool exec_ps4_expanding;
+static bool exec_ps4_dash_blocked;
+
+static fn exec_ps4_dash_block(bool on)
+{
+        exec_ps4_dash_blocked = on;
+}
 
 static inline INLINE PURE bool exec_trace_on()
 {
         return (shell_options & SHELL_XTRACE) && !exec_ps4_expanding;
 }
 
+static bool exec_ps4_command_sub(string_address text)
+{
+        while (string_get(text))
+        {
+                p8 value = string_get(text);
+
+                if (value == '\\' && string_get(text + 1))
+                {
+                        text += 2;
+                        continue;
+                }
+
+                if (value == '`')
+                        return true;
+
+                if (value == '$' && string_get(text + 1) == '(' &&
+                    string_get(text + 2) != '(')
+                        return true;
+
+                text++;
+        }
+
+        return false;
+}
+
 static fn exec_trace_ps4()
 {
         string_address prefix;
+        string_address expanded;
 
         prefix = env_get("PS4");
         if (!prefix)
                 prefix = (string_address) "+ ";
 
         /*
-                Bash expands PS4 the way it expands a prompt: parameters
-                and command substitutions first, then the backslash
-                escapes, then the first character of what that produced
-                written once per reader depth. Dash writes the bytes as
-                they stand. Expanding with xtrace still on would trace
-                the expansion itself.
+                Dash and bash both expand parameters, command substitutions
+                and arithmetic in PS4. Expanding with xtrace still on would
+                trace the expansion itself. Bash then applies prompt
+                backslash escapes and writes the first character once per
+                reader depth. Dash writes the expanded bytes as they stand.
+
+                Dash re-parses PS4 as a double-quoted string, so a leftover
+                end-of-file token from a one-line eval argument makes a
+                command substitution in that parse fail. The stored prefix
+                is then written, and the next trace expands again.
         */
+        if (exec_ps4_dash_blocked && exec_ps4_command_sub(prefix))
+        {
+                exec_ps4_dash_blocked = false;
+                shell_syntax_where();
+                log_error(str("Syntax error: end of file unexpected"
+                              " (expecting \")\")\n"));
+                log_error(prefix, 0);
+                return;
+        }
+
+        exec_ps4_expanding = true;
+        expanded = shell_expand_ps4(prefix);
+        exec_ps4_expanding = false;
+        if (expanded)
+                prefix = expanded;
+
         if (shell_bash_compat)
         {
-                string_address expanded;
-                p8 first;
+                p8 first = string_get(prefix);
 
-                exec_ps4_expanding = true;
-                expanded = shell_expand_ps4(prefix);
-                exec_ps4_expanding = false;
-                if (expanded && string_get(expanded))
-                        prefix = expanded;
-
-                first = string_get(prefix);
                 if (first)
                 {
                         positive depth = shell_run_depth ? shell_run_depth : 1;
@@ -6759,7 +6803,7 @@ static fn exec_trace_ps4()
                         if (string_get(prefix + 1))
                                 shell_prompt_written(log_error, prefix + 1);
                         return;
-                    }
+                }
         }
 
         log_error(prefix, 0);

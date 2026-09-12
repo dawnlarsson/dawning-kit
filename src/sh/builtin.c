@@ -385,6 +385,7 @@ static bool exec_arithmetic_value(string_address text,
 // exec owns the lifetime of PIPESTATUS; the variable engine materializes its
 // deferred one-element value only when a reader actually names it.
 fn exec_pipe_status_wanted();
+static fn exec_ps4_dash_block(bool on);
 
 static bool shell_pipe_status_wanted(const_string name, positive length)
 {
@@ -13559,7 +13560,17 @@ COLD fn shell_eval(writer write, string_address input)
 
                 // Every line of it, not the first: eval "$(cmd)" is the
                 // idiom, and what cmd printed has as many lines as it likes.
+                //
+                // Dash expands PS4 by re-parsing it, and a one-line eval
+                // argument leaves an end-of-file token that makes a command
+                // substitution in that parse fail once. A newline-terminated
+                // argument does not.
+                if (!shell_bash_compat &&
+                    !string_first_of(eval_storage, '\n'))
+                        exec_ps4_dash_block(true);
+
                 run_lines(eval_storage);
+                exec_ps4_dash_block(false);
                 shell_input_end();
                 exec_input_finish();
 
