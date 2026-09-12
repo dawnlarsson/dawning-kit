@@ -2527,6 +2527,7 @@ b32 parse_program()
         parse_word_used = parse_word_base;
         parse_redirect_used = parse_redirect_base;
         here_taken = 0;
+        shell_parse_generation++;
 
         root = parse_list();
 

@@ -426,7 +426,7 @@ typedef struct
         positive used;
 } shell_mark;
 
-static PURE shell_mark shell_store_mark(shell_store address_to store)
+static inline INLINE PURE shell_mark shell_store_mark(shell_store address_to store)
 {
         shell_mark mark;
 
@@ -436,16 +436,22 @@ static PURE shell_mark shell_store_mark(shell_store address_to store)
         return mark;
 }
 
-static fn shell_store_rewind(shell_store address_to store, shell_mark mark)
+static inline INLINE fn shell_store_rewind(shell_store address_to store, shell_mark mark)
 {
-        if (!mark.block)
+        if (mark.block)
         {
-                shell_store_reset(store);
+                if (store->here == mark.block && store->here->used == mark.used)
+                        return;
+
+                store->here = mark.block;
+                store->here->used = mark.used;
                 return;
         }
 
-        store->here = mark.block;
-        store->here->used = mark.used;
+        if (!store->here)
+                return;
+
+        shell_store_reset(store);
 }
 
 /*
@@ -463,8 +469,15 @@ typedef struct
 
 //      Bound to wherever the table actually lives, so the same appending code
 //      serves argv, a for loop's list and set's arguments alike.
-static bool shell_words_add(shell_words address_to list, string_address word)
+static inline INLINE bool shell_words_add(shell_words address_to list, string_address word)
 {
+        if (list->count + 2 <= *list->room)
+        {
+                (address_to list->word)[list->count++] = word;
+                (address_to list->word)[list->count] = null;
+                return true;
+        }
+
         if (!shell_room((address_any address_to)list->word, list->room,
                         list->count + 2, sizeof(string_address)))
                 return false;
@@ -750,6 +763,9 @@ positive shell_argc;
 static bool shell_command_name_stable;
 static string_address shell_command_name_address;
 static positive shell_command_name_length;
+/* parse_program reuses word slots. A remembered builtin is only the same
+   command while this generation is unchanged -- a kept loop tree. */
+static positive shell_parse_generation;
 
 p8 address_to argument_line;
 positive argument_line_room;
@@ -1190,14 +1206,16 @@ bool shell_builtin(string_address arguments, positive2 named)
 {
         static shell_command address_to remembered;
         static positive remembered_length;
+        static positive remembered_hash;
+        static positive remembered_generation;
         shell_command address_to command = null;
 
         if (!arguments && shell_command_name_stable &&
             shell_argv[0] == shell_command_name_address && remembered &&
             !shell_disabled[remembered - shell_commands] &&
-            remembered_length == shell_command_name_length &&
-            !memory_compare(shell_argv[0], remembered->name,
-                            remembered_length))
+            remembered_length == named.y && remembered_hash &&
+            remembered_hash == named.x &&
+            remembered_generation == shell_parse_generation)
                 command = remembered;
         else
         {
@@ -1211,7 +1229,9 @@ bool shell_builtin(string_address arguments, positive2 named)
                     shell_argv[0] == shell_command_name_address && command)
                 {
                         remembered = command;
-                        remembered_length = shell_command_name_length;
+                        remembered_length = named.y;
+                        remembered_hash = named.x;
+                        remembered_generation = shell_parse_generation;
                 }
         }
 

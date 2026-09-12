@@ -6403,10 +6403,11 @@ static b32 exec_call(positive slot)
 {
         b32 body = exec_functions[slot].body;
         positive saved_count = shell_parameter_count;
-        positive saved;
+        positive saved = 0;
         b32 status;
         shell_getopts_state saved_getopts;
         bool saved_replaced = shell_parameters_replaced;
+        bool held_parameters;
 
         if (shell_dash_compat)
                 saved_getopts = shell_getopts_save();
@@ -6424,21 +6425,26 @@ static b32 exec_call(positive slot)
                 return 1;
         }
 
-        saved = shell_parameters_save();
-        if (saved == EXPAND_NO_ROOM ||
-            !shell_parameters_restore_prepare(saved_count) ||
-            !shell_parameters_set(shell_argv + 1,
-                                  shell_argc > 0 ? shell_argc - 1 : 0))
-        {
-                if (saved != EXPAND_NO_ROOM)
-                        shell_parameter_stack_used = saved;
-                shell_local_leave();
-                log_error(str("No room for function arguments\n"));
-                shell_status = 1;
-                return 1;
-        }
+        held_parameters = saved_count || shell_argc > 1;
 
-        shell_getopts_parameters_changed();
+        if (held_parameters)
+        {
+                saved = shell_parameters_save();
+                if (saved == EXPAND_NO_ROOM ||
+                    !shell_parameters_restore_prepare(saved_count) ||
+                    !shell_parameters_set(shell_argv + 1,
+                                          shell_argc > 0 ? shell_argc - 1 : 0))
+                {
+                        if (saved != EXPAND_NO_ROOM)
+                                shell_parameter_stack_used = saved;
+                        shell_local_leave();
+                        log_error(str("No room for function arguments\n"));
+                        shell_status = 1;
+                        return 1;
+                }
+
+                shell_getopts_parameters_changed();
+        }
 
         // By index and not by address: a definition made inside the body can
         // grow the table, and the table may move when it does.
@@ -6489,14 +6495,25 @@ static b32 exec_call(positive slot)
         if (exec_signal == EXEC_SIGNAL_RETURN || exec_input_error())
                 exec_signal = EXEC_SIGNAL_NONE;
 
-        if (!shell_parameters_restore(saved, saved_count))
+        if (held_parameters)
+        {
+                if (!shell_parameters_restore(saved, saved_count))
+                {
+                        log_error(str("No room to restore function arguments\n"));
+                        shell_status = 2;
+                        /* Restore storage was reserved before the function ran, and
+                           the caller's byte/table capacities cannot have shrunk.
+                           Continuing would expose the callee's $@ as caller state;
+                           make an invariant violation terminal instead. */
+                        log_flush();
+                        exit(2);
+                }
+        }
+        else if (shell_parameter_count &&
+                 !shell_parameters_set(shell_parameter, 0))
         {
                 log_error(str("No room to restore function arguments\n"));
                 shell_status = 2;
-                /* Restore storage was reserved before the function ran, and
-                   the caller's byte/table capacities cannot have shrunk.
-                   Continuing would expose the callee's $@ as caller state;
-                   make an invariant violation terminal instead. */
                 log_flush();
                 exit(2);
         }
@@ -6678,9 +6695,9 @@ static COLD fn exec_trace_assignment(string_address word)
 
 static bool exec_ps4_expanding;
 
-static PURE bool exec_trace_on()
+static inline INLINE PURE bool exec_trace_on()
 {
-        return !exec_ps4_expanding && (shell_options & SHELL_XTRACE) != 0;
+        return (shell_options & SHELL_XTRACE) && !exec_ps4_expanding;
 }
 
 static fn exec_trace_ps4()
@@ -6739,7 +6756,7 @@ static fn exec_trace_ps4()
         the equals, and the value quoted as a word -- and then the command.
         Dash writes every word as it stands, assignments and command together.
 */
-static fn exec_trace(b32 count, b32 assignments)
+static COLD fn exec_trace(b32 count, b32 assignments)
 {
         b32 at;
         b32 from;
@@ -7823,15 +7840,30 @@ static b32 exec_dispatch(b32 command_word)
         bool disabled = shell_builtin_disabled(name);
         bool colon = initial == ':' && !string_get(name + 1);
 
-        /* With no function at all, or in a personality where : cannot be
-           overridden, its answer needs neither a name hash nor a table walk.
-           Bash ordinary mode reaches the lookup only when a function could
-           actually have claimed this name. */
-        if (colon && !disabled &&
+        /* With no function at all, or in a personality where : / true / false
+           cannot be overridden, the answer needs neither a name hash nor a
+           table walk. Bash ordinary mode reaches the lookup only when a
+           function could actually have claimed this name. */
+        if (!disabled &&
             (!shell_bash_compat || shell_posix_on() || !exec_function_count))
         {
-                shell_status = 0;
-                return 0;
+                if (colon)
+                {
+                        shell_status = 0;
+                        return 0;
+                }
+                if (initial == 't' && name[1] == 'r' && name[2] == 'u' &&
+                    name[3] == 'e' && !name[4])
+                {
+                        shell_status = 0;
+                        return 0;
+                }
+                if (initial == 'f' && name[1] == 'a' && name[2] == 'l' &&
+                    name[3] == 's' && name[4] == 'e' && !name[5])
+                {
+                        shell_status = 1;
+                        return 1;
+                }
         }
 
         shell_command_name_stable =
@@ -7886,10 +7918,22 @@ static b32 exec_dispatch(b32 command_word)
                 return exec_call(slot);
         }
 
-        if (colon && !disabled)
+        if (!disabled)
         {
-                shell_status = 0;
-                return 0;
+                if (colon ||
+                    (named.y == 4 && name[0] == 't' && name[1] == 'r' &&
+                     name[2] == 'u' && name[3] == 'e') ||
+                    (named.y == 1 && name[0] == ':'))
+                {
+                        shell_status = 0;
+                        return 0;
+                }
+                if (named.y == 5 && name[0] == 'f' && name[1] == 'a' &&
+                    name[2] == 'l' && name[3] == 's' && name[4] == 'e')
+                {
+                        shell_status = 1;
+                        return 1;
+                }
         }
 
         if (!disabled && exec_control_builtin(name, true))
@@ -8219,7 +8263,7 @@ static b32 exec_simple(b32 index)
         b32 mark = exec_save_count;
         b32 count = 0;
         b32 first = 0;
-        b32 declaration_from = exec_declaration_from(node);
+        b32 declaration_from = -1;
         b32 leading = 0;
         b32 address_to word_order = null;
         b32 status;
@@ -8287,6 +8331,37 @@ static b32 exec_simple(b32 index)
 
 #define EXEC_WORD(at) (word_order ? word_order[(at)] : node->word + (at))
 
+        /* Literal words are the parse-time identity: no expand_begin, no
+           field split, no assignment capture. Prefix assignments, keyword
+           reordering and redirections keep the general walk. */
+        if (!leading && !word_order && node->word_count)
+        {
+                b32 words = node->word_count;
+                b32 word = node->word;
+                b32 step = 0;
+
+                while (step < words &&
+                       (parse_word_flags[word + step] & PARSE_WORD_LITERAL))
+                        step++;
+
+                if (step == words)
+                {
+                        if (!shell_array_room(shell_argv, shell_argv_room,
+                                              (positive)words + 2))
+                        {
+                                status = 2;
+                                goto fail;
+                        }
+
+                        for (step = 0; step < words; step++)
+                                shell_argv[step] = parse_words[word + step];
+
+                        count = words;
+                        first = 0;
+                        goto argv_ready;
+                }
+        }
+
         if (leading)
         {
                 expanded_kept = (exec_kept_value address_to)shell_store_take(
@@ -8316,27 +8391,33 @@ static b32 exec_simple(b32 index)
                         Declaration operands are expanded whole; the ordinary
                         argument expansion must not split their right sides.
                 */
-                if (assignment && word_index >= declaration_from)
+                if (assignment)
                 {
-                        positive value_at =
-                            parse_word_name_lengths[word_index] + 1 +
-                            ((word_flags & PARSE_WORD_APPEND) != 0);
+                        if (declaration_from < 0)
+                                declaration_from = exec_declaration_from(node);
 
-                        if (!shell_words_add(
-                                address_of arguments,
-                                (literal ||
-                                 (word_flags & PARSE_WORD_COMPOUND))
-                                    ? word
-                                    : shell_expand_assignment(word,
-                                                              value_at)))
-                                break;
+                        if (word_index >= declaration_from)
+                        {
+                                positive value_at =
+                                    parse_word_name_lengths[word_index] + 1 +
+                                    ((word_flags & PARSE_WORD_APPEND) != 0);
 
-                        count = (b32)arguments.count;
+                                if (!shell_words_add(
+                                        address_of arguments,
+                                        (literal ||
+                                         (word_flags & PARSE_WORD_COMPOUND))
+                                            ? word
+                                            : shell_expand_assignment(word,
+                                                                      value_at)))
+                                        break;
 
-                        if (exec_line_aborted())
-                                break;
+                                count = (b32)arguments.count;
 
-                        continue;
+                                if (exec_line_aborted())
+                                        break;
+
+                                continue;
+                        }
                 }
 
                 if (literal)
@@ -8475,6 +8556,7 @@ static b32 exec_simple(b32 index)
                 goto fail;
         }
 
+        argv_ready:
         shell_argv[count] = null;
         shell_argc = count;
 
@@ -8505,7 +8587,8 @@ static b32 exec_simple(b32 index)
                         env_export_restore(kept[at].binding.name, true);
         }
 
-        exec_trace(count, first);
+        if (exec_trace_on())
+                exec_trace(count, first);
 
         if (node->redirect_count && !exec_redirect_apply(index))
         {
@@ -8580,7 +8663,7 @@ static b32 exec_simple(b32 index)
         if (log_failed() && !status)
                 status = shell_status = 1;
 
-        if (!exec_finish_prefixes(kept, kept_count) && !status)
+        if (kept && !exec_finish_prefixes(kept, kept_count) && !status)
                 status = shell_status = 2;
 
         if (node->redirect_count)
@@ -8605,7 +8688,7 @@ static b32 exec_simple(b32 index)
                 them left the arena behind.
         */
 fail:
-        if (!exec_finish_prefixes(kept, kept_count) && !status)
+        if (kept && !exec_finish_prefixes(kept, kept_count) && !status)
                 status = shell_status = 2;
         exec_put_back(expanded_kept, expanded_count, true);
         shell_store_rewind(address_of exec_store, arena_mark);
@@ -11164,10 +11247,27 @@ static b32 exec_node_kind(b32 index)
                     exec_condition_reaches(SHELL_EXTRA_FUNCTRACE))
                         exec_trap_condition(TRAP_DEBUG);
 
-                expanded = shell_store_mark(address_of expand_store);
+                bool expand_scratch = node->redirect_count != 0;
+                b32 word_at = node->word;
+                b32 word_stop = word_at + node->word_count;
+
+                while (!expand_scratch && word_at < word_stop)
+                {
+                        if (!(parse_word_flags[word_at] & PARSE_WORD_LITERAL))
+                                expand_scratch = true;
+                        word_at++;
+                }
+
+                if (expand_scratch)
+                        expanded = shell_store_mark(address_of expand_store);
 
                 status = exec_simple(index);
-                exec_expansion_done(expanded, substitutions);
+
+                if (expand_scratch)
+                        exec_expansion_done(expanded, substitutions);
+                else if (expand_substitutions_ever &&
+                         expand_substitutions_count != substitutions)
+                        shell_substitutions_close(substitutions);
 
                 shell_status = status;
 
