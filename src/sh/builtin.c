@@ -16592,6 +16592,13 @@ fn shell_command_builtin(writer write, string_address input)
             exec_control_builtin(shell_argv[0], true))
                 return;
 
+        /* Dash's command makes the next word a regular builtin and gives
+           it a temporary variable stack that is discarded when it ends.
+           local only writes into that stack, so command local is a
+           successful no-op, including outside a function. */
+        if (!shell_bash_compat && word_is(shell_argv[0], "local"))
+                return shell_answer(0);
+
         {
                 bool tail = shell_tail_command;
                 bool reader = word_is(shell_argv[0], "eval") ||

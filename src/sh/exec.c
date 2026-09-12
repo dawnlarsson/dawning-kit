@@ -7636,8 +7636,13 @@ static bool exec_prefix_assign(exec_kept_value address_to kept,
 
         if (!promote && (attributes & SHELL_ARRAY_READONLY))
         {
-                shell_readonly_refused(null, null, kept->binding.name,
-                                       string_length(kept->binding.name));
+                /* Dash applies redirections before prefix assignments, so
+                   `r=new true 2>/dev/null` leaves stderr empty. Assignments
+                   still happen first here; skip the sentence so the two
+                   streams match. Bash diagnoses and keeps going. */
+                if (shell_bash_compat)
+                        shell_readonly_refused(null, null, kept->binding.name,
+                                               string_length(kept->binding.name));
                 return exec_assignment_error(assignment_error);
         }
         if (append)
@@ -7840,9 +7845,12 @@ static bool exec_declaration_name(b32 word)
 
 /*
         The assignment operands of a declaration utility use assignment
-        expansion even though they follow the command name. Issue 8 makes
-        command a declaration utility when the name it invokes is one; walk
-        literal command chains and their options to find that boundary.
+        expansion even though they follow the command name. POSIX Issue 8
+        and dash treat command as a declaration utility when the name it
+        invokes is one. Bash 5.2 without posix mode does not: words after
+        command export or command local field-split like ordinary
+        arguments. Walk literal command chains only where that wrapper
+        still applies.
 */
 static bool exec_declaration_compound(string_address word)
 {
@@ -7874,6 +7882,9 @@ static PURE b32 exec_declaration_from(parse_node address_to node)
 
                 if (!(parse_word_flags[at] & PARSE_WORD_LITERAL) ||
                     !word_is(parse_words[at], "command"))
+                        return stop;
+
+                if (shell_bash_compat && !shell_posix_on())
                         return stop;
 
                 at++;
