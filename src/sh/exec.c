@@ -6270,7 +6270,34 @@ PURE positive shell_line_now()
         /* A diagnostic before any command has run still needs the line the
            reader is on: syntax errors used to say line 0 because exec_line
            is only filled when a node starts. */
+        if (expand_substitution_lineno)
+                return expand_substitution_lineno;
+
+        if (shell_eval_lineno_base)
+                return shell_eval_lineno_base +
+                       (shell_line_number ? shell_line_number : 1) - 1;
+
         return exec_line ? (positive)exec_line : shell_line_number;
+}
+
+PURE bool exec_in_function()
+{
+        return exec_function_depth != 0;
+}
+
+/*
+        The line Bash reports as $LINENO for the first line of an eval body:
+        the last physical line of the eval command itself, or that command's
+        already-offset line when eval is nested inside eval.
+*/
+positive shell_eval_lineno_base_now()
+{
+        if (shell_eval_lineno_base)
+                return shell_line_now();
+        if (exec_function_depth)
+                return exec_line ? (positive)exec_line : 1;
+        return shell_line_number ? shell_line_number
+                                 : (exec_line ? (positive)exec_line : 1);
 }
 
 /*
@@ -7076,7 +7103,10 @@ static PURE bool exec_special_active(string_address name, p8 kind)
    the POSIX policy it has always had. */
 static PURE bool exec_special_builtin(string_address name)
 {
-        if (shell_bash_compat && !shell_posix_on())
+        /* `time < file` is a timed null command: there is no argv name, and
+           POSIX mode still asks this after a redirect fails. The empty
+           command is not one of the fifteen. */
+        if (!name || (shell_bash_compat && !shell_posix_on()))
                 return false;
         return exec_special_active(name, exec_special_kind(name));
 }

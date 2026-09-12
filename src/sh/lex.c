@@ -138,6 +138,29 @@ static b32 lex_ready;
    child parses a fresh, non-interactive shell source even when the containing
    shell was interactive, which is material to comment policy. */
 static bool expand_in_substitution;
+/* $LINENO inside $( ) is the line of the substitution in the caller, not
+   a fresh count of the child's body. The child freezes that number here. */
+static positive expand_substitution_lineno;
+
+/*
+        Nested eval and `.` name themselves on a syntax error. Bash inserts
+        `eval:` between $0 and the line, and replaces $0 with the sourced
+        path; dash puts the extra word after the line. Expansion errors pick
+        the same names up except that bash never writes `eval:` on those.
+*/
+static string_address shell_syntax_command;
+static string_address shell_syntax_file;
+
+/*
+        Bash $LINENO inside eval is the eval command's line plus the offset
+        inside the evaluated text. The nested reader still counts from one;
+        this is the command's line, added back by shell_line_now. dash has
+        no LINENO, so only the bash personality sets it.
+*/
+static positive shell_eval_lineno_base;
+
+positive shell_eval_lineno_base_now();
+PURE bool exec_in_function();
 
 fn lex_prepare()
 {

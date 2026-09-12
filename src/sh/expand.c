@@ -3484,6 +3484,17 @@ static fn expand_substitution_body(string_address command, bool capture)
         // parse_reset_all below announces the child. Announcing it here as
         // well counted this one fork twice, so $BASH_SUBSHELL inside a
         // command substitution read one deeper than the shell had gone.
+        /* A nested substitution keeps the outer freeze; the first one
+           takes the line of the command that wrote `$(...)`. */
+        if (!expand_substitution_lineno)
+        {
+                if (shell_eval_lineno_base || exec_in_function())
+                        expand_substitution_lineno = shell_line_now();
+                else
+                        expand_substitution_lineno =
+                            shell_line_number ? shell_line_number
+                                              : shell_line_now();
+        }
         expand_in_substitution = true;
         /* Only Bash command capture clears errexit by default; process
            substitutions and dash inherit it. POSIX mode enables the same

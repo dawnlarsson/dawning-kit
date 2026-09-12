@@ -6435,10 +6435,22 @@ static bool shell_parameters_replaced;
         still disagrees about is the sentence after the prefix, not the
         prefix itself.
 */
+static PURE string_address shell_where_self()
+{
+        if (shell_bash_compat && shell_syntax_file &&
+            string_get(shell_syntax_file))
+                return shell_syntax_file;
+
+        if (shell_script_name && string_get(shell_script_name))
+                return shell_script_name;
+
+        return (string_address) "sh";
+}
+
 static COLD fn shell_diagnostic_where_to(writer write)
 {
-        string_address self = shell_script_name && string_get(shell_script_name)
-                                  ? shell_script_name : (string_address) "sh";
+        string_address self = shell_where_self();
+        positive line = shell_line_now();
 
         if (shell_bash_compat && shell_is_interactive)
         {
@@ -6446,8 +6458,16 @@ static COLD fn shell_diagnostic_where_to(writer write)
                 return;
         }
 
-        string_format(write, shell_bash_compat ? "%s: line %p: " : "%s: %p: ",
-                      self, shell_line_now());
+        /* Dash names eval and a sourced file on expansion errors too.
+           Bash keeps the ordinary prefix: only syntax inserts `eval:`. */
+        if (!shell_bash_compat && shell_syntax_command)
+                string_format(write, "%s: %p: %s: ", self,
+                              shell_line_number ? shell_line_number : line,
+                              shell_syntax_command);
+        else
+                string_format(write,
+                              shell_bash_compat ? "%s: line %p: " : "%s: %p: ",
+                              self, line);
 }
 
 static COLD fn shell_diagnostic_where()
@@ -6458,13 +6478,16 @@ static COLD fn shell_diagnostic_where()
 /*
         Parser errors name the source the reader is in. Bash's unnamed
         -c string is that source spelled `-c`, between $0 and the line;
-        a name operand is $0 itself and needs no extra word. Expansion
-        errors stay with the ordinary prefix: they never insert `-c`.
+        a name operand is $0 itself and needs no extra word. Nested eval
+        inserts `eval:` the same way, and a sourced file replaces $0.
+        dash puts the extra word after the line. Expansion errors stay
+        with the ordinary prefix: they never insert `-c`.
 */
 static COLD fn shell_syntax_where()
 {
-        string_address self = shell_script_name && string_get(shell_script_name)
-                                  ? shell_script_name : (string_address) "sh";
+        string_address self = shell_where_self();
+        string_address extra = shell_syntax_command;
+        positive line;
 
         if (shell_bash_compat && shell_is_interactive)
         {
@@ -6472,15 +6495,31 @@ static COLD fn shell_syntax_where()
                 return;
         }
 
-        if (shell_bash_compat && string_is(shell_option_flags, 'c') &&
-            shell_run_depth == 1)
+        /* A sourced file counts from one of its own lines. dash eval does
+           too. Bash eval uses $LINENO's offset from the eval command. */
+        if ((!shell_bash_compat && extra) || (shell_syntax_file && !extra))
+                line = shell_line_number ? shell_line_number : 1;
+        else
+                line = shell_line_now();
+
+        if (shell_bash_compat)
         {
-                string_format(log_error, "%s: -c: line %p: ", self,
-                              shell_line_now());
+                if (extra)
+                        string_format(log_error, "%s: %s: line %p: ", self,
+                                      extra, line);
+                else if (string_is(shell_option_flags, 'c') &&
+                         shell_run_depth == 1 && !shell_syntax_file)
+                        string_format(log_error, "%s: -c: line %p: ", self,
+                                      line);
+                else
+                        string_format(log_error, "%s: line %p: ", self, line);
                 return;
         }
 
-        shell_diagnostic_where();
+        if (extra)
+                string_format(log_error, "%s: %p: %s: ", self, line, extra);
+        else
+                string_format(log_error, "%s: %p: ", self, line);
 }
 
 /*
@@ -12621,6 +12660,12 @@ COLD fn shell_eval(writer write, string_address input)
         /* The nested line gets independent lexer storage and parser marks. */
         {
                 lex_frame frame;
+                string_address saved_command = shell_syntax_command;
+                positive saved_base = shell_eval_lineno_base;
+
+                shell_syntax_command = (string_address) "eval";
+                if (shell_bash_compat)
+                        shell_eval_lineno_base = shell_eval_lineno_base_now();
 
                 lex_nest_enter(address_of frame);
 
@@ -12631,6 +12676,9 @@ COLD fn shell_eval(writer write, string_address input)
                 exec_input_finish();
 
                 lex_nest_leave(address_of frame);
+
+                shell_syntax_command = saved_command;
+                shell_eval_lineno_base = saved_base;
         }
 
         memory_free(eval_storage, eval_room);
@@ -13999,7 +14047,44 @@ COLD fn shell_dot(writer write, string_address input)
         bool replaced_arguments = held != EXPAND_NO_ROOM;
         if (replaced_arguments)
                 shell_parameters_replaced = false;
-        b32 syntax = shell_source_execute(source_text, filled, false);
+        b32 syntax = 0;
+
+        /* The name as written: argv will be overwritten by commands inside
+           the file, and bash's diagnostic $0 is this path, not the caller's. */
+        {
+                p8 address_to named = null;
+                positive named_room = 0;
+                positive named_length = string_length(path);
+                string_address saved_file = shell_syntax_file;
+                string_address saved_command = shell_syntax_command;
+
+                if (!shell_array_room(named, named_room, named_length + 1))
+                {
+                        memory_free(source_text, source_room);
+                        if (held != EXPAND_NO_ROOM)
+                                shell_parameter_stack_used = held;
+                        return shell_answer(string_report(log_error, 2,
+                                                          "%s: no room\n",
+                                                          shell_argv[0]));
+                }
+
+                memory_copy(named, path, named_length);
+                named[named_length] = end;
+
+                if (shell_bash_compat)
+                {
+                        shell_syntax_file = named;
+                        shell_syntax_command = null;
+                }
+                else
+                        shell_syntax_command = named;
+
+                syntax = shell_source_execute(source_text, filled, false);
+
+                shell_syntax_file = saved_file;
+                shell_syntax_command = saved_command;
+                memory_free(named, named_room);
+        }
 
         memory_free(source_text, source_room);
 
