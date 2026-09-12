@@ -4542,6 +4542,20 @@ static HOT string_address expand_arithmetic_finish(string_address ready,
         return stop + 2;
 }
 
+/*
+        POSIX gives $(( precedence, but only when that expansion can be
+        parsed as arithmetic. The closer is `))`. A first `)` that is not
+        that closer means the bytes were `$(` and a `(...)` subshell, so
+        `$((exit 7) | true)` is command substitution of a pipeline rather
+        than a dollar followed by the source text. Bash extracts `$(`
+        first and only then asks whether the body is `(expr)`.
+*/
+static COLD string_address expand_arithmetic_as_command(string_address step,
+                                                        bool quoted)
+{
+        return expand_command(step, quoted);
+}
+
 static COLD string_address expand_arithmetic_complex(string_address step,
                                                      bool quoted)
 {
@@ -4553,10 +4567,7 @@ static COLD string_address expand_arithmetic_complex(string_address step,
         positive length;
 
         if (!stop || string_get(stop + 1) != ')')
-        {
-                expand_push('$', MARK_PLAIN);
-                return step + 1;
-        }
+                return expand_arithmetic_as_command(step, quoted);
 
         length = (positive)(stop - inner);
         text = expand_hold(inner, length, text_local, sizeof(text_local));
@@ -4603,10 +4614,7 @@ static HOT __attribute__((noinline)) string_address expand_arithmetic(
 
         if (!string_get(at) ||
             (string_get(at) == ')' && string_get(at + 1) != ')'))
-        {
-                expand_push('$', MARK_PLAIN);
-                return step + 1;
-        }
+                return expand_arithmetic_as_command(step, quoted);
 
         return expand_arithmetic_complex(step, quoted);
 }
