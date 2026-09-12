@@ -1141,7 +1141,8 @@ b32 lex_unfinished(string_address line)
         This is the only question that makes a=(x y z) one word rather than a
         name followed by a subshell, and it is asked at one byte -- directly
         after the equals -- so that a command's own parentheses, a function
-        definition and a case pattern are all untouched by it.
+        definition and a case pattern are all untouched by it. Dash has no
+        arrays, so the same bytes stay a name and a parenthesis.
 */
 static PURE bool lex_assignment_head(string_address text, positive length)
 {
@@ -1311,8 +1312,12 @@ static KEEP b32 lex_word(string_address address_to at)
                 }
 
                 /* a=(...) stays one word so the parenthesis is not a
-                   subshell. Unquoted ( inside the body is diagnosed later. */
-                if (c == '(' && step > start && step[-1] == '=' &&
+                   subshell. Unquoted ( inside the body is diagnosed later.
+                   Dash has no arrays: name=() is name= and then (, which
+                   lima dash 0.5.x reports as "(" unexpected. Bash --posix
+                   still reads the compound form. */
+                if (shell_bash_compat && c == '(' && step > start &&
+                    step[-1] == '=' &&
                     lex_assignment_head(start, (positive)(step - start - 1)))
                 {
                         string_address stop = lex_nesting(step);
