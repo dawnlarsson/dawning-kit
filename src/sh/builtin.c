@@ -4988,6 +4988,25 @@ COLD fn shell_exec(writer write, string_address input)
         if (shell_argc < 2)
                 return shell_answer(0);
 
+        /*
+                An empty operand is still a name. Dash treats it as a path
+                that cannot be executed (EACCES, 126); bash never finds a
+                command of that name (ENOENT, 127). The redirections-only
+                case is the argc check above, not this one.
+        */
+        if (!string_get(shell_argv[1]))
+        {
+                bipolar refused = shell_bash_compat ? -ERROR_NO_ENTRY
+                                                    : -ERROR_ACCESS;
+                b32 status = shell_bash_compat ? 127 : 126;
+
+                shell_answer(status);
+                shell_exec_refused(shell_argv[1], refused);
+                shell_exec_failed(status);
+
+                return;
+        }
+
         located = shell_find_in_path_alloc(shell_argv[1], address_of found,
                                            address_of found_room);
 
