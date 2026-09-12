@@ -8903,6 +8903,16 @@ COLD fn shell_readonly(writer write, string_address input)
 #define TEST_BEFORE 12
 #define TEST_AFTER 13
 
+/* Lowercase unary primaries as a bit per letter, so -n/-z/-f do not walk
+   twenty-one comparisons on every two-word form. G/L/O/S stay beside it. */
+#define TEST_UNARY_LOWER                                                       \
+        ((1u << ('b' - 'a')) | (1u << ('c' - 'a')) | (1u << ('d' - 'a')) |     \
+         (1u << ('e' - 'a')) | (1u << ('f' - 'a')) | (1u << ('g' - 'a')) |     \
+         (1u << ('h' - 'a')) | (1u << ('k' - 'a')) | (1u << ('n' - 'a')) |     \
+         (1u << ('p' - 'a')) | (1u << ('r' - 'a')) | (1u << ('s' - 'a')) |     \
+         (1u << ('t' - 'a')) | (1u << ('u' - 'a')) | (1u << ('w' - 'a')) |     \
+         (1u << ('x' - 'a')) | (1u << ('z' - 'a')))
+
 static positive test_at;
 static positive test_stop;
 static bool test_bad;
@@ -9026,58 +9036,37 @@ PURE bool test_is_unary(string_address word)
 {
         p8 letter;
 
-        if (!word || string_not(word, '-') || !string_get(word + 1) || string_get(word + 2))
+        if (!word || string_not(word, '-') || !string_get(word + 1) ||
+            string_get(word + 2))
                 return false;
 
         letter = string_get(word + 1);
+        if ((p8)(letter - 'a') <= 25)
+                return (TEST_UNARY_LOWER & (1u << (letter - 'a'))) != 0;
 
-        return letter == 'b' || letter == 'c' || letter == 'd' || letter == 'e' ||
-               letter == 'f' || letter == 'g' || letter == 'h' || letter == 'k' ||
-               letter == 'n' || letter == 'p' || letter == 'r' || letter == 's' ||
-               letter == 't' || letter == 'u' || letter == 'w' || letter == 'x' ||
-               letter == 'z' || letter == 'G' || letter == 'L' || letter == 'O' ||
-               letter == 'S';
+        return letter == 'G' || letter == 'L' || letter == 'O' || letter == 'S';
 }
 
 PURE positive test_is_binary(string_address word)
 {
         p8 first;
         p8 second;
+        p8 third;
 
-        if (!word || !string_get(word))
+        if (!word)
                 return 0;
 
         first = string_get(word);
         second = string_get(word + 1);
+        third = string_get(word + 2);
 
-        /* Every binary operator is one or three bytes. Decode that fixed
-           grammar directly: a chain of generic NUL comparisons made the
-           overwhelmingly common -lt walk across =, !=, -eq and -ne first on
-           every loop condition. This is shell syntax, not a reusable byte
-           primitive, and its irreducible work is the operator's three bytes. */
-        if (!second)
+        /* Every binary operator is one or three bytes. A loop condition is
+           -lt/-le/-gt/-ge/-eq/-ne, so the three-byte dash operators are
+           first: walking =, != and == ahead of them made every `while [ "$i"
+           -lt N ]` pay three misses before the pair that actually matched. */
+        if (first == '-' && second && third && !string_get(word + 3))
         {
-                if (first == '=')
-                        return TEST_SAME;
-                if (first == '<')
-                        return TEST_BEFORE;
-                if (first == '>')
-                        return TEST_AFTER;
-
-                return 0;
-        }
-
-        if (first == '!' && second == '=' && !string_get(word + 2))
-                return TEST_DIFFERENT;
-
-        // Bash's second spelling of =, and the one scripts reach for because
-        // [[ ]] wants it. POSIX has only the single one.
-        if (first == '=' && second == '=' && !string_get(word + 2))
-                return TEST_SAME;
-
-        if (first == '-' && string_get(word + 2) && !string_get(word + 3))
-        {
-                p16 pair = ((p16)second << 8) | string_get(word + 2);
+                p16 pair = ((p16)second << 8) | third;
 
                 if (pair == ((p16)'e' << 8 | 'q'))
                         return TEST_EQUAL;
@@ -9097,6 +9086,29 @@ PURE positive test_is_binary(string_address word)
                         return TEST_OLDER;
                 if (pair == ((p16)'e' << 8 | 'f'))
                         return TEST_SAME_FILE;
+        }
+
+        if (!second)
+        {
+                if (first == '=')
+                        return TEST_SAME;
+                if (first == '<')
+                        return TEST_BEFORE;
+                if (first == '>')
+                        return TEST_AFTER;
+
+                return 0;
+        }
+
+        if (!third)
+        {
+                if (first == '!' && second == '=')
+                        return TEST_DIFFERENT;
+
+                // Bash's second spelling of =, and the one scripts reach for
+                // because [[ ]] wants it. POSIX has only the single one.
+                if (first == '=' && second == '=')
+                        return TEST_SAME;
         }
 
         return 0;
@@ -9132,18 +9144,235 @@ CONST bool test_ordered(positive kind, bipolar first, bipolar second)
         return first >= second;
 }
 
+/*
+        POSIX test integers, not $(( )).
+
+        A loop writes `[ "$i" -lt 500000 ]` and after expansion that is two
+        digit strings. arith_evaluate would treat a leading zero as octal and
+        refuse 08; test(1) is a signed decimal word, so 08 is eight. Leading
+        and trailing blanks are the strtol grammar bash and dash use; anything
+        else after the digits is not a number (status 2, not a false). A value
+        that will not fit in a signed machine word is the same error: bash and
+        dash refuse it, they do not wrap.
+*/
+static inline INLINE HOT bool test_digits_compare(string_address left,
+                                                  string_address right,
+                                                  bipolar address_to cmp)
+{
+        string_address a;
+        string_address b;
+        string_address as;
+        string_address bs;
+        p8 ca;
+        p8 cb;
+        positive la;
+        positive lb;
+
+        if (!left || !right)
+                return false;
+
+        ca = string_get(left);
+        cb = string_get(right);
+        if ((p8)(ca - '0') > 9 || (p8)(cb - '0') > 9)
+                return false;
+
+        /* A loop counter and `[ 1 -eq 1 ]` are one or two bytes. Comparing
+           those as numbers through multiply is more work than the bytes. */
+        if (!string_get(left + 1) && !string_get(right + 1))
+        {
+                address_to cmp = ca < cb ? -1 : (ca > cb ? 1 : 0);
+                return true;
+        }
+
+        a = left;
+        b = right;
+        while (ca == '0' && (p8)(string_get(a + 1) - '0') <= 9)
+        {
+                a++;
+                ca = string_get(a);
+        }
+        while (cb == '0' && (p8)(string_get(b + 1) - '0') <= 9)
+        {
+                b++;
+                cb = string_get(b);
+        }
+
+        as = a;
+        do
+                a++;
+        while ((p8)(string_get(a) - '0') <= 9);
+        if (string_get(a))
+                return false;
+
+        bs = b;
+        do
+                b++;
+        while ((p8)(string_get(b) - '0') <= 9);
+        if (string_get(b))
+                return false;
+
+        la = (positive)(a - as);
+        lb = (positive)(b - bs);
+        if (la > 18 || lb > 18)
+                return false;
+
+        if (la != lb)
+        {
+                address_to cmp = la < lb ? -1 : 1;
+                return true;
+        }
+
+        while (as != a)
+        {
+                ca = string_get(as);
+                cb = string_get(bs);
+                if (ca != cb)
+                {
+                        address_to cmp = ca < cb ? -1 : 1;
+                        return true;
+                }
+                as++;
+                bs++;
+        }
+
+        address_to cmp = 0;
+        return true;
+}
+
+static HOT bool test_integer(string_address word, bipolar address_to out)
+{
+        p8 byte;
+        bool negative;
+        positive magnitude;
+        positive bound;
+        p8 digit;
+
+        if (!word)
+                return false;
+
+        byte = string_get(word);
+        while (byte == ' ' || byte == '\t')
+        {
+                word++;
+                byte = string_get(word);
+        }
+
+        negative = false;
+        if (byte == '-' || byte == '+')
+        {
+                negative = byte == '-';
+                word++;
+                byte = string_get(word);
+        }
+
+        if ((p8)(byte - '0') > 9)
+                return false;
+
+        while (byte == '0' && (p8)(string_get(word + 1) - '0') <= 9)
+        {
+                word++;
+                byte = string_get(word);
+        }
+
+        magnitude = 0;
+        bound = negative ? (positive)bipolar_max + 1 : (positive)bipolar_max;
+        do
+        {
+                digit = (p8)(byte - '0');
+                if (magnitude > bound / 10 ||
+                    (magnitude == bound / 10 && (positive)digit > bound % 10))
+                        return false;
+
+                magnitude = magnitude * 10 + (positive)digit;
+                word++;
+                byte = string_get(word);
+        } while ((p8)(byte - '0') <= 9);
+
+        while (byte == ' ' || byte == '\t')
+        {
+                word++;
+                byte = string_get(word);
+        }
+
+        if (byte)
+                return false;
+
+        address_to out = negative ? (bipolar)(0 - magnitude) : (bipolar)magnitude;
+        return true;
+}
+
+static inline INLINE HOT bool test_integer_pair(string_address left, string_address op,
+                                  string_address right, b32 address_to status)
+{
+        positive kind;
+        bipolar cmp;
+        bipolar first;
+        bipolar second;
+
+        kind = test_is_binary(op);
+        if (kind < TEST_EQUAL || kind > TEST_GREATER_EQUAL)
+                return false;
+
+        if (test_digits_compare(left, right, address_of cmp))
+        {
+                address_to status = test_ordered(kind, cmp, 0) ? 0 : 1;
+                return true;
+        }
+
+        if (!test_integer(left, address_of first))
+        {
+                shell_test_number_refused(left);
+                address_to status = 2;
+                return true;
+        }
+
+        if (!test_integer(right, address_of second))
+        {
+                shell_test_number_refused(right);
+                address_to status = 2;
+                return true;
+        }
+
+        address_to status = test_ordered(kind, first, second) ? 0 : 1;
+        return true;
+}
+
 bool test_compare(positive kind, string_address left, string_address right)
 {
         bipolar first;
         bipolar second;
-        bool first_good;
-        bool second_good;
 
-        if (kind == TEST_SAME)
-                return !string_compare(left, right);
+        if (kind <= TEST_DIFFERENT)
+        {
+                if (kind == TEST_SAME)
+                        return !string_compare(left, right);
 
-        if (kind == TEST_DIFFERENT)
                 return string_compare(left, right) != 0;
+        }
+
+        if (kind <= TEST_GREATER_EQUAL)
+        {
+                bipolar cmp;
+
+                if (test_digits_compare(left, right, address_of cmp))
+                        return test_ordered(kind, cmp, 0);
+
+                if (!test_integer(left, address_of first))
+                {
+                        shell_test_number_refused(left);
+                        test_bad = true;
+                        return false;
+                }
+
+                if (!test_integer(right, address_of second))
+                {
+                        shell_test_number_refused(right);
+                        test_bad = true;
+                        return false;
+                }
+
+                return test_ordered(kind, first, second);
+        }
 
         if (kind == TEST_NEWER || kind == TEST_OLDER || kind == TEST_SAME_FILE)
         {
@@ -9195,23 +9424,7 @@ bool test_compare(positive kind, string_address left, string_address right)
         if (kind == TEST_BEFORE)
                 return string_compare(left, right) < 0;
 
-        if (kind == TEST_AFTER)
-                return string_compare(left, right) > 0;
-
-        first = shell_signed(left, address_of first_good);
-        second = shell_signed(right, address_of second_good);
-
-        if (!first_good || !second_good)
-        {
-                //      Both references complain about the operand that is not
-                //      a number; being silent read as a false rather than an
-                //      error to anything watching the diagnostic.
-                shell_test_number_refused(first_good ? right : left);
-                test_bad = true;
-                return false;
-        }
-
-        return test_ordered(kind, first, second);
+        return string_compare(left, right) > 0;
 }
 
 bool test_expression();
@@ -9317,7 +9530,7 @@ TEST_LOGICAL_LEVEL(test_expression, test_conjunction, "-o", ||)
         Answers false and clears handled when the count says nothing, which is
         where the general parser takes over.
 */
-bool test_short(positive from, positive to, bool address_to handled)
+HOT bool test_short(positive from, positive to, bool address_to handled)
 {
         positive count = to - from;
         bool inner;
@@ -9366,13 +9579,103 @@ bool test_short(positive from, positive to, bool address_to handled)
         return false;
 }
 
-fn shell_test(writer write, string_address input)
+FLAT HOT fn shell_test(writer write, string_address input)
 {
         bool value;
         bool handled;
+        string_address name;
+        string_address last;
+        positive count;
+        positive argc;
+        b32 status;
+
+        argc = shell_argc;
+        name = shell_argv[0];
+
+        /* `[ a -lt b ]` and `[ -n x ]` after expansion. Decide from argc
+           before touching the expression cursor: a loop condition is five
+           argv words, a unary two-word form is four, and neither needs the
+           general walker. */
+        if (name && string_is(name, '[') && !string_get(name + 1))
+        {
+                if (argc == 5)
+                {
+                        last = shell_argv[4];
+                        if (last && string_is(last, ']') && !string_get(last + 1) &&
+                            test_integer_pair(shell_argv[1], shell_argv[2],
+                                              shell_argv[3], address_of status))
+                                return shell_answer(status);
+                }
+                else if (argc == 4)
+                {
+                        string_address op = shell_argv[1];
+                        string_address operand = shell_argv[2];
+
+                        last = shell_argv[3];
+                        if (op && string_is(op, '-') && string_get(op + 1) &&
+                            !string_get(op + 2) && last && string_is(last, ']') &&
+                            !string_get(last + 1))
+                        {
+                                p8 letter = string_get(op + 1);
+
+                                if (letter == 'n')
+                                {
+                                        shell_status =
+                                            operand && string_not(operand, end)
+                                                ? 0
+                                                : 1;
+                                        return;
+                                }
+
+                                if (letter == 'z')
+                                {
+                                        shell_status =
+                                            !operand || string_is(operand, end)
+                                                ? 0
+                                                : 1;
+                                        return;
+                                }
+                        }
+
+                        if (last && string_is(last, ']') && !string_get(last + 1) &&
+                            op && string_is(op, '!') && !string_get(op + 1))
+                        {
+                                shell_status =
+                                    string_get(operand) == end ? 0 : 1;
+                                return;
+                        }
+                }
+        }
+        else if (argc == 4)
+        {
+                if (test_integer_pair(shell_argv[1], shell_argv[2],
+                                      shell_argv[3], address_of status))
+                        return shell_answer(status);
+        }
+        else if (argc == 3)
+        {
+                string_address op = shell_argv[1];
+                string_address operand = shell_argv[2];
+
+                if (op && string_is(op, '-') && string_get(op + 1) &&
+                    !string_get(op + 2))
+                {
+                        p8 letter = string_get(op + 1);
+
+                        if (letter == 'n')
+                                return shell_answer(
+                                    operand && string_not(operand, end) ? 0
+                                                                        : 1);
+
+                        if (letter == 'z')
+                                return shell_answer(
+                                    !operand || string_is(operand, end) ? 0
+                                                                        : 1);
+                }
+        }
 
         test_at = 1;
-        test_stop = shell_argc;
+        test_stop = argc;
         test_bad = false;
         test_said = false;
 
@@ -9380,19 +9683,30 @@ fn shell_test(writer write, string_address input)
         //      a script that only looks at the status still cares that the
         //      channel spoke: silence here was the one place test differed
         //      from every shell it is compared against.
-        if (word_is(shell_argv[0], "["))
+        if (name && string_is(name, '[') && !string_get(name + 1))
         {
-                if (shell_argc < 2 || !word_is(shell_argv[shell_argc - 1], "]"))
+                if (argc < 2)
                         return shell_answer(string_report(
-                            log_error, 2, "%s: missing `]'\n", shell_argv[0]));
+                            log_error, 2, "%s: missing `]'\n", name));
 
-                test_stop = shell_argc - 1;
+                last = shell_argv[argc - 1];
+                if (!last || string_not(last, ']') || string_get(last + 1))
+                        return shell_answer(string_report(
+                            log_error, 2, "%s: missing `]'\n", name));
+
+                test_stop = argc - 1;
         }
 
         if (test_at >= test_stop)
                 return shell_answer(1);
 
-        if (test_stop - test_at <= 4)
+        count = test_stop - test_at;
+
+        if (count == 1)
+                return shell_answer(string_get(shell_argv[test_at]) != end ? 0
+                                                                          : 1);
+
+        if (count <= 4)
         {
                 value = test_short(test_at, test_stop, address_of handled);
 
