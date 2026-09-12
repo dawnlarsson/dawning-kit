@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        279 routines (269 public, 10 local), 278 of them on all three and 1 local to one.
+        280 routines (270 public, 10 local), 279 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -246,6 +246,7 @@
           program_environment            public  yes     yes     yes
           program_environment_list       public  yes     yes     yes
           program_initial_identity       public  yes     yes     yes
+          sha256_compress                public  yes     yes     yes
           shell_set_cursor               public  yes     yes     yes
           sleep                          public  yes     yes     yes
           socket_accept                  public  yes     yes     yes
@@ -5743,6 +5744,82 @@ __asm__(
     ASM_RET
     ASM_END(memory_hash_33)
 
+
+    /* One SHA-256 compression on the hardware floor.
+
+       state is eight little-endian 32-bit words; block is 64 bytes of
+       big-endian message. The schedule lives on the stack. Rotates are
+       ror, not rorx: BMI2 is above the floor, and SHA-NI is a different
+       instruction set. arm64 uses its baseline ror; RISC-V has no Zbb,
+       so the same rotate is a shift pair. */
+    ASM_FUNC(sha256_compress)
+    "push %rbp\n   push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "sub $256, %rsp\n"
+    "xor %ecx, %ecx\n"
+    ".Lsha256_x64_load:\n"
+    "mov (%rsi,%rcx), %eax\n   bswap %eax\n   mov %eax, (%rsp,%rcx)\n"
+    "add $4, %ecx\n   cmp $64, %ecx\n   jb .Lsha256_x64_load\n"
+    ".Lsha256_x64_expand:\n"
+    "mov -60(%rsp,%rcx), %eax\n   mov %eax, %edx\n   ror $7, %eax\n"
+    "mov %edx, %ebx\n   ror $18, %ebx\n   xor %ebx, %eax\n"
+    "shr $3, %edx\n   xor %edx, %eax\n"
+    "mov -8(%rsp,%rcx), %edx\n   mov %edx, %ebx\n   ror $17, %edx\n"
+    "ror $19, %ebx\n   xor %ebx, %edx\n"
+    "mov -8(%rsp,%rcx), %ebx\n   shr $10, %ebx\n   xor %ebx, %edx\n"
+    "add -64(%rsp,%rcx), %eax\n   add -28(%rsp,%rcx), %eax\n"
+    "add %edx, %eax\n   mov %eax, (%rsp,%rcx)\n"
+    "add $4, %ecx\n   cmp $256, %ecx\n   jb .Lsha256_x64_expand\n"
+    "mov (%rdi), %r8d\n   mov 4(%rdi), %r9d\n"
+    "mov 8(%rdi), %r10d\n   mov 12(%rdi), %r11d\n"
+    "mov 16(%rdi), %r12d\n   mov 20(%rdi), %r13d\n"
+    "mov 24(%rdi), %r14d\n   mov 28(%rdi), %r15d\n"
+    "leaq .Lsha256_k_x64(%rip), %rsi\n"
+    "xor %ecx, %ecx\n"
+    ".Lsha256_x64_round:\n"
+    "mov %r12d, %eax\n   ror $6, %eax\n   mov %r12d, %edx\n   ror $11, %edx\n"
+    "xor %edx, %eax\n   mov %r12d, %edx\n   ror $25, %edx\n   xor %edx, %eax\n"
+    "mov %r12d, %edx\n   mov %r13d, %ebx\n   and %edx, %ebx\n"
+    "not %edx\n   and %r14d, %edx\n   xor %ebx, %edx\n"
+    "add %r15d, %eax\n   add %edx, %eax\n"
+    "add (%rsi,%rcx), %eax\n   add (%rsp,%rcx), %eax\n"
+    "mov %r8d, %edx\n   ror $2, %edx\n   mov %r8d, %ebx\n   ror $13, %ebx\n"
+    "xor %ebx, %edx\n   mov %r8d, %ebx\n   ror $22, %ebx\n   xor %ebx, %edx\n"
+    "mov %r8d, %ebp\n   and %r9d, %ebp\n   mov %r8d, %ebx\n   and %r10d, %ebx\n"
+    "xor %ebx, %ebp\n   mov %r9d, %ebx\n   and %r10d, %ebx\n   xor %ebx, %ebp\n"
+    "add %ebp, %edx\n"
+    "mov %r14d, %r15d\n   mov %r13d, %r14d\n   mov %r12d, %r13d\n"
+    "mov %r11d, %r12d\n   add %eax, %r12d\n"
+    "mov %r10d, %r11d\n   mov %r9d, %r10d\n   mov %r8d, %r9d\n"
+    "add %edx, %eax\n   mov %eax, %r8d\n"
+    "add $4, %ecx\n   cmp $256, %ecx\n   jb .Lsha256_x64_round\n"
+    "add %r8d, (%rdi)\n   add %r9d, 4(%rdi)\n"
+    "add %r10d, 8(%rdi)\n   add %r11d, 12(%rdi)\n"
+    "add %r12d, 16(%rdi)\n   add %r13d, 20(%rdi)\n"
+    "add %r14d, 24(%rdi)\n   add %r15d, 28(%rdi)\n"
+    "add $256, %rsp\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n   pop %rbp\n"
+    ASM_RET
+    ".section .rodata\n   .balign 16\n"
+    ".Lsha256_k_x64:\n"
+    ".long 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5\n"
+    ".long 0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5\n"
+    ".long 0xd807aa98,0x12835b01,0x243185be,0x550c7dc3\n"
+    ".long 0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174\n"
+    ".long 0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc\n"
+    ".long 0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da\n"
+    ".long 0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7\n"
+    ".long 0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967\n"
+    ".long 0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13\n"
+    ".long 0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85\n"
+    ".long 0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3\n"
+    ".long 0xd192e819,0xd6990624,0xf40e3585,0x106aa070\n"
+    ".long 0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5\n"
+    ".long 0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3\n"
+    ".long 0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208\n"
+    ".long 0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n"
+    ASM_SECTION
+    ASM_END(sha256_compress)
+
     /* A NUL-terminated name normally needs both of these answers. Returning
        them together keeps the bytes in one hardware-floor pass: hash in rax,
        length in rdx, which is the two-word aggregate return ABI. */
@@ -11208,6 +11285,82 @@ __asm__(
     ASM_RET
     ASM_END(memory_hash_33)
 
+
+    // See the x86_64 body for the shared contract and why this stays scalar.
+    ASM_FUNC(sha256_compress)
+    "stp x29, x30, [sp, #-96]!\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n"
+    "stp x27, x28, [sp, #80]\n"
+    "sub sp, sp, #256\n"
+    "mov x27, x0\n"
+    "mov x3, xzr\n"
+    ".Lsha256_arm64_load:\n"
+    "ldr w2, [x1, x3]\n   rev w2, w2\n   str w2, [sp, x3]\n"
+    "add x3, x3, #4\n   cmp x3, #64\n   b.lo .Lsha256_arm64_load\n"
+    ".Lsha256_arm64_expand:\n"
+    "sub x4, x3, #60\n   ldr w2, [sp, x4]\n"
+    "ror w0, w2, #7\n   ror w5, w2, #18\n   eor w0, w0, w5\n"
+    "lsr w5, w2, #3\n   eor w0, w0, w5\n"
+    "sub x4, x3, #8\n   ldr w2, [sp, x4]\n"
+    "ror w5, w2, #17\n   ror w6, w2, #19\n   eor w5, w5, w6\n"
+    "lsr w6, w2, #10\n   eor w5, w5, w6\n"
+    "sub x4, x3, #64\n   ldr w2, [sp, x4]\n   add w0, w0, w2\n"
+    "sub x4, x3, #28\n   ldr w2, [sp, x4]\n   add w0, w0, w2\n"
+    "add w0, w0, w5\n   str w0, [sp, x3]\n"
+    "add x3, x3, #4\n   cmp x3, #256\n   b.lo .Lsha256_arm64_expand\n"
+    "ldp w19, w20, [x27]\n   ldp w21, w22, [x27, #8]\n"
+    "ldp w23, w24, [x27, #16]\n   ldp w25, w26, [x27, #24]\n"
+    "adrp x28, .Lsha256_k_arm64\n   add x28, x28, :lo12:.Lsha256_k_arm64\n"
+    "mov x3, xzr\n"
+    ".Lsha256_arm64_round:\n"
+    "ror w0, w23, #6\n   ror w1, w23, #11\n   eor w0, w0, w1\n"
+    "ror w1, w23, #25\n   eor w0, w0, w1\n"
+    "and w1, w23, w24\n   mvn w2, w23\n   and w2, w2, w25\n   eor w1, w1, w2\n"
+    "add w0, w0, w26\n   add w0, w0, w1\n"
+    "ldr w1, [x28, x3]\n   add w0, w0, w1\n"
+    "ldr w1, [sp, x3]\n   add w0, w0, w1\n"
+    "ror w1, w19, #2\n   ror w2, w19, #13\n   eor w1, w1, w2\n"
+    "ror w2, w19, #22\n   eor w1, w1, w2\n"
+    "and w2, w19, w20\n   and w4, w19, w21\n   eor w2, w2, w4\n"
+    "and w4, w20, w21\n   eor w2, w2, w4\n"
+    "add w1, w1, w2\n"
+    "mov w26, w25\n   mov w25, w24\n   mov w24, w23\n"
+    "add w23, w22, w0\n"
+    "mov w22, w21\n   mov w21, w20\n   mov w20, w19\n"
+    "add w19, w0, w1\n"
+    "add x3, x3, #4\n   cmp x3, #256\n   b.lo .Lsha256_arm64_round\n"
+    "ldp w0, w1, [x27]\n   add w0, w0, w19\n   add w1, w1, w20\n   stp w0, w1, [x27]\n"
+    "ldp w0, w1, [x27, #8]\n   add w0, w0, w21\n   add w1, w1, w22\n   stp w0, w1, [x27, #8]\n"
+    "ldp w0, w1, [x27, #16]\n   add w0, w0, w23\n   add w1, w1, w24\n   stp w0, w1, [x27, #16]\n"
+    "ldp w0, w1, [x27, #24]\n   add w0, w0, w25\n   add w1, w1, w26\n   stp w0, w1, [x27, #24]\n"
+    "add sp, sp, #256\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x23, x24, [sp, #48]\n   ldp x25, x26, [sp, #64]\n"
+    "ldp x27, x28, [sp, #80]\n"
+    "ldp x29, x30, [sp], #96\n"
+    ASM_RET
+    ".section .rodata\n   .balign 16\n"
+    ".Lsha256_k_arm64:\n"
+    ".long 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5\n"
+    ".long 0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5\n"
+    ".long 0xd807aa98,0x12835b01,0x243185be,0x550c7dc3\n"
+    ".long 0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174\n"
+    ".long 0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc\n"
+    ".long 0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da\n"
+    ".long 0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7\n"
+    ".long 0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967\n"
+    ".long 0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13\n"
+    ".long 0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85\n"
+    ".long 0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3\n"
+    ".long 0xd192e819,0xd6990624,0xf40e3585,0x106aa070\n"
+    ".long 0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5\n"
+    ".long 0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3\n"
+    ".long 0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208\n"
+    ".long 0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n"
+    ASM_SECTION
+    ASM_END(sha256_compress)
+
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
     "mov x2, #5381\n   mov x1, #0\n"
@@ -15349,6 +15502,101 @@ __asm__(
     ASM_RET
     ASM_END(memory_hash_33)
 
+
+    // See the x86_64 body. RV64IMAFD has no rotate; each ror is a shift pair.
+    ASM_FUNC(sha256_compress)
+    "addi sp, sp, -352\n"
+    "sd ra, 256(sp)\n   sd s0, 264(sp)\n   sd s1, 272(sp)\n"
+    "sd s2, 280(sp)\n   sd s3, 288(sp)\n   sd s4, 296(sp)\n"
+    "sd s5, 304(sp)\n   sd s6, 312(sp)\n   sd s7, 320(sp)\n"
+    "sd s8, 328(sp)\n   sd s9, 336(sp)\n"
+    "mv s0, a0\n"
+    "li t0, 0\n"
+    ".Lsha256_rv_load:\n"
+    "add t1, a1, t0\n"
+    "lbu t2, 0(t1)\n   lbu t3, 1(t1)\n   lbu t4, 2(t1)\n   lbu t5, 3(t1)\n"
+    "slli t2, t2, 24\n   slli t3, t3, 16\n   slli t4, t4, 8\n"
+    "or t2, t2, t3\n   or t2, t2, t4\n   or t2, t2, t5\n"
+    "add t1, sp, t0\n   sw t2, 0(t1)\n"
+    "addi t0, t0, 4\n   li t1, 64\n   bltu t0, t1, .Lsha256_rv_load\n"
+    ".Lsha256_rv_expand:\n"
+    "add t1, sp, t0\n"
+    "lw a2, -60(t1)\n"
+    "srlw t2, a2, 7\n   sllw t3, a2, 25\n   or t2, t2, t3\n"
+    "srlw t3, a2, 18\n   sllw t4, a2, 14\n   or t3, t3, t4\n"
+    "xor t2, t2, t3\n   srliw t3, a2, 3\n   xor t2, t2, t3\n"
+    "lw a3, -8(t1)\n"
+    "srlw t3, a3, 17\n   sllw t4, a3, 15\n   or t3, t3, t4\n"
+    "srlw t4, a3, 19\n   sllw t5, a3, 13\n   or t4, t4, t5\n"
+    "xor t3, t3, t4\n   srliw t4, a3, 10\n   xor t3, t3, t4\n"
+    "lw t4, -64(t1)\n   lw t5, -28(t1)\n"
+    "addw t2, t2, t4\n   addw t2, t2, t5\n   addw t2, t2, t3\n"
+    "sw t2, 0(t1)\n"
+    "addi t0, t0, 4\n   li t1, 256\n   bltu t0, t1, .Lsha256_rv_expand\n"
+    "lw s2, 0(s0)\n   lw s3, 4(s0)\n   lw s4, 8(s0)\n   lw s5, 12(s0)\n"
+    "lw s6, 16(s0)\n   lw s7, 20(s0)\n   lw s8, 24(s0)\n   lw s9, 28(s0)\n"
+    "lla s1, .Lsha256_k_rv\n"
+    "li t6, -1\n   srli t6, t6, 32\n"
+    "li t0, 0\n"
+    ".Lsha256_rv_round:\n"
+    "srlw t2, s6, 6\n   sllw t3, s6, 26\n   or t2, t2, t3\n"
+    "srlw t3, s6, 11\n   sllw t4, s6, 21\n   or t3, t3, t4\n"
+    "xor t2, t2, t3\n"
+    "srlw t3, s6, 25\n   sllw t4, s6, 7\n   or t3, t3, t4\n"
+    "xor t2, t2, t3\n"
+    "and t3, s6, s7\n   not t4, s6\n   and t4, t4, t6\n   and t4, t4, s8\n"
+    "xor t3, t3, t4\n"
+    "addw t2, t2, s9\n   addw t2, t2, t3\n"
+    "add t1, s1, t0\n   lw t3, 0(t1)\n   addw t2, t2, t3\n"
+    "add t1, sp, t0\n   lw t3, 0(t1)\n   addw t2, t2, t3\n"
+    "srlw t3, s2, 2\n   sllw t4, s2, 30\n   or t3, t3, t4\n"
+    "srlw t4, s2, 13\n   sllw t5, s2, 19\n   or t4, t4, t5\n"
+    "xor t3, t3, t4\n"
+    "srlw t4, s2, 22\n   sllw t5, s2, 10\n   or t4, t4, t5\n"
+    "xor t3, t3, t4\n"
+    "and t4, s2, s3\n   and t5, s2, s4\n   xor t4, t4, t5\n"
+    "and t5, s3, s4\n   xor t4, t4, t5\n"
+    "addw t3, t3, t4\n"
+    "mv s9, s8\n   mv s8, s7\n   mv s7, s6\n"
+    "addw s6, s5, t2\n"
+    "mv s5, s4\n   mv s4, s3\n   mv s3, s2\n"
+    "addw s2, t2, t3\n"
+    "addi t0, t0, 4\n   li t1, 256\n   bltu t0, t1, .Lsha256_rv_round\n"
+    "lw t2, 0(s0)\n   addw t2, t2, s2\n   sw t2, 0(s0)\n"
+    "lw t2, 4(s0)\n   addw t2, t2, s3\n   sw t2, 4(s0)\n"
+    "lw t2, 8(s0)\n   addw t2, t2, s4\n   sw t2, 8(s0)\n"
+    "lw t2, 12(s0)\n   addw t2, t2, s5\n   sw t2, 12(s0)\n"
+    "lw t2, 16(s0)\n   addw t2, t2, s6\n   sw t2, 16(s0)\n"
+    "lw t2, 20(s0)\n   addw t2, t2, s7\n   sw t2, 20(s0)\n"
+    "lw t2, 24(s0)\n   addw t2, t2, s8\n   sw t2, 24(s0)\n"
+    "lw t2, 28(s0)\n   addw t2, t2, s9\n   sw t2, 28(s0)\n"
+    "ld ra, 256(sp)\n   ld s0, 264(sp)\n   ld s1, 272(sp)\n"
+    "ld s2, 280(sp)\n   ld s3, 288(sp)\n   ld s4, 296(sp)\n"
+    "ld s5, 304(sp)\n   ld s6, 312(sp)\n   ld s7, 320(sp)\n"
+    "ld s8, 328(sp)\n   ld s9, 336(sp)\n"
+    "addi sp, sp, 352\n"
+    ASM_RET
+    ".section .rodata\n   .balign 16\n"
+    ".Lsha256_k_rv:\n"
+    ".long 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5\n"
+    ".long 0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5\n"
+    ".long 0xd807aa98,0x12835b01,0x243185be,0x550c7dc3\n"
+    ".long 0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174\n"
+    ".long 0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc\n"
+    ".long 0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da\n"
+    ".long 0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7\n"
+    ".long 0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967\n"
+    ".long 0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13\n"
+    ".long 0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85\n"
+    ".long 0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3\n"
+    ".long 0xd192e819,0xd6990624,0xf40e3585,0x106aa070\n"
+    ".long 0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5\n"
+    ".long 0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3\n"
+    ".long 0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208\n"
+    ".long 0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n"
+    ASM_SECTION
+    ASM_END(sha256_compress)
+
     // See the x86_64 body for the shared one-pass contract.
     ASM_FUNC(string_hash_33_length)
     "mv t0, a0\n   li a2, 5381\n   li a1, 0\n"
@@ -19050,6 +19298,10 @@ address_any memory_fill_64(address_any destination, positive value,
                            positive count);
 PURE positive memory_common_prefix(address_any one, address_any two, positive size);
 PURE READS(1, 2) positive memory_hash_33(address_any block, positive size);
+/* One SHA-256 compression. state is eight little-endian 32-bit words;
+   block is 64 big-endian bytes. Rotates stay on the floor: ror, not
+   rorx or SHA-NI, and RISC-V builds the same rotate from a shift pair. */
+fn sha256_compress(p32 address_to state, p8 address_to block);
 PURE READS(1, 2) p32 memory_sum_bytes(address_any block, positive size);
 // Writes exactly 2*size lowercase hex bytes, without a terminator, and returns
 // that length. Source and destination must not overlap; size must fit when

@@ -195,7 +195,12 @@ freestanding()
         #       floor, otherwise qemu proving a binary full of compressed
         #       instructions says nothing about whether the floor actually
         #       works.
+        #
+        #       x86_64 GCC on a modern host emits BMI2 (rorx, shlx) from C
+        #       rotates unless the march is pinned. The library floor is
+        #       baseline x86-64 without BMI.
         case $architecture in
+        x86_64) set -- "$@" -march=x86-64 ;;
         arm64) set -- "$@" -mno-outline-atomics ;;
         riscv64) set -- "$@" -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
         esac
@@ -2053,6 +2058,7 @@ build_ours() {
         where=$5
 
         case $target in
+        x86_64)  set -- -march=x86-64 ;;
         arm64)   set -- -mno-outline-atomics ;;
         riscv64) set -- -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
         *)       set -- ;;
@@ -2248,6 +2254,7 @@ build_ours() {
         extra=$5
 
         case $target in
+        x86_64)  set -- -march=x86-64 ;;
         arm64)   set -- -mno-outline-atomics ;;
         riscv64) set -- -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
         *)       set -- ;;
@@ -2574,7 +2581,7 @@ one()
         sed -n '/^shared-end$/,$p' "$work/$name.out" | sed '1d;s/^/    /'
 }
 
-one x86_64  gcc                    ""             ""
+one x86_64  gcc                    ""             "-march=x86-64"
 one arm64   aarch64-linux-gnu-gcc  qemu-aarch64   "-mno-outline-atomics"
 one riscv64 riscv64-linux-gnu-gcc  qemu-riscv64   "-march=rv64imafd_zicsr_zicntr -mabi=lp64d"
 
@@ -8375,6 +8382,7 @@ bench_target()
         shift 4
 
         case $bench_arch in
+        x86_64) bench_arch_flags=-march=x86-64 ;;
         arm64) bench_arch_flags=-mno-outline-atomics ;;
         riscv64) bench_arch_flags='-march=rv64imafd_zicsr_zicntr -mabi=lp64d' ;;
         *)     bench_arch_flags= ;;

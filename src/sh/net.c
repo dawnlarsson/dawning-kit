@@ -536,6 +536,7 @@ static b32 net_fetch(void)
         http_buffer body = {0};
         string_address path;
         p16 port = 80;
+        bool tls = false;
         p32 host = 0;
         bipolar server;
         bipolar status;
@@ -548,13 +549,13 @@ static b32 net_fetch(void)
                 return 1;
         }
 
-        status = http_split(net_word(1), name, sizeof name, address_of port,
-                            address_of path);
+        status = http_split_into(net_word(1), name, sizeof name, address_of port,
+                                 address_of path, address_of tls);
 
-        if (status == HTTP_NOT_PLAIN)
+        if (tls)
         {
                 string_format(net_out, "fetch: https is not implemented; this speaks "
-                                   "http only\n");
+                                   "http only. use wget\n");
                 net_flush();
                 return 1;
         }
@@ -624,6 +625,144 @@ static b32 net_fetch(void)
                 system_write_all(1, body.bytes, body.used);
 
         http_forget(address_of body);
+
+        return 0;
+}
+
+
+static const file_long wget_longs[] = {
+    {(string_address) "output-document", 'O'},
+    {(string_address) "quiet", 'q'},
+    {(string_address) "help", 'h'},
+    {(string_address) "version", 'V'},
+    {(string_address) "no-check-certificate", 'K'},
+    {null, 0},
+};
+
+/*
+        wget [ -q ] [ -O FILE ] [ --no-check-certificate ] URL
+
+        BusyBox's subset: save the body under the URL's last component, or
+        under -O, and follow redirects. HTTPS is the reason this exists;
+        fetch remains the small plaintext tool.
+*/
+static b32 net_wget(void)
+{
+        file_taking taking = {
+            .program = (string_address) "wget",
+            .allowed = (string_address) "OqhVK",
+            .valued = (string_address) "O",
+            .longs = wget_longs,
+        };
+        string_address url;
+        string_address output;
+        p8 name[256];
+        p8 leaf[256];
+        string_address path;
+        p16 port = 80;
+        bool tls = false;
+        bool quiet;
+        bool check_cert;
+        bipolar dest = -1;
+        bipolar status;
+        b32 code = 0;
+        bool own_file = false;
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        if (file_meta(address_of taking,
+                      (string_address) "[-q] [-O FILE] [--no-check-certificate] URL",
+                      log))
+        {
+                log_flush();
+                return 0;
+        }
+
+        if (taking.first >= (positive)program_argument_count())
+        {
+                string_format(log_error, "wget: missing URL\n");
+                string_format(log_error, "Usage: wget [-q] [-O FILE] "
+                                         "[--no-check-certificate] URL\n");
+                return 1;
+        }
+
+        if (taking.first + 1 < (positive)program_argument_count())
+        {
+                string_format(log_error, "wget: extra operand '%s'\n",
+                              program_argument((b32)(taking.first + 1)));
+                return 1;
+        }
+
+        url = program_argument((b32)taking.first);
+        quiet = (taking.flags & FILE_FLAG('q')) != 0;
+        check_cert = (taking.flags & FILE_FLAG('K')) == 0;
+        output = file_option_value(address_of taking, 'O');
+
+        status = http_split_into(url, name, sizeof name, address_of port,
+                                 address_of path, address_of tls);
+        if (status)
+        {
+                string_format(log_error, "wget: %s is not a url this understands\n",
+                              url);
+                return 1;
+        }
+
+        if (output && string_equals(output, (string_address) "-"))
+                dest = 1;
+        else
+        {
+                if (!output)
+                {
+                        http_url_leaf(path, leaf, sizeof leaf);
+                        output = leaf;
+                }
+                dest = system_open_at_mode(AT_FDCWD, output,
+                                           FILE_WRITE | O_CLOEXEC, 0644);
+                if (dest < 0)
+                {
+                        string_format(log_error, "wget: cannot write %s\n", output);
+                        return 1;
+                }
+                own_file = true;
+        }
+
+        if (!quiet)
+        {
+                string_format(log_error, "%s\nSaving to: '%s'\n", url, output);
+        }
+
+        status = http_fetch_to(url, dest, check_cert, address_of code);
+        if (own_file)
+                system_close(dest);
+
+        if (status)
+        {
+                if (own_file)
+                        system_remove_at(AT_FDCWD, output, 0);
+                if (status == HTTP_NO_HOST)
+                        string_format(log_error, "wget: cannot resolve %s\n", name);
+                else if (status == HTTP_NO_ROUTE)
+                        string_format(log_error, "wget: cannot reach %s\n", name);
+                else if (status == HTTP_TLS)
+                        string_format(log_error, "wget: TLS handshake failed\n");
+                else if (status == HTTP_REDIRECTS)
+                        string_format(log_error, "wget: too many redirects\n");
+                else if (status == HTTP_NO_REPLY)
+                        string_format(log_error, "wget: no reply from %s\n", name);
+                else
+                        string_format(log_error, "wget: download failed\n");
+                return 1;
+        }
+
+        if (code >= 400)
+        {
+                if (own_file)
+                        system_remove_at(AT_FDCWD, output, 0);
+                string_format(log_error, "wget: server returned %p\n",
+                              (positive)code);
+                return 1;
+        }
 
         return 0;
 }

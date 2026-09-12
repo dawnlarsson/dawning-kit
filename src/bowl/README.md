@@ -14,7 +14,9 @@ The runtime has two profiles:
   no supervisor fork.
 - `--isolated` adds PID, UTS and IPC views, pivots into the complete
   distribution root, mounts its kernel interfaces, and supervises its first
-  process. Use it while a package manager fills a tree.
+  process. Package managers pick this themselves: `pacman`, `apt-get` and
+  `apk` own the guest `/etc` and `/var`, so an exposed `pacman` is isolated
+  even without the flag.
 
 With no program, both profiles execute Moonwater's `/shell`. The runtime opens
 it before changing mounts and executes that descriptor afterward, so neither a
@@ -32,53 +34,54 @@ process. Namespaces select views; they do not emulate instructions or proxy
 syscalls. Setup that can be made persistent should eventually happen when a
 bowl is created, not on every command invocation.
 
-## First system-wide command
-
-Place an unpacked root at `/bowls/debian` or `/bowls/arch`, install a package in
-the isolated profile, then expose one of its executables:
+## New install
 
 ```sh
-bowl --isolated /bowls/debian /usr/bin/apt-get install -y jq
-bowl expose /bowls/debian /usr/bin/jq
-jq --version
+bowl setup arch
+pacman -Syu
 ```
 
-The Arch equivalent is:
+That is the whole first boot. Setup becomes root if it has to, points `/bowl`
+at this binary so `#!/bowl` shebangs resolve, lands the official x86_64
+bootstrap at `/bowls/arch`, writes a resolv.conf that is not a stub resolver,
+enables one mirror, turns off pacman's alpm download sandbox (Moonwater has
+no landlock), initialises the keyring inside isolated, and installs `pacman`
+and `pacman-key` at `/bin` so they win on the default `PATH`. The next
+command is ordinary: `pacman -Syu`, then `pacman -S jq`, then
+`bowl expose /bowls/arch /usr/bin/jq` if that binary should be a fast
+Moonwater command.
 
-```sh
-bowl --isolated /bowls/arch /usr/bin/pacman -S --noconfirm jq
-bowl expose /bowls/arch /usr/bin/jq
-```
+Setup downloads the bootstrap itself. There is no archive argument and
+nothing to copy by hand.
+
+Debian and Alpine setups are not built in yet.
 
 `bowl expose` creates a tiny executable launcher such as `/bowls/bin/jq`, a
 directory on Moonwater's default `PATH`. Keeping roots and launchers under
 `/bowls` lets one persistent mount carry the complete installation. The
 launcher's shebang contains the Bowl root and program path, and the kernel
 invokes `/bowl` directly—there is no wrapper shell or generated per-command
-binary. Exposed commands use the fast view, so `jq ./file.json` sees the same
-file and working directory as a native Moonwater command, and `tar` or `sed`
-in a script is still the native applet.
+binary. Ordinary exposed commands use the fast view, so `jq ./file.json` sees
+the same file and working directory as a native Moonwater command, and `tar`
+or `sed` in a script is still the native applet.
 
 ## Native tools the managers still need
 
 Moonwater already has the shell, coreutils, sed, awk, grep, find, mount,
-unshare, chroot, `ip`, `host`, plaintext `fetch`, and uncompressed `tar`.
-Pacman, apt and apk inside `--isolated` bring their own linked downloaders
-and archive libraries. The host-side gaps that every distro bootstrap still
-shells out to are not Bowl mounts:
+unshare, chroot, `ip`, `host`, plaintext `fetch`, `wget` (HTTPS), uncompressed
+`tar`, and `zstd -d`. Pacman, apt and apk inside `--isolated` bring their own
+linked downloaders and archive libraries. The host-side gaps that every distro
+bootstrap still shells out to are not Bowl mounts:
 
-- gzip / xz / zstd — the compressors those tarballs actually use (Arch is
-  `.tar.zst`); `tar` itself is native
+- gzip / xz — Debian is `.tar.xz`, Alpine is `.tar.gz`
 - `ar` — `.deb` members; debootstrap will not run without it
-- HTTPS on `fetch` — mirrors refuse plaintext; until then a root is copied
-  onto the image from a machine that already has curl
 
 Do not implement pacman, apt or apk here. Do not overlay guest `/bin` to
 paper over a missing applet.
 
 The next slices should preserve these rules:
 
-- add those applets, then root acquisition for Arch, then Debian and Alpine;
+- gzip, xz, ar, then Debian and Alpine setups;
 - share Arch's glibc with other glibc bowls; keep Alpine on musl;
 - discover package-owned executables so exposure can be selected after install;
 - persist prepared mount views and reduce fast entry to setns plus exec;

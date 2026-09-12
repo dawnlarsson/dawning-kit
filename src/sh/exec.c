@@ -7985,13 +7985,22 @@ static b32 exec_dispatch(b32 command_word)
 
                 if (located == 1)
                 {
-                        shell_argv[0] = found;
+                        string_address address_to saved_argv = shell_argv;
+                        positive saved_argc = shell_argc;
+
+                        if (!bowl_wrap_command(found, shell_directory,
+                                               address_of shell_argv,
+                                               address_of shell_argc))
+                                shell_argv[0] = found;
+
                         if (shell_tail_command)
                                 shell_thread_instance_mode(exec_asynchronous);
                         else if (job_monitor())
                                 job_execute_foreground();
                         else
                                 shell_execute_command();
+                        shell_argv = saved_argv;
+                        shell_argc = saved_argc;
                         shell_argv[0] = name;
                         return shell_status;
                 }
@@ -10225,6 +10234,9 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
 
                 words[0] = found;
         }
+
+        bowl_wrap_words(shell_directory, words, (positive)node->word_count,
+                        EXEC_STAGE_WORDS_MAX + 1);
 
         return shell_spawn_stage(words, input, output, -1);
 }

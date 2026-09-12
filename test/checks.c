@@ -38760,9 +38760,24 @@ static fn fetching(void)
                          address_of port, address_of path) == HTTP_OK);
         check("which is the root", string_equals(path, (string_address) "/"));
 
-        check("https is refused by name",
+        check("https splits as TLS",
               http_split((string_address) "https://dawning.dev/", name, sizeof name,
-                         address_of port, address_of path) == HTTP_NOT_PLAIN);
+                         address_of port, address_of path) == HTTP_OK);
+        check("https defaults to 443", port == 443);
+        {
+                bool tls = false;
+                check("https marks TLS",
+                      http_split_into((string_address) "https://dawning.dev/x", name,
+                                      sizeof name, address_of port, address_of path,
+                                      address_of tls) == HTTP_OK &&
+                          tls && port == 443 &&
+                          string_equals(path, (string_address) "/x"));
+                check("http does not mark TLS",
+                      http_split_into((string_address) "http://dawning.dev/x", name,
+                                      sizeof name, address_of port, address_of path,
+                                      address_of tls) == HTTP_OK &&
+                          !tls && port == 80);
+        }
         check("an empty host is refused",
               http_split((string_address) "http:///x", name, sizeof name,
                          address_of port, address_of path) == HTTP_BAD_URL);
@@ -38908,6 +38923,191 @@ static fn fetching(void)
                 check("HTTP extension byte classes and bounded SIMD tails",
                       valid ? got == 1 && body[0] == 'a' : got == HTTP_MALFORMED);
         }
+}
+
+static bool crypto_bytes_are(p8 address_to got, positive length, string_address hex)
+{
+        p8 expect[128];
+        positive n = string_length(hex);
+        positive i;
+
+        if (n != length * 2 || length > sizeof expect)
+                return false;
+        for (i = 0; i < length; i++)
+        {
+                p8 high = hex[i * 2];
+                p8 low = hex[i * 2 + 1];
+                p8 value = 0;
+                if (high >= '0' && high <= '9')
+                        value = (p8)((high - '0') << 4);
+                else if (high >= 'a' && high <= 'f')
+                        value = (p8)((high - 'a' + 10) << 4);
+                else
+                        return false;
+                if (low >= '0' && low <= '9')
+                        value |= (p8)(low - '0');
+                else if (low >= 'a' && low <= 'f')
+                        value |= (p8)(low - 'a' + 10);
+                else
+                        return false;
+                expect[i] = value;
+        }
+        return memory_compare(got, expect, length) == 0;
+}
+
+static fn crypto_floor(void)
+{
+        p8 out[64];
+        p8 text[20];
+
+        crypto_sha256_of((p8 address_to) "", 0, out);
+        check("SHA-256 of nothing",
+              crypto_bytes_are(out, 32,
+                               "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
+        crypto_sha256_of((p8 address_to) "abc", 3, out);
+        check("SHA-256 of abc",
+              crypto_bytes_are(out, 32,
+                               "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+        crypto_sha256_of((p8 address_to)
+                             "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+                         56, out);
+        check("SHA-256 of 56 bytes",
+              crypto_bytes_are(
+                  out, 32,
+                  "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"));
+        crypto_sha384((p8 address_to) "", 0, out);
+        check("SHA-384 of nothing",
+              crypto_bytes_are(
+                  out, 48,
+                  "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b"));
+
+        memory_fill(text, 0x0b, 20);
+        crypto_hmac_sha256(text, 20, (p8 address_to) "Hi There", 8, out);
+        check("HMAC-SHA256 RFC 4231 1",
+              crypto_bytes_are(out, 32,
+                               "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"));
+
+        {
+                p8 key[16];
+                p8 iv[12];
+                p8 tag[16];
+
+                memory_fill(key, 0, 16);
+                memory_fill(iv, 0, 12);
+                crypto_aesgcm_encrypt(key, iv, null, 0, (p8 address_to) "", 0, tag);
+                check("AES-GCM empty NIST",
+                      crypto_bytes_are(tag, 16, "58e2fccefa7e3061367f1d57a4e7455a"));
+        }
+}
+
+static fn crypto_floor_aes(void)
+{
+        p8 key[16];
+        p8 iv[12];
+        p8 block[16];
+        p8 tag[16];
+        static const p8 alice[32] = {
+            0x77, 0x07, 0x6d, 0x0a, 0x73, 0x18, 0xa5, 0x7d, 0x3c, 0x16,
+            0xc1, 0x72, 0x51, 0xb2, 0x66, 0x45, 0xdf, 0x4c, 0x2f, 0x87,
+            0xeb, 0xc0, 0x99, 0x2a, 0xb1, 0x77, 0xfb, 0xa5, 0x1d, 0xb9,
+            0x2c, 0x2a};
+        static const p8 bob[32] = {
+            0x5d, 0xab, 0x08, 0x7e, 0x62, 0x4a, 0x8a, 0x4b, 0x79, 0xe1,
+            0x7f, 0x8b, 0x83, 0x80, 0x0e, 0xe6, 0x6f, 0x3b, 0xb1, 0x29,
+            0x26, 0x18, 0xb6, 0xfd, 0x1c, 0x2f, 0x8b, 0x27, 0xff, 0x88,
+            0xe0, 0xeb};
+        static const p8 nine[32] = {9};
+        p8 alice_pub[32];
+        p8 bob_pub[32];
+        p8 ab[32];
+        p8 ba[32];
+
+        memory_fill(key, 0, 16);
+        memory_fill(iv, 0, 12);
+        memory_fill(block, 0, 16);
+        crypto_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
+        check("AES-GCM one block",
+              crypto_bytes_are(block, 16, "0388dace60b6a392f328c2b971b2fe78") &&
+                  crypto_bytes_are(tag, 16, "ab6e47d42cec13bdf53a67b21257bddf"));
+
+        memory_fill(key, 0, 16);
+        memory_fill(iv, 0, 12);
+        check("AES-GCM decrypt",
+              crypto_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
+                  crypto_bytes_are(block, 16, "00000000000000000000000000000000"));
+
+        memory_fill(key, 0, 16);
+        memory_fill(iv, 0, 12);
+        memory_fill(block, 0xaa, 16);
+        crypto_aesgcm_encrypt(key, iv, null, 0, block, 16, tag);
+        tag[0] ^= 1;
+        check("AES-GCM bad tag wipes",
+              !crypto_aesgcm_decrypt(key, iv, null, 0, block, 16, tag) &&
+                  crypto_bytes_are(block, 16, "00000000000000000000000000000000"));
+
+        {
+                static const p8 qx[32] = {
+                    0x60, 0xfe, 0xd4, 0xba, 0x25, 0x5a, 0x9d, 0x31, 0xc9, 0x61,
+                    0xeb, 0x74, 0xc6, 0x35, 0x6d, 0x68, 0xc0, 0x49, 0xb8, 0x92,
+                    0x3b, 0x61, 0xfa, 0x6c, 0xe6, 0x69, 0x62, 0x2e, 0x60, 0xf2,
+                    0x9f, 0xb6};
+                static const p8 qy[32] = {
+                    0x79, 0x03, 0xfe, 0x10, 0x08, 0xb8, 0xbc, 0x99, 0xa4, 0x1a,
+                    0xe9, 0xe9, 0x56, 0x28, 0xbc, 0x64, 0xf2, 0xf1, 0xb2, 0x0c,
+                    0x2d, 0x7e, 0x9f, 0x51, 0x77, 0xa3, 0xc2, 0x94, 0xd4, 0x46,
+                    0x22, 0x99};
+                static const p8 r[32] = {
+                    0xef, 0xd4, 0x8b, 0x2a, 0xac, 0xb6, 0xa8, 0xfd, 0x11, 0x40,
+                    0xdd, 0x9c, 0xd4, 0x5e, 0x81, 0xd6, 0x9d, 0x2c, 0x87, 0x7b,
+                    0x56, 0xaa, 0xf9, 0x91, 0xc3, 0x4d, 0x0e, 0xa8, 0x4e, 0xaf,
+                    0x37, 0x16};
+                static const p8 s[32] = {
+                    0xf7, 0xcb, 0x1c, 0x94, 0x2d, 0x65, 0x7c, 0x41, 0xd4, 0x36,
+                    0xc7, 0xa1, 0xb6, 0xe2, 0x9f, 0x65, 0xf3, 0xe9, 0x00, 0xdb,
+                    0xb9, 0xaf, 0xf4, 0x06, 0x4d, 0xc4, 0xab, 0x2f, 0x84, 0x3a,
+                    0xcd, 0xa8};
+                p8 digest[32];
+
+                crypto_sha256_of((p8 address_to) "sample", 6, digest);
+                check("ECDSA P-256 RFC 6979 sample",
+                      crypto_ecdsa_p256(digest, 32, (p8 address_to)r, 32,
+                                        (p8 address_to)s, 32, (p8 address_to)qx,
+                                        (p8 address_to)qy));
+        }
+
+        crypto_x25519(alice_pub, (p8 address_to)alice, (p8 address_to)nine);
+        crypto_x25519(bob_pub, (p8 address_to)bob, (p8 address_to)nine);
+        crypto_x25519(ab, (p8 address_to)alice, bob_pub);
+        crypto_x25519(ba, (p8 address_to)bob, alice_pub);
+        check("X25519 RFC 7748 public",
+              crypto_bytes_are(
+                  alice_pub, 32,
+                  "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"));
+        check("X25519 RFC 7748 shared",
+              crypto_bytes_are(
+                  ab, 32,
+                  "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742") &&
+                  !memory_compare(ab, ba, 32));
+}
+
+static fn redirect_urls(void)
+{
+        p8 into[256];
+
+        check("absolute Location wins",
+              http_absolutize(true, "geo.mirror.pkgbuild.com", 443, "/iso/latest/",
+                              "https://geo.mirror.pkgbuild.com/iso/2026.09.01/x", into,
+                              sizeof into) == HTTP_OK &&
+                  string_equals(into,
+                                "https://geo.mirror.pkgbuild.com/iso/2026.09.01/x"));
+        check("root-relative Location keeps the host",
+              http_absolutize(true, "example.com", 443, "/iso/latest/a", "/iso/b",
+                              into, sizeof into) == HTTP_OK &&
+                  string_equals(into, "https://example.com/iso/b"));
+        check("relative Location keeps the directory",
+              http_absolutize(false, "h", 80, "/dir/old", "new", into, sizeof into) ==
+                      HTTP_OK &&
+                  string_equals(into, "http://h/dir/new"));
 }
 
 /*
@@ -39443,6 +39643,9 @@ b32 main(void)
         resolving();
         resolving_edges();
         fetching();
+        crypto_floor();
+        crypto_floor_aes();
+        redirect_urls();
         fetching_for_real();
         leasing();
         leasing_datagrams();

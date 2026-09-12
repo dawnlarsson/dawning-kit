@@ -4205,6 +4205,23 @@ static b32 build_userspace()
                                        "-delete", null))
                                 return build_die(build_join("clearing ",
                                                             where[at], null));
+
+                /*
+                        /bowls is a runtime mount, not a place to ship
+                        archives. A leftover bootstrap tarball here is packed
+                        into the initramfs.
+                */
+                if (build_tool("find", build_join(image, "/bowls", null),
+                               "-maxdepth", "1", "(", "-type", "f", "-o",
+                               "-type", "l", ")", "-delete", null))
+                        return build_die("clearing leftover bowl files");
+
+                if (build_tool("rm", "-f",
+                               build_join(image,
+                                          "/root/archlinux-bootstrap-x86_64.tar.zst",
+                                          null),
+                               null))
+                        return build_die("clearing leftover root archive");
         }
 
         build_components(build_join(build_setting_get("kernel_tree"), "/.config",

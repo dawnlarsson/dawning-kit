@@ -157,7 +157,9 @@ static b32 screen_term()
         if (child == 0)
         {
                 string_address argv[] = {SHELL, null};
-                string_address envp[] = {"TERM=ansi", null};
+                string_address envp[] = {"TERM=ansi", "HOME=/root",
+                                         "PATH=" BOWL_DEFAULT_PATH,
+                                         "LANG=C.UTF-8", null};
 
                 if (process_pty_child_setup(master, slave, -1, -1) < 0)
                         system_call_1(syscall(exit), 126);

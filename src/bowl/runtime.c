@@ -16,6 +16,11 @@
                       PID, UTS and IPC views; use this for apt, pacman, apk
                       while they fill a tree.
 
+        `bowl setup arch` is the new-install command: it becomes root,
+        installs /bowl, lands the bootstrap, and puts pacman on PATH.
+        Typing pacman afterwards is isolated by the program name, not by
+        a flag the person has to remember.
+
         Neither is instruction emulation or a syscall proxy. Once setup is
         complete, the program is an ordinary native process on this kernel.
 */
@@ -23,7 +28,8 @@
 #define bowl_label TERM_BOLD "[Bowl]" TERM_RESET " "
 
 static const p8 bowl_usage_text[] = bowl_label
-    "usage: bowl [--fast|--isolated] <root> [program [argument...]]\n"
+    "usage: bowl setup <name>\n"
+    bowl_label "       bowl [--fast|--isolated] <root> [program [argument...]]\n"
     bowl_label "       bowl expose <root> <program> [name]\n";
 
 #define BOWL_NATIVE_SHELL "/shell"
@@ -34,9 +40,11 @@ static const p8 bowl_usage_text[] = bowl_label
 #define BOWL_EXPOSE_DIRECTORY BOWL_ROOT_PREFIX "bin"
 #define BOWL_DEFAULT_PATH "/bin:/usr/bin:" BOWL_EXPOSE_DIRECTORY ":/"
 #define BOWL_EXPOSE_PREFIX "#!/bowl @"
+#define BOWL_PROGRAM "/bowl"
 #define BOWL_PATH_LIMIT 4096
 #define BOWL_SHEBANG_LIMIT 256
 #define BOWL_ACCESS_EXECUTE 1
+#define BOWL_WRAP_ARGV 96
 
 #define MNT_DETACH 2
 
@@ -187,16 +195,30 @@ static bipolar bowl_bind_ro(string_address source, string_address target)
         generated ELF file or per-command runtime. The launcher is the whole
         system-wide installation and is intentionally created O_EXCL.
 */
-static b32 bowl_expose(positive count,
-                       string_address address_to arguments)
+static bool bowl_needs_isolated(string_address program)
+{
+        p8 name[256];
+
+        if (!program || program[0] != '/')
+                return false;
+
+        path_tail_copy(name, sizeof(name), program);
+        return string_equals(name, "pacman") ||
+               string_equals(name, "pacman-key") ||
+               string_equals(name, "makepkg") ||
+               string_equals(name, "apt") ||
+               string_equals(name, "apt-get") ||
+               string_equals(name, "dpkg") ||
+               string_equals(name, "apk");
+}
+
+static b32 bowl_expose_program(string_address root, string_address program,
+                               string_address name, bool exclusive)
 {
         p8 installed[BOWL_PATH_LIMIT];
         p8 launcher[BOWL_PATH_LIMIT];
         p8 inferred[256];
         p8 line[BOWL_SHEBANG_LIMIT];
-        string_address root;
-        string_address program;
-        string_address name;
         positive prefix_length = sizeof(BOWL_EXPOSE_PREFIX) - 1;
         positive root_length;
         positive program_length;
@@ -204,13 +226,6 @@ static b32 bowl_expose(positive count,
         positive line_length;
         bipolar handle;
         bipolar failed;
-
-        if (count < 4 || count > 5)
-                return bowl_usage();
-
-        root = arguments[2];
-        program = arguments[3];
-        name = count == 5 ? arguments[4] : inferred;
 
         if (!bowl_named_root(root) || !program || program[0] != '/' ||
             !program[1])
@@ -222,8 +237,11 @@ static b32 bowl_expose(positive count,
                         return bowl_refuse("whitespace cannot be encoded in "
                                            "an exposed path\n");
 
-        if (count != 5)
+        if (!name || !name[0])
+        {
                 path_tail_copy(inferred, sizeof(inferred), program);
+                name = inferred;
+        }
 
         if (!bowl_name(name, true))
                 return bowl_refuse("invalid command name\n");
@@ -249,6 +267,10 @@ static b32 bowl_expose(positive count,
                 return bowl_fail(BOWL_EXPOSE_DIRECTORY, failed);
 
         path_join(launcher, sizeof(launcher), BOWL_EXPOSE_DIRECTORY, name);
+
+        if (!exclusive && system_access_at(AT_FDCWD, launcher, 0) >= 0)
+                return 0;
+
         memory_copy(line, BOWL_EXPOSE_PREFIX, prefix_length);
         memory_copy(line + prefix_length, root, root_length);
         memory_copy(line + prefix_length + root_length, program,
@@ -286,6 +308,227 @@ static b32 bowl_expose(positive count,
         return 0;
 }
 
+static b32 bowl_expose(positive count, string_address address_to arguments)
+{
+        if (count < 4 || count > 5)
+                return bowl_usage();
+
+        return bowl_expose_program(arguments[2], arguments[3],
+                                   count == 5 ? arguments[4] : null, true);
+}
+
+static string_address bowl_guest_bins[] = {
+    "/usr/bin", "/usr/sbin", "/bin", null};
+
+static bool bowl_split_guest_path(string_address path, p8 address_to root,
+                                  positive root_room, p8 address_to program,
+                                  positive program_room)
+{
+        positive prefix = sizeof(BOWL_ROOT_PREFIX) - 1;
+        string_address rest;
+        positive root_length;
+        positive program_length;
+
+        if (!path || string_compare_max(path, BOWL_ROOT_PREFIX, prefix))
+                return false;
+
+        rest = string_first_of(path + prefix, '/');
+        if (!rest || !rest[1])
+                return false;
+
+        root_length = (positive)(rest - path);
+        program_length = string_length(rest);
+        if (root_length >= root_room || program_length >= program_room)
+                return false;
+
+        memory_copy(root, path, root_length);
+        root[root_length] = end;
+        if (!bowl_named_root(root))
+                return false;
+
+        memory_copy(program, rest, program_length + 1);
+        return true;
+}
+
+static bool bowl_file_elf(string_address path)
+{
+        p8 head[4];
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+        bipolar got;
+
+        if (handle < 0)
+                return false;
+
+        got = system_read_retry((positive)handle, head, 4);
+        system_close(handle);
+        return got == 4 && head[0] == 0x7f && head[1] == 'E' &&
+               head[2] == 'L' && head[3] == 'F';
+}
+
+/*
+        A bare name the PATH did not hold: look under each bowl's usual
+        command directories, expose it, and hand back the launcher so the
+        next lookup is an ordinary PATH hit.
+*/
+static bool bowl_fill_command(string_address name, p8 address_to into,
+                             positive room)
+{
+        file_walk walk;
+        struct linux_dirent64 address_to entry;
+        p8 root[BOWL_PATH_LIMIT];
+        p8 rel[256];
+        p8 installed[BOWL_PATH_LIMIT];
+        bool found = false;
+        positive name_length;
+
+        if (!name || string_first_of(name, '/') || !bowl_name(name, true))
+                return false;
+
+        name_length = string_length(name);
+        if (!file_walk_open(address_of walk, AT_FDCWD, BOWL_ROOT_DIRECTORY))
+                return false;
+
+        while (!found && (entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name) ||
+                    string_equals(entry->d_name, "bin"))
+                        continue;
+
+                if (!path_join(root, sizeof(root), BOWL_ROOT_DIRECTORY,
+                               entry->d_name) ||
+                    !bowl_named_root(root))
+                        continue;
+
+                for (positive at = 0; bowl_guest_bins[at]; at++)
+                {
+                        if (string_length(bowl_guest_bins[at]) + 1 +
+                                name_length >=
+                            sizeof(rel))
+                                continue;
+
+                        if (!path_join(rel, sizeof(rel), bowl_guest_bins[at],
+                                       name) ||
+                            !bowl_root_path(installed, sizeof(installed), root,
+                                            rel) ||
+                            system_access_at(AT_FDCWD, installed,
+                                             BOWL_ACCESS_EXECUTE) < 0)
+                                continue;
+
+                        found = true;
+                        if (!bowl_expose_program(root, rel, name, false) &&
+                            path_join(into, room, BOWL_EXPOSE_DIRECTORY,
+                                      name))
+                                break;
+
+                        if (string_length(installed) >= room)
+                        {
+                                found = false;
+                                break;
+                        }
+
+                        memory_copy(into, installed,
+                                    string_length(installed) + 1);
+                        break;
+                }
+        }
+
+        file_walk_close(address_of walk);
+        return found;
+}
+
+static p8 bowl_wrap_root[BOWL_PATH_LIMIT];
+static p8 bowl_wrap_program[BOWL_PATH_LIMIT];
+static p8 bowl_wrap_absolute[BOWL_PATH_LIMIT];
+static string_address bowl_wrap_vector[BOWL_WRAP_ARGV];
+
+static bool bowl_guest_absolute(string_address path, string_address cwd,
+                                p8 address_to into, positive room)
+{
+        if (!path || !path[0])
+                return false;
+
+        if (path[0] == '/')
+        {
+                positive length = string_length(path);
+
+                if (length >= room)
+                        return false;
+
+                memory_copy(into, path, length + 1);
+                return true;
+        }
+
+        if (!cwd || cwd[0] != '/')
+                return false;
+
+        return path_join(into, room, cwd, path) != 0;
+}
+
+static bool bowl_guest_elf_command(string_address path, string_address cwd)
+{
+        if (!bowl_guest_absolute(path, cwd, bowl_wrap_absolute,
+                                 sizeof(bowl_wrap_absolute)))
+                return false;
+
+        return bowl_file_elf(bowl_wrap_absolute) &&
+               bowl_split_guest_path(bowl_wrap_absolute, bowl_wrap_root,
+                                     sizeof(bowl_wrap_root),
+                                     bowl_wrap_program,
+                                     sizeof(bowl_wrap_program));
+}
+
+/*
+        A guest ELF is not a Moonwater program: execve of it looks for
+        ld-linux under the host and answers -2. Run it through bowl so the
+        fast view can bind the loader, whether the name was typed, hashed, or
+        spelled as ./btop from the guest bin directory.
+*/
+static bool bowl_wrap_command(string_address path, string_address cwd,
+                              string_address address_to address_to argv,
+                              positive address_to argc)
+{
+        string_address address_to old;
+        positive count;
+        positive at;
+
+        if (!argv || !argc || !bowl_guest_elf_command(path, cwd))
+                return false;
+
+        old = address_to argv;
+        count = address_to argc;
+        if (!old || count + 2 >= BOWL_WRAP_ARGV)
+                return false;
+
+        bowl_wrap_vector[0] = BOWL_PROGRAM;
+        bowl_wrap_vector[1] = bowl_wrap_root;
+        bowl_wrap_vector[2] = bowl_wrap_program;
+        for (at = 1; at < count; at++)
+                bowl_wrap_vector[at + 2] = old[at];
+        bowl_wrap_vector[count + 2] = null;
+        address_to argv = bowl_wrap_vector;
+        address_to argc = count + 2;
+        return true;
+}
+
+static bool bowl_wrap_words(string_address cwd,
+                           string_address address_to words, positive count,
+                           positive room)
+{
+        positive at;
+
+        if (!words || count < 1 || count + 2 >= room ||
+            !bowl_guest_elf_command(words[0], cwd))
+                return false;
+
+        for (at = count; at >= 1; at--)
+                words[at + 2] = words[at];
+        words[0] = BOWL_PROGRAM;
+        words[1] = bowl_wrap_root;
+        words[2] = bowl_wrap_program;
+        words[count + 2] = null;
+        return true;
+}
+
 /* Parse @/bowls/NAME/PROGRAM from a shebang invocation. */
 static bool bowl_launcher(string_address encoded, p8 address_to root,
                           positive room,
@@ -321,13 +564,21 @@ static bool bowl_launcher(string_address encoded, p8 address_to root,
         return true;
 }
 
+static bipolar bowl_dev_link(string_address target, string_address name)
+{
+        bipolar failed = system_symbolic_link_at(target, AT_FDCWD, name);
+
+        return (failed < 0 && failed != -EEXIST) ? failed : 0;
+}
+
 static bipolar bowl_isolated_populate(void)
 {
+        bipolar failed = 0;
+
         for (positive i = 0; bowl_isolated_mounts[i].target; i++)
         {
                 struct bowl_mount_point address_to point =
                     bowl_isolated_mounts + i;
-                bipolar failed;
 
                 failed = bowl_mkdir(point->target);
                 if (!failed)
@@ -341,7 +592,22 @@ static bipolar bowl_isolated_populate(void)
                 }
         }
 
-        return 0;
+        /*
+                bash process substitution opens /dev/fd/N. devtmpfs does not
+                create those names; pacman-key uses them while filling the
+                keyring.
+        */
+        failed = bowl_dev_link("/proc/self/fd", "/dev/fd");
+        if (!failed)
+                failed = bowl_dev_link("/proc/self/fd/0", "/dev/stdin");
+        if (!failed)
+                failed = bowl_dev_link("/proc/self/fd/1", "/dev/stdout");
+        if (!failed)
+                failed = bowl_dev_link("/proc/self/fd/2", "/dev/stderr");
+        if (failed)
+                bowl_fail("/dev/fd", failed);
+
+        return failed;
 }
 
 /*
@@ -471,7 +737,8 @@ static b32 bowl_launch(string_address root, string_address program,
         string_address native_arguments[] = {BOWL_NATIVE_SHELL, null};
         string_address fallback_environment[] = {"TERM=ansi",
                                                    "PATH=" BOWL_DEFAULT_PATH,
-                                                   "HOME=/root", null};
+                                                   "HOME=/root",
+                                                   "LANG=C.UTF-8", null};
         string_address address_to environment = file_environment_all();
         bipolar native_shell = -1;
         bipolar failed;
@@ -525,6 +792,9 @@ static b32 bowl_launch(string_address root, string_address program,
         return failed < 0 ? 1 : wait_status_code(status);
 }
 
+#include "unpack.c"
+#include "setup.c"
+
 static b32 bowl_main()
 {
         string_address address_to arguments = program_argument_list();
@@ -534,10 +804,14 @@ static b32 bowl_main()
         string_address program = null;
         string_address address_to command_arguments = null;
         bool isolated = false;
+        bool isolated_told = false;
         p8 launcher_root[BOWL_PATH_LIMIT];
 
         if (!arguments || count < 2)
                 return bowl_usage();
+
+        if (string_equals(arguments[1], "setup"))
+                return bowl_setup(count, arguments);
 
         if (string_equals(arguments[1], "expose"))
                 return bowl_expose(count, arguments);
@@ -545,10 +819,14 @@ static b32 bowl_main()
         if (string_equals(arguments[1], "--isolated"))
         {
                 isolated = true;
+                isolated_told = true;
                 root_at++;
         }
         else if (string_equals(arguments[1], "--fast"))
+        {
+                isolated_told = true;
                 root_at++;
+        }
         else if (arguments[1][0] == '-' && arguments[1][1] == '-')
                 return bowl_usage();
 
@@ -574,6 +852,13 @@ static b32 bowl_main()
                 program = arguments[root_at + 1];
                 command_arguments = arguments + root_at + 1;
         }
+
+        if (!isolated_told)
+                isolated = bowl_needs_isolated(program);
+
+        /* An older tree was landed before these lines existed. */
+        if (isolated && bowl_has(root, "/etc/pacman.conf"))
+                bowl_write_pacman(root);
 
         return bowl_launch(root, program, command_arguments, isolated);
 }

@@ -1646,6 +1646,8 @@ fn shell_env_init(string_address address_to process_environment)
         // hands over the three bytes.
         string_address defaults[] = {"PATH=" BOWL_DEFAULT_PATH,
                                      "SHELL=/bin/sh",
+                                     "HOME=/root",
+                                     "LANG=C.UTF-8",
                                      "IFS= \t\n",
                                      "OPTIND=1", null};
 
@@ -15813,6 +15815,19 @@ static bipolar shell_find_in_path_alloc_mode(string_address name,
 
                 if (!shell_path_wanted(value, name_length, address_of wanted))
                         return -1;
+
+                /*
+                        A guest binary lives under /bowls/NAME/usr/bin, which
+                        is longer than any PATH component, and the launcher
+                        is /bowls/bin/NAME.
+                */
+                {
+                        positive guest = sizeof(BOWL_ROOT_PREFIX) + 64 +
+                                         sizeof("/usr/sbin/") + name_length;
+
+                        if (guest > wanted)
+                                wanted = guest;
+                }
         }
 
         if (!shell_room((address_any address_to)into, room, wanted, 1))
@@ -15834,6 +15849,10 @@ static bipolar shell_find_in_path_alloc_mode(string_address name,
         if (!query && shell_find_in_path_mode(name, *into, *room, 0, false,
                                               fixed_path))
                 return 2;
+
+        if (!fixed_path && !string_first_of(name, '/') &&
+            bowl_fill_command(name, *into, *room))
+                return 1;
 
         return 0;
 }
@@ -16373,13 +16392,24 @@ fn shell_command_builtin(writer write, string_address input)
                         return shell_answer(string_report(log_error, 126, "command: %s: cannot run\n", name));
                 }
 
-                shell_argv[0] = found;
-                if (shell_tail_command)
-                        shell_thread_instance_mode(true);
-                else
-                        shell_execute_command();
-                shell_argv[0] = name;
-                memory_free(found, found_room);
+                {
+                        string_address address_to saved_argv = shell_argv;
+                        positive saved_argc = shell_argc;
+
+                        if (!bowl_wrap_command(found, shell_directory,
+                                               address_of shell_argv,
+                                               address_of shell_argc))
+                                shell_argv[0] = found;
+
+                        if (shell_tail_command)
+                                shell_thread_instance_mode(true);
+                        else
+                                shell_execute_command();
+                        shell_argv = saved_argv;
+                        shell_argc = saved_argc;
+                        shell_argv[0] = name;
+                        memory_free(found, found_room);
+                }
         }
 }
 
