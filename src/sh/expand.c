@@ -8832,9 +8832,9 @@ static positive shell_expand_without_braces(string_address word,
         if (split)
                 return expand_split(out);
 
-        /* POSIX interactive redirections pathname-expand one whole word, but
-           do not field-split it. An unquoted expansion to nothing is still no
-           target, while a quoted empty expansion is one empty target. */
+        /* A redirect kept whole: no field split and no glob. An unquoted
+           expansion to nothing is still no target, while a quoted empty
+           expansion is one empty target. */
         if (expand_length || expand_quoted_seen)
                 expand_emit(0, expand_length, out);
 
@@ -8976,6 +8976,12 @@ static bool expand_brace_range(string_address word, string_address open,
                 bipolar last = string_get(first_dots + 2);
                 bipolar magnitude;
                 bipolar step;
+
+                /* Seq braces need two numbers or two letters. {1..a} is
+                   neither, so it stays one field; mixed-case letters still
+                   walk the ASCII span the way bash does. */
+                if (!byte_is_alpha(first) || !byte_is_alpha(last))
+                        return false;
 
                 if (step_number == bipolar_min)
                         return false;
@@ -9240,10 +9246,14 @@ RETURNS_NONNULL string_address shell_expand_word(string_address word)
         return result;
 }
 
-/* A redirect is a single whole word in POSIX/non-Bash policy. Bash's default
-   policy additionally splits and pathname-expands it, but still requires the
-   result to be exactly one target. The caller supplies its reusable word
-   table so a one-off large glob does not leave another retained array here.
+/* A redirect is a single whole word in POSIX/non-Bash policy. Dash has no
+   brace expansion, so that path is enough. Bash --posix still honours the
+   braceexpand extra option (on by default, including under --posix) and
+   treats several brace fields as an ambiguous redirect, but it does not
+   split or glob. Bash's default policy additionally splits and
+   pathname-expands, and still requires exactly one target. The caller
+   supplies its reusable word table so a one-off large glob does not leave
+   another retained array here.
 
    1 is one target, 0 is Bash's ambiguous redirect, -1 is an expansion abort
    already carrying its diagnostic/status. */
@@ -9251,7 +9261,7 @@ static b32 shell_expand_redirect(string_address word,
                                  shell_words address_to fields,
                                  string_address address_to target)
 {
-        if (!shell_bash_compat || (shell_posix_on() && !shell_is_interactive))
+        if (!shell_bash_compat)
         {
                 address_to target = shell_expand_word(word);
                 return expand_failed ? -1 : 1;
