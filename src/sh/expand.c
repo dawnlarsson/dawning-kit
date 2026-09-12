@@ -29,6 +29,9 @@ string_address env_get_hashed_span(const_string name, positive length,
 positive env_names_prefix(string_address prefix, positive length,
                           string_address address_to names, positive room);
 PURE bool env_readonly(const_string name);
+PURE bool env_assignment_readonly_hashed_span(const_string name,
+                                              positive length,
+                                              positive hash);
 bool env_assign(const_string name, const_string value);
 //      Where a diagnostic came from, written through the caller's writer:
 //      these lines go out unbuffered, so the prefix has to travel with them.
@@ -2084,6 +2087,18 @@ static bool arith_bash_mode;
 static bool arith_nounset;
 static bool arith_unset;
 
+/*
+        A persistent `name=$((...))` whose whole right-hand side is one
+        arithmetic expansion. The increment fast path may store that name
+        once; the executor then skips the second env write. Prefix
+        assignments leave this empty so a restored `i=$((i+1)) true`
+        still puts `i` back.
+*/
+static string_address arith_assign_target;
+static positive arith_assign_target_length;
+static bool arith_assign_stored;
+static bool expand_assignment_commit;
+
 static PURE inline INLINE string_address arith_skip_space(string_address at)
 {
         return at + string_span_of_set(at, " \t\n");
@@ -3061,6 +3076,8 @@ static HOT bool arith_increment_fast(bipolar address_to value)
         bipolar delta = 1;
         bipolar held;
         bipolar next;
+        positive2 hashed;
+        bool same;
 
         if (arith_bash_mode && (first == '+' || first == '-') &&
             string_get(at + 1) == first)
@@ -3132,8 +3149,8 @@ static HOT bool arith_increment_fast(bipolar address_to value)
         name.name = name_local;
         name.name_length = name_length;
 
+        hashed = string_hash_33_length(name_local);
         {
-                positive2 hashed = string_hash_33_length(name_local);
                 string_address raw = env_get_hashed_span(name_local, hashed.y,
                                                          hashed.x, null);
 
@@ -3151,12 +3168,28 @@ static HOT bool arith_increment_fast(bipolar address_to value)
         next = add ? arith_addition(held, delta)
                    : arith_subtraction(held, delta);
 
+        same = arith_assign_target &&
+               arith_assign_target_length == name_length &&
+               !memory_compare(arith_assign_target, name_local, name_length);
+
         if (prefix || assign)
+        {
                 address_to value = arith_store(name, next);
+                if (same && !arith_bad)
+                        arith_assign_stored = true;
+        }
         else if (postfix)
         {
                 arith_store(name, next);
                 address_to value = held;
+        }
+        else if (same &&
+                 !env_assignment_readonly_hashed_span(name_local, hashed.y,
+                                                      hashed.x))
+        {
+                address_to value = arith_store(name, next);
+                if (!arith_bad)
+                        arith_assign_stored = true;
         }
         else
                 address_to value = next;
@@ -7840,6 +7873,89 @@ static b32 shell_expand_redirect(string_address word,
 }
 
 /*
+        A persistent assignment whose whole right-hand side is $((...))
+        with nothing left to expand in the body.
+
+        The increment fast path can store `i=$((i + 1))` (and the += / ++
+        cousins) into the env cell once. xtrace still needs the digits in
+        the word; otherwise the executor skips building `name=<digits>`
+        and writing it a second time. A miss still evaluates here so a
+        comma or octal is not parsed twice.
+*/
+static string_address expand_assignment_arithmetic(string_address word,
+                                                   positive value_at)
+{
+        string_address rhs;
+        string_address inner;
+        string_address stop;
+        string_address text;
+        string_address ready;
+        p8 text_local[EXPAND_LOCAL_TEXT];
+        p8 written[32];
+        positive length;
+        positive digits;
+        bipolar value;
+        string_address made;
+
+        if (value_at < 2 || word[value_at - 1] != '=')
+                return null;
+
+        rhs = word + value_at;
+        if (string_get(rhs) != '$' || string_get(rhs + 1) != '(' ||
+            string_get(rhs + 2) != '(')
+                return null;
+
+        inner = rhs + 3;
+        stop = expand_paren_end(inner);
+        if (!stop || string_get(stop + 1) != ')' || string_get(stop + 2))
+                return null;
+
+        length = (positive)(stop - inner);
+        text = expand_hold(inner, length, text_local, sizeof(text_local));
+        if (!text)
+                return (string_address) "";
+
+        if (string_get(text + string_span_without_set(text, "$`\"'\\")))
+                return null;
+
+        arith_assign_target = word;
+        arith_assign_target_length = value_at - 1;
+        ready = arith_expand_body(text);
+        if (expand_failed)
+        {
+                arith_assign_target = null;
+                return (string_address) "";
+        }
+
+        value = arith_evaluate(ready);
+        arith_assign_target = null;
+
+        if (arith_bad)
+        {
+                if (!arith_unset)
+                        shell_arith_report(writer_stderr_once, null, ready);
+                expand_slice_error();
+                return (string_address) "";
+        }
+
+        if (arith_assign_stored &&
+            !(shell_options & ((positive)1 << ('x' - 'a'))))
+                return word;
+
+        digits = bipolar_into_string(written, value);
+        made = shell_store_take(address_of expand_store, value_at + digits + 1);
+        if (!made)
+        {
+                expand_fail_state();
+                return (string_address) "";
+        }
+
+        memory_copy(made, word, value_at);
+        memory_copy_end(made + value_at, written, digits);
+        return made;
+}
+
+/*
         A declaration operand is an assignment even though it follows the
         command name. Keep it whole like a leading assignment, and recognize
         the additional tilde-prefix positions after '=' and unquoted ':'.
@@ -7847,6 +7963,14 @@ static b32 shell_expand_redirect(string_address word,
 RETURNS_NONNULL string_address shell_expand_assignment(string_address word, positive value_at)
 {
         string_address result;
+
+        arith_assign_stored = false;
+        if (expand_assignment_commit)
+        {
+                result = expand_assignment_arithmetic(word, value_at);
+                if (result)
+                        return result;
+        }
 
         expand_begin();
         expand_push_run(word, value_at, MARK_PLAIN);

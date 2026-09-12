@@ -7069,6 +7069,12 @@ static bool exec_assign_value(string_address word, positive name_length,
         string_address mark = name_end + append;
         bool answer;
 
+        if (arith_assign_stored)
+        {
+                arith_assign_stored = false;
+                return true;
+        }
+
         if (string_get(mark) != '=')
                 return false;
         *name_end = end;
@@ -8496,10 +8502,17 @@ static b32 exec_simple(b32 index)
                     shell_substitution_generation;
                 positive value_at = parse_word_name_lengths[word_index] + 1 +
                                       ((flags & PARSE_WORD_APPEND) != 0);
-                string_address trial =
-                    (flags & PARSE_WORD_LITERAL) ||
+                bool held_commit = expand_assignment_commit;
+                string_address trial;
+
+                arith_assign_stored = false;
+                expand_assignment_commit =
+                    assignments_only && !(flags & PARSE_WORD_APPEND) &&
+                    !(flags & PARSE_WORD_COMPOUND);
+                trial = (flags & PARSE_WORD_LITERAL) ||
                     (assignments_only && (flags & PARSE_WORD_COMPOUND))
                         ? word : shell_expand_assignment(word, value_at);
+                expand_assignment_commit = held_commit;
 
                 /* Bash's ordinary mode exposes each substitution answer to
                    the next assignment RHS. POSIX freezes the status from
@@ -8511,6 +8524,12 @@ static b32 exec_simple(b32 index)
 
                 if (exec_line_aborted())
                         break;
+                if (arith_assign_stored)
+                {
+                        arith_assign_stored = false;
+                        shell_argv[at] = trial;
+                        continue;
+                }
                 if (!trial ||
                     !exec_keep_value(expanded_kept + expanded_count, trial,
                         parse_word_name_lengths[word_index], assignments_only ? EXEC_KEEP_TARGET : EXEC_KEEP_PREFIX))
