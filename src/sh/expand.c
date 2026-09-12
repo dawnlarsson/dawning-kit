@@ -6217,17 +6217,288 @@ static COLD string_address expand_unset_reason(bool colon)
                    : (string_address) "parameter not set or null";
 }
 
+/*
+        Bytes dash quotes with CTLESC inside ${@%pat}. _rmescapes then copies
+        only $1 (it stops at the NUL join), so the suffix/prefix scan walks
+        that copy -- and into the pattern sitting in front of it -- while the
+        cut is applied to the full NUL-joined "$@". That is why "${@%*.}" with
+        a*c b c is one field a*, and with /usr/local/bin b c is /u.
+*/
+static PURE bool expand_dash_quoted_ctl(string_address text)
+{
+        p8 value;
+
+        while ((value = *text++))
+        {
+                if (value == '!' || value == '*' || value == '-' ||
+                    value == '/' || value == ':' || value == '=' ||
+                    value == '?' || value == '[' || value == '\\' ||
+                    value == ']' || value == '~')
+                        return true;
+        }
+
+        return false;
+}
+
+static COLD p8 address_to expand_dash_scanleft(p8 address_to startp,
+                                               p8 address_to rmesc,
+                                               string_address pattern,
+                                               bool zero)
+{
+        p8 address_to loc = startp;
+        p8 address_to loc2 = rmesc;
+        p8 c;
+
+        do
+        {
+                string_address s = loc2;
+
+                c = *loc2;
+                if (zero)
+                {
+                        *loc2 = end;
+                        s = rmesc;
+                }
+                bool hit = shell_match(pattern, s);
+                *loc2 = c;
+                if (hit)
+                        return loc;
+                loc++;
+                loc2++;
+        } while (c);
+
+        return null;
+}
+
+static COLD p8 address_to expand_dash_scanright(p8 address_to startp,
+                                                p8 address_to endp,
+                                                p8 address_to rmesc,
+                                                p8 address_to rmescend,
+                                                string_address pattern,
+                                                bool zero)
+{
+        p8 address_to loc;
+        p8 address_to loc2;
+
+        for (loc = endp, loc2 = rmescend; loc >= startp; loc2--)
+        {
+                string_address s = loc2;
+                p8 c = *loc2;
+
+                if (zero && loc2 >= rmesc && loc2 <= rmescend)
+                {
+                        *loc2 = end;
+                        s = rmesc;
+                }
+                bool hit = shell_match(pattern, s);
+                *loc2 = c;
+                if (hit)
+                        return loc;
+                loc--;
+        }
+
+        return null;
+}
+
+static COLD fn expand_push_nul_fields(p8 address_to start, p8 address_to stop,
+                                      bool quoted)
+{
+        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+        p8 address_to at = start;
+        bool first = true;
+
+        if (start == stop)
+        {
+                if (quoted)
+                        expand_push_empty();
+                return;
+        }
+
+        while (1)
+        {
+                p8 address_to next = at;
+
+                while (next < stop && *next)
+                        next++;
+                if (!first)
+                        expand_push(' ', quoted ? MARK_BREAK : MARK_SEPARATE);
+                first = false;
+                if (next != at)
+                        expand_push_run(at, (positive)(next - at), mark);
+                else if (quoted)
+                        expand_push_empty();
+                if (next >= stop)
+                        break;
+                at = next + 1;
+                if (at == stop)
+                {
+                        expand_push(' ', quoted ? MARK_BREAK : MARK_SEPARATE);
+                        if (quoted)
+                                expand_push_empty();
+                        break;
+                }
+        }
+}
+
+static COLD fn expand_bash_positional_trim(p8 form, string_address pattern,
+                                           bool prefix, bool longest,
+                                           bool quoted)
+{
+        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+        p8 between = string_get(expand_ifs());
+        bool fields = quoted ? form == '@' : !between;
+        positive at;
+
+        if (!shell_parameter_count)
+        {
+                if (quoted && form == '@')
+                        expand_name_at_empty = true;
+                return;
+        }
+
+        for (at = 0; at < shell_parameter_count && !expand_failed; at++)
+        {
+                positive start;
+
+                if (at)
+                        expand_sequence_between(fields, between, mark);
+                start = expand_length;
+                expand_push_string(shell_parameter[at], mark);
+                expand_trim(start, pattern, prefix, longest);
+        }
+}
+
+static COLD fn expand_dash_at_trim(string_address pattern, bool prefix,
+                                   bool longest, bool quoted)
+{
+        positive joined = 1;
+        positive at;
+        positive first_length = 0;
+        positive pattern_length;
+        bool copy;
+        p8 address_to block;
+        p8 address_to startp;
+        p8 address_to endp;
+        p8 address_to rmesc;
+        p8 address_to rmescend;
+        p8 address_to loc;
+        p8 address_to used;
+        bool zero = prefix;
+        bool left = prefix != longest;
+
+        if (!shell_parameter_count)
+        {
+                if (quoted)
+                        expand_push_empty();
+                return;
+        }
+
+        for (at = 0; at < shell_parameter_count; at++)
+        {
+                positive run = string_length(shell_parameter[at]);
+
+                if (joined > (positive)-1 - run - (at ? 1 : 0))
+                {
+                        expand_fail_state();
+                        return;
+                }
+                joined += run + (at ? 1 : 0);
+        }
+
+        first_length = string_length(shell_parameter[0]);
+        pattern_length = string_length(pattern);
+        copy = quoted && expand_dash_quoted_ctl(shell_parameter[0]);
+        if (joined > (positive)-1 - pattern_length - 1 -
+                         (copy ? first_length + 1 : 0))
+        {
+                expand_fail_state();
+                return;
+        }
+
+        block = shell_store_take(address_of expand_store,
+                                 joined + pattern_length + 1 +
+                                     (copy ? first_length + 1 : 0));
+        if (!block)
+        {
+                expand_fail_state();
+                return;
+        }
+
+        used = block;
+        for (at = 0; at < shell_parameter_count; at++)
+        {
+                positive run = string_length(shell_parameter[at]);
+
+                if (at)
+                        *used++ = end;
+                memory_copy_apart(used, shell_parameter[at], run);
+                used += run;
+        }
+        *used++ = end;
+        memory_copy_apart(used, pattern, pattern_length + 1);
+        startp = block;
+        endp = block + joined - 1;
+        if (copy)
+        {
+                p8 address_to into = used + pattern_length + 1;
+
+                memory_copy_apart(into, shell_parameter[0], first_length);
+                into[first_length] = end;
+                rmesc = into;
+                rmescend = into + first_length;
+        }
+        else
+        {
+                rmesc = startp;
+                rmescend = endp;
+        }
+
+        loc = left ? expand_dash_scanleft(startp, rmesc, pattern, zero)
+                   : expand_dash_scanright(startp, endp, rmesc, rmescend,
+                                           pattern, zero);
+        if (loc)
+        {
+                if (zero)
+                {
+                        memory_copy(startp, loc, (positive)(endp - loc));
+                        loc = startp + (endp - loc);
+                }
+                *loc = end;
+        }
+        else
+                loc = endp;
+
+        expand_push_nul_fields(startp, loc, quoted);
+}
+
 static fn expand_modifier(expand_reference reference, p8 operation, bool doubled,
                            string_address word, bool quoted, b32 parameter_mode)
 {
         if (operation == '#' || operation == '%')
         {
-                positive start = expand_length;
-                expand_push_parameter_as(reference, quoted, parameter_mode);
+                string_address name = reference.name;
+                bool all = string_get(name + 1) == end &&
+                           (string_is(name, '@') || string_is(name, '*'));
                 string_address pattern = expand_capture(
                     word, false, EXPAND_CAPTURE_PATTERN);
-                if (!expand_failed)
+
+                if (expand_failed)
+                        return;
+                if (all && shell_bash_compat)
+                        expand_bash_positional_trim(string_get(name), pattern,
+                                                    operation == '#', doubled,
+                                                    quoted);
+                else if (all && quoted && string_is(name, '@'))
+                        expand_dash_at_trim(pattern, operation == '#', doubled,
+                                            quoted);
+                else
+                {
+                        positive start = expand_length;
+
+                        expand_push_parameter_as(reference, quoted,
+                                                 parameter_mode);
                         expand_trim(start, pattern, operation == '#', doubled);
+                }
         }
         else if (operation == '/')
         {
