@@ -6655,6 +6655,27 @@ static COLD fn exec_trace_word(string_address word)
         log_error(str("'"));
 }
 
+/* NAME= then the value, quoted the way a word is. Bash never wraps the
+   name into that quoting, so a value that needs quotes is x='q"uote'
+   and not 'x=q"uote'. An empty value is the name and the equals alone. */
+static COLD fn exec_trace_assignment(string_address word)
+{
+        positive name_length = 0;
+        p8 kind = shell_assignment_kind(word, address_of name_length);
+        string_address value;
+
+        if (!kind)
+        {
+                exec_trace_word(word);
+                return;
+        }
+
+        log_error(word, name_length + kind);
+        value = word + name_length + kind;
+        if (string_get(value))
+                exec_trace_word(value);
+}
+
 static bool exec_ps4_expanding;
 
 static PURE bool exec_trace_on()
@@ -6711,18 +6732,40 @@ static fn exec_trace_ps4()
         log_error(prefix, 0);
 }
 
-static fn exec_trace(b32 count)
+/*
+        The words a simple command expanded to.
+
+        Bash writes each prefix assignment on a line of its own -- the name,
+        the equals, and the value quoted as a word -- and then the command.
+        Dash writes every word as it stands, assignments and command together.
+*/
+static fn exec_trace(b32 count, b32 assignments)
 {
         b32 at;
+        b32 from;
 
         if (!exec_trace_on())
                 return;
 
-        exec_trace_ps4();
-
-        for (at = 0; at < count; at++)
+        if (shell_bash_compat)
         {
-                if (at)
+                for (at = 0; at < assignments; at++)
+                {
+                        exec_trace_ps4();
+                        exec_trace_assignment(shell_argv[at]);
+                        log_error((string_address) "\n", 1);
+                }
+                from = assignments;
+                if (from == count)
+                        return;
+        }
+        else
+                from = 0;
+
+        exec_trace_ps4();
+        for (at = from; at < count; at++)
+        {
+                if (at != from)
                         log_error((string_address) " ", 1);
 
                 if (shell_bash_compat)
@@ -8462,7 +8505,7 @@ static b32 exec_simple(b32 index)
                         env_export_restore(kept[at].binding.name, true);
         }
 
-        exec_trace(count);
+        exec_trace(count, first);
 
         if (node->redirect_count && !exec_redirect_apply(index))
         {
