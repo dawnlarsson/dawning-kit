@@ -1598,19 +1598,20 @@ fn shell_input_end()
         /*
                 A here-document the input ended inside of.
 
-                dash takes the end of the input as the delimiter, says so on
-                stderr, and runs the command. Refusing the line here threw
-                away a script whose last line was the body -- which is what
-                a generated one looks like when the generator forgot the
-                delimiter, and what "cat <<EOF" typed into eval looks like
-                every time.
+                Both dash and bash take the end of the input as the delimiter
+                and run the command. Bash says so on stderr; lima dash 0.5.x
+                prints nothing. Refusing the line here threw away a script
+                whose last line was the body -- which is what a generated one
+                looks like when the generator forgot the delimiter, and what
+                "cat <<EOF" typed into eval looks like every time.
         */
         if (parse_here_open())
         {
-                string_format(log_error,
-                              "Warning: here-document ended by end of input"
-                              " (wanted %s)\n",
-                              parse_here_open());
+                if (shell_bash_compat)
+                        string_format(log_error,
+                                      "Warning: here-document ended by end of input"
+                                      " (wanted %s)\n",
+                                      parse_here_open());
 
                 while (parse_here_open())
                         parse_here_close();
