@@ -5526,9 +5526,9 @@ COLD fn shell_exit(writer write, string_address input)
                                                    address_of exit_code);
 
                 // Reuse return's checked integer parser. Bash accepts signed
-                // machine words; dash rejects negative statuses. Operand
-                // errors go through the special-builtin policy so command
-                // can suppress their fatality without suppressing valid exit.
+                // machine words; dash rejects negative statuses. Dash's
+                // command prefix makes a bad operand a regular failure;
+                // bash still leaves, command or not.
                 if (!good || (!shell_bash_compat && exit_code < 0))
                 {
                         string_format(log_error,
@@ -5537,6 +5537,11 @@ COLD fn shell_exit(writer write, string_address input)
                                           : "%s: Illegal number: %s\n",
                                       shell_argv[0], shell_argv[first]);
                         exec_special_error_note();
+                        if (shell_bash_compat)
+                        {
+                                expand_fatal_status(2);
+                                return;
+                        }
                         return shell_answer(2);
                 }
 
@@ -9033,11 +9038,16 @@ static COLD fn shell_marked(writer write, p8 mark)
                 if (!shell_valid_name(word, length))
                 {
                         shell_name_refused(command, word, length);
-                        exec_special_error_note();
+                        //      Dash aborts: export is a special builtin.
+                        //      Bash --posix reports the identifier and
+                        //      continues, in a function and at the top of
+                        //      -c alike; invalid options are the class
+                        //      that still takes the script.
+                        if (!shell_bash_compat)
+                                exec_special_error_note();
 
-                        //      Under posix the refusal takes the script
-                        //      with it, so bash never reaches the next word
-                        //      to complain about that one too.
+                        //      Under posix the next word is not tried, so
+                        //      bash never complains about that one too.
                         if (shell_posix_on())
                                 return shell_answer(1);
 
@@ -13696,10 +13706,11 @@ COLD fn shell_eval(writer write, string_address input)
 
         if (shell_syntax_generation != syntax)
         {
-                positive kind = shell_syntax_generation - syntax;
                 shell_syntax_generation = syntax;
-                if (!shell_bash_compat ||
-                    (!shell_command_reader_depth && kind != 1))
+                //      Dash eval of a syntax error is process-fatal. Bash
+                //      --posix reports it and runs the next command, even
+                //      though eval is a special builtin.
+                if (!shell_bash_compat)
                         exec_special_error_note();
         }
 

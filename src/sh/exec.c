@@ -8098,8 +8098,13 @@ bool exec_control_builtin(string_address name, bool run)
                                                   : "%s: Illegal number: "
                                                     "%s\n",
                                               name, shell_argv[1]);
+                                //      A non-integer is a special-builtin
+                                //      error. Aborting the line here made
+                                //      `command continue bad` fatal, and
+                                //      let eval of `break bad` return so
+                                //      the next -c line still printed end=.
                                 shell_status = 2;
-                                exec_abort_line(shell_status);
+                                exec_special_error_note();
                                 return true;
                         }
                 }
