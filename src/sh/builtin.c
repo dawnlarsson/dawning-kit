@@ -4277,13 +4277,13 @@ COLD fn shell_cd(writer write, string_address input)
         if (index < shell_argc)
                 name = shell_argv[index++];
 
-        //      Bash counts the operands and refuses a second; dash reads
-        //      the first and pays no attention to what follows it.
+        //      Bash counts the operands and refuses a second with status 1;
+        //      dash reads the first and pays no attention to what follows it.
         if (index < shell_argc && shell_bash_compat)
         {
                 shell_diagnostic_where();
 
-                return shell_answer(string_report(log_error, 2,
+                return shell_answer(string_report(log_error, 1,
                     "cd: too many arguments\n"));
         }
 
@@ -4291,25 +4291,19 @@ COLD fn shell_cd(writer write, string_address input)
         {
                 name = env_get("HOME");
 
-                if (!name || !string_get(name))
+                //      Only an unset HOME is "HOME not set". An empty HOME
+                //      is the current directory, the same stay as `cd ''`.
+                if (!name)
                 {
                         if (shell_bash_compat)
                                 return shell_answer(string_report(log_error, 1, "cd: HOME not set\n"));
 
-                        return shell_answer(0);
+                        name = ".";
                 }
         }
-        else if (!string_get(name))
-        {
-                //      An empty name is a null directory to Bash and nothing
-                //      at all to dash, which stays where it is and says so
-                //      with a zero.
-                if (!shell_bash_compat)
-                        return shell_answer(0);
 
-                log_error("cd: empty directory\n", 0);
-                return shell_answer(1);
-        }
+        if (!string_get(name))
+                name = ".";
         else if (word_is(name, "-"))
         {
                 name = env_get("OLDPWD");
@@ -5526,10 +5520,12 @@ COLD fn shell_exit(writer write, string_address input)
                                                    address_of exit_code);
 
                 // Reuse return's checked integer parser. Bash accepts signed
-                // machine words; dash rejects negative statuses. Dash's
-                // command prefix makes a bad operand a regular failure;
-                // bash still leaves, command or not.
-                if (!good || (!shell_bash_compat && exit_code < 0))
+                // machine words; dash's parser is a signed 32-bit field, so
+                // a value past INT_MAX is the same Illegal number as a
+                // negative. Dash's command prefix makes a bad operand a
+                // regular failure; bash still leaves, command or not.
+                if (!good || (!shell_bash_compat &&
+                              (exit_code < 0 || exit_code > 0x7fffffff)))
                 {
                         string_format(log_error,
                                       shell_bash_compat
@@ -5554,13 +5550,16 @@ COLD fn shell_exit(writer write, string_address input)
                 }
         }
 
-        exit_code = (bipolar)((positive)exit_code & 0xff);
+        /* Dash's EXIT trap reads $? as the unmasked operand; the process
+           status is still the low eight bits. Bash masks before the trap. */
+        if (shell_bash_compat)
+                exit_code = (bipolar)((positive)exit_code & 0xff);
         shell_status = (b32)exit_code;
         shell_trap_exit();
 
         log_flush();
 
-        exit(exit_code);
+        exit((positive)shell_status & 0xff);
 }
 
 COLD fn shell_logout(writer write, string_address input)
