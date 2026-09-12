@@ -590,6 +590,7 @@ static struct
 // declarations. The names themselves remain in the indexed variable table;
 // this is only a count, not a second registry.
 static positive readonly_count;
+static bool shell_bashpid_cleared;
 
 /*
         The pointer vector above is the form execve and the utilities need,
@@ -1600,6 +1601,7 @@ bool env_set(const_string name, const_string value);
 bool env_assign(const_string name, const_string value);
 fn env_unset(string_address name);
 static PURE bool env_optlist_name(const_string name, positive length);
+static PURE bool env_bash_readonly_name(const_string name, positive length);
 static COLD bool env_optlist_take(string_address entry);
 static COLD string_address shell_optlist_value(bool shopts,
                                                positive address_to value_length);
@@ -1690,6 +1692,7 @@ fn shell_env_init(string_address address_to process_environment)
 
         shell_var_count = 0;
         readonly_count = 0;
+        shell_bashpid_cleared = false;
         shell_envp_dirty = true;
         env_index_slots = 0;
         env_index_tombstones = 0;
@@ -2490,7 +2493,7 @@ static PURE bool env_assignment_readonly_destination(const_string name,
 {
         if (env_restricted_name(name, length))
                 return true;
-        if (env_optlist_name(name, length))
+        if (env_bash_readonly_name(name, length))
                 return true;
         if (!name || (!readonly_count && (!destination ||
             !(destination->attributes & SHELL_ARRAY_READONLY))))
@@ -2517,7 +2520,7 @@ PURE bool env_readonly_hashed_span(const_string name, positive length,
 
         if (env_restricted_name(name, length))
                 return true;
-        if (env_optlist_name(name, length))
+        if (env_bash_readonly_name(name, length))
                 return true;
 
         if (!name || !readonly_count)
@@ -2537,7 +2540,7 @@ PURE bool env_readonly(const_string name)
                 return false;
 
         named = string_hash_33_length(env_reading(name));
-        if (env_restricted_name(name, named.y) || env_optlist_name(name, named.y))
+        if (env_restricted_name(name, named.y) || env_bash_readonly_name(name, named.y))
                 return true;
         if (!readonly_count)
                 return false;
@@ -3419,6 +3422,7 @@ static COLD fn shell_dynamic_versinfo()
                                          "release", MOONWATER_MACHTYPE};
 
         shell_array_words("BASH_VERSINFO", 13, parts, array_count(parts));
+        shell_variable_attribute_set("BASH_VERSINFO", 13, SHELL_ARRAY_READONLY, 0);
 }
 
 static COLD fn shell_dynamic_groups()
@@ -3596,9 +3600,14 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
                 }
 
                 if (!memory_compare((address_any)text, "BASHPID", 7))
+                {
+                        if (shell_bashpid_cleared)
+                                return null;
+
                         return shell_dynamic_number(
                             (positive)system_call_1(syscall(getpid), 0),
                             value_length);
+                }
                 break;
 
         case 8:
@@ -3723,6 +3732,38 @@ COLD bool shell_dynamic_assign(const_string name, positive length,
         }
 
         return false;
+}
+
+/*
+        Bash freezes UID, EUID and PPID at startup as readonly integers, so
+        a subshell still answers the original parent and `readonly -p` lists
+        them. Assignment and unset refuse the names even before a script
+        has mentioned them.
+*/
+static COLD fn shell_publish_readonly_id(const_string name, positive length,
+                                         positive value)
+{
+        p8 written[32];
+
+        written[positive_into_string(written, value)] = end;
+        if (!env_set((string_address)name, written))
+                return;
+        shell_variable_attribute_set(name, length,
+                                     SHELL_ARRAY_READONLY | SHELL_ARRAY_INTEGER,
+                                     0);
+}
+
+COLD fn shell_bash_ids_publish()
+{
+        if (!shell_bash_compat)
+                return;
+
+        shell_publish_readonly_id(
+            "UID", 3, (positive)system_call_1(syscall(getuid), 0));
+        shell_publish_readonly_id(
+            "EUID", 4, (positive)system_call_1(syscall(geteuid), 0));
+        shell_publish_readonly_id(
+            "PPID", 4, (positive)system_call_1(syscall(getppid), 0));
 }
 
 // string_to_positive scans backwards from the end of the string, so it reads
@@ -5617,6 +5658,8 @@ static COLD fn env_unset_noted(string_address name, positive length)
                 shell_getopts_index_changed();
                 shell_getopts_parameters_changed();
         }
+        else if (length == 7 && !memory_compare(name, "BASHPID", 7))
+                shell_bashpid_cleared = true;
 }
 
 static fn env_unset_span(string_address name, positive length)
@@ -6342,6 +6385,29 @@ static PURE bool env_optlist_name(const_string name, positive length)
         return false;
 }
 
+/*
+        Names bash holds readonly without a `readonly` command: the two
+        option listings, the frozen identity numbers, and BASH_VERSINFO.
+        BASHPID is integer and dynamic until unset, so it is not here.
+*/
+static PURE bool env_bash_readonly_name(const_string name, positive length)
+{
+        if (env_optlist_name(name, length))
+                return true;
+        if (!shell_bash_compat || !name)
+                return false;
+        if (length == 3 && !memory_compare((address_any)name, "UID", 3))
+                return true;
+        if (length == 4 &&
+            (!memory_compare((address_any)name, "EUID", 4) ||
+             !memory_compare((address_any)name, "PPID", 4)))
+                return true;
+        if (length == 13 &&
+            !memory_compare((address_any)name, "BASH_VERSINFO", 13))
+                return true;
+        return false;
+}
+
 static COLD fn shell_optlist_append(positive address_to used, string_address name)
 {
         positive length = string_length(name);
@@ -6957,12 +7023,15 @@ COLD fn shell_set(writer write, string_address input)
 
                 // A lone - also ends the options, and POSIX has it turn off
                 // -x and -v on the way; neither reference keeps it as $1.
+                // With nothing after it, bash and dash leave the positional
+                // list alone: `set a b; set -` keeps $#.
                 if (word_is(word, "-"))
                 {
                         shell_option_letter_told('x', false);
                         shell_option_letter_told('v', false);
-                        operands = true;
                         index++;
+                        if (index < shell_argc)
+                                operands = true;
                         break;
                 }
 
@@ -7101,10 +7170,8 @@ fn shell_shift(writer write, string_address input)
                 {
                         if (shell_bash_compat)
                         {
-                                if (!good)
-                                        exec_special_error_note();
                                 shell_diagnostic_where();
-                                return shell_answer(string_report(log_error, good ? 1 : 2, "shift: %s: %s\n",
+                                return shell_answer(string_report(log_error, 1, "shift: %s: %s\n",
                                               shell_argv[first],
                                               good ? "shift count out of range"
                                                    : "numeric argument required"));
@@ -7148,13 +7215,17 @@ fn shell_shift(writer write, string_address input)
 
 static bool shell_unset_variable(const_string name, positive length)
 {
-        if (env_restricted_name(name, length) || env_optlist_name(name, length))
+        if (env_restricted_name(name, length) || env_bash_readonly_name(name, length))
         {
                 shell_unset_readonly_refused((string_address)name, length);
                 exec_special_error_note();
                 shell_answer(shell_bash_compat ? 1 : 2);
                 return false;
         }
+
+        if (shell_bash_compat && length == 7 &&
+            !memory_compare((address_any)name, "BASHPID", 7))
+                shell_bashpid_cleared = true;
 
         b32 detached = exec_unset_prefix(name, length);
         if (detached < 0)
@@ -7869,6 +7940,11 @@ static bool shell_declare_print_one(writer write, string_address name,
                 shell_declare_quoted(write,
                                      variable->text + length + 1);
         }
+        else if (env_optlist_name(name, length))
+        {
+                write("=", 1);
+                shell_declare_quoted(write, shell_optlist_value(length == 8, null));
+        }
 
         write("\n", 1);
         return true;
@@ -7902,6 +7978,13 @@ static inline INLINE bool shell_inventory_sorted(
                 if (shell_bash_compat)
                         exec_pipe_status_wanted();
                 count = shell_var_count;
+                if (shell_bash_compat)
+                {
+                        if (env_find_span("BASHOPTS", 8) >= shell_var_count)
+                                count++;
+                        if (env_find_span("SHELLOPTS", 9) >= shell_var_count)
+                                count++;
+                }
         }
 
         if (!count)
@@ -7919,6 +8002,7 @@ static inline INLINE bool shell_inventory_sorted(
                         names[count++] = name;
         }
         else
+        {
                 for (at = 0; at < shell_var_count; at++)
                 {
                         positive length = shell_vars[at].name_length;
@@ -7928,6 +8012,14 @@ static inline INLINE bool shell_inventory_sorted(
                                 goto failed;
                         names[count++] = name;
                 }
+                if (shell_bash_compat)
+                {
+                        if (env_find_span("BASHOPTS", 8) >= shell_var_count)
+                                names[count++] = (string_address) "BASHOPTS";
+                        if (env_find_span("SHELLOPTS", 9) >= shell_var_count)
+                                names[count++] = (string_address) "SHELLOPTS";
+                }
+        }
 
         if (!expand_sort_names(names, count))
                 goto failed;
@@ -8812,6 +8904,15 @@ static fn shell_marked_written(writer write, string_address name,
                                              variable->text + length + 1);
                 else
                         shell_quoted(write, variable->text + length + 1);
+        }
+        else if (env_optlist_name(name, length))
+        {
+                write("=", 1);
+                if (shell_bash_compat)
+                        shell_declare_quoted(write,
+                                             shell_optlist_value(length == 8, null));
+                else
+                        shell_quoted(write, shell_optlist_value(length == 8, null));
         }
 
         write("\n", 1);

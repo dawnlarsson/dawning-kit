@@ -664,6 +664,7 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
 COLD bool shell_dynamic_assign(const_string name, positive length,
                                const_string value);
 COLD bool shell_dynamic_wanted(const_string name, positive length);
+COLD fn shell_bash_ids_publish();
 
 //      How many subshells deep this process is, which is what $BASH_SUBSHELL
 //      is and the only thing a fork has to remember to say it.

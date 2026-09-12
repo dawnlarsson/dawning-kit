@@ -282,10 +282,9 @@ extern positive shell_options;
 /*
         What the last command substitution answered.
 
-        Not $? -- a substitution inside a command word must not change what the
-        rest of that same command sees, or "echo $(false)$?" reports on itself.
-        An assignment whose whole right hand side is a substitution is the one
-        place the number is wanted, and that is the shell's to notice.
+        Bash (including --posix) exposes that number as $? for the rest of the
+        same word, so `echo $(exit 2)$?` prints 2. Dash keeps the status from
+        before the command until the command itself finishes.
 */
 b32 shell_substitution_status;
 positive shell_substitution_generation;
@@ -3871,6 +3870,8 @@ static fn expand_run(string_address command, bool quoted)
         {
                 shell_substitution_status = wait_status_code(status);
                 shell_substitution_generation++;
+                if (shell_bash_compat)
+                        shell_status = shell_substitution_status;
         }
 }
 
@@ -7074,15 +7075,23 @@ static string_address expand_braced_body(string_address step,
         /*
                 Bash ${!name} expands name once and uses that value as the
                 parameter to read. ${!} itself remains the ordinary special
-                parameter. A trailing * or @ is consumed separately below
-                only when it ends an ordinary-name prefix.
+                parameter: an operator after the bang is $!, not prefix
+                indirection, so ${!:+set} follows whether a background job
+                has a pid. POSIX ${!#} / ${!?} are that same $! with a
+                trim or ? operator rather than ${#} / ${?} indirection.
+                Dash has no indirection, so a bang is always $!.
         */
-        if (string_is(step, '!') && step + 1 < close &&
-            !(shell_posix_on() &&
-              (string_is(step + 1, '#') || string_is(step + 1, '?'))))
+        if (shell_bash_compat && string_is(step, '!') && step + 1 < close)
         {
-                parameter_mode = EXPAND_PARAMETER_INDIRECT;
-                step++;
+                p8 next = string_get(step + 1);
+
+                if (next != ':' && next != '-' && next != '+' && next != '=' &&
+                    next != '%' && next != '/' && next != '^' && next != ',' &&
+                    !(shell_posix_on() && (next == '#' || next == '?')))
+                {
+                        parameter_mode = EXPAND_PARAMETER_INDIRECT;
+                        step++;
+                }
         }
 
         seen = string_get(step);
@@ -7463,6 +7472,12 @@ static string_address expand_braced_body(string_address step,
                                                              null);
 
                 if (parameter_mode & EXPAND_PARAMETER_MISSING)
+                        present = false;
+                /* Bash treats empty $@ / $* as unset for - + = ?, so
+                   ${@-none} is none. Dash keeps them set-but-empty. */
+                if (present && shell_bash_compat && !shell_parameter_count &&
+                    length == 1 &&
+                    (string_is(name, '@') || string_is(name, '*')))
                         present = false;
                 bool blank = present && value[0] == end;
                 bool missing = !present || (colon && blank);

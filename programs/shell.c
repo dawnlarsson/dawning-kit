@@ -760,6 +760,10 @@ b32 main()
            deliberately replace it without forging another initial stack. */
         shell_env_init(environ);
 
+        /* Frozen identity numbers bash lists as readonly integers. */
+        if (shell_bash_compat)
+                shell_bash_ids_publish();
+
         /*      getopts already reads OPTERR and already treats an unset one
                 as asking to complain, which is what a 1 means. Bash
                 publishes the 1 as well, under --posix too, so a script that
