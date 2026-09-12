@@ -7984,28 +7984,115 @@ static fn expand_into(string_address text, bool quoted, p8 plain,
 }
 
 /*
+        The home-directory column of a passwd record. A missing file, a
+        missing user, or a record that never reached that column is not a
+        home directory: the tilde word stays literal.
+*/
+static bool expand_tilde_account(string_address name, positive length,
+                                 string_address address_to home,
+                                 positive address_to home_length)
+{
+        p8 address_to text = file_account_text(FILE_ACCOUNT_USER);
+        positive at = 0;
+        file_account_record record;
+
+        while (file_account_next(text, address_of at, 5, address_of record))
+        {
+                if (!record.has_value || record.name_length != length ||
+                    memory_compare(record.name, name, length))
+                        continue;
+
+                address_to home = record.value;
+                address_to home_length = record.value_length;
+                return true;
+        }
+
+        return false;
+}
+
+static bool expand_tilde_self(string_address address_to home,
+                              positive address_to home_length)
+{
+        p8 name[FILE_NAME_MAX];
+        positive uid = (positive)getuid();
+
+        if (!file_account_name(file_account_text(FILE_ACCOUNT_USER), uid, 2,
+                               name, sizeof(name)))
+                return false;
+
+        return expand_tilde_account(name, string_length(name), home,
+                                    home_length);
+}
+
+/* HOME and a passwd directory are quoted so they do not split. An empty
+   one is still a field in bash, the way "" is, and no field in dash. */
+static fn expand_tilde_push(string_address home, positive home_length)
+{
+        if (home_length)
+                expand_push_run(home, home_length, MARK_QUOTED);
+        else if (shell_bash_compat)
+                expand_quoted_seen = true;
+}
+
+/*
         A tilde, and only at the very front of a word.
 
-        What HOME says, and no splitting afterwards: a home directory with a
-        space in it is still one directory.
+        An empty login is HOME. Bash, HOME unset, takes this uid's directory
+        from the password file; dash leaves the tilde alone. A name is that
+        file's home column for the login. Bash also spells the working
+        directory ~+ and the previous one ~-. No splitting afterwards: a
+        home directory with a space in it is still one directory.
 */
 static string_address expand_tilde(string_address step, bool assignment)
 {
+        string_address name = step + 1;
+        string_address at = name;
         string_address home;
+        positive home_length;
+        positive length;
 
-        // ~name wants a password file, and there is none on this machine.
-        if (string_not(step + 1, end) && string_not(step + 1, '/') &&
-            (!assignment || string_not(step + 1, ':')))
+        while (string_get(at) && string_not(at, '/') &&
+               !(assignment && string_is(at, ':')))
+                at++;
+
+        length = (positive)(at - name);
+
+        if (!length)
+        {
+                home = env_get((const_string) "HOME");
+
+                if (home)
+                {
+                        expand_tilde_push(home, string_length(home));
+                        return name;
+                }
+
+                if (!shell_bash_compat ||
+                    !expand_tilde_self(address_of home, address_of home_length))
+                        return step;
+
+                expand_tilde_push(home, home_length);
+                return name;
+        }
+
+        if (shell_bash_compat && length == 1 &&
+            (string_is(name, '+') || string_is(name, '-')))
+        {
+                home = env_get(string_is(name, '+') ? (const_string) "PWD"
+                                                    : (const_string) "OLDPWD");
+                if (!home)
+                        return step;
+
+                expand_tilde_push(home, string_length(home));
+                return at;
+        }
+
+        if (!expand_tilde_account(name, length, address_of home,
+                                  address_of home_length))
                 return step;
 
-        home = env_get((const_string) "HOME");
-
-        if (!home)
-                return step;
-
-        expand_push_string(home, MARK_QUOTED);
-
-        return step + 1;
+        expand_tilde_push(home, home_length);
+        return at;
 }
 
 /* Here bodies and startup filenames share expansion without quote removal,
