@@ -687,12 +687,24 @@ static bipolar expand_base_number(string_address address_to at, bool address_to 
 
         A [ with no ] anywhere after it is a plain [ and not a set at all, which
         is why the end is found first and the membership asked second.
+
+        POSIX inverts a class with !. Bash also takes ^, the regex letter, so
+        [^0-9] and [!0-9] are the same class there and two different classes
+        on dash: the caret is an ordinary member. The closer and the membership
+        walk have to agree, because [^]] is "not a bracket" in bash and the
+        class of a caret, then a leftover bracket, in dash.
 */
+static inline INLINE bool expand_set_inverts(string_address at)
+{
+        return string_is(at, '!') ||
+               (shell_bash_compat && string_is(at, '^'));
+}
+
 static PURE string_address expand_set_end(string_address at)
 {
         string_address step = at + 1;
 
-        if (string_is(step, '!') || string_is(step, '^'))
+        if (expand_set_inverts(step))
                 step++;
 
         // The first ] is a member, not the close.
@@ -751,7 +763,7 @@ static PURE inline INLINE bool expand_in_set(string_address at, string_address s
         bool invert = false;
         bool found = false;
 
-        if (string_is(step, '!') || string_is(step, '^'))
+        if (expand_set_inverts(step))
         {
                 invert = true;
                 step++;
@@ -8494,12 +8506,12 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                 million system calls against thirty three.
 
                 What is allowed to close it comes from the same page. After
-                the '[' an optional '!' or '^' does not end it, and a ']'
-                standing immediately after either of those is itself literal
-                -- "[]]" is the bracket expression that matches a bracket. So
-                the first ']' that can close is the one after that, and the
-                three states below are which of those places the scan is
-                standing in.
+                the '[' an optional '!' does not end it -- bash also takes
+                '^' here, dash does not -- and a ']' standing immediately
+                after that invert is itself literal -- "[]]" is the bracket
+                expression that matches a bracket. So the first ']' that can
+                close is the one after that, and the three states below are
+                which of those places the scan is standing in.
         */
         positive bracket = 0;
 
@@ -8550,7 +8562,8 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                         if (value == '[')
                                 bracket = 1;
                 }
-                else if (bracket == 1 && (value == '!' || value == '^'))
+                else if (bracket == 1 &&
+                         (value == '!' || (shell_bash_compat && value == '^')))
                         bracket = 2;
                 else if (bracket == 3 && value == ']')
                         magic = true;
