@@ -1531,6 +1531,10 @@ fn run_line(string_address line)
         The text is copied before it is cut up, because it may not be there
         by the time the second line runs: a trap action is the trap table's
         own copy and the first line is allowed to be "trap - USR1".
+
+        Bash eval asks for a verbose reprint of each physical line here.
+        jobs -x and a trap action use the same walker and are not that
+        input, so the echo is only the flag eval sets.
 */
 fn run_lines(string_address text)
 {
@@ -1543,6 +1547,8 @@ fn run_lines(string_address text)
 
         if (!string_first_of(text, '\n'))
         {
+                if (shell_verbose_eval_lines && string_get(text))
+                        shell_verbose_line(text);
                 run_line(text);
                 return;
         }
@@ -1572,6 +1578,8 @@ fn run_lines(string_address text)
 
                 // An empty line is a line: it is a body line of a
                 // here-document, and it ends a command a backslash held open.
+                if (shell_verbose_eval_lines)
+                        shell_verbose_line(at);
                 run_line(at);
                 if (shell_syntax_generation != syntax)
                         break;

@@ -13590,7 +13590,14 @@ COLD fn shell_unalias(writer write, string_address input)
         The words are joined back into a line and the line is run. This has to
         reach the code that runs lines, which sits above this file and is only
         there when a shell was built around it.
+
+        Bash -v reprints each physical line of that joined text as if the
+        reader had seen it: lima 5.2 writes the inner `echo evaluated` after
+        `eval 'echo evaluated'`. dash does not -- an eval is not a file, and
+        a -c command stays quiet through from_string -- so the walker below
+        is asked to echo only under bash.
 */
+static bool shell_verbose_eval_lines;
 COLD fn shell_eval(writer write, string_address input)
 {
         p8 address_to eval_storage = null;
@@ -13691,7 +13698,13 @@ COLD fn shell_eval(writer write, string_address input)
                     !string_first_of(eval_storage, '\n'))
                         exec_ps4_dash_block(true);
 
-                run_lines(eval_storage);
+                {
+                        bool held = shell_verbose_eval_lines;
+
+                        shell_verbose_eval_lines = shell_bash_compat;
+                        run_lines(eval_storage);
+                        shell_verbose_eval_lines = held;
+                }
                 exec_ps4_dash_block(false);
                 shell_input_end();
                 exec_input_finish();
@@ -14848,6 +14861,9 @@ static bipolar shell_source_read(bipolar handle,
         A sourced file is read from somewhere, so both shells echo it and
         it is declared here, beside the reader that runs one, rather than
         beside the process reader in the entry file that is included last.
+
+        An eval body is bash's only: lima 5.2 reprints it, dash does not,
+        and the walker that runs those lines is told so beside eval.
 */
 static bool shell_verbose_from_string;
 
