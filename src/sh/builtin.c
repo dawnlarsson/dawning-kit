@@ -562,6 +562,25 @@ typedef struct
 static env_variable address_to shell_vars;
 static positive shell_vars_room;
 static positive shell_var_count;
+/*
+        The last name that was found.
+
+        A tight loop reads and writes the same counter every iteration, so
+        the hash probe and the name compare ran twice for the same slot.
+        Remembering that slot makes the second lookup a generation check
+        and a compare of the name. Structural changes bump the generation;
+        replacing the value in place does not. Separate from
+        env_locale_generation, which only tracks LC_ALL / LC_CTYPE / LANG.
+        One record so the hit check stays on a single line of cache.
+*/
+static struct
+{
+        positive generation;
+        positive hit_generation;
+        positive hit_hash;
+        positive hit_length;
+        positive hit_index;
+} env_lookup;
 // Fast negative answer for the overwhelmingly common shell with no readonly
 // declarations. The names themselves remain in the indexed variable table;
 // this is only a count, not a second registry.
@@ -591,6 +610,27 @@ static name_index_slot address_to env_index;
 static positive env_index_room;
 static positive env_index_slots;
 static positive env_index_tombstones;
+
+static inline INLINE fn env_index_touch()
+{
+        env_lookup.generation++;
+        if (!env_lookup.generation)
+        {
+                env_lookup.generation = 1;
+                env_lookup.hit_generation = 0;
+        }
+}
+
+static inline INLINE fn env_hit_remember(positive hash, positive length,
+                                         positive index)
+{
+        if (!env_lookup.generation)
+                env_lookup.generation = 1;
+        env_lookup.hit_generation = env_lookup.generation;
+        env_lookup.hit_hash = hash;
+        env_lookup.hit_length = length;
+        env_lookup.hit_index = index;
+}
 
 // Rebuilt lazily for execve and the in-process utilities that spawn children.
 string_address address_to shell_envp;
@@ -731,6 +771,7 @@ static fn name_index_remove(name_index_slot address_to table, positive slots,
 
 static bool env_index_rebuild(positive count)
 {
+        env_index_touch();
         if (!name_index_prepare(address_of env_index,
                                 address_of env_index_room,
                                 address_of env_index_slots,
@@ -746,8 +787,8 @@ static bool env_index_rebuild(positive count)
         return true;
 }
 
-static PURE positive env_find_hashed_span(const_string name, positive length,
-                                     positive hash)
+static COLD positive env_find_hashed_span_probe(const_string name,
+                                                positive length, positive hash)
 {
         if (env_index_slots)
         {
@@ -768,7 +809,10 @@ static PURE positive env_find_hashed_span(const_string name, positive length,
                                 if (index < shell_var_count &&
                                     !memory_compare(shell_vars[index].text,
                                                     (address_any)name, length))
+                                {
+                                        env_hit_remember(hash, length, index);
                                         return index;
+                                }
                         }
 
                         at = (at + 1) & (env_index_slots - 1);
@@ -783,12 +827,44 @@ static PURE positive env_find_hashed_span(const_string name, positive length,
                     shell_vars[index].name_length == length &&
                     !memory_compare(shell_vars[index].text,
                                     (address_any)name, length))
+                {
+                        env_hit_remember(hash, length, index);
                         return index;
+                }
 
         return shell_var_count;
 }
 
-static PURE positive env_find_span(const_string name, positive length)
+static inline INLINE bool env_name_same(string_address held, const_string name,
+                                        positive length)
+{
+        if (length == 1)
+                return held[0] == name[0];
+        for (positive at = 0; at < length; at++)
+                if (held[at] != name[at])
+                        return false;
+        return true;
+}
+
+static positive env_find_hashed_span(const_string name, positive length,
+                                     positive hash)
+{
+        if (env_lookup.hit_generation &&
+            env_lookup.hit_generation == env_lookup.generation &&
+            env_lookup.hit_hash == hash &&
+            env_lookup.hit_length == length)
+        {
+                positive index = env_lookup.hit_index;
+
+                if (index < shell_var_count &&
+                    env_name_same(shell_vars[index].text, name, length))
+                        return index;
+        }
+
+        return env_find_hashed_span_probe(name, length, hash);
+}
+
+static positive env_find_span(const_string name, positive length)
 {
         return env_find_hashed_span(name, length,
                                     env_name_hash(name, length));
@@ -1144,6 +1220,8 @@ static fn env_variable_drop(positive index)
         positive left = shell_var_count - index - 1;
         env_variable dropped = shell_vars[index];
 
+        env_index_touch();
+
         if (dropped.attributes & SHELL_ARRAY_READONLY)
                 readonly_count--;
 
@@ -1210,6 +1288,7 @@ static env_variable address_to env_record_append(string_address text,
         record->attributes = 0;
         record->array = 0;
         shell_var_count++;
+        env_index_touch();
 
         if (!env_index_slots || shell_var_count > env_index_slots / 2)
                 env_index_rebuild(shell_var_count);
@@ -1609,6 +1688,7 @@ fn shell_env_init(string_address address_to process_environment)
         shell_envp_dirty = true;
         env_index_slots = 0;
         env_index_tombstones = 0;
+        env_index_touch();
 
         // The inherited entries and four defaults are the upper bound.  One
         // allocation and clear now serves variable lookup and export state.
@@ -1873,16 +1953,11 @@ static bool env_attribute_target_span(
         return true;
 }
 
-string_address env_get_hashed_span(const_string name, positive length,
-                                   positive hash,
-                                   positive address_to value_length)
+static COLD string_address env_get_hashed_miss(const_string name, positive length,
+                                               positive hash,
+                                               positive address_to value_length)
 {
-        positive index;
-
-        if (name == null)
-                return null;
-
-        index = env_find_hashed_span(name, length, hash);
+        positive index = env_find_hashed_span(name, length, hash);
 
         if (index >= shell_var_count ||
             !env_variable_has_value(shell_vars + index))
@@ -1906,6 +1981,40 @@ string_address env_get_hashed_span(const_string name, positive length,
                 address_to value_length = shell_vars[index].value_length;
 
         return shell_vars[index].text + length + 1;
+}
+
+string_address env_get_hashed_span(const_string name, positive length,
+                                   positive hash,
+                                   positive address_to value_length)
+{
+        if (name == null)
+                return null;
+
+        if (env_lookup.hit_generation &&
+            env_lookup.hit_generation == env_lookup.generation &&
+            env_lookup.hit_hash == hash &&
+            env_lookup.hit_length == length)
+        {
+                positive index = env_lookup.hit_index;
+
+                if (index < shell_var_count)
+                {
+                        env_variable address_to variable = shell_vars + index;
+                        string_address text = variable->text;
+
+                        if (env_name_same(text, name, length) &&
+                            !(variable->attributes & SHELL_ARRAY_NAMEREF) &&
+                            text && text[variable->name_length] == '=')
+                        {
+                                if (value_length)
+                                        address_to value_length =
+                                            variable->value_length;
+                                return text + length + 1;
+                        }
+                }
+        }
+
+        return env_get_hashed_miss(name, length, hash, value_length);
 }
 
 PURE string_address env_get(const_string name)
@@ -2750,7 +2859,7 @@ static COLD string_address env_append_value(string_address old, const_string val
         return made;
 }
 
-static COLD bool shell_scalar_assign_destination(const_string name, positive length,
+static bool shell_scalar_assign_destination(const_string name, positive length,
                                       positive hash, const_string value,
                                       bool append, bool bind_reference,
                                       env_variable address_to destination)
@@ -5523,6 +5632,7 @@ fn env_unset(string_address name)
 static bool env_value_restore(string_address name, positive length,
                               string_address value, p8 attributes, b32 array)
 {
+        env_index_touch();
         if (!value && !attributes)
         {
                 env_unset_span(name, length);
@@ -7378,6 +7488,7 @@ static COLD bool local_hide_saved(string_address name, positive length,
         if (length == 4 && memory_is_4(name, 'P', 'A', 'T', 'H'))
                 hash_forget();
         env_locale_touch(name, length);
+        env_index_touch();
         // An explicit OPTIND initializer controls cursor reset itself. In
         // particular, local OPTIND=2 must retain a pending bundled byte.
         if (!assigning || !local_getopts_scope(name, length))
