@@ -132,6 +132,15 @@ static b8 lex_operator[STRING_SET_BYTES];
 // What decides nothing inside a double quote: wider than lex_ordinary,
 // because a blank means nothing in there.
 static b8 lex_in_double[STRING_SET_BYTES];
+/*
+        Bytes that cannot open a line continuation. parse_feed used to walk
+        every line twice -- lex_unfinished, then lex_line -- and the second
+        walk is the only one that produces tokens. The unfinished walk is
+        needed only when a quote, a backslash, a substitution, `[[`, or a
+        process substitution might still be open; this set lets one
+        string_span prove the common line has none of those.
+*/
+static b8 lex_closed[STRING_SET_BYTES];
 static b32 lex_ready;
 
 /* expand.c is included later in this translation unit.  Its substitution
@@ -193,6 +202,14 @@ fn lex_prepare()
                         lex_in_double[in_double[i]] = 0;
         }
 
+        memory_fill(lex_closed + 1, 1, STRING_SET_BYTES - 1);
+        {
+                static const string_address opens = "\"'\\$`[<>";
+
+                for (positive i = 0; opens[i]; i++)
+                        lex_closed[opens[i]] = 0;
+        }
+
         lex_ready = true;
 }
 
@@ -201,6 +218,13 @@ fn lex_prepare()
 static b32 lex_operator_at(string_address at, positive address_to length)
 {
         p8 a = string_get(at);
+
+        if (!lex_operator[a])
+        {
+                address_to length = 0;
+                return 0;
+        }
+
         p8 b = string_get(at + 1);
 
         /* <( and >( begin a process substitution, which is part of the word
@@ -904,6 +928,49 @@ lex_nesting(string_address at)
 // grammar when eval/dot returns to its caller. The parser still joins both
 // kinds with a newline; only its EOF boundary needs this distinction.
 #define LEX_OPEN_WORD 3
+
+/*
+        Whether this physical line is already complete: nothing left open
+        that would ask for another physical line.
+
+        Redirect `<`/`>` and a lone `[` are not themselves continuations:
+        they stop the span so this can look at the next byte, then they
+        carry on. A quote, a backslash, `$`, a backtick, `[[`, or `<( ` /
+        `>(` still need the real unfinished walk.
+*/
+static bool lex_line_closed(string_address line)
+{
+        string_address step = line;
+
+        lex_prepare();
+
+        while (1)
+        {
+                p8 c;
+
+                step += string_span(step, lex_closed);
+                c = string_get(step);
+
+                if (!c || c == '\n')
+                        return true;
+
+                if ((c == '<' || c == '>') && string_not(step + 1, '('))
+                {
+                        step++;
+                        continue;
+                }
+
+                if (c == '[' &&
+                    !(string_is(step + 1, '[') &&
+                      lex_is_space(string_get(step + 2))))
+                {
+                        step++;
+                        continue;
+                }
+
+                return false;
+        }
+}
 
 b32 lex_unfinished(string_address line)
 {
