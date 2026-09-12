@@ -2100,6 +2100,7 @@ static string_address arith_at;
 static bool arith_bad;
 static string_address arith_why;
 static p8 arith_token_buf[32];
+static string_address arith_origin;
 static bool arith_said;
 
 // Parsing always reaches the far end of a logical or conditional expression,
@@ -2155,6 +2156,16 @@ static COLD fn arith_fail(string_address why)
                 string_address at = arith_skip_space(arith_at);
                 positive n = 0;
 
+                if (!string_get(at) && arith_origin && arith_at > arith_origin)
+                {
+                        at = arith_at;
+                        while (at > arith_origin &&
+                               (at[-1] == ' ' || at[-1] == '\t'))
+                                at--;
+                        if (at > arith_origin)
+                                at--;
+                }
+
                 while (n + 1 < sizeof(arith_token_buf) && string_get(at) &&
                        string_get(at) != ' ' && string_get(at) != '\t')
                         arith_token_buf[n++] = string_get(at++);
@@ -2209,14 +2220,16 @@ COLD fn shell_arith_report(writer write, string_address command,
                               "\"%s\"\n",
                               expr);
         else if (arith_why &&
-                 !string_compare(arith_why, "value too great for base"))
+                 (!string_compare(arith_why, "value too great for base") ||
+                  !string_compare(arith_why, "expecting EOF")))
                 string_format(write,
                               "arithmetic expression: expecting EOF: "
                               "\"%s\"\n",
                               expr);
         else
                 string_format(write,
-                              "Arithmetic expression: syntax error: \"%s\"\n",
+                              "arithmetic expression: expecting primary: "
+                              "\"%s\"\n",
                               expr);
 }
 
@@ -2875,7 +2888,8 @@ static bipolar arith_primary()
 
         // A byte that starts no value at all, which is where a missing
         // operand lands: $((1 + )) answered 1 and $((2 ** 3)) answered 0.
-        arith_fail("syntax error in expression");
+        arith_fail(arith_bash_mode ? "syntax error: operand expected"
+                                  : "expecting primary");
 
         return 0;
 }
@@ -3380,6 +3394,7 @@ static bipolar arith_evaluate(string_address text)
             shell_bash_compat &&
             (shell_options & ((positive)1 << ('u' - 'a'))) != 0;
         arith_at = text;
+        arith_origin = text;
         arith_space();
 
         bool held_bash_mode = arith_bash_mode;
@@ -3397,7 +3412,7 @@ static bipolar arith_evaluate(string_address text)
         if (!string_get(arith_at))
         {
                 if (!arith_bash_mode)
-                        arith_fail("syntax error in expression");
+                        arith_fail("expecting primary");
                 arith_nounset = held_nounset;
                 arith_bash_mode = held_bash_mode;
                 return 0;
@@ -3409,7 +3424,8 @@ static bipolar arith_evaluate(string_address text)
         // Every byte has to belong to the grammar. This catches comma and
         // postfix increment/decrement instead of returning the left prefix.
         if (string_get(arith_at))
-                arith_fail("syntax error in expression");
+                arith_fail(arith_bash_mode ? "syntax error in expression"
+                                          : "expecting EOF");
 
         arith_nounset = held_nounset;
         arith_bash_mode = held_bash_mode;
@@ -5167,7 +5183,12 @@ static bool expand_slice_bounds(expand_reference reference, string_address expre
         else if (!separator)
         {
                 expand_where();
-                string_format(writer_stderr_once, "%s: bad substitution\n", expand_reference_text(reference));
+                if (!shell_bash_compat)
+                        writer_stderr_once(str("Bad substitution\n"));
+                else
+                        string_format(writer_stderr_once,
+                                      "${%s:}: bad substitution\n",
+                                      expand_reference_text(reference));
                 expand_fatal_status(shell_bash_compat ? 1 : 2);
                 return false;
         }
@@ -5208,9 +5229,12 @@ static bool expand_slice_bounds(expand_reference reference, string_address expre
 
                 if (kind || back > origin - address_to begin)
                 {
+                        p8 shown[32];
+
                         expand_where();
+                        bipolar_into_string(shown, wanted);
                         string_format(writer_stderr_once,
-                                      "%s: substring expression < 0\n", expand_reference_text(reference));
+                                      "%s: substring expression < 0\n", shown);
                         expand_slice_error();
                         return false;
                 }
@@ -5278,6 +5302,22 @@ static fn expand_substring(expand_reference reference, string_address expression
                         return;
                 }
                 expand_positional_slice(name, expression, quoted);
+                return;
+        }
+
+        /* ${name:} is a bad substitution even when the name is unset: lima
+           bash 5.2.32 still names `${x:}`, and an unset skip used to swallow
+           that and expand to nothing. */
+        if (!string_get(expression) && !expand_substring_separator(expression))
+        {
+                expand_where();
+                if (!shell_bash_compat)
+                        writer_stderr_once(str("Bad substitution\n"));
+                else
+                        string_format(writer_stderr_once,
+                                      "${%s:}: bad substitution\n",
+                                      expand_reference_text(reference));
+                expand_fatal_status(shell_bash_compat ? 1 : 2);
                 return;
         }
 

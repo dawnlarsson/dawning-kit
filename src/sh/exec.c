@@ -6915,6 +6915,7 @@ fn shell_caller(writer write, string_address input)
 
         if (numbered && !string_digits_exact(shell_argv[1], address_of want))
         {
+                shell_diagnostic_where();
                 string_format(log_error, "caller: %s: invalid number\n",
                               shell_argv[1]);
                 string_format(log_error, "caller: usage: caller [expr]\n");
@@ -8468,6 +8469,7 @@ bool exec_control_builtin(string_address name, bool run)
                         }
                         else
                         {
+                                shell_diagnostic_where();
                                 string_format(log_error,
                                               shell_bash_compat
                                                   ? "%s: %s: numeric "
@@ -8519,6 +8521,7 @@ bool exec_control_builtin(string_address name, bool run)
                 //      Dash return is a special builtin. A non-integer is
                 //      fatal, including a value past INT_MAX. Aborting only
                 //      the line let the next -c line print end=2.
+                shell_diagnostic_where();
                 string_format(log_error, "return: Illegal number: %s\n",
                               shell_argv[1]);
                 shell_status = 2;

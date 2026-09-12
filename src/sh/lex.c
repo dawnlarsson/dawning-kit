@@ -194,6 +194,7 @@ static positive expand_substitution_lineno;
 */
 static string_address shell_syntax_command;
 static string_address shell_syntax_file;
+static positive shell_syntax_line_override;
 
 /*
         Bash $LINENO inside eval is the eval command's line plus the offset
@@ -985,6 +986,19 @@ lex_nesting(string_address at)
 // kinds with a newline; only its EOF boundary needs this distinction.
 #define LEX_OPEN_WORD 3
 
+static p8 lex_unmatched;
+
+static COLD b32 lex_open_match(b32 kind, p8 match)
+{
+        lex_unmatched = match;
+        return kind;
+}
+
+static PURE p8 lex_unmatched_now()
+{
+        return lex_unmatched;
+}
+
 /*
         Whether this physical line is already complete: nothing left open
         that would ask for another physical line.
@@ -1038,6 +1052,7 @@ b32 lex_unfinished(string_address line)
         bool newline = lex_scan_newline;
 
         lex_prepare();
+        lex_unmatched = 0;
 
         while (string_get(step))
         {
@@ -1050,7 +1065,7 @@ b32 lex_unfinished(string_address line)
                         string_address stop = lex_conditional_end(step);
 
                         if (!stop)
-                                return LEX_OPEN;
+                                return lex_open_match(LEX_OPEN, ']');
 
                         step = stop;
                         fresh = false;
@@ -1072,7 +1087,7 @@ b32 lex_unfinished(string_address line)
                                 string_address stop = lex_nesting(step + 1);
 
                                 if (stop == step + 1)
-                                        return LEX_OPEN;
+                                        return lex_open_match(LEX_OPEN, ')');
 
                                 step = stop;
                                 fresh = false;
@@ -1111,7 +1126,7 @@ b32 lex_unfinished(string_address line)
                         step = lex_dollar_quote_end(step + 2);
 
                         if (!string_get(step))
-                                return LEX_OPEN_WORD;
+                                return lex_open_match(LEX_OPEN_WORD, '\'');
 
                         step++;
                         continue;
@@ -1131,7 +1146,9 @@ b32 lex_unfinished(string_address line)
                                 return LEX_CONTINUES;
 
                         if (!string_get(step))
-                                return command_open ? LEX_OPEN : LEX_OPEN_WORD;
+                                return lex_open_match(command_open ? LEX_OPEN
+                                                                   : LEX_OPEN_WORD,
+                                                      c);
 
                         step++;
                         continue;
@@ -1143,9 +1160,14 @@ b32 lex_unfinished(string_address line)
                         string_address stop = lex_nesting(inner);
 
                         if (stop == inner)
-                                return string_is(inner, '(') &&
-                                               string_not(inner + 1, '(')
-                                           ? LEX_OPEN : LEX_OPEN_WORD;
+                                return lex_open_match(
+                                    string_is(inner, '(') &&
+                                            string_not(inner + 1, '(')
+                                        ? LEX_OPEN
+                                        : LEX_OPEN_WORD,
+                                    string_is(inner, '{')
+                                        ? '}'
+                                        : string_is(inner, '`') ? '`' : ')');
 
                         step = stop;
                         continue;

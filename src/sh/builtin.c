@@ -4296,7 +4296,11 @@ COLD fn shell_cd(writer write, string_address input)
                 if (!name)
                 {
                         if (shell_bash_compat)
-                                return shell_answer(string_report(log_error, 1, "cd: HOME not set\n"));
+                        {
+                                shell_diagnostic_where();
+                                return shell_answer(string_report(
+                                    log_error, 1, "cd: HOME not set\n"));
+                        }
 
                         name = ".";
                 }
@@ -4312,7 +4316,11 @@ COLD fn shell_cd(writer write, string_address input)
                 if (!name)
                 {
                         if (shell_bash_compat)
-                                return shell_answer(string_report(log_error, 1, "cd: OLDPWD not set\n"));
+                        {
+                                shell_diagnostic_where();
+                                return shell_answer(string_report(
+                                    log_error, 1, "cd: OLDPWD not set\n"));
+                        }
 
                         name = shell_directory;
                 }
@@ -5527,6 +5535,7 @@ COLD fn shell_exit(writer write, string_address input)
                 if (!good || (!shell_bash_compat &&
                               (exit_code < 0 || exit_code > 0x7fffffff)))
                 {
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       shell_bash_compat
                                           ? "%s: %s: numeric argument required\n"
@@ -5543,6 +5552,7 @@ COLD fn shell_exit(writer write, string_address input)
 
                 if (shell_bash_compat && shell_argc > first + 1)
                 {
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       "%s: too many arguments\n", shell_argv[0]);
                         expand_fatal_status(1);
@@ -6824,7 +6834,9 @@ static PURE string_address shell_where_self()
 static COLD fn shell_diagnostic_where_to(writer write)
 {
         string_address self = shell_where_self();
-        positive line = shell_line_now();
+        positive line = shell_syntax_line_override
+                            ? shell_syntax_line_override
+                            : shell_line_now();
 
         if (shell_bash_compat && shell_is_interactive)
         {
@@ -6870,8 +6882,11 @@ static COLD fn shell_syntax_where()
         }
 
         /* A sourced file counts from one of its own lines. dash eval does
-           too. Bash eval uses $LINENO's offset from the eval command. */
-        if ((!shell_bash_compat && extra) || (shell_syntax_file && !extra))
+           too. Bash eval uses $LINENO's offset from the eval command. EOF
+           syntax may name a different line than the one just consumed. */
+        if (shell_syntax_line_override)
+                line = shell_syntax_line_override;
+        else if ((!shell_bash_compat && extra) || (shell_syntax_file && !extra))
                 line = shell_line_number ? shell_line_number : 1;
         else
                 line = shell_line_now();
@@ -6881,8 +6896,8 @@ static COLD fn shell_syntax_where()
                 if (extra)
                         string_format(log_error, "%s: %s: line %p: ", self,
                                       extra, line);
-                else if (string_is(shell_option_flags, 'c') &&
-                         shell_run_depth == 1 && !shell_syntax_file)
+                else if (string_first_of(shell_option_flags, 'c') &&
+                         shell_run_depth <= 1 && !shell_syntax_file)
                         string_format(log_error, "%s: -c: line %p: ", self,
                                       line);
                 else
@@ -10723,6 +10738,7 @@ fn printf_one(writer write, string_address format)
                 {
                         p8 said[3] = {'%', conversion, end};
 
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       "printf: %s: invalid directive\n", said);
                 }
@@ -15520,8 +15536,11 @@ COLD fn shell_wait(writer write, string_address input)
 
                 if (!string_digits_exact(shell_argv[at], address_of pid) ||
                     pid > (positive)bipolar_max)
+                {
+                        shell_diagnostic_where();
                         return shell_answer(string_report(log_error, 2, "wait: Illegal number: %s\n",
                                       shell_argv[at]));
+                }
 
                 answer = shell_wait_one((bipolar)pid,
                                         address_of interrupted,

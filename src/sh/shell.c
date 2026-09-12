@@ -1668,10 +1668,20 @@ fn shell_input_end()
         if (parse_here_open())
         {
                 if (shell_bash_compat)
+                {
+                        positive start = parse_here_start_line();
+                        positive now = shell_line_number ? shell_line_number
+                                                         : 1;
+
+                        shell_syntax_line_override =
+                            parse_here_got_body() ? now : start;
+                        shell_diagnostic_where();
+                        shell_syntax_line_override = 0;
                         string_format(log_error,
-                                      "Warning: here-document ended by end of input"
-                                      " (wanted %s)\n",
-                                      parse_here_open());
+                                      "warning: here-document at line %p "
+                                      "delimited by end-of-file (wanted `%s')\n",
+                                      start, parse_here_open());
+                }
 
                 while (parse_here_open())
                         parse_here_close();
@@ -1690,14 +1700,66 @@ fn shell_input_end()
                         return;
         }
 
-        shell_syntax_where();
-        log_error(str("Syntax error: unexpected end of file\n"));
-        bool word_eof = parse_pending_used &&
-                        lex_unfinished(parse_pending) == LEX_OPEN_WORD;
-        parse_reset();
-        shell_more = false;
-        shell_status = 2;
-        shell_syntax_generation += word_eof ? 1 : 2;
+        {
+                bool pending = parse_pending_used != 0;
+                b32 unfinished = pending ? lex_unfinished(parse_pending)
+                                         : LEX_COMPLETE;
+                p8 unmatched = pending ? lex_unmatched_now() : 0;
+                p8 match[2];
+                string_address want = parse_want_now();
+                positive now = shell_line_number ? shell_line_number : 1;
+                bool word_eof = pending && unfinished == LEX_OPEN_WORD;
+
+                if (shell_bash_compat)
+                {
+                        if (pending &&
+                            (unfinished == LEX_OPEN_WORD || unmatched == '\'' ||
+                             unmatched == '"' || unmatched == '`' ||
+                             unmatched == '}'))
+                                shell_syntax_line_override =
+                                    parse_pending_start_line();
+                        else
+                                shell_syntax_line_override = now + 1;
+                }
+
+                shell_syntax_where();
+                match[0] = unmatched;
+                match[1] = end;
+
+                if (shell_bash_compat)
+                {
+                        if (unmatched)
+                                string_format(log_error,
+                                              "unexpected EOF while looking "
+                                              "for matching `%s'\n",
+                                              match);
+                        else
+                                log_error(str(
+                                    "syntax error: unexpected end of file\n"));
+                }
+                else if (unmatched == '\'' || unmatched == '"')
+                        log_error(str(
+                            "Syntax error: Unterminated quoted string\n"));
+                else if (unmatched == '`')
+                        log_error(str(
+                            "Syntax error: EOF in backquote substitution\n"));
+                else if (unmatched == '}')
+                        log_error(str("Syntax error: Missing '}'\n"));
+                else if (unmatched || want)
+                        string_format(log_error,
+                                      "Syntax error: end of file unexpected "
+                                      "(expecting \"%s\")\n",
+                                      unmatched ? match : want);
+                else
+                        log_error(str(
+                            "Syntax error: unexpected end of file\n"));
+
+                shell_syntax_line_override = 0;
+                parse_reset();
+                shell_more = false;
+                shell_status = 2;
+                shell_syntax_generation += word_eof ? 1 : 2;
+        }
 }
 
 // A prompt is for somebody watching. Asking the terminal about itself is the

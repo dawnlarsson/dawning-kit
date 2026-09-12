@@ -244,6 +244,7 @@ typedef struct
         // because the logical line has not begun there.
         b32 continued;
         b32 overflow;
+        positive line;
 } here_document;
 
 static here_document address_to here_documents;
@@ -266,6 +267,33 @@ static positive here_names_room;
 static p8 address_to parse_pending;
 static positive parse_pending_room;
 static positive parse_pending_used;
+static positive parse_pending_line;
+
+#define PARSE_WANT_ROOM 16
+static string_address parse_want[PARSE_WANT_ROOM];
+static positive parse_want_used;
+
+static fn parse_want_push(string_address word)
+{
+        if (parse_want_used < PARSE_WANT_ROOM)
+                parse_want[parse_want_used++] = word;
+}
+
+static fn parse_want_pop()
+{
+        if (parse_want_used)
+                parse_want_used--;
+}
+
+static PURE string_address parse_want_now()
+{
+        return parse_want_used ? parse_want[parse_want_used - 1] : null;
+}
+
+static PURE positive parse_pending_start_line()
+{
+        return parse_pending_line ? parse_pending_line : 1;
+}
 
 /* Bash 5.2 keeps at most sixteen here-documents waiting for a body. lima
    reports `maximum here-document count exceeded` and leaves 2. Dash has no
@@ -288,6 +316,8 @@ bool parse_eof_can_complete()
 fn parse_reset()
 {
         parse_pending_used = 0;
+        parse_pending_line = 0;
+        parse_want_used = 0;
         parse_token_count = parse_token_base;
         shell_store_rewind(address_of parse_store, parse_text_base);
         here_wanted = 0;
@@ -554,6 +584,7 @@ static bool parse_here_register(string_address word, bool strip)
         memory_fill(document, 0, sizeof(*document));
         document->delimiter = start;
         document->strip = strip;
+        document->line = shell_line_number ? shell_line_number : 1;
 
         while (string_get(step))
         {
@@ -600,6 +631,26 @@ PURE string_address parse_here_open()
                 return null;
 
         return here_names + here_documents[here_filled].delimiter;
+}
+
+static PURE positive parse_here_start_line()
+{
+        if (here_filled >= here_wanted)
+                return 1;
+
+        return here_documents[here_filled].line
+                   ? here_documents[here_filled].line
+                   : 1;
+}
+
+/* A body line, even an empty one, is what moves bash's EOF warning off the
+   opener. A trailing newline that only finished the << line is not a body. */
+static PURE bool parse_here_got_body()
+{
+        if (here_filled >= here_wanted)
+                return false;
+
+        return here_documents[here_filled].length != 0;
 }
 
 static bool parse_here_take_span(string_address line, positive length,
@@ -726,6 +777,9 @@ fn parse_here_close()
 static bool parse_hold(string_address line, b32 unfinished)
 {
         positive length = string_length(line);
+
+        if (!parse_pending_used)
+                parse_pending_line = shell_line_number ? shell_line_number : 1;
 
         if (line != parse_pending)
         {
@@ -1904,11 +1958,14 @@ static b32 parse_if_tail()
         if (parse_state)
                 return 0;
 
+        parse_want_push("then");
         parse_nodes[index].left = parse_list_required();
 
         if (parse_state || !parse_expect_word("then"))
                 return 0;
+        parse_want_pop();
 
+        parse_want_push("fi");
         parse_nodes[index].right = parse_list_required();
 
         if (parse_state)
@@ -1918,6 +1975,8 @@ static b32 parse_if_tail()
         {
                 parse_position++;
                 parse_nodes[index].extra = parse_if_tail();
+                if (!parse_state)
+                        parse_want_pop();
 
                 return parse_state ? 0 : index;
         }
@@ -1933,18 +1992,26 @@ static b32 parse_if_tail()
 
         if (!parse_expect_word("fi"))
                 return 0;
+        parse_want_pop();
 
         return index;
 }
 
 static b32 parse_do_body(b32 index)
 {
+        parse_want_push("do");
         if (parse_state || !parse_expect_word("do"))
                 return 0;
+        parse_want_pop();
 
+        parse_want_push("done");
         parse_nodes[index].right = parse_list_required();
 
-        return parse_state || !parse_expect_word("done") ? 0 : index;
+        if (parse_state || !parse_expect_word("done"))
+                return 0;
+        parse_want_pop();
+
+        return index;
 }
 
 static b32 parse_loop(b32 kind)
@@ -2065,10 +2132,12 @@ static b32 parse_case()
 
         parse_skip_newlines();
 
+        parse_want_push("esac");
         while (!parse_word_is(0, "esac"))
         {
                 b32 item;
 
+                parse_want_push(")");
                 if (parse_look(0)->kind == PT_END)
                 {
                         parse_state = PARSE_INCOMPLETE;
@@ -2106,6 +2175,7 @@ static b32 parse_case()
 
                 if (!parse_expect_operator(OP_RPAREN))
                         return 0;
+                parse_want_pop();
 
                 parse_skip_newlines();
 
@@ -2144,6 +2214,7 @@ static b32 parse_case()
         }
 
         parse_position++;
+        parse_want_pop();
         parse_nodes[index].left = head;
 
         return index;
@@ -2158,6 +2229,7 @@ static b32 parse_enclosed(b32 kind)
 
         parse_position++;
 
+        parse_want_push(kind == NODE_SUBSHELL ? ")" : "}");
         parse_nodes[index].left = parse_list_required();
 
         if (parse_state)
@@ -2170,6 +2242,7 @@ static b32 parse_enclosed(b32 kind)
         }
         else if (!parse_expect_word("}"))
                 return 0;
+        parse_want_pop();
 
         return index;
 }
@@ -2763,6 +2836,8 @@ b32 parse_program()
                 parse_state = PARSE_INCOMPLETE;
                 return 0;
         }
+
+        parse_want_used = 0;
 
         if (!parse_node_top)
         {
