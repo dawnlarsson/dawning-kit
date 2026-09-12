@@ -11,6 +11,11 @@
         entirely that one operation: run to the next thing that matters. Every
         set below is prepared once, so the inner loop never asks what kind of
         byte it is holding.
+
+        lex_line_floor fuses that span into the token loop on x86_64, arm64
+        and riscv64, because a short blank skip was a call that looked at one
+        byte and came back. Quotes, substitutions, [[, (( and a=(...) still
+        take the C word walk.
 */
 
 #define LEX_END 0
@@ -82,6 +87,17 @@ typedef struct
         */
         positive line;
 } lex_frame;
+
+_Static_assert(sizeof(lex_token) == 32, "lex_line_floor stores 32-byte tokens");
+_Static_assert(__builtin_offsetof(lex_token, kind) == 0, "kind");
+_Static_assert(__builtin_offsetof(lex_token, op) == 4, "op");
+_Static_assert(__builtin_offsetof(lex_token, text) == 8, "text");
+_Static_assert(__builtin_offsetof(lex_token, length) == 16, "length");
+_Static_assert(__builtin_offsetof(lex_token, at) == 24, "at");
+_Static_assert(__builtin_offsetof(lex_frame, tokens) == 0, "tokens");
+_Static_assert(__builtin_offsetof(lex_frame, token_room) == 8, "room");
+_Static_assert(__builtin_offsetof(lex_frame, count) == 16, "count");
+_Static_assert(__builtin_offsetof(lex_frame, line) == 24, "line");
 
 /*
         Nested input gets its own token table; the outer table and the input
@@ -312,9 +328,9 @@ static b32 lex_operator_at(string_address at, positive address_to length)
         return 0;
 }
 
-static positive lex_at;
+static KEEP positive lex_at;
 
-static b32 lex_add(b32 kind, b32 op, string_address text, positive length)
+static KEEP b32 lex_add(b32 kind, b32 op, string_address text, positive length)
 {
         if (!shell_array_room(lex_tokens, lex_token_room, (positive)lex_count + 2))
                 return false;
@@ -327,6 +343,12 @@ static b32 lex_add(b32 kind, b32 op, string_address text, positive length)
         lex_count++;
 
         return true;
+}
+
+/* The token floor grows through here; LTO cannot see that call. */
+static KEEP bool lex_grow(void)
+{
+        return shell_array_room(lex_tokens, lex_token_room, (positive)lex_count + 2);
 }
 
 PURE bool shell_extglob_asked();
@@ -505,7 +527,7 @@ static b32 lex_skip_held(string_address address_to at)
 // One Bash arithmetic command token. Keeping its interior whole prevents the
 // shell operators inside ((...)) -- notably ;, &&, < and > -- from becoming
 // command-language tokens before the arithmetic parser sees them.
-static string_address lex_arithmetic_end(string_address start)
+static KEEP string_address lex_arithmetic_end(string_address start)
 {
         string_address at = start + 2;
         positive depth = 0;
@@ -539,7 +561,7 @@ static string_address lex_arithmetic_end(string_address start)
 // A Bash [[...]] condition is one command-language token. Its own &&, ||,
 // parentheses, < and > belong to the conditional grammar, while the same
 // bytes after the closing ]] belong to the shell grammar again.
-static string_address lex_conditional_end(string_address start)
+static KEEP string_address lex_conditional_end(string_address start)
 {
         string_address at = start + 2;
 
@@ -1249,7 +1271,7 @@ static string_address lex_assignment_subscript_end(string_address at)
         return null;
 }
 
-static b32 lex_word(string_address address_to at)
+static KEEP b32 lex_word(string_address address_to at)
 {
         string_address step = address_to at;
         string_address start = step;
@@ -1379,6 +1401,20 @@ static b32 lex_word(string_address address_to at)
         Returns how many, or -1 when there were more than there is room for.
         A comment runs to the end of the line and is not a token.
 */
+#if X64 || ARM64 || RISCV64
+
+b32 lex_line_floor(string_address line, b32 comments);
+
+#include "lex_line_floor.inc"
+
+HOT b32 lex_line(string_address line)
+{
+        lex_prepare();
+        return lex_line_floor(line, lex_comments_on());
+}
+
+#else
+
 HOT b32 lex_line(string_address line)
 {
         string_address step = line;
@@ -1459,3 +1495,5 @@ HOT b32 lex_line(string_address line)
 
         return lex_count - 1;
 }
+
+#endif
