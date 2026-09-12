@@ -32,11 +32,17 @@ static const bipolar zstd_of_default[29] = {
         1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
         1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1};
 
+/*
+        One FSE cell, eight bytes, the same layout zstd's sequence walker
+        keeps: next state, extra bits, FSE nbits, baseline. Huffman weight
+        tables leave extra 0 and the symbol in base, and are never fused.
+*/
 typedef struct
 {
         p16 next;
+        p8 extra;
         p8 bits;
-        p8 symbol;
+        p32 base;
 } zstd_fse_cell;
 
 typedef struct
@@ -45,6 +51,7 @@ typedef struct
         p8 rle;
         bool valid;
         p8 pad;
+        p32 cells_at_8;
         zstd_fse_cell cell[ZSTD_FSE_MAX];
 } zstd_fse;
 
@@ -428,7 +435,7 @@ static p8 zstd_fse_peek(zstd_fse address_to table, p16 state)
 {
         if (!table->log)
                 return table->rle;
-        return table->cell[state].symbol;
+        return (p8)table->cell[state].base;
 }
 
 static fn zstd_fse_step(zstd_fse address_to table, p16 address_to state,
@@ -512,14 +519,95 @@ static bool zstd_fse_build(zstd_fse address_to table, const bipolar address_to n
                 if (!n)
                         return zstd_fail("zstd FSE empty cell");
                 bits = (p8)(log - zstd_highbit32(n));
-                table->cell[u].symbol = sym;
+                table->cell[u].extra = 0;
                 table->cell[u].bits = bits;
                 table->cell[u].next = (p16)((n << bits) - size);
+                table->cell[u].base = (p32)sym;
         }
 
         table->log = log;
         table->rle = 0;
         table->valid = true;
+        return true;
+}
+
+static const p8 zstd_ll_extra[36] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 1, 1, 1, 2, 2, 3, 3, 4, 6, 7, 8, 9, 10, 11, 12,
+        13, 14, 15, 16};
+static const p8 zstd_ml_extra[53] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 7, 8, 9, 10, 11,
+        12, 13, 14, 15, 16};
+static const p32 zstd_ll_base[36] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        16, 18, 20, 22, 24, 28, 32, 40, 48, 64, 128, 256, 512, 1024, 2048, 4096,
+        8192, 16384, 32768, 65536};
+static const p32 zstd_ml_base[53] = {
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+        19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
+        35, 37, 39, 41, 43, 47, 51, 59, 67, 83, 99, 131, 259, 515, 1027, 2051,
+        4099, 8195, 16387, 32771, 65539};
+
+/*
+        Fold the sequence baselines into the FSE cells. The walker then
+        loads one word per stream instead of a symbol plus two RIP tables.
+        A lone RLE symbol lives in cell 0 with no FSE step, so the same
+        load serves both the compressed tables and a constant one.
+*/
+static bool zstd_seq_fuse(zstd_fse address_to table, p8 kind)
+{
+        const p8 address_to extra;
+        const p32 address_to base;
+        positive max;
+        positive n;
+        positive i;
+
+        if (kind == 0)
+        {
+                extra = zstd_ll_extra;
+                base = zstd_ll_base;
+                max = 35;
+        }
+        else if (kind == 1)
+        {
+                extra = null;
+                base = null;
+                max = 31;
+        }
+        else
+        {
+                extra = zstd_ml_extra;
+                base = zstd_ml_base;
+                max = 52;
+        }
+
+        n = table->log ? (positive)1 << table->log : 1;
+        for (i = 0; i < n; i++)
+        {
+                p8 sym = table->log ? (p8)table->cell[i].base : table->rle;
+
+                if (sym > max)
+                        return zstd_fail("zstd sequence symbol too large");
+                if (kind == 1)
+                {
+                        table->cell[i].extra = sym;
+                        table->cell[i].base =
+                            (p32)(sym < 2 ? (positive)sym : ((positive)1 << sym) - 3);
+                }
+                else
+                {
+                        table->cell[i].extra = extra[sym];
+                        table->cell[i].base = base[sym];
+                }
+                if (!table->log)
+                {
+                        table->cell[i].next = 0;
+                        table->cell[i].bits = 0;
+                }
+        }
+
         return true;
 }
 
@@ -674,6 +762,9 @@ static fn zstd_fse_defaults(void)
         zstd_fse_build(address_of zstd_ll_def, zstd_ll_default, 35, 6);
         zstd_fse_build(address_of zstd_ml_def, zstd_ml_default, 52, 6);
         zstd_fse_build(address_of zstd_of_def, zstd_of_default, 28, 5);
+        zstd_seq_fuse(address_of zstd_ll_def, 0);
+        zstd_seq_fuse(address_of zstd_ml_def, 2);
+        zstd_seq_fuse(address_of zstd_of_def, 1);
         zstd_fse_ready = true;
 }
 
@@ -1003,7 +1094,7 @@ static bool zstd_seq_table(zstd_fse address_to table, zstd_fse address_to prev,
                         return zstd_fail("zstd truncated RLE table");
                 zstd_fse_rle(table, src[0]);
                 address_to used = 1;
-                return true;
+                return zstd_seq_fuse(table, kind);
         }
         if (mode == 2)
         {
@@ -1017,7 +1108,7 @@ static bool zstd_seq_table(zstd_fse address_to table, zstd_fse address_to prev,
                 if (!zstd_fse_build(table, norm, max_sym, log))
                         return false;
                 address_to used = ncount;
-                return true;
+                return zstd_seq_fuse(table, kind);
         }
         if (mode == 3)
         {
