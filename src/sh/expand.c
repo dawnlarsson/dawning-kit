@@ -7639,6 +7639,115 @@ static positive shell_expand_braces(string_address word,
 }
 
 /*
+        A whole word that is exactly $name or "$name".
+
+        Ordinary POSIX names only: no braces, no subscript, no $1/$#/$@.
+        Quoted, or unquoted with nothing to split or glob, the environment
+        value is already the field -- argv can hold that pointer instead of
+        walking expand_into. Unquoted empty vanishes; quoted empty is one
+        empty field. Unset, arrays that are not their own scalar, IFS split
+        and glob stay on the general expander, which is also where nounset
+        still diagnoses.
+*/
+static inline INLINE positive expand_simple_dollar_shape(string_address word,
+                                           bool address_to quoted)
+{
+        string_address name;
+        positive length;
+        p8 first;
+
+        if (string_is(word, '"'))
+        {
+                if (string_not(word + 1, '$'))
+                        return 0;
+
+                name = word + 2;
+                address_to quoted = true;
+        }
+        else if (string_is(word, '$'))
+        {
+                name = word + 1;
+                address_to quoted = false;
+        }
+        else
+                return 0;
+
+        first = string_get(name);
+        if (!byte_is_alpha(first) && first != '_')
+                return 0;
+
+        length = string_span(name, string_set_name);
+        if (!length)
+                return 0;
+
+        if (address_to quoted)
+        {
+                if (string_not(name + length, '"') || string_get(name + length + 1))
+                        return 0;
+        }
+        else if (string_get(name + length))
+                return 0;
+
+        return length;
+}
+
+static inline INLINE bool expand_simple_dollar_word(string_address word,
+                                      shell_words address_to out, bool borrow)
+{
+        bool quoted;
+        positive length = expand_simple_dollar_shape(word, address_of quoted);
+        string_address name;
+        string_address value;
+        positive value_length;
+        positive hash;
+
+        if (!length)
+                return false;
+
+        name = word + (quoted ? 2 : 1);
+        hash = memory_hash_33((address_any)name, length);
+        value = env_get_hashed_span(name, length, hash, address_of value_length);
+
+        /* Absent includes nameref-to-element, associative $name and the
+           names that are only published when something asks. Those are
+           not "unset" yet. */
+        if (!value)
+                return false;
+
+        if (!quoted)
+        {
+                string_address ifs;
+
+                if (!value_length)
+                        return true;
+
+                ifs = expand_ifs();
+                if (string_get(ifs) && string_first_of_set(value, ifs))
+                        return false;
+
+                if (!(shell_options & SHELL_NO_GLOB) && glob_magic(value))
+                        return false;
+        }
+        else if (!value_length)
+                value = (string_address) "";
+
+        if (!borrow)
+        {
+                value = expand_keep_bytes(value, value_length);
+                if (expand_failed)
+                        return true;
+        }
+
+        if (!shell_words_add(out, value))
+        {
+                expand_fail_state();
+                return true;
+        }
+
+        return true;
+}
+
+/*
         One lexed word, expanded whole, and the fields it became written out.
 
         The answer is not one word. $@ makes as many as there are parameters, an
@@ -7649,7 +7758,12 @@ static positive shell_expand_braces(string_address word,
 */
 positive shell_expand_fields(string_address word, shell_words address_to out)
 {
-        positive count = shell_braceexpand_on()
+        positive count;
+
+        if (expand_simple_dollar_word(word, out, false))
+                return out->count;
+
+        count = shell_braceexpand_on()
                              ? shell_expand_braces(word, out, true)
                              : shell_expand_without_braces(word, out, true);
 

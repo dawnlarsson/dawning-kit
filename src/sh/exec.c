@@ -8430,6 +8430,9 @@ static b32 exec_simple(b32 index)
 
                         count = (b32)arguments.count;
                 }
+                else if (expand_simple_dollar_word(word, address_of arguments,
+                                                    !leading))
+                        count = (b32)arguments.count;
                 else
                         count = (b32)shell_expand_fields(word,
                                                          address_of arguments);
