@@ -34,6 +34,28 @@ bool env_assign(const_string name, const_string value);
 //      these lines go out unbuffered, so the prefix has to travel with them.
 static COLD fn shell_diagnostic_where_to(writer write);
 
+static COLD fn expand_where()
+{
+        shell_diagnostic_where_to(writer_stderr_once);
+}
+
+/*
+        The original `${...}` as bash writes it, or dash's capitalised
+        sentence with no word. close points at the closing brace.
+*/
+static COLD fn expand_bad_substitution(string_address whole, string_address close)
+{
+        expand_where();
+        if (!shell_bash_compat)
+        {
+                writer_stderr_once(str("Bad substitution\n"));
+                return;
+        }
+
+        writer_stderr_once(whole, (positive)(close - whole + 1));
+        writer_stderr_once(str(": bad substitution\n"));
+}
+
 // Resolve LC_CTYPE only for character operations. Keeping this a read of the
 // live environment makes prefix assignments, locals, unset and restoration
 // agree without a second locale cache/invalidation protocol. Other encodings
@@ -1995,6 +2017,9 @@ static string_address arith_at;
         2 behind, and so does this.
 */
 static bool arith_bad;
+static string_address arith_why;
+static p8 arith_token_buf[32];
+static bool arith_said;
 
 // Parsing always reaches the far end of a logical or conditional expression,
 // but an untaken arm is grammar only: it must not read or write variables or
@@ -2007,6 +2032,89 @@ static bool arith_unset;
 static PURE inline INLINE string_address arith_skip_space(string_address at)
 {
         return at + string_span_of_set(at, " \t\n");
+}
+
+/*
+        Remember why the expression failed, and a short token from where
+        the cursor was standing. Bash names both in the diagnostic; dash
+        names the whole expression. The first failure sticks -- a later
+        leftover byte must not overwrite a division that already happened.
+*/
+static COLD fn arith_fail(string_address why)
+{
+        if (arith_bad)
+                return;
+
+        arith_bad = true;
+        arith_why = why;
+
+        {
+                string_address at = arith_skip_space(arith_at);
+                positive n = 0;
+
+                while (n + 1 < sizeof(arith_token_buf) && string_get(at) &&
+                       string_get(at) != ' ' && string_get(at) != '\t')
+                        arith_token_buf[n++] = string_get(at++);
+
+                arith_token_buf[n] = end;
+        }
+}
+
+/*
+        The arithmetic diagnostic both $(( )) and let/(( share.
+
+        Bash writes the expression, a reason and an error token, and let
+        and (( put their own name in front of that. dash writes a shorter
+        sentence and no token. Unset-name failures already wrote their
+        own line.
+*/
+COLD fn shell_arith_report(writer write, string_address command,
+                           string_address expr)
+{
+        string_address why;
+        string_address token;
+
+        if (arith_unset || arith_said)
+                return;
+
+        why = arith_why ? arith_why
+                        : (string_address) "syntax error in expression";
+        token = string_get(arith_token_buf) ? arith_token_buf : expr;
+        if (!token || !string_get(token))
+                token = expr ? expr : (string_address) "";
+        if (!expr)
+                expr = (string_address) "";
+
+        shell_diagnostic_where_to(write);
+
+        if (shell_bash_compat)
+        {
+                if (command)
+                        string_format(write,
+                                      "%s: %s: %s (error token is \"%s\")\n",
+                                      command, expr, why, token);
+                else
+                        string_format(write,
+                                      "%s: %s (error token is \"%s\")\n",
+                                      expr, why, token);
+                return;
+        }
+
+        if (arith_why && !string_compare(arith_why, "division by 0"))
+                string_format(write,
+                              "arithmetic expression: division by zero: "
+                              "\"%s\"\n",
+                              expr);
+        else if (arith_why &&
+                 !string_compare(arith_why, "value too great for base"))
+                string_format(write,
+                              "arithmetic expression: expecting EOF: "
+                              "\"%s\"\n",
+                              expr);
+        else
+                string_format(write,
+                              "Arithmetic expression: syntax error: \"%s\"\n",
+                              expr);
 }
 
 static fn arith_space()
@@ -2034,6 +2142,8 @@ static bipolar arith_store(expand_reference reference, bipolar value)
         {
                 string_address name = expand_reference_text(reference);
                 arith_bad = true;
+                arith_said = true;
+                shell_diagnostic_where_to(writer_stderr_once);
                 string_format(writer_stderr_once,
                               !env_readonly(name)
                                   ? "%s: cannot assign\n"
@@ -2225,7 +2335,7 @@ static COLD bipolar arith_named_expression(string_address value)
         // Every byte of the value belongs to the expression, exactly as every
         // byte of the outer one does: x=12ab is not twelve.
         if (string_get(arith_at))
-                arith_bad = true;
+                arith_fail("syntax error in expression");
 
         arith_at = outer;
         arith_names--;
@@ -2258,7 +2368,12 @@ static bipolar arith_divide(bipolar left, bipolar right, bool remainder)
 
         if (!right || (right == -1 && left == bipolar_min))
         {
-                arith_bad = true;
+                arith_fail("division by 0");
+                if (!right)
+                {
+                        arith_token_buf[0] = '0';
+                        arith_token_buf[1] = end;
+                }
                 return 0;
         }
 
@@ -2307,7 +2422,7 @@ static bipolar arith_power_of(bipolar base, bipolar exponent)
 
         if (exponent < 0)
         {
-                arith_bad = true;
+                arith_fail("exponent less than 0");
                 return 0;
         }
 
@@ -2585,6 +2700,7 @@ static bipolar arith_primary()
         {
                 bool valid;
                 string_address scan = arith_at;
+                string_address start = arith_at;
 
                 // What is in front of a # is a base and not a value, and only
                 // a run of plain decimal digits can be one: 0x10#1 is neither.
@@ -2596,7 +2712,17 @@ static bipolar arith_primary()
                 value = expand_base_number(address_of arith_at, address_of valid);
 
                 if (!valid)
-                        arith_bad = true;
+                {
+                        /* 08 is refused as an octal digit. The cursor has
+                           already walked past the leading 0, so the token
+                           bash names is restored from the start of the
+                           literal, then the cursor goes back to after it. */
+                        string_address held = arith_at;
+
+                        arith_at = start;
+                        arith_fail("value too great for base");
+                        arith_at = held;
+                }
 
                 return value;
         }
@@ -2610,7 +2736,7 @@ static bipolar arith_primary()
 
         // A byte that starts no value at all, which is where a missing
         // operand lands: $((1 + )) answered 1 and $((2 ** 3)) answered 0.
-        arith_bad = true;
+        arith_fail("syntax error in expression");
 
         return 0;
 }
@@ -2770,6 +2896,9 @@ static bipolar arith_evaluate(string_address text)
 
         arith_bad = false;
         arith_unset = false;
+        arith_why = null;
+        arith_token_buf[0] = end;
+        arith_said = false;
         arith_active = true;
         arith_nounset =
             shell_bash_compat &&
@@ -2792,7 +2921,7 @@ static bipolar arith_evaluate(string_address text)
         if (!string_get(arith_at))
         {
                 if (!arith_bash_mode)
-                        arith_bad = true;
+                        arith_fail("syntax error in expression");
                 arith_nounset = held_nounset;
                 arith_bash_mode = held_bash_mode;
                 return 0;
@@ -2803,7 +2932,7 @@ static bipolar arith_evaluate(string_address text)
         // Every byte has to belong to the grammar. This catches comma and
         // postfix increment/decrement instead of returning the left prefix.
         if (string_get(arith_at))
-                arith_bad = true;
+                arith_fail("syntax error in expression");
 
         arith_nounset = held_nounset;
         arith_bash_mode = held_bash_mode;
@@ -3571,8 +3700,8 @@ static string_address expand_arithmetic(string_address step, bool quoted)
                 if (arith_bad)
                 {
                         if (!arith_unset)
-                                string_format(writer_stderr_once,
-                                              "arithmetic: %s\n", ready);
+                                shell_arith_report(writer_stderr_once, null,
+                                                   ready);
                         /*      The same status a bad slice subscript takes.
                                 Both are an expansion that could not produce a
                                 word, both end the line, and bash answers 1
@@ -4060,7 +4189,7 @@ static bool expand_slice_number(string_address text, bipolar address_to value)
         if (arith_bad)
         {
                 if (!arith_unset)
-                        string_format(writer_stderr_once, "arithmetic: %s\n", ready);
+                        shell_arith_report(writer_stderr_once, null, ready);
                 expand_slice_error();
                 return false;
         }
@@ -4098,6 +4227,7 @@ static bool expand_slice_bounds(expand_reference reference, string_address expre
         }
         else if (!separator)
         {
+                expand_where();
                 string_format(writer_stderr_once, "%s: bad substitution\n", expand_reference_text(reference));
                 expand_fatal_status(shell_bash_compat ? 1 : 2);
                 return false;
@@ -4139,6 +4269,7 @@ static bool expand_slice_bounds(expand_reference reference, string_address expre
 
                 if (kind || back > origin - address_to begin)
                 {
+                        expand_where();
                         string_format(writer_stderr_once,
                                       "%s: substring expression < 0\n", expand_reference_text(reference));
                         expand_slice_error();
@@ -4202,6 +4333,7 @@ static fn expand_substring(expand_reference reference, string_address expression
         {
                 if (!shell_bash_compat)
                 {
+                        expand_where();
                         string_format(writer_stderr_once, "%s: bad substitution\n", name);
                         expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
                         return;
@@ -4857,6 +4989,7 @@ static COLD string_address expand_subscript_key(string_address base,
                         //      subscript goes in the line only when it was
                         //      being assigned to, which this shared
                         //      resolution cannot tell from here.
+                        expand_where();
                         string_format(writer_stderr_once,
                                       "%s: bad array subscript\n", base);
                         expand_fatal_status(shell_bash_compat ? 1 : 2);
@@ -5131,6 +5264,7 @@ static COLD fn expand_array_form(string_address name, positive length,
 
 static string_address expand_braced(string_address step, bool quoted)
 {
+        string_address whole = step;
         string_address name_start;
         p8 name_local[EXPAND_LOCAL_NAME];
         p8 word_local[EXPAND_LOCAL_TEXT];
@@ -5227,8 +5361,7 @@ static string_address expand_braced(string_address step, bool quoted)
 
                 if (!shut || shut >= close)
                 {
-                        string_format(writer_stderr_once,
-                                      "%s: bad substitution\n", expand_reference_text(reference));
+                        expand_bad_substitution(whole, close);
                         expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
                         return close + 1;
                 }
@@ -5342,7 +5475,7 @@ static string_address expand_braced(string_address step, bool quoted)
             (!operation && step != close) ||
             (want_length && (operation || name_list)))
         {
-                string_format(writer_stderr_once, "%s: bad substitution\n", expand_reference_text(reference));
+                expand_bad_substitution(whole, close);
                 expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
 
                 return close + 1;
@@ -5356,6 +5489,55 @@ static string_address expand_braced(string_address step, bool quoted)
 
                 if (!word)
                         return close + 1;
+        }
+
+        /*
+                ${name@X} names one transformation. An unknown letter is a
+                bad substitution, but only when the name is set: bash 5.2
+                leaves an unset ${x@Z} empty and continues. Nounset still
+                sees the missing name.
+        */
+        if (operation == '@')
+        {
+                p8 which = string_get(word);
+                bool known = which && !string_get(word + 1) &&
+                             (which == 'Q' || which == 'E' || which == 'P' ||
+                              which == 'A' || which == 'a' || which == 'K' ||
+                              which == 'k' || which == 'U' || which == 'u' ||
+                              which == 'L');
+
+                if (!known)
+                {
+                        p8 scratch[32];
+                        bool present = true;
+
+                        expand_value_of(reference, scratch, address_of present,
+                                        null);
+
+                        if (!present)
+                        {
+                                if (shell_options & ((positive)1 << ('u' - 'a')))
+                                {
+                                        expand_where();
+                                        string_format(
+                                            writer_stderr_once,
+                                            shell_bash_compat
+                                                ? "%s: unbound variable\n"
+                                                : "%s: parameter not set\n",
+                                            expand_reference_text(reference));
+                                        expand_fatal_status(
+                                            expand_nounset_status(false));
+                                }
+
+                                return close + 1;
+                        }
+
+                        expand_bad_substitution(whole, close);
+                        expand_fatal_status(shell_bash_compat
+                                                ? expand_nounset_status(false)
+                                                : 2);
+                        return close + 1;
+                }
         }
 
         /*
@@ -5401,6 +5583,7 @@ static string_address expand_braced(string_address step, bool quoted)
 
                         if (first < '0' || first > '9')
                         {
+                                expand_where();
                                 string_format(writer_stderr_once,
                                               "%s: invalid indirect expansion\n",
                                               expand_reference_text(reference));
@@ -5422,6 +5605,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 }
                 else if (!expand_parameter_name(name, target_length))
                 {
+                        expand_where();
                         string_format(writer_stderr_once,
                                       "%s: invalid variable name\n", name);
                         expand_fatal_status(1);
@@ -5495,8 +5679,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 if (!which || string_get(word + 1) ||
                     !string_first_of((string_address)"QEULua", which))
                 {
-                        string_format(writer_stderr_once,
-                                      "%s: bad substitution\n", expand_reference_text(reference));
+                        expand_bad_substitution(whole, close);
                         expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
                         return close + 1;
                 }
@@ -5543,6 +5726,7 @@ static string_address expand_braced(string_address step, bool quoted)
                                 if ((parameter_mode & EXPAND_PARAMETER_INDIRECT) &&
                                     !expand_assignable_name(name))
                                 {
+                                        expand_where();
                                         string_format(
                                             writer_stderr_once,
                                             "%s: invalid indirect expansion\n",
@@ -5560,6 +5744,7 @@ static string_address expand_braced(string_address step, bool quoted)
                                 if (!expand_assign_named(reference, made))
                                 {
                                         name = expand_reference_text(reference);
+                                        expand_where();
                                         string_format(
                                             writer_stderr_once,
                                             !env_readonly(name)
@@ -5700,6 +5885,7 @@ static string_address expand_dollar(string_address step, bool quoted)
         // thing that would notice.
         if (expand_depth >= EXPAND_DEPTH)
         {
+                expand_where();
                 string_format(writer_stderr_once, "Expansion nested too deeply\n");
                 expand_fatal_status(2);
                 return step + 1;
@@ -5909,6 +6095,27 @@ static fn expand_into(string_address text, bool quoted, p8 plain,
 
                 if (seen == '\\' && string_get(step + 1))
                 {
+                        p8 next = string_get(step + 1);
+
+                        /* Double-quote rules when this text is already
+                           quoted: only ", \, $ and ` hide the backslash.
+                           PS4 and a quoted ${...} word still need `\n`
+                           intact so prompt escapes can see it. */
+                        if (quoted)
+                        {
+                                if (next == '"' || next == '\\' ||
+                                    next == '$' || next == '`')
+                                {
+                                        expand_push(next, MARK_QUOTED);
+                                        step += 2;
+                                        continue;
+                                }
+
+                                expand_push(seen, MARK_QUOTED);
+                                step++;
+                                continue;
+                        }
+
                         step++;
                         expand_push(string_get(step++), MARK_QUOTED);
                         continue;
@@ -6221,7 +6428,8 @@ static bool glob_exists(string_address path)
         really there come back, which is what makes a pattern that matches
         nothing stay a pattern.
 */
-static fn glob_walk(p8 address_to prefix, positive used, string_address pattern, positive depth)
+static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
+                    positive depth, bool from_star)
 {
         p8 component[GLOB_PATH];
         positive length = 0;
@@ -6285,7 +6493,38 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
         // ** first matches zero directories, then reuses this component at
         // each child directory. Ordinary patterns consume it exactly once.
         if (star && string_get(rest))
-                glob_walk(prefix, used, rest + 1, depth + 1);
+                glob_walk(prefix, used, rest + 1, depth + 1, false);
+
+        /*
+                A last-component ** includes the directory it is standing
+                in, with a trailing slash: `d/**` lists `d/` as well as
+                what is under it. Recursion into a child already listed
+                that child without a slash (`d/s`); another add made `d/s/`.
+        */
+        if (star && !string_get(rest) && used && !from_star)
+        {
+                /*
+                        `d/**` has already consumed the slash into the
+                        prefix, so another one made `d//`. A directory
+                        that does not already end in a slash still wants
+                        one: bash lists `d/` as well as what is under it.
+                */
+                if (prefix[used - 1] != '/')
+                {
+                        if (used + 1 >= GLOB_PATH)
+                        {
+                                glob_failed = true;
+                                return;
+                        }
+
+                        prefix[used] = '/';
+                        prefix[used + 1] = end;
+                }
+                else
+                        prefix[used] = end;
+
+                glob_add(prefix);
+        }
 
         if (!star && !glob_magic(component))
         {
@@ -6301,7 +6540,7 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                         }
                         prefix[out++] = component[at];
                 }
-                glob_walk(prefix, out, rest, depth + 1);
+                glob_walk(prefix, out, rest, depth + 1, false);
                 return;
         }
 
@@ -6356,7 +6595,7 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                 }
 
                 if (!star)
-                        glob_walk(prefix, out, rest, depth + 1);
+                        glob_walk(prefix, out, rest, depth + 1, false);
                 else
                 {
                         // Unknown directory types are resolved by
@@ -6369,7 +6608,7 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                                 prefix[out] = '/';
                                 glob_walk(prefix, out + 1,
                                           link_directory ? rest + 1 : whole,
-                                          depth + 1);
+                                          depth + 1, true);
                         }
                 }
         }
@@ -6556,7 +6795,7 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                 glob_count = 0;
                 glob_failed = false;
                 shell_store_reset(address_of glob_store);
-                glob_walk(built, 0, pattern, 0);
+                glob_walk(built, 0, pattern, 0, false);
 
                 if (glob_failed)
                 {
@@ -6599,9 +6838,17 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                 */
                 if (shell_shopt_on(FAILGLOB))
                 {
+                        /*
+                                Bash fails that command and reads on. Killing
+                                the process made `echo after=$?` never run.
+                                The prefix is the same one a session compares
+                                byte for byte.
+                        */
+                        expand_where();
                         string_format(writer_stderr_once, "no match: %s\n",
                                       pattern);
-                        expand_fatal_status(1);
+                        shell_status = 1;
+                        expand_failed = true;
                         return false;
                 }
 
@@ -6670,6 +6917,9 @@ static positive expand_split(shell_words address_to out)
 
         while (at < expand_length)
         {
+                if (expand_failed)
+                        return out->count;
+
                 if (expand_mark[at] == MARK_BREAK ||
                     expand_mark[at] == MARK_SEPARATE)
                 {
@@ -6726,8 +6976,9 @@ static positive expand_split(shell_words address_to out)
                 at++;
         }
 
-        if (start != expand_length ||
-            expand_mark[expand_length - 1] != MARK_SEPARATE)
+        if (!expand_failed &&
+            (start != expand_length ||
+             expand_mark[expand_length - 1] != MARK_SEPARATE))
                 expand_emit(start, expand_length, out);
 
         return out->count;
@@ -7297,4 +7548,22 @@ RETURNS_NONNULL string_address shell_expand_pattern(string_address word)
 RETURNS_NONNULL string_address shell_expand_regex(string_address word)
 {
         return shell_expand_quoted(word, true);
+}
+
+/*
+        PS4 is expanded the way a double-quoted string is -- parameters,
+        command substitutions and arithmetic -- so a script can put a
+        counter or a command in the trace prefix. Backslash prompt
+        escapes are applied afterwards, where the prefix is written.
+*/
+COLD string_address shell_expand_ps4(string_address text)
+{
+        string_address ready;
+
+        if (!text)
+                return (string_address) "";
+
+        expand_begin();
+        ready = expand_capture(text, true, EXPAND_CAPTURE_TEXT);
+        return ready ? ready : (string_address) "";
 }

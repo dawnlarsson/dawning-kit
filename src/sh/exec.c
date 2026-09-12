@@ -6267,7 +6267,10 @@ static COLD fn exec_frames_publish()
 */
 PURE positive shell_line_now()
 {
-        return (positive)exec_line;
+        /* A diagnostic before any command has run still needs the line the
+           reader is on: syntax errors used to say line 0 because exec_line
+           is only filled when a node starts. */
+        return exec_line ? (positive)exec_line : shell_line_number;
 }
 
 /*
@@ -6454,7 +6457,9 @@ static b32 exec_call(positive slot)
         exec_function_depth--;
 
         // return leaves the function and nothing further out.
-        if (exec_signal == EXEC_SIGNAL_RETURN)
+        // A failglob inside the body is the same: the rest of the
+        // function is skipped, the caller is not.
+        if (exec_signal == EXEC_SIGNAL_RETURN || exec_input_error())
                 exec_signal = EXEC_SIGNAL_NONE;
 
         if (!shell_parameters_restore(saved, saved_count))
@@ -6623,9 +6628,11 @@ static COLD fn exec_trace_word(string_address word)
         log_error(str("'"));
 }
 
+static bool exec_ps4_expanding;
+
 static PURE bool exec_trace_on()
 {
-        return (shell_options & SHELL_XTRACE) != 0;
+        return !exec_ps4_expanding && (shell_options & SHELL_XTRACE) != 0;
 }
 
 static fn exec_trace_ps4()
@@ -6637,23 +6644,44 @@ static fn exec_trace_ps4()
                 prefix = (string_address) "+ ";
 
         /*
-                How deep the reader is, marked the way Bash marks it: the
-                first character of PS4 written once per level and then the
-                rest of PS4, so the line an eval or a sourced file runs
-                traces under ++ where the line that reached it traced
-                under +. dash does not mark depth at all and neither does
-                this shell under a dash name.
+                Bash expands PS4 the way it expands a prompt: parameters
+                and command substitutions first, then the backslash
+                escapes, then the first character of what that produced
+                written once per reader depth. Dash writes the bytes as
+                they stand. Expanding with xtrace still on would trace
+                the expansion itself.
         */
-        if (shell_bash_compat && string_get(prefix))
+        if (shell_bash_compat)
         {
-                positive depth = shell_run_depth ? shell_run_depth : 1;
+                string_address expanded;
+                p8 first;
 
-                for (positive again = 0; again < depth && again < 99; again++)
-                        log_error(prefix, 1);
-                log_error(prefix + 1, 0);
+                exec_ps4_expanding = true;
+                expanded = shell_expand_ps4(prefix);
+                exec_ps4_expanding = false;
+                if (expanded && string_get(expanded))
+                        prefix = expanded;
+
+                first = string_get(prefix);
+                if (first)
+                {
+                        positive depth = shell_run_depth ? shell_run_depth : 1;
+                        p8 held = first;
+                        p8 room[2];
+
+                        room[0] = held;
+                        room[1] = end;
+                        for (positive again = 0; again < depth && again < 99;
+                             again++)
+                                log_error(room, 1);
+
+                        if (string_get(prefix + 1))
+                                shell_prompt_written(log_error, prefix + 1);
+                        return;
+                    }
         }
-        else
-                log_error(prefix, 0);
+
+        log_error(prefix, 0);
 }
 
 static fn exec_trace(b32 count)
@@ -7023,7 +7051,14 @@ static PURE p8 exec_special_kind(string_address name)
         if (which < array_count(names))
                 return 1;
 
-        return word_is(name, "source") ? 2 : 0;
+        if (word_is(name, "source"))
+                return 2;
+
+        /* Dash treats local as special; POSIX does not name it. */
+        if (!shell_bash_compat && word_is(name, "local"))
+                return 1;
+
+        return 0;
 }
 
 static PURE bool exec_special_active(string_address name, p8 kind)
@@ -7527,6 +7562,7 @@ static COLD fn exec_return_bash()
                 valid = exec_control_integer(shell_argv[first], address_of value);
                 if (!valid)
                 {
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       "return: %s: numeric argument required\n",
                                       shell_argv[first]);
@@ -7534,6 +7570,7 @@ static COLD fn exec_return_bash()
                 }
                 else if (shell_argc > first + 1)
                 {
+                        shell_diagnostic_where();
                         log_error("return: too many arguments\n", 0);
                         shell_status = 1;
                         if (!shell_is_interactive || exec_forked ||
@@ -7594,10 +7631,13 @@ bool exec_control_builtin(string_address name, bool run)
                 if (shell_bash_compat && !exec_loop_depth)
                 {
                         if (!shell_posix_on())
+                        {
+                                shell_diagnostic_where();
                                 string_format(log_error,
                                               "%s: only meaningful in a "
                                               "`for', `while', or `until' "
                                               "loop\n", name);
+                        }
                         shell_status = 0;
                         return true;
                 }
@@ -7619,6 +7659,7 @@ bool exec_control_builtin(string_address name, bool run)
                                 levels = (b32)exec_loop_depth;
                         else if (numeric)
                         {
+                                shell_diagnostic_where();
                                 string_format(log_error,
                                               "%s: %s: loop count out of "
                                               "range\n", name, shell_argv[1]);
@@ -8123,6 +8164,11 @@ static b32 exec_simple(b32 index)
         shell_words_bind(address_of arguments, address_of shell_argv,
                          address_of shell_argv_room);
 
+        /* A previous word's failglob must not make this command's first
+           literal word look like a failed expansion. expand_begin clears
+           the flag, but a literal name never goes through it. */
+        expand_failed = false;
+
         // The line this command was written on, which caller and $LINENO
         // answer with for as long as it runs.
         exec_line = node->line;
@@ -8230,6 +8276,12 @@ static b32 exec_simple(b32 index)
                 else
                         count = (b32)shell_expand_fields(word,
                                                          address_of arguments);
+
+                if (expand_failed && !exec_line_aborted())
+                {
+                        status = shell_status ? shell_status : 1;
+                        goto fail;
+                }
 
                 if (exec_line_aborted())
                         break;
@@ -8610,7 +8662,7 @@ static b32 exec_loop_items(parse_node address_to node, positive base)
                                          address_of exec_fields_room);
                         made = shell_expand_fields(parse_words[node->word + at + 1],
                                                    address_of list);
-                        if (exec_line_aborted())
+                        if (exec_line_aborted() || expand_failed)
                                 break;
                         fields = exec_fields;
                 }
@@ -8911,6 +8963,13 @@ static b32 exec_for(b32 index, bool selecting)
                 return exec_aborted(mark);
         }
 
+        if (expand_failed)
+        {
+                exec_items_used = base;
+                shell_store_rewind(address_of exec_store, mark);
+                return shell_status ? shell_status : 1;
+        }
+
         exec_items_used = base + (positive)count;
 
         // Nothing to choose from is not a menu nobody answered: no menu is
@@ -8996,7 +9055,8 @@ done:
 }
 
 static bool exec_arithmetic_value(string_address text,
-                                  bipolar address_to value)
+                                  bipolar address_to value,
+                                  string_address command)
 {
         shell_mark mark = shell_store_mark(address_of expand_store);
         string_address ready = shell_expand_arithmetic_text(text);
@@ -9019,7 +9079,7 @@ static bool exec_arithmetic_value(string_address text,
         }
 
         if (!arith_unset)
-                string_format(log_error, "arithmetic: %s\n", ready);
+                shell_arith_report(log_error, command, ready);
         shell_store_rewind(address_of expand_store, mark);
         return false;
 }
@@ -9062,7 +9122,7 @@ static b32 exec_arithmetic_command(b32 index)
 
         if (!string_get(whole + 2 + string_span_of_set(whole + 2, " \t\n")))
                 status = 1;
-        else if (!exec_arithmetic_value(whole + 2, address_of value))
+        else if (!exec_arithmetic_value(whole + 2, address_of value, "(("))
                 status = exec_line_aborted() ? shell_status : 1;
         else
                 status = value ? 0 : 1;
@@ -9140,6 +9200,7 @@ static b32 exec_cfor(b32 index)
 
         if (!string_get(first))
         {
+                shell_diagnostic_where();
                 log_error(str("arithmetic: expected two semicolons\n"));
                 status = 2;
                 goto done;
@@ -9150,6 +9211,7 @@ static b32 exec_cfor(b32 index)
 
         if (!string_get(second))
         {
+                shell_diagnostic_where();
                 log_error(str("arithmetic: expected two semicolons\n"));
                 status = 2;
                 goto done;
@@ -9161,7 +9223,7 @@ static b32 exec_cfor(b32 index)
         update = second + 1;
 
         if (string_get(initialize) &&
-            !exec_arithmetic_value(initialize, address_of value))
+            !exec_arithmetic_value(initialize, address_of value, "(("))
         {
                 status = exec_line_aborted() ? shell_status : 1;
                 goto done;
@@ -9171,7 +9233,8 @@ static b32 exec_cfor(b32 index)
         {
                 if (string_get(condition))
                 {
-                        if (!exec_arithmetic_value(condition, address_of value))
+                        if (!exec_arithmetic_value(condition, address_of value,
+                                                   "(("))
                         {
                                 status = exec_line_aborted() ? shell_status : 1;
                                 goto done;
@@ -9189,7 +9252,7 @@ static b32 exec_cfor(b32 index)
                         break;
 
                 if (string_get(update) &&
-                    !exec_arithmetic_value(update, address_of value))
+                    !exec_arithmetic_value(update, address_of value, "(("))
                 {
                         status = exec_line_aborted() ? shell_status : 1;
                         goto done;
@@ -9365,6 +9428,7 @@ static bool conditional_integer(positive kind, string_address left,
 
 static COLD fn conditional_nounset_fatal()
 {
+        shell_diagnostic_where();
         log_error(str("arithmetic: parameter not set\n"));
         shell_status = 1;
 
@@ -11045,6 +11109,13 @@ static b32 exec_node_kind(b32 index)
                         exec_pipe_status_one(status);
 
                 exec_errexit(status);
+
+                /* failglob (and other command-level expansion failures)
+                   abort the rest of this physical line and of a function
+                   body, after errexit has had its look. The next line of
+                   a script still runs. */
+                if (expand_failed && !exec_line_aborted())
+                        exec_expand_input_error();
 
                 return status;
         }

@@ -380,7 +380,8 @@ bipolar shell_spawn_tool(string_address address_to arguments,
 fn parse_nest_enter();
 fn parse_nest_leave();
 static bool exec_arithmetic_value(string_address text,
-                                  bipolar address_to value);
+                                  bipolar address_to value,
+                                  string_address command);
 // exec owns the lifetime of PIPESTATUS; the variable engine materializes its
 // deferred one-element value only when a reader actually names it.
 fn exec_pipe_status_wanted();
@@ -6455,6 +6456,34 @@ static COLD fn shell_diagnostic_where()
 }
 
 /*
+        Parser errors name the source the reader is in. Bash's unnamed
+        -c string is that source spelled `-c`, between $0 and the line;
+        a name operand is $0 itself and needs no extra word. Expansion
+        errors stay with the ordinary prefix: they never insert `-c`.
+*/
+static COLD fn shell_syntax_where()
+{
+        string_address self = shell_script_name && string_get(shell_script_name)
+                                  ? shell_script_name : (string_address) "sh";
+
+        if (shell_bash_compat && shell_is_interactive)
+        {
+                string_format(log_error, "%s: ", self);
+                return;
+        }
+
+        if (shell_bash_compat && string_is(shell_option_flags, 'c') &&
+            shell_run_depth == 1)
+        {
+                string_format(log_error, "%s: -c: line %p: ", self,
+                              shell_line_now());
+                return;
+        }
+
+        shell_diagnostic_where();
+}
+
+/*
         set's usage line, which Bash writes under every letter complaint and
         dash does not write at all.
 
@@ -6714,6 +6743,7 @@ fn shell_shift(writer write, string_address input)
 
         if (shell_bash_compat && shell_argc > first + 1)
         {
+                shell_diagnostic_where();
                 log_error("shift: too many arguments\n", 0);
                 expand_fatal_status(1);
                 return;
@@ -6730,11 +6760,13 @@ fn shell_shift(writer write, string_address input)
                         {
                                 if (!good)
                                         exec_special_error_note();
+                                shell_diagnostic_where();
                                 return shell_answer(string_report(log_error, good ? 1 : 2, "shift: %s: %s\n",
                                               shell_argv[first],
                                               good ? "shift count out of range"
                                                    : "numeric argument required"));
                         }
+                        shell_diagnostic_where();
                         string_format(log_error, "shift: Illegal number: %s\n",
                                       shell_argv[first]);
                         exec_special_error_note();
@@ -6749,13 +6781,17 @@ fn shell_shift(writer write, string_address input)
                 if (shell_bash_compat)
                 {
                         if (shell_shopt_on(SHIFT_VERBOSE))
+                        {
+                                shell_diagnostic_where();
                                 string_format(log_error,
                                               "shift: %s: shift count out of range\n",
                                               shell_argc > first
                                                   ? shell_argv[first]
                                                   : (string_address)"1");
+                        }
                         return shell_answer(1);
                 }
+                shell_diagnostic_where();
                 log_error("shift: can't shift that many\n", 0);
                 exec_special_error_note();
                 return shell_answer(2);
@@ -8218,6 +8254,20 @@ COLD fn shell_local(writer write, string_address input)
                 }
 
                 expand_fatal_status(2);
+                return;
+        }
+
+        //      Dash has no option letters on local: `--` and `--bogus`
+        //      are names, and a bad name is the special-builtin abort.
+        //      Bash walks the same option list declare does.
+        if (!shell_bash_compat)
+        {
+                (void)write;
+                (void)input;
+                state.index = 1;
+                if (state.index >= shell_argc)
+                        return shell_answer(0);
+                shell_declare_apply(address_of state, true);
                 return;
         }
 
@@ -14267,7 +14317,8 @@ COLD fn shell_let(writer write, string_address input)
                 return shell_answer(1);
 
         for (; at < shell_argc; at++)
-                if (!exec_arithmetic_value(shell_argv[at], address_of value))
+                if (!exec_arithmetic_value(shell_argv[at], address_of value,
+                                           "let"))
                         return shell_answer(exec_line_aborted() ? 2 : 1);
 
         shell_answer(value ? 0 : 1);

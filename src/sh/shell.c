@@ -1357,7 +1357,38 @@ static fn run_line_inner(string_address line)
 
         if (parse_state)
         {
-                log_error(str("Syntax error\n"));
+                parse_token address_to tok = parse_look(0);
+
+                shell_syntax_where();
+                if (shell_bash_compat)
+                {
+                        if (!tok || tok->kind == PT_END ||
+                            tok->kind == PT_NEWLINE)
+                                log_error(str(
+                                    "syntax error: unexpected end of file\n"));
+                        else
+                        {
+                                string_format(
+                                    log_error,
+                                    "syntax error near unexpected token `%s'\n",
+                                    tok->text);
+                                /* Bash repeats the prefix and quotes the
+                                   physical line the token came from. */
+                                if (line && string_get(line))
+                                {
+                                        shell_syntax_where();
+                                        log_error("`", 1);
+                                        log_error(line, 0);
+                                        log_error("'\n", 2);
+                                }
+                        }
+                }
+                else if (!tok || tok->kind == PT_END)
+                        log_error(str("Syntax error: unexpected end of file\n"));
+                else
+                        string_format(log_error,
+                                      "Syntax error: \"%s\" unexpected\n",
+                                      tok->text);
                 shell_status = 2;
                 parse_reset();
 
@@ -1570,7 +1601,8 @@ fn shell_input_end()
                         return;
         }
 
-        log_error(str("Syntax error: unexpected end of input\n"));
+        shell_syntax_where();
+        log_error(str("Syntax error: unexpected end of file\n"));
         bool word_eof = parse_pending_used &&
                         lex_unfinished(parse_pending) == LEX_OPEN_WORD;
         parse_reset();

@@ -23535,6 +23535,15 @@ static b32 kill_list(positive count, positive index)
                 return 0;
         }
 
+        //      Dash's kill -l only reads a number (an exit status). A
+        //      name is an illegal number, status two. Bash looks the
+        //      name up and writes it back.
+        if (kill_shell_spelling && !shell_bash_compat)
+        {
+                string_format(log_error, "kill: Illegal number: %s\n", word);
+                return 2;
+        }
+
         bipolar found = kill_signal_of(word);
 
         if (found < 0 || found >= KILL_LEAST_REAL)

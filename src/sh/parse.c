@@ -727,7 +727,39 @@ static bool parse_copy_lex(parse_token address_to into,
         into->line = (b32)shell_line_number;
 
         if (into->kind == PT_OP)
+        {
+                static const string_address spelling[] = {
+                    0,
+                    "&&",
+                    "||",
+                    ";;",
+                    "<<",
+                    ">>",
+                    "<&",
+                    ">&",
+                    "<>",
+                    ">|",
+                    ";",
+                    "|",
+                    "&",
+                    "<",
+                    ">",
+                    "(",
+                    ")",
+                    "&>",
+                    "&>>",
+                    "<<<",
+                    "|&",
+                    ";&",
+                    ";;&",
+                };
+
+                if (into->op > 0 &&
+                    into->op < (b32)array_count(spelling))
+                        into->text = (string_address)spelling[into->op];
+
                 return true;
+        }
 
         into->text = shell_store_copy(address_of parse_store, source->text,
                                       source->length);
