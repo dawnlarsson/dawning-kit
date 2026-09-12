@@ -870,8 +870,11 @@ static bool zstd_huff_from_weights(zstd_huff address_to huff, p8 address_to weig
                         if (start + span > ((positive)1 << max_bits))
                                 return zstd_fail("zstd Huffman table overflow");
                         for (i = 0; i < span; i++)
+                                /* nbits in the low byte, symbol in the high
+                                   byte: Facebook's 4X1 walker shifts by the
+                                   cell itself, and x86 can store %ah. */
                                 huff->cell[start + i] =
-                                    (p16)s | ((p16)bits << 8);
+                                    (p16)bits | ((p16)s << 8);
                         start += span;
                 }
         }

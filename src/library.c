@@ -6434,9 +6434,10 @@ __asm__(
     ASM_END(zstd_bits_get)
 
     /* zstd Huffman: dest[need] from a backward bitstream. cell[i] is
-       the symbol in the low 8 bits and the bit count in the high 8.
-       max_bits is the table log. A tail shorter than tableLog indexes
-       with zero padding, the same shift Facebook BIT_lookBits uses. */
+       the bit count in the low 8 bits and the symbol in the high 8,
+       the layout Facebook's 4X1 walker shifts by. max_bits is the table
+       log. A tail shorter than tableLog indexes with zero padding, the
+       same shift Facebook BIT_lookBits uses. */
     ASM_FUNC(zstd_huffman_stream)
     "test %rsi, %rsi\n   jz .Lzstd_huff_x64_ok_empty\n"
     "test %rcx, %rcx\n   jz .Lzstd_huff_x64_fail_empty\n"
@@ -6483,9 +6484,14 @@ __asm__(
     "shlx %r10, %rbx, %rax\n"
     "mov $64, %ecx\n   sub %r15d, %ecx\n"
     "shrx %rcx, %rax, %rax\n"
-    "movzwl (%r14,%rax,2), %edx\n   test %dh, %dh\n   jz .Lzstd_huff_x64_fail\n"
-    "mov %dl, (%r12)\n   inc %r12\n   movzbl %dh, %ecx\n   add %ecx, %r10d\n"
-    "dec %r13\n   jnz .Lzstd_huff_x64_loop\n"
+    "movzwl (%r14,%rax,2), %edx\n   test %dl, %dl\n   jz .Lzstd_huff_x64_fail\n"
+    "movzbl %dh, %eax\n   mov %al, (%r12)\n   inc %r12\n"
+    "movzbl %dl, %ecx\n   add %ecx, %r10d\n"
+    "dec %r13\n   jz .Lzstd_huff_x64_done_ok\n"
+    "mov $64, %eax\n   sub %r15d, %eax\n   cmp %eax, %r10d\n"
+    "jbe .Lzstd_huff_x64_look\n"
+    "jmp .Lzstd_huff_x64_loop\n"
+    ".Lzstd_huff_x64_done_ok:\n"
     "xor %eax, %eax\n"
     ".Lzstd_huff_x64_done:\n"
     "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
@@ -6497,10 +6503,168 @@ __asm__(
     ASM_RET
     ASM_END(zstd_huffman_stream)
 
-    /* Four Huffman streams: jump table then four zstd_huffman_stream calls. */
+    /* Four Huffman streams. Table log 11 and four slices of at least
+       eight bytes take Facebook's 4X1 walker: four left-justified bit
+       containers, five symbols apiece, a bsf reload. Anything smaller
+       falls back to four zstd_huffman_stream calls. Dest registers stay
+       in rsi/rbx/rcx/rdi so the symbol in %ah is encodable. */
+#define ZSTD_HUF4_GET(bits, var) \
+    "mov $53, %" var "\n   shrx %" var ", %" bits ", %" var "\n   movzwl (%r14,%" var ",2), %" var "d\n"
+#define ZSTD_HUF4_DEC(bits, var, op, off) \
+    "mov %" var ", %rax\n   shlx %" var ", %" bits ", %" bits "\n   movb %ah, " off "(%" op ")\n"
+#define ZSTD_HUF4_NEXT(bits, var, op, off) \
+    ZSTD_HUF4_DEC(bits, var, op, off) \
+    ZSTD_HUF4_GET(bits, var)
+#define ZSTD_HUF4_RELOAD(bits, op, ip) \
+    "bsf %" bits ", %" bits "\n   mov %" bits ", %rax\n   and $7, %eax\n   shr $3, %" bits "\n" \
+    "lea 5(%" op "), %" op "\n   sub %" bits ", %" ip "\n" \
+    "mov (%" ip "), %" bits "\n   or $1, %" bits "\n   shlx %rax, %" bits ", %" bits "\n"
+#define ZSTD_HUF4_INIT(ip, bits) \
+    "movzbl 7(%" ip "), %eax\n   test %al, %al\n   jz .Lzstd_huff4_x64_ffail\n" \
+    "bsr %eax, %ecx\n   mov $8, %eax\n   sub %ecx, %eax\n" \
+    "mov (%" ip "), %" bits "\n   or $1, %" bits "\n   shlx %rax, %" bits ", %" bits "\n"
+#define ZSTD_HUF4_TAIL(tag, opoff, eoff, ipoff, boff, startoff, lastoff) \
+    "mov " opoff "(%rsp), %rdi\n   mov " eoff "(%rsp), %rsi\n" \
+    "cmp %rsi, %rdi\n   je .Lzstd_huff4_x64_" tag "e\n" \
+    "mov " boff "(%rsp), %rcx\n   bsf %rcx, %rax\n   mov %eax, %r10d\n" \
+    "mov " ipoff "(%rsp), %r11\n   mov (%r11), %rbx\n" \
+    "mov " startoff "(%rsp), %rbp\n   mov " lastoff "(%rsp), %r9\n" \
+    "lea 8(%rbp), %r8\n" \
+    ".Lzstd_huff4_x64_" tag "l:\n" \
+    "cmp %rsi, %rdi\n   je .Lzstd_huff4_x64_" tag "e\n" \
+    "mov $53, %eax\n   cmp %eax, %r10d\n   jbe .Lzstd_huff4_x64_" tag "k\n" \
+    "cmp $64, %r10d\n   ja .Lzstd_huff4_x64_ffail\n" \
+    "cmp %r8, %r11\n   jae .Lzstd_huff4_x64_" tag "f\n" \
+    "cmp %rbp, %r11\n   je .Lzstd_huff4_x64_" tag "k\n" \
+    "mov %r10d, %eax\n   shr $3, %eax\n   mov %r11, %rcx\n   sub %rax, %rcx\n" \
+    "cmp %rbp, %rcx\n   jae .Lzstd_huff4_x64_" tag "o\n" \
+    "mov %r11, %rax\n   sub %rbp, %rax\n   mov %rbp, %rcx\n" \
+    ".Lzstd_huff4_x64_" tag "o:\n" \
+    "mov %rcx, %r11\n   shl $3, %eax\n   sub %eax, %r10d\n" \
+    "mov %r9, %rcx\n   sub %r11, %rcx\n   cmp $8, %rcx\n   jb .Lzstd_huff4_x64_" tag "p\n" \
+    "mov (%r11), %rbx\n   jmp .Lzstd_huff4_x64_" tag "k\n" \
+    ".Lzstd_huff4_x64_" tag "f:\n" \
+    "mov %r10, %rax\n   shr $3, %rax\n   sub %rax, %r11\n   and $7, %r10d\n" \
+    "mov (%r11), %rbx\n   jmp .Lzstd_huff4_x64_" tag "k\n" \
+    ".Lzstd_huff4_x64_" tag "p:\n" \
+    "xor %ebx, %ebx\n   xor %edx, %edx\n" \
+    ".Lzstd_huff4_x64_" tag "q:\n" \
+    "cmp %rcx, %rdx\n   jae .Lzstd_huff4_x64_" tag "k\n" \
+    "movzbl (%r11,%rdx), %eax\n   mov %edx, %r15d\n   shl $3, %r15d\n" \
+    "xchg %ecx, %r15d\n   shl %cl, %rax\n   xchg %ecx, %r15d\n" \
+    "or %rax, %rbx\n   inc %rdx\n" \
+    "jmp .Lzstd_huff4_x64_" tag "q\n" \
+    ".Lzstd_huff4_x64_" tag "k:\n" \
+    "cmp $64, %r10d\n   jae .Lzstd_huff4_x64_ffail\n" \
+    "shlx %r10, %rbx, %rax\n   shr $53, %rax\n" \
+    "movzwl (%r14,%rax,2), %eax\n   test %al, %al\n   jz .Lzstd_huff4_x64_ffail\n" \
+    "movb %ah, (%rdi)\n   inc %rdi\n   movzbl %al, %ecx\n   add %ecx, %r10d\n" \
+    "jmp .Lzstd_huff4_x64_" tag "l\n" \
+    ".Lzstd_huff4_x64_" tag "e:\n"
     ASM_FUNC(zstd_huffman_4x)
     "test %rsi, %rsi\n   jz .Lzstd_huff4_x64_ok0\n"
     "cmp $10, %rcx\n   jb .Lzstd_huff4_x64_bad0\n"
+    "cmp $11, %r9\n   jne .Lzstd_huff4_x64_slow0\n"
+    "movzwl (%rdx), %eax\n   cmp $8, %eax\n   jb .Lzstd_huff4_x64_slow0\n"
+    "mov %eax, %r10d\n"
+    "movzwl 2(%rdx), %eax\n   cmp $8, %eax\n   jb .Lzstd_huff4_x64_slow0\n"
+    "add %eax, %r10d\n"
+    "movzwl 4(%rdx), %eax\n   cmp $8, %eax\n   jb .Lzstd_huff4_x64_slow0\n"
+    "add %eax, %r10d\n"
+    "add $6, %r10\n   cmp %rcx, %r10\n   ja .Lzstd_huff4_x64_bad0\n"
+    "mov %rcx, %rax\n   sub %r10, %rax\n   cmp $8, %rax\n   jb .Lzstd_huff4_x64_slow0\n"
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "sub $240, %rsp\n"
+    "mov %rdi, (%rsp)\n   mov %rsi, 8(%rsp)\n   mov %rdx, 16(%rsp)\n"
+    "mov %rcx, 24(%rsp)\n   mov %r8, %r14\n   mov %rdx, 80(%rsp)\n"
+    "lea (%rdi,%rsi), %rax\n   mov %rax, 72(%rsp)\n"
+    "mov 16(%rsp), %r10\n"
+    "lea 6(%r10), %r11\n   mov %r11, 192(%rsp)\n"
+    "movzwl (%r10), %eax\n   add %rax, %r11\n   mov %r11, 200(%rsp)\n   lea -8(%r11), %r8\n"
+    "movzwl 2(%r10), %eax\n   add %rax, %r11\n   mov %r11, 208(%rsp)\n   lea -8(%r11), %rax\n   mov %rax, 88(%rsp)\n"
+    "movzwl 4(%r10), %eax\n   add %rax, %r11\n   mov %r11, 216(%rsp)\n   lea -8(%r11), %rax\n   mov %rax, 96(%rsp)\n"
+    "mov 24(%rsp), %rax\n   add %r10, %rax\n   mov %rax, 224(%rsp)\n   lea -8(%rax), %rax\n   mov %rax, 104(%rsp)\n"
+    ZSTD_HUF4_INIT("r8", "rbp")
+    "mov 88(%rsp), %r9\n"
+    ZSTD_HUF4_INIT("r9", "rdx")
+    "mov 96(%rsp), %r10\n"
+    ZSTD_HUF4_INIT("r10", "r12")
+    "mov 104(%rsp), %r11\n"
+    ZSTD_HUF4_INIT("r11", "r13")
+    "mov (%rsp), %rsi\n   mov 8(%rsp), %rax\n   lea 3(%rax), %r9\n   shr $2, %r9\n"
+    "lea (%rsi,%r9), %rbx\n   mov %rbx, 48(%rsp)\n"
+    "lea (%rbx,%r9), %rcx\n   mov %rcx, 56(%rsp)\n"
+    "lea (%rcx,%r9), %rdi\n   mov %rdi, 64(%rsp)\n"
+    "jmp .Lzstd_huff4_x64_more\n"
+    ".balign 64\n"
+    ".Lzstd_huff4_x64_loop:\n"
+    ZSTD_HUF4_NEXT("rbp", "r15", "rsi", "0")
+    ZSTD_HUF4_NEXT("rdx", "r9", "rbx", "0")
+    ZSTD_HUF4_NEXT("r12", "r10", "rcx", "0")
+    ZSTD_HUF4_NEXT("r13", "r11", "rdi", "0")
+    ZSTD_HUF4_NEXT("rbp", "r15", "rsi", "1")
+    ZSTD_HUF4_NEXT("rdx", "r9", "rbx", "1")
+    ZSTD_HUF4_NEXT("r12", "r10", "rcx", "1")
+    ZSTD_HUF4_NEXT("r13", "r11", "rdi", "1")
+    ZSTD_HUF4_NEXT("rbp", "r15", "rsi", "2")
+    ZSTD_HUF4_NEXT("rdx", "r9", "rbx", "2")
+    ZSTD_HUF4_NEXT("r12", "r10", "rcx", "2")
+    ZSTD_HUF4_NEXT("r13", "r11", "rdi", "2")
+    ZSTD_HUF4_NEXT("rbp", "r15", "rsi", "3")
+    ZSTD_HUF4_NEXT("rdx", "r9", "rbx", "3")
+    ZSTD_HUF4_NEXT("r12", "r10", "rcx", "3")
+    ZSTD_HUF4_NEXT("r13", "r11", "rdi", "3")
+    ZSTD_HUF4_DEC("rbp", "r15", "rsi", "4")
+    ZSTD_HUF4_DEC("rdx", "r9", "rbx", "4")
+    ZSTD_HUF4_DEC("r12", "r10", "rcx", "4")
+    ZSTD_HUF4_DEC("r13", "r11", "rdi", "4")
+    "mov 88(%rsp), %r9\n   mov 96(%rsp), %r10\n   mov 104(%rsp), %r11\n"
+    ZSTD_HUF4_RELOAD("rbp", "rsi", "r8")
+    ZSTD_HUF4_GET("rbp", "r15")
+    ZSTD_HUF4_RELOAD("rdx", "rbx", "r9")
+    "mov %r9, 88(%rsp)\n"
+    ZSTD_HUF4_GET("rdx", "r9")
+    ZSTD_HUF4_RELOAD("r12", "rcx", "r10")
+    "mov %r10, 96(%rsp)\n"
+    ZSTD_HUF4_GET("r12", "r10")
+    ZSTD_HUF4_RELOAD("r13", "rdi", "r11")
+    "mov %r11, 104(%rsp)\n"
+    ZSTD_HUF4_GET("r13", "r11")
+    ".Lzstd_huff4_x64_check:\n"
+    "mov 72(%rsp), %rax\n   sub %rdi, %rax\n   cmp $5, %rax\n   jb .Lzstd_huff4_x64_tails\n"
+    "mov %r8, %rax\n   sub 80(%rsp), %rax\n   cmp $7, %rax\n   jb .Lzstd_huff4_x64_tails\n"
+    "cmp 88(%rsp), %r8\n   ja .Lzstd_huff4_x64_ffail\n"
+    "mov 88(%rsp), %rax\n   cmp 96(%rsp), %rax\n   ja .Lzstd_huff4_x64_ffail\n"
+    "mov 96(%rsp), %rax\n   cmp 104(%rsp), %rax\n   ja .Lzstd_huff4_x64_ffail\n"
+    "jmp .Lzstd_huff4_x64_loop\n"
+    ".Lzstd_huff4_x64_more:\n"
+    "mov 72(%rsp), %rax\n   sub %rdi, %rax\n   cmp $5, %rax\n   jb .Lzstd_huff4_x64_tails\n"
+    "mov %r8, %rax\n   sub 80(%rsp), %rax\n   cmp $7, %rax\n   jb .Lzstd_huff4_x64_tails\n"
+    "cmp 88(%rsp), %r8\n   ja .Lzstd_huff4_x64_ffail\n"
+    "mov 88(%rsp), %rax\n   cmp 96(%rsp), %rax\n   ja .Lzstd_huff4_x64_ffail\n"
+    "mov 96(%rsp), %rax\n   cmp 104(%rsp), %rax\n   ja .Lzstd_huff4_x64_ffail\n"
+    ZSTD_HUF4_GET("rbp", "r15")
+    ZSTD_HUF4_GET("rdx", "r9")
+    ZSTD_HUF4_GET("r12", "r10")
+    ZSTD_HUF4_GET("r13", "r11")
+    "jmp .Lzstd_huff4_x64_loop\n"
+    ".Lzstd_huff4_x64_tails:\n"
+    "mov %rsi, 112(%rsp)\n   mov %rbx, 120(%rsp)\n"
+    "mov %rcx, 128(%rsp)\n   mov %rdi, 136(%rsp)\n"
+    "mov %rbp, 144(%rsp)\n   mov %rdx, 152(%rsp)\n"
+    "mov %r12, 160(%rsp)\n   mov %r13, 168(%rsp)\n"
+    "mov %r8, 176(%rsp)\n"
+    ZSTD_HUF4_TAIL("a", "112", "48", "176", "144", "192", "200")
+    ZSTD_HUF4_TAIL("b", "120", "56", "88", "152", "200", "208")
+    ZSTD_HUF4_TAIL("c", "128", "64", "96", "160", "208", "216")
+    ZSTD_HUF4_TAIL("d", "136", "72", "104", "168", "216", "224")
+    "xor %eax, %eax\n"
+    ".Lzstd_huff4_x64_fdone:\n"
+    "add $240, %rsp\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
+    ASM_RET
+    ".Lzstd_huff4_x64_ffail:\n   mov $-1, %eax\n   jmp .Lzstd_huff4_x64_fdone\n"
+    ".Lzstd_huff4_x64_slow0:\n"
     "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
     "sub $40, %rsp\n"
     "mov %rdi, %r12\n"
@@ -6543,6 +6707,12 @@ __asm__(
     ".Lzstd_huff4_x64_bad0:\n   mov $-1, %rax\n"
     ASM_RET
     ASM_END(zstd_huffman_4x)
+#undef ZSTD_HUF4_GET
+#undef ZSTD_HUF4_DEC
+#undef ZSTD_HUF4_NEXT
+#undef ZSTD_HUF4_RELOAD
+#undef ZSTD_HUF4_INIT
+#undef ZSTD_HUF4_TAIL
 
     /* Refill the sequence bitstream in place. A call to a label inside this
        STT_FUNC is an unannotated intra-function call and objtool refuses it,
@@ -6555,7 +6725,7 @@ __asm__(
        threshold. A mid-sequence refill is only for fat extra-bit totals. */
 #define ZSTD_SEQ_RELOAD \
     "cmp $64, %r14d\n   ja .Lzstd_seq_x64_fail\n" \
-    "cmp %rbp, %r15\n   jae 80f\n" \
+    "cmp 168(%rsp), %r15\n   jae 80f\n" \
     "mov %r8, (%rsp)\n   mov %r9, 8(%rsp)\n" \
     "mov %rsi, 128(%rsp)\n" \
     "mov %r10, 184(%rsp)\n   mov %r11, 192(%rsp)\n" \
@@ -6580,7 +6750,12 @@ __asm__(
        FSE cell[i] sits at table+8, eight bytes: next, extra, nbits, base.
        An RLE table has log 0 and that one cell at index 0, so the load
        is the same as a compressed table. The window already has room
-       for the block; this only writes it. */
+       for the block; this only writes it.
+       TODO: src8-3 is still about 0.85× host. This walker is fused cells
+       and always-refill; Huffman 4X1 is the host loop. The remaining
+       cut is fewer instructions per sequence here -- bound checks,
+       extra-bit GET, copy dispatch -- not another table layout. ARM
+       and RV still call get/reload. */
     ASM_FUNC(zstd_sequences_run)
     "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
     "sub $200, %rsp\n   mov %rdi, 96(%rsp)\n"
@@ -6599,7 +6774,7 @@ __asm__(
     "lea 136(%rsp), %rdi\n   call zstd_bits_open\n"
     "test %eax, %eax\n   jnz .Lzstd_seq_x64_fail\n"
     "mov 136(%rsp), %rbx\n   mov 144(%rsp), %r14\n   mov 152(%rsp), %r15\n"
-    "mov 168(%rsp), %rbp\n"
+    "mov 72(%rsp), %rbp\n"
     ".Lzstd_seq_x64_init:\n"
     "mov 40(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
     ZSTD_SEQ_GET "mov %edx, 80(%rsp)\n"
@@ -6607,24 +6782,21 @@ __asm__(
     ZSTD_SEQ_GET "mov %edx, 84(%rsp)\n"
     "mov 56(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
     ZSTD_SEQ_GET "mov %edx, 88(%rsp)\n"
-    ZSTD_SEQ_RELOAD
+    "addq $8, 40(%rsp)\n   addq $8, 48(%rsp)\n   addq $8, 56(%rsp)\n"
+    ".balign 64\n"
     ".Lzstd_seq_x64_loop:\n"
     ZSTD_SEQ_RELOAD
     "mov 48(%rsp), %rdi\n   mov 84(%rsp), %eax\n"
-    "mov 8(%rdi,%rax,8), %r10\n"
+    "mov (%rdi,%rax,8), %r10\n"
     "mov 56(%rsp), %rdi\n   mov 88(%rsp), %eax\n"
-    "mov 8(%rdi,%rax,8), %r9\n"
+    "mov (%rdi,%rax,8), %r9\n"
     "mov 40(%rsp), %rdi\n   mov 80(%rsp), %eax\n"
-    "mov 8(%rdi,%rax,8), %r8\n"
+    "mov (%rdi,%rax,8), %r8\n"
     "mov %r10d, %eax\n   shr $16, %eax\n   movzbl %al, %eax\n"
-    "mov %r9d, %ecx\n   shr $16, %ecx\n   movzbl %cl, %ecx\n"
-    "add %eax, %ecx\n"
-    "mov %r8d, %edx\n   shr $16, %edx\n   movzbl %dl, %edx\n"
-    "add %edx, %ecx\n   mov %ecx, 128(%rsp)\n"
     ZSTD_SEQ_GET "mov %rdx, %r11\n"
     "mov %r9d, %eax\n   shr $16, %eax\n   movzbl %al, %eax\n"
     ZSTD_SEQ_GET "mov %rdx, %rsi\n"
-    "cmpl $31, 128(%rsp)\n   jb .Lzstd_seq_x64_llget\n"
+    "cmp $22, %r14d\n   jbe .Lzstd_seq_x64_llget\n"
     ZSTD_SEQ_RELOAD
     ".Lzstd_seq_x64_llget:\n"
     "mov %r8d, %eax\n   shr $16, %eax\n   movzbl %al, %eax\n"
@@ -6666,7 +6838,7 @@ __asm__(
     "mov (%rdi), %edx\n   mov %edx, 4(%rdi)\n   mov %eax, (%rdi)\n"
     ".Lzstd_seq_x64_offok:\n"
     "mov %rax, 104(%rsp)\n"
-    "cmpq $1, 72(%rsp)\n   je .Lzstd_seq_x64_lits\n"
+    "cmp $1, %rbp\n   je .Lzstd_seq_x64_lits\n"
     "mov %r8d, %eax\n   shr $24, %eax\n"
     ZSTD_SEQ_GET
     "movzwl %r8w, %esi\n   add %edx, %esi\n   mov %esi, 80(%rsp)\n"
@@ -6679,7 +6851,6 @@ __asm__(
     ".Lzstd_seq_x64_lits:\n"
     "mov 120(%rsp), %r8\n"
     "lea (%r13,%r8), %rdx\n   cmp 32(%rsp), %rdx\n   ja .Lzstd_seq_x64_fail\n"
-    "test %r8, %r8\n   jz .Lzstd_seq_x64_match\n"
     "cmp $32, %r8\n   jae .Lzstd_seq_x64_litlong\n"
     ASM_USERSPACE_WIDE(
     "movdqu (%r13), %xmm0\n   movdqu 16(%r13), %xmm1\n"
@@ -6728,11 +6899,10 @@ __asm__(
     "jmp .Lzstd_seq_x64_after\n"
     ".Lzstd_seq_x64_overlap:\n"
     "mov %r12, %rdi\n"
-    "neg %rsi\n   prefetcht0 (%rdi,%rsi,1)\n   neg %rsi\n"
     "call memory_copy_match\n"
     "add 112(%rsp), %r12\n"
     ".Lzstd_seq_x64_after:\n"
-    "decq 72(%rsp)\n   jnz .Lzstd_seq_x64_loop\n"
+    "dec %rbp\n   jnz .Lzstd_seq_x64_loop\n"
     ".Lzstd_seq_x64_rest:\n"
     ZSTD_SEQ_RELOAD
     "mov 32(%rsp), %rdx\n   sub %r13, %rdx\n"
@@ -11577,8 +11747,8 @@ __asm__(
     ".Lzstd_huff_arm64_look:\n"
     "cmp w24, #64\n   b.hs .Lzstd_huff_arm64_fail\n"
     "lsl x0, x23, x24\n   mov x1, #64\n   sub x1, x1, x22\n   lsr x0, x0, x1\n"
-    "ldrh w0, [x21, x0, lsl #1]\n   lsr w1, w0, #8\n   cbz w1, .Lzstd_huff_arm64_fail\n"
-    "strb w0, [x19], #1\n   add w24, w24, w1\n"
+    "ldrh w0, [x21, x0, lsl #1]\n   and w1, w0, #255\n   cbz w1, .Lzstd_huff_arm64_fail\n"
+    "lsr w0, w0, #8\n   strb w0, [x19], #1\n   add w24, w24, w1\n"
     "subs x20, x20, #1\n   b.ne .Lzstd_huff_arm64_loop\n"
     "mov x0, xzr\n"
     ".Lzstd_huff_arm64_done:\n"
@@ -15722,8 +15892,8 @@ __asm__(
     "li t1, 64\n   bgeu s5, t1, .Lzstd_huff_rv_fail\n"
     "sll t0, s4, s5\n   li t1, 64\n   sub t1, t1, s3\n   srl t0, t0, t1\n"
     "slli t0, t0, 1\n   add t0, s2, t0\n   lhu t0, 0(t0)\n"
-    "srli t1, t0, 8\n   beqz t1, .Lzstd_huff_rv_fail\n"
-    "sb t0, 0(s0)\n   addi s0, s0, 1\n   add s5, s5, t1\n"
+    "andi t1, t0, 255\n   beqz t1, .Lzstd_huff_rv_fail\n"
+    "srli t0, t0, 8\n   sb t0, 0(s0)\n   addi s0, s0, 1\n   add s5, s5, t1\n"
     "addi s1, s1, -1\n   bnez s1, .Lzstd_huff_rv_loop\n"
     "li a0, 0\n"
     ".Lzstd_huff_rv_done:\n"
