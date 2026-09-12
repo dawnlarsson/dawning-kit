@@ -4101,6 +4101,7 @@ static fn expand_substitution_body(string_address command, bool capture)
         if (!string_first_of(command, '\n'))
         {
                 shell_tail_line_requested = true;
+                lex_physical_newline(false);
                 run_line(command);
         }
         else
@@ -4116,6 +4117,8 @@ static fn expand_substitution_body(string_address command, bool capture)
                                 address_to stop = end;
                                 stop++;
                         }
+                        else
+                                lex_physical_newline(false);
 
                         if (string_get(at))
                                 run_line(at);

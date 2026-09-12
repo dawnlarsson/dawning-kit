@@ -267,9 +267,19 @@ static p8 address_to parse_pending;
 static positive parse_pending_room;
 static positive parse_pending_used;
 
-// A terminal backslash removed itself and only asked for the next physical
-// line. At EOF an empty next line completes that command; an open quote or
-// substitution remains unfinished and is a syntax error instead.
+/* Bash 5.2 keeps at most sixteen here-documents waiting for a body. lima
+   reports `maximum here-document count exceeded` and leaves 2. Dash has no
+   such cap. A document whose body has already been read is not pending, so
+   forty cats on forty lines still run. */
+#define PARSE_HERE_PENDING_MAX 16
+static bool parse_here_capped;
+
+fn lex_take_physical_newline();
+
+// A terminal backslash-newline removed itself and only asked for the next
+// physical line. At EOF an empty next line completes that command. A
+// backslash that met EOF with no newline never asked: it stayed in the word.
+// An open quote or substitution remains unfinished and is a syntax error.
 bool parse_eof_can_complete()
 {
         return parse_pending_used && !lex_unfinished(parse_pending);
@@ -285,6 +295,12 @@ fn parse_reset()
         here_taken = 0;
         here_used = 0;
         here_names_used = 0;
+        parse_here_capped = false;
+}
+
+bool parse_here_limit_exceeded()
+{
+        return parse_here_capped;
 }
 
 /*
@@ -516,6 +532,19 @@ static bool parse_here_register(string_address word, bool strip)
         positive start = here_names_used;
         positive reserve = string_length(word) + 1;
         here_document address_to document;
+
+        if (shell_bash_compat &&
+            here_wanted - here_filled >= PARSE_HERE_PENDING_MAX)
+        {
+                if (!parse_here_capped)
+                {
+                        shell_syntax_where();
+                        log_error(str("maximum here-document count exceeded\n"));
+                        parse_here_capped = true;
+                }
+
+                return false;
+        }
 
         if (!shell_array_room(here_documents, here_document_room, (positive)here_wanted + 1) ||
             !shell_array_room(here_names, here_names_room, here_names_used + reserve))
@@ -882,6 +911,7 @@ bool parse_feed(string_address line)
         // The unfinished walk and the token walk read the same bytes. Skip
         // the first when a span of lex_closed already proves nothing on the
         // line can still be open.
+        lex_take_physical_newline();
         unfinished = lex_line_closed(line) ? LEX_COMPLETE : lex_unfinished(line);
 
         if (unfinished)

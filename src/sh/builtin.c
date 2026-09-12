@@ -14933,6 +14933,8 @@ static b32 shell_source_execute(p8 address_to text, positive filled,
                         shell_verbose_line(text + at);
                         shell_verbose_from_string = held;
                 }
+                if (!newline)
+                        lex_physical_newline(false);
                 run_line(text + at);
                 if (shell_syntax_generation != syntax)
                         break;

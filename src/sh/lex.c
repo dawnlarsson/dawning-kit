@@ -117,6 +117,25 @@ PURE positive shell_line_now();
 fn parse_nest_enter();
 fn parse_nest_leave();
 
+/* Whether the physical line being fed ended with a newline. POSIX
+   continuation is backslash-newline; a backslash that meets EOF with nothing
+   after it is a byte of the word. Bash synthesizes that newline for a script
+   or stdin, which the reader asks for by leaving this true. A -c string,
+   a sourced file, eval, and dash do not. */
+static bool lex_line_newline = true;
+static bool lex_scan_newline = true;
+
+fn lex_physical_newline(bool newline)
+{
+        lex_line_newline = newline;
+}
+
+fn lex_take_physical_newline()
+{
+        lex_scan_newline = lex_line_newline;
+        lex_line_newline = true;
+}
+
 static fn lex_nest_enter(lex_frame address_to frame)
 {
         address_to frame = lex_context;
@@ -371,8 +390,12 @@ static string_address parse_here_skip_bodies(string_address line,
                                               string_address newline);
 
 /* The expander enforces this same ceiling when it later evaluates the nested
-   words.  The earlier syntax walk must not be the unbounded recursive path. */
-#define EXPAND_DEPTH 64
+   words.  The earlier syntax walk must not be the unbounded recursive path.
+   Nested command substitutions a hundred and fifty deep work on lima 5.2.32;
+   sixty-four made the walk return unclosed and the line read as unexpected
+   EOF. Two hundred and fifty-six is enough for that family and still a bound
+   on C-stack recursion. */
+#define EXPAND_DEPTH 256
 
 // The three bytes that separate words and lines. Asked in five places, which
 // used to be five spellings of the same three comparisons.
@@ -1006,6 +1029,7 @@ b32 lex_unfinished(string_address line)
         // same rule lex_line uses -- echo a#b is one word and not half of one.
         bool fresh = true;
         bool comments = lex_comments_on();
+        bool newline = lex_scan_newline;
 
         lex_prepare();
 
@@ -1070,7 +1094,7 @@ b32 lex_unfinished(string_address line)
                 if (c == '\\')
                 {
                         if (!string_get(step + 1))
-                                return LEX_CONTINUES;
+                                return newline ? LEX_CONTINUES : LEX_COMPLETE;
 
                         step += 2;
                         continue;

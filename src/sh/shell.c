@@ -1354,6 +1354,22 @@ static fn run_line_inner(string_address line)
                 parse_here_line(line);
         else if (!parse_feed(line))
         {
+                if (parse_here_limit_exceeded())
+                {
+                        shell_status = 2;
+                        parse_reset();
+                        shell_more = false;
+                        shell_syntax_generation += 2;
+                        if (shell_run_depth == 1 && !shell_source_depth)
+                        {
+                                if (string_is(shell_option_flags, 'c'))
+                                        exec_child_leave(shell_status);
+                                if (!shell_is_interactive)
+                                        expand_fatal_status(shell_status);
+                        }
+                        return;
+                }
+
                 log_error(str("Command line too long\n"));
                 parse_reset();
                 shell_more = false;
@@ -1378,6 +1394,22 @@ static fn run_line_inner(string_address line)
 
         if (parse_state)
         {
+                if (parse_here_limit_exceeded())
+                {
+                        shell_status = 2;
+                        parse_reset();
+                        shell_more = false;
+                        shell_syntax_generation += 2;
+                        if (shell_run_depth == 1 && !shell_source_depth)
+                        {
+                                if (string_is(shell_option_flags, 'c'))
+                                        exec_child_leave(shell_status);
+                                if (!shell_is_interactive)
+                                        expand_fatal_status(shell_status);
+                        }
+                        return;
+                }
+
                 parse_token address_to tok = parse_look(0);
                 bool compound = parse_state == PARSE_COMPOUND_SYNTAX &&
                                 shell_bash_compat;
@@ -1549,6 +1581,7 @@ fn run_lines(string_address text)
         {
                 if (shell_verbose_eval_lines && string_get(text))
                         shell_verbose_line(text);
+                lex_physical_newline(false);
                 run_line(text);
                 return;
         }
@@ -1575,6 +1608,8 @@ fn run_lines(string_address text)
                         address_to stop = end;
                         stop++;
                 }
+                else
+                        lex_physical_newline(false);
 
                 // An empty line is a line: it is a body line of a
                 // here-document, and it ends a command a backslash held open.

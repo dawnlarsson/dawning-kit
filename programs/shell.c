@@ -943,6 +943,7 @@ b32 main()
                 {
                         shell_verbose_from_string = true;
                         shell_verbose_line(command);
+                        lex_physical_newline(false);
                         run_line(command);
                 }
                 else
@@ -965,6 +966,7 @@ b32 main()
                                 if (at < length)
                                 {
                                         shell_verbose_line(held_command + at);
+                                        lex_physical_newline(false);
                                         run_line(held_command + at);
                                 }
                         }
@@ -1098,6 +1100,11 @@ b32 main()
                 {
                         shell_verbose_from_string = false;
                         shell_verbose_line(ready);
+                        // Bash treats EOF on a script or stdin as a newline,
+                        // so a trailing backslash is still a continuation.
+                        // dash leaves the backslash as a byte of the word.
+                        if (!shell_bash_compat)
+                                lex_physical_newline(false);
                         run_line(ready);
                 }
         }
