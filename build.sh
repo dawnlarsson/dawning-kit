@@ -394,13 +394,39 @@ size "$image"
 #
 #       This comment used to say the image booted on the default too. It does
 #       not, and did not; see kernel/profile/arch/x64.
+#
+#       xres/yres are the visible screen in backing pixels. Canvas takes
+#       seventy percent of that at the panel's refresh; cocoa then sizes
+#       the window in points (pixels / backingScaleFactor) and centres it,
+#       which is seventy percent of the DIP screen on a Retina panel.
+gpu_device=virtio-gpu-pci
+screen_px=$(osascript -l JavaScript -e '
+ObjC.import("AppKit");
+var s = $.NSScreen.mainScreen;
+if (!s) throw "no screen";
+var f = s.visibleFrame;
+var b = s.backingScaleFactor;
+Math.round(f.size.width * b) + " " + Math.round(f.size.height * b);
+' 2>/dev/null || true)
+xres=${screen_px%% *}
+yres=${screen_px#* }
+case "$xres" in
+*[!0-9]* | "") xres= ;;
+esac
+case "$yres" in
+*[!0-9]* | "") yres= ;;
+esac
+if [ -n "$xres" ] && [ -n "$yres" ] && [ "$xres" -ge 640 ] && [ "$yres" -ge 480 ]; then
+        gpu_device=virtio-gpu-pci,xres=$xres,yres=$yres
+fi
+
 set -- \
         -m 2G \
         -smp 2 \
         -cpu Nehalem \
         -kernel "$image" \
         -vga none \
-        -device virtio-gpu-pci \
+        -device "$gpu_device" \
         -device qemu-xhci -device usb-tablet -device usb-kbd \
         -no-reboot
 

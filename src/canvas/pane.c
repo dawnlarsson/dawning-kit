@@ -1493,9 +1493,45 @@ static void window_release(struct file *file)
         changed for a couple of seconds. An idle desktop takes no wakeups, and
         a program drawing every frame makes no calls; the one call is the first
         change after the compositor went to sleep.
+
+        The period is the fastest output's refresh. Sixteen milliseconds is
+        60 Hz, which is the wrong answer on a 120 Hz panel and used to be
+        the only answer this had.
 */
-#define CANVAS_FRAME_MS 16
-#define CANVAS_IDLE_FRAMES 120
+#define CANVAS_FRAME_FALLBACK_NS (NSEC_PER_SEC / 60)
+#define CANVAS_IDLE_NS (2ULL * NSEC_PER_SEC)
+
+static void desktop_sync_frame_ns(void)
+{
+        struct output *output;
+        unsigned int hz = 0;
+        u64 ns;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                unsigned int refresh;
+
+                if (!output->mode_set || !output->mode_set->mode)
+                        continue;
+
+                refresh = drm_mode_vrefresh(output->mode_set->mode);
+                if (refresh > hz)
+                        hz = refresh;
+        }
+
+        ns = hz ? NSEC_PER_SEC / hz : CANVAS_FRAME_FALLBACK_NS;
+        if (!ns)
+                ns = CANVAS_FRAME_FALLBACK_NS;
+
+        WRITE_ONCE(desktop.frame_ns, ns);
+}
+
+static u64 canvas_frame_ns(void)
+{
+        u64 ns = READ_ONCE(desktop.frame_ns);
+
+        return ns ? ns : CANVAS_FRAME_FALLBACK_NS;
+}
 
 static void desktop_set_awake(_Bool awake)
 {
@@ -1516,7 +1552,7 @@ static enum hrtimer_restart desktop_frame(struct hrtimer *timer)
         atomic_set(&desktop.frame_pending, 1);
         canvas_thread_wake();
 
-        hrtimer_forward_now(timer, ms_to_ktime(CANVAS_FRAME_MS));
+        hrtimer_forward_now(timer, ns_to_ktime(canvas_frame_ns()));
         return HRTIMER_RESTART;
 }
 
@@ -1538,7 +1574,8 @@ static void desktop_watch(void)
 
         desktop_set_awake(true);
         desktop.idle_frames = 0;
-        hrtimer_start(&desktop.frame, ms_to_ktime(CANVAS_FRAME_MS), HRTIMER_MODE_REL);
+        hrtimer_start(&desktop.frame, ns_to_ktime(canvas_frame_ns()),
+                      HRTIMER_MODE_REL);
 }
 
 static _Bool desktop_sequence_changed(void)
@@ -1597,7 +1634,7 @@ static void desktop_frame_pass(void)
         {
                 desktop.idle_frames = 0;
         }
-        else if (++desktop.idle_frames > CANVAS_IDLE_FRAMES)
+        else if ((u64)++desktop.idle_frames * canvas_frame_ns() >= CANVAS_IDLE_NS)
         {
                 desktop_set_awake(false);
 

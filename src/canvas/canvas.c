@@ -295,6 +295,7 @@ static struct desktop
 
         struct hrtimer frame;
         atomic_t frame_pending;
+        u64 frame_ns;
 
         // Unconsumed wheel distance in v120 units: 120 is one detent.
         // Positive is back through what has already gone past.

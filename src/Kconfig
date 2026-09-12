@@ -129,9 +129,12 @@ menu "Moonwater"
           5120x1440, so taking the preferred one leaves most of the panel
           dark.
 
-          A virtual display is halved regardless, whatever this says: its
-          screen belongs to a host that is still using it, and filling it
-          takes the machine the emulator is running on with it. Which
-          displays are virtual is decided by the driver's name, not by
-          anything the display claims about itself.
+          The largest mode is taken at the highest refresh it lists. A
+          guest is seventy percent of the host screen in the pixels the
+          host already scaled -- cocoa divides by the backing factor and
+          centres the window, so a Retina Mac is seventy percent of the
+          DIP screen. The mode is one the connector already listed, at
+          that size's highest refresh: a made-up CVT line has no pixel
+          clock for virtio-gpu, and the display then waits forever for a
+          vblank that never arrives.
 endmenu # Moonwater

@@ -40,8 +40,13 @@ static PURE unsigned int output_mode_count(struct drm_connector *connector)
         return count;
 }
 
-static struct drm_display_mode *output_best_mode(struct drm_connector *connector,
-                                                 unsigned int want_width)
+/*
+        Highest resolution, and at that size the highest refresh.
+
+        Same size at 60 Hz and 120 Hz is the 120 Hz entry: that is what a
+        Mac's virtio EDID actually offers, and what the cursor needs.
+*/
+static struct drm_display_mode *output_best_mode(struct drm_connector *connector)
 {
         struct drm_display_mode *mode, *best = NULL;
         int best_score = 0, best_refresh = 0;
@@ -54,14 +59,7 @@ static struct drm_display_mode *output_best_mode(struct drm_connector *connector
                         continue;
 
                 refresh = drm_mode_vrefresh(mode);
-
-                /*
-                        Nearest to the width asked for rather than the largest
-                        under it: a mode list with a hole in it would otherwise
-                        drop a long way below half, and half is the point.
-                */
-                score = want_width ? -abs(mode->hdisplay - (int)want_width)
-                                   : mode->hdisplay * mode->vdisplay;
+                score = mode->hdisplay * mode->vdisplay;
                 if (best && (score < best_score ||
                              (score == best_score && refresh <= best_refresh)))
                         continue;
@@ -72,6 +70,174 @@ static struct drm_display_mode *output_best_mode(struct drm_connector *connector
         }
 
         return best;
+}
+
+/*
+        The host's idea of the screen: the preferred mode, or the largest
+        if the connector did not mark one.
+*/
+static struct drm_display_mode *output_screen_mode(struct drm_connector *connector)
+{
+        struct drm_display_mode *mode, *best = NULL;
+        int best_score = 0, best_refresh = 0;
+
+        list_for_each_entry(mode, &connector->modes, head)
+        {
+                int score, refresh;
+
+                if (!(mode->type & DRM_MODE_TYPE_PREFERRED))
+                        continue;
+                if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
+                        continue;
+
+                refresh = drm_mode_vrefresh(mode);
+                score = mode->hdisplay * mode->vdisplay;
+                if (best && (score < best_score ||
+                             (score == best_score && refresh <= best_refresh)))
+                        continue;
+
+                best = mode;
+                best_score = score;
+                best_refresh = refresh;
+        }
+
+        return best ? best : output_best_mode(connector);
+}
+
+/*
+        The same size, at the highest refresh that size lists.
+
+        Restoring a running size used to take the first match, which on a
+        120 Hz EDID is often the 60 Hz established timing of the same
+        width and height.
+*/
+static struct drm_display_mode *output_mode_wh(struct drm_connector *connector,
+                                               unsigned int width,
+                                               unsigned int height)
+{
+        struct drm_display_mode *mode, *best = NULL;
+        int best_refresh = -1;
+
+        list_for_each_entry(mode, &connector->modes, head)
+        {
+                int refresh;
+
+                if (mode->hdisplay != (int)width || mode->vdisplay != (int)height)
+                        continue;
+                if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
+                        continue;
+
+                refresh = drm_mode_vrefresh(mode);
+                if (best && refresh <= best_refresh)
+                        continue;
+
+                best = mode;
+                best_refresh = refresh;
+        }
+
+        return best;
+}
+
+static struct drm_display_mode *output_mode_under(struct drm_connector *connector,
+                                                  int width, int height)
+{
+        struct drm_display_mode *mode, *best = NULL;
+        int best_score = 0, best_refresh = 0;
+
+        list_for_each_entry(mode, &connector->modes, head)
+        {
+                int score, refresh;
+
+                if (mode->hdisplay > width || mode->vdisplay > height)
+                        continue;
+                if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
+                        continue;
+
+                refresh = drm_mode_vrefresh(mode);
+                score = mode->hdisplay * mode->vdisplay;
+                if (best && (score < best_score ||
+                             (score == best_score && refresh <= best_refresh)))
+                        continue;
+
+                best = mode;
+                best_score = score;
+                best_refresh = refresh;
+        }
+
+        return best;
+}
+
+/*
+        A copy of src with its CRTC timings filled, or nothing.
+
+        Connector modes leave crtc_clock at 0 until a modeset fills it.
+        virtio-gpu's vblank timer reads that field; 0 means no vblank, and
+        the next flip waits ten seconds then warns.
+*/
+static struct drm_display_mode *output_mode_take(struct drm_device *dev,
+                                                 const struct drm_display_mode *src)
+{
+        struct drm_display_mode *taken;
+
+        if (!src || src->clock <= 0)
+                return NULL;
+
+        taken = drm_mode_duplicate(dev, src);
+        if (!taken)
+                return NULL;
+
+        drm_mode_set_crtcinfo(taken, CRTC_INTERLACE_HALVE_V);
+        if (taken->crtc_clock <= 0)
+        {
+                drm_mode_destroy(dev, taken);
+                return NULL;
+        }
+
+        return taken;
+}
+
+/*
+        A guest is a window on somebody else's screen, so it cannot take the
+        whole of that screen. Seventy percent of the host, in the pixels the
+        host already scaled: cocoa then divides by the backing factor and
+        centres the window, which is seventy percent of the DIP screen on a
+        Retina panel.
+
+        The mode has to be one the connector already listed. A CVT line for
+        this size is a size virtio-gpu will scan out, but it arrives with
+        crtc_clock still 0, the CRTC never generates vblank, and the first
+        flip after the picture is on screen waits forever. The 120 Hz entry
+        of a listed size is still preferred over a 60 Hz established timing
+        of the same width and height.
+*/
+static struct drm_display_mode *output_guest_mode(struct drm_device *dev,
+                                                  struct drm_connector *connector)
+{
+        struct drm_display_mode *screen, *listed;
+        int w, h;
+
+        screen = output_screen_mode(connector);
+        if (!screen)
+                return NULL;
+
+        w = screen->hdisplay * 7 / 10;
+        h = screen->vdisplay * 7 / 10;
+        w &= ~1;
+        h &= ~1;
+        if (w < 2)
+                w = 2;
+        if (h < 2)
+                h = 2;
+
+        listed = output_mode_wh(connector, (unsigned int)w, (unsigned int)h);
+        if (listed)
+                return output_mode_take(dev, listed);
+
+        listed = output_mode_under(connector, w, h);
+        if (listed)
+                return output_mode_take(dev, listed);
+
+        return output_mode_take(dev, screen);
 }
 
 /*
@@ -90,48 +256,42 @@ static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
         if (drm_client_modeset_probe(client, 0, 0))
                 return -ENODEV;
 
-        if (!biggest)
-                return 0;
-
         mutex_lock(&client->modeset_mutex);
         mutex_lock(&dev->mode_config.mutex);
 
         drm_client_for_each_modeset(mode_set, client)
         {
+                struct drm_connector *connector;
                 struct drm_display_mode *want, *taken;
 
                 if (!mode_set->mode || !mode_set->num_connectors ||
                     !mode_set->connectors || !mode_set->connectors[0])
                         continue;
 
-                want = output_best_mode(mode_set->connectors[0], 0);
-
-                /*
-                        Half the width inside a guest, so the window this is
-                        drawn in leaves room for the machine around it. The
-                        largest mode is the right answer on a real panel and
-                        the wrong one when the panel belongs to a host that is
-                        still using it.
-                */
-                if (want && canvas_is_virtual(dev))
+                connector = mode_set->connectors[0];
+                if (biggest && canvas_is_virtual(dev))
                 {
-                        struct drm_display_mode *smaller =
-                            output_best_mode(mode_set->connectors[0],
-                                             (unsigned int)want->hdisplay / 2);
-
-                        if (smaller)
-                                want = smaller;
+                        taken = output_guest_mode(dev, connector);
+                        if (!taken)
+                                continue;
+                        if (drm_mode_equal(taken, mode_set->mode))
+                        {
+                                drm_mode_destroy(dev, taken);
+                                continue;
+                        }
                 }
-
-                if (!want || drm_mode_equal(want, mode_set->mode))
-                        continue;
-
-                // The modeset owns its mode, so this is a copy, not the
-                // connector's own entry.
-                taken = drm_mode_duplicate(dev, want);
-
-                if (!taken)
-                        continue;
+                else
+                {
+                        want = biggest ? output_best_mode(connector)
+                                       : output_mode_wh(connector,
+                                                        (unsigned int)mode_set->mode->hdisplay,
+                                                        (unsigned int)mode_set->mode->vdisplay);
+                        if (!want || drm_mode_equal(want, mode_set->mode))
+                                continue;
+                        taken = output_mode_take(dev, want);
+                        if (!taken)
+                                continue;
+                }
 
                 drm_mode_destroy(dev, mode_set->mode);
                 mode_set->mode = taken;
@@ -140,6 +300,7 @@ static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
         mutex_unlock(&dev->mode_config.mutex);
         mutex_unlock(&client->modeset_mutex);
 
+        desktop_sync_frame_ns();
         return 0;
 }
 
@@ -151,24 +312,6 @@ static struct output *output_for_modeset(struct canvas *canvas,
         list_for_each_entry(output, &desktop.outputs, link)
                 if (output->canvas == canvas && output->mode_set == mode_set)
                         return output;
-
-        return NULL;
-}
-
-static struct drm_display_mode *output_mode_wh(struct drm_connector *connector,
-                                               unsigned int width,
-                                               unsigned int height)
-{
-        struct drm_display_mode *mode;
-
-        list_for_each_entry(mode, &connector->modes, head)
-        {
-                if (mode->hdisplay != (int)width || mode->vdisplay != (int)height)
-                        continue;
-                if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
-                        continue;
-                return mode;
-        }
 
         return NULL;
 }
@@ -211,7 +354,7 @@ static void output_attach(struct output *output)
 
         mutex_lock(&dev->mode_config.mutex);
         want = output_mode_wh(connector, output->width, output->height);
-        taken = want ? drm_mode_duplicate(dev, want) : NULL;
+        taken = output_mode_take(dev, want);
         mutex_unlock(&dev->mode_config.mutex);
 
         if (!taken)
@@ -220,6 +363,7 @@ static void output_attach(struct output *output)
         drm_mode_destroy(dev, mode_set->mode);
         mode_set->mode = taken;
         mode_set->fb = output->buffer->fb;
+        desktop_sync_frame_ns();
 }
 
 static void desktop_place_outputs(void);
@@ -317,6 +461,7 @@ static void desktop_place_outputs(void)
         desktop.height = height;
 
         desktop_gather_panes();
+        desktop_sync_frame_ns();
 }
 
 static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mode_set)
