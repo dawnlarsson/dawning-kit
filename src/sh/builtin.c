@@ -4844,6 +4844,159 @@ static bool printf_in_b;
 fn printf_escaped(writer write, string_address text);
 
 /*
+        Join short builtin output into one write.
+
+        echo hello world is four log copies and one flush; the copies are the
+        builtin. A small stack buffer, or the log buffer itself when that is
+        the writer and the line fits, makes one copy and leaves the flush
+        where exec already puts it. Anything larger than the room is written
+        in chunks of this size, still fewer traps than a byte or a word.
+*/
+#define SHELL_OUTPUT_JOIN 256
+
+static inline INLINE fn shell_output_put(writer write, p8 address_to room,
+                                         positive address_to used,
+                                         address_any data, positive length)
+{
+        if (!length)
+                return;
+
+        if (*used && *used + length > SHELL_OUTPUT_JOIN)
+        {
+                write(room, *used);
+                *used = 0;
+        }
+
+        if (length > SHELL_OUTPUT_JOIN)
+        {
+                write(data, length);
+                return;
+        }
+
+        memory_copy_apart(room + *used, data, length);
+        *used += length;
+}
+
+static inline INLINE fn shell_output_byte(writer write, p8 address_to room,
+                                          positive address_to used, p8 value)
+{
+        if (*used == SHELL_OUTPUT_JOIN)
+        {
+                write(room, *used);
+                *used = 0;
+        }
+
+        room[(*used)++] = value;
+}
+
+static inline INLINE bool shell_log_room(positive total)
+{
+        return log_writer_buffer_length <= MAX_INPUT &&
+               total <= MAX_INPUT - log_writer_buffer_length;
+}
+
+static inline INLINE fn shell_echo_join(writer write, positive first,
+                                        bool newline)
+{
+        positive words = shell_argc - first;
+        p8 address_to dst;
+        positive have;
+
+        if (words <= 2)
+        {
+                string_address a = words ? shell_argv[first] : (string_address) "";
+                positive la = words ? string_length(a) : 0;
+                string_address b = words == 2 ? shell_argv[first + 1] : a;
+                positive lb = words == 2 ? string_length(b) : 0;
+                positive total = la + lb + (words == 2) + (newline ? 1 : 0);
+
+                if (!total)
+                        return;
+
+                if (write == log && shell_log_room(total))
+                {
+                        have = log_writer_buffer_length;
+                        dst = log_writer_buffer + have;
+                        memory_copy_apart(dst, a, la);
+                        dst += la;
+                        if (words == 2)
+                        {
+                                *dst++ = ' ';
+                                memory_copy_apart(dst, b, lb);
+                                dst += lb;
+                        }
+                        if (newline)
+                                *dst = '\n';
+                        log_writer_buffer_length = have + total;
+                        return;
+                }
+
+                if (total <= SHELL_OUTPUT_JOIN)
+                {
+                        p8 room[SHELL_OUTPUT_JOIN];
+
+                        memory_copy_apart(room, a, la);
+                        if (words == 2)
+                        {
+                                room[la] = ' ';
+                                memory_copy_apart(room + la + 1, b, lb);
+                        }
+                        if (newline)
+                                room[total - 1] = '\n';
+                        write(room, total);
+                        return;
+                }
+
+                if (la)
+                        write(a, la);
+                if (words == 2)
+                {
+                        write(" ", 1);
+                        if (lb)
+                                write(b, lb);
+                }
+                if (newline)
+                        write("\n", 1);
+                return;
+        }
+
+        {
+                p8 room[SHELL_OUTPUT_JOIN];
+                positive used = 0;
+                positive at;
+                bool more = false;
+
+                for (at = first; at < shell_argc; at++)
+                {
+                        if (more)
+                                shell_output_byte(write, room, address_of used,
+                                                  ' ');
+                        more = true;
+                        shell_output_put(write, room, address_of used,
+                                         shell_argv[at],
+                                         string_length(shell_argv[at]));
+                }
+
+                if (newline)
+                        shell_output_byte(write, room, address_of used, '\n');
+
+                if (used)
+                        write(room, used);
+        }
+}
+
+static inline INLINE bool shell_echo_backslash(positive first)
+{
+        positive at;
+
+        for (at = first; at < shell_argc; at++)
+                if (string_first_of(shell_argv[at], '\\'))
+                        return true;
+
+        return false;
+}
+
+/*
         echo.
 
         One escape writer, with each personality's option grammar. Dash only
@@ -4892,17 +5045,19 @@ fn shell_echo(writer write, string_address input)
                         break;
         }
 
+        // -e, dash's default escapes, and a word that still has a backslash
+        // in it keep the shared escape writer, including \c. A word with no
+        // backslash is the same bytes either way, so it joins with the rest.
+        if (!escapes || !shell_echo_backslash(index))
+        {
+                shell_echo_join(write, index, newline);
+                return;
+        }
+
         for (positive first = index; index < shell_argc; index++)
         {
                 if (index != first)
                         write(" ", 1);
-
-                if (!escapes)
-                {
-                        write(shell_argv[index],
-                              string_length(shell_argv[index]));
-                        continue;
-                }
 
                 printf_in_b = true;
                 printf_escaped(write, shell_argv[index]);
@@ -10020,6 +10175,230 @@ fn printf_one(writer write, string_address format)
         }
 }
 
+/*
+        The common printf: literal text, %% , %s, %d/%i, and the one-byte
+        backslash escapes. Widths, %b, %q, %n and the rest keep the full
+        walker, including dash's missing %q (we still have it). `%s %s\n`
+        and `%s\n` are the script-shaped cases and do not walk the format.
+*/
+static inline INLINE fn printf_join_two_strings(writer write,
+                                                string_address a,
+                                                string_address b, p8 between,
+                                                bool newline)
+{
+        positive la = string_length(env_reading(a));
+        positive lb = string_length(env_reading(b));
+        positive total = la + lb + (between ? 1 : 0) + (newline ? 1 : 0);
+        p8 address_to dst;
+        positive have;
+
+        if (!total)
+                return;
+
+        if (write == log && shell_log_room(total))
+        {
+                have = log_writer_buffer_length;
+                dst = log_writer_buffer + have;
+                memory_copy_apart(dst, a, la);
+                dst += la;
+                if (between)
+                        *dst++ = between;
+                memory_copy_apart(dst, b, lb);
+                dst += lb;
+                if (newline)
+                        *dst = '\n';
+                log_writer_buffer_length = have + total;
+                return;
+        }
+
+        if (total <= SHELL_OUTPUT_JOIN)
+        {
+                p8 room[SHELL_OUTPUT_JOIN];
+
+                memory_copy_apart(room, a, la);
+                dst = room + la;
+                if (between)
+                        *dst++ = between;
+                memory_copy_apart(dst, b, lb);
+                if (newline)
+                        room[total - 1] = '\n';
+                write(room, total);
+                return;
+        }
+
+        if (la)
+                write(a, la);
+        if (between)
+                write(address_of between, 1);
+        if (lb)
+                write(b, lb);
+        if (newline)
+                write("\n", 1);
+}
+
+static inline INLINE fn printf_join_string_nl(writer write, string_address a)
+{
+        positive la = string_length(env_reading(a));
+        positive total = la + 1;
+        p8 address_to dst;
+        positive have;
+
+        if (write == log && shell_log_room(total))
+        {
+                have = log_writer_buffer_length;
+                dst = log_writer_buffer + have;
+                memory_copy_apart(dst, a, la);
+                dst[la] = '\n';
+                log_writer_buffer_length = have + total;
+                return;
+        }
+
+        if (total <= SHELL_OUTPUT_JOIN)
+        {
+                p8 room[SHELL_OUTPUT_JOIN];
+
+                memory_copy_apart(room, a, la);
+                room[la] = '\n';
+                write(room, total);
+                return;
+        }
+
+        if (la)
+                write(a, la);
+        write("\n", 1);
+}
+
+static bool printf_format_simple(string_address format)
+{
+        string_address step = format;
+
+        while (string_get(step))
+        {
+                p8 byte = string_get(step);
+
+                if (byte != '%' && byte != '\\')
+                {
+                        step++;
+                        continue;
+                }
+
+                if (byte == '\\')
+                {
+                        p8 next = string_get(step + 1);
+
+                        if (!next)
+                                return false;
+
+                        if ((next >= '0' && next <= '7') || next == 'x' ||
+                            next == 'u' || next == 'U')
+                                return false;
+
+                        step += 2;
+                        continue;
+                }
+
+                step++;
+                byte = string_get(step);
+
+                if (byte == '%')
+                {
+                        step++;
+                        continue;
+                }
+
+                if (byte == 's' || byte == 'd' || byte == 'i')
+                {
+                        step++;
+                        continue;
+                }
+
+                return false;
+        }
+
+        return true;
+}
+
+static fn printf_simple_one(writer write, string_address format)
+{
+        p8 room[SHELL_OUTPUT_JOIN];
+        positive used = 0;
+        string_address step = format;
+
+        while (string_get(step))
+        {
+                p8 byte = string_get(step);
+
+                if (byte != '%' && byte != '\\')
+                {
+                        string_address start = step;
+
+                        do
+                                step++;
+                        while (string_get(step) && string_not(step, '%') &&
+                               string_not(step, '\\'));
+
+                        shell_output_put(write, room, address_of used, start,
+                                         (positive)(step - start));
+                        continue;
+                }
+
+                if (byte == '\\')
+                {
+                        p8 next = string_get(step + 1);
+                        p8 escaped = byte_simple_escape(next);
+
+                        step += 2;
+
+                        if (next == 'e')
+                                escaped = 27;
+                        else if (next == '\\')
+                                escaped = '\\';
+                        else if (!escaped)
+                        {
+                                shell_output_byte(write, room, address_of used,
+                                                  '\\');
+                                escaped = next;
+                        }
+
+                        shell_output_byte(write, room, address_of used,
+                                          escaped);
+                        continue;
+                }
+
+                step++;
+                byte = string_get(step);
+                step++;
+
+                if (byte == '%')
+                {
+                        shell_output_byte(write, room, address_of used, '%');
+                        continue;
+                }
+
+                if (byte == 's')
+                {
+                        string_address value = printf_next();
+
+                        shell_output_put(write, room, address_of used, value,
+                                         string_length(env_reading(value)));
+                        continue;
+                }
+
+                {
+                        bipolar number =
+                            (bipolar)printf_integer(printf_next(), true);
+                        p8 digits[32];
+                        positive length = bipolar_into(digits, number);
+
+                        shell_output_put(write, room, address_of used, digits,
+                                         length);
+                }
+        }
+
+        if (used)
+                write(room, used);
+}
+
 fn shell_printf(writer write, string_address input)
 {
         string_address format;
@@ -10072,15 +10451,37 @@ fn shell_printf(writer write, string_address input)
                 write = printf_keeper;
         }
 
-        while (1)
         {
-                printf_took = false;
-                printf_one(write, format);
+                p8 kind;
 
-                // A format with no conversion in it would otherwise run for as
-                // long as there were arguments left.
-                if (printf_cut || printf_argument >= shell_argc || !printf_took)
-                        break;
+                if (word_is(format, "%s %s\n"))
+                        kind = 1;
+                else if (word_is(format, "%s\n"))
+                        kind = 2;
+                else if (printf_format_simple(format))
+                        kind = 3;
+                else
+                        kind = 0;
+
+                while (1)
+                {
+                        printf_took = false;
+                        if (kind == 1)
+                                printf_join_two_strings(write, printf_next(),
+                                                        printf_next(), ' ',
+                                                        true);
+                        else if (kind == 2)
+                                printf_join_string_nl(write, printf_next());
+                        else if (kind)
+                                printf_simple_one(write, format);
+                        else
+                                printf_one(write, format);
+
+                        // A format with no conversion in it would otherwise run for as
+                        // long as there were arguments left.
+                        if (printf_cut || printf_argument >= shell_argc || !printf_took)
+                                break;
+                }
         }
 
         if (into)
