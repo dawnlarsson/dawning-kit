@@ -2099,6 +2099,16 @@ static bool arith_bash_mode;
 static bool arith_nounset;
 static bool arith_unset;
 
+// The last primary that is still a variable, so assignment can refuse
+// `1 + x = 2` and `y >= z |= 1` while still taking `x = 1` and a
+// ternary's middle `x = 1`. The name is copied out of the primary's
+// frame: the right-hand side may parse another lvalue on top of it.
+static bool arith_is_lvalue;
+static expand_reference arith_held;
+static bipolar arith_held_value;
+static p8 arith_held_name[EXPAND_LOCAL_NAME];
+static p8 arith_held_key[32];
+
 /*
         A persistent `name=$((...))` whose whole right-hand side is one
         arithmetic expansion. The increment fast path may store that name
@@ -2205,7 +2215,30 @@ static fn arith_space()
 }
 
 static bipolar arith_choose();
+static bipolar arith_assign();
 static bipolar arith_expression();
+
+static fn arith_keep_lvalue(expand_reference name, bipolar value)
+{
+        if (name.name_length >= EXPAND_LOCAL_NAME ||
+            (name.key && name.key_length >= sizeof(arith_held_key)))
+        {
+                arith_is_lvalue = false;
+                return;
+        }
+
+        memory_copy_end(arith_held_name, name.name, name.name_length);
+        arith_held = name;
+        arith_held.name = arith_held_name;
+        if (name.key)
+        {
+                memory_copy_end(arith_held_key, name.key, name.key_length);
+                arith_held.key = arith_held_key;
+        }
+        arith_held_value = value;
+        arith_is_lvalue = true;
+}
+
 static PURE string_address expand_bracket_end(string_address at, p8 open,
                                               p8 close);
 static COLD bool expand_assign_named(expand_reference reference,
@@ -2468,25 +2501,27 @@ static bipolar arith_value_of(expand_reference reference)
 /*
         The one division the machine will not do.
 
-        A zero divisor faults, and so does the smallest number there is over
-        minus one, because its opposite is not a number this width holds --
-        $(( -9223372036854775808 / -1 )) killed the shell with SIGFPE.
+        A zero divisor faults. The smallest number over minus one used
+        to share that diagnostic, because its opposite is not a number
+        this width holds and the instruction raises SIGFPE. Bash and
+        dash answer the quotient as the number itself -- wrapping --
+        and the remainder as zero.
 */
 static bipolar arith_divide(bipolar left, bipolar right, bool remainder)
 {
         if (!arith_active)
                 return 0;
 
-        if (!right || (right == -1 && left == bipolar_min))
+        if (!right)
         {
                 arith_fail("division by 0");
-                if (!right)
-                {
-                        arith_token_buf[0] = '0';
-                        arith_token_buf[1] = end;
-                }
+                arith_token_buf[0] = '0';
+                arith_token_buf[1] = end;
                 return 0;
         }
+
+        if (right == -1 && left == bipolar_min)
+                return remainder ? 0 : left;
 
         return remainder ? left % right : left / right;
 }
@@ -2665,6 +2700,8 @@ static bipolar arith_based(string_address hash)
 
 // Each lvalue owns its name and subscript storage through the whole operation.
 // Recursive right operands may allocate and rewind their own inner marks.
+// Assignment is not consumed here: it is looser than every binary operator
+// and is recognised after the ternary, so `y >= z |= 1` is not `z |= 1`.
 static bipolar arith_lvalue(p8 prefix)
 {
         string_address start = arith_at;
@@ -2673,9 +2710,8 @@ static bipolar arith_lvalue(p8 prefix)
         positive length = string_span(arith_at, string_set_name);
         shell_mark held;
         bipolar value = 0;
-        p8 op = 0;
-        b32 skip = 0;
 
+        arith_is_lvalue = false;
         arith_at += length;
         bool element = length && string_is(arith_at, '[');
         if (element)
@@ -2700,43 +2736,8 @@ static bipolar arith_lvalue(p8 prefix)
         }
 
         arith_space();
-        if (string_is(arith_at, '=') && string_get(arith_at + 1) != '=')
-        {
-                arith_at++;
-                value = arith_store(name, arith_choose());
-                goto done;
-        }
-
-        // Compound assignments read before evaluating their right operand.
-        // Match the three-byte shifts before the two-byte operators.
-        if (string_is(arith_at, '<') && string_is(arith_at + 1, '<') &&
-            string_is(arith_at + 2, '='))
-        {
-                op = 'l';
-                skip = 3;
-        }
-        else if (string_is(arith_at, '>') && string_is(arith_at + 1, '>') &&
-                 string_is(arith_at + 2, '='))
-        {
-                op = 'r';
-                skip = 3;
-        }
-        else if (string_is(arith_at + 1, '=') &&
-                 string_first_of((string_address) "+-*/%&|^",
-                                 string_get(arith_at)))
-        {
-                op = string_get(arith_at);
-                skip = 2;
-        }
-
-        if (op)
-        {
-                arith_at += skip;
-                value = arith_value_of(name);
-                value = arith_store(name, arith_combine(op, value, arith_choose()));
-        }
-        else if ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
-                 (string_is(arith_at, '-') && string_is(arith_at + 1, '-')))
+        if ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
+            (string_is(arith_at, '-') && string_is(arith_at + 1, '-')))
         {
                 bool increment = string_is(arith_at, '+');
 
@@ -2746,7 +2747,10 @@ static bipolar arith_lvalue(p8 prefix)
                                            : arith_subtraction(value, 1));
         }
         else
+        {
                 value = arith_value_of(name);
+                arith_keep_lvalue(name, value);
+        }
 
 done:
         if (element)
@@ -2759,6 +2763,7 @@ static bipolar arith_primary()
         bipolar value = 0;
 
         arith_space();
+        arith_is_lvalue = false;
 
         if (string_is(arith_at, '('))
         {
@@ -2770,23 +2775,30 @@ static bipolar arith_primary()
                 else
                         arith_bad = true;
 
+                arith_is_lvalue = false;
                 return value;
         }
 
         if (string_is(arith_at, '!'))
         {
                 arith_at++;
-                return !arith_primary();
+                value = !arith_primary();
+                arith_is_lvalue = false;
+                return value;
         }
 
         if (string_is(arith_at, '~'))
         {
                 arith_at++;
-                return ~arith_primary();
+                value = ~arith_primary();
+                arith_is_lvalue = false;
+                return value;
         }
 
-        if ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
-            (string_is(arith_at, '-') && string_is(arith_at + 1, '-')))
+        if (arith_bash_mode &&
+            ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
+             (string_is(arith_at, '-') && string_is(arith_at + 1, '-'))) &&
+            expand_assignable_name(arith_skip_space(arith_at + 2)))
         {
                 p8 prefix = string_get(arith_at);
 
@@ -2798,13 +2810,17 @@ static bipolar arith_primary()
         if (string_is(arith_at, '-'))
         {
                 arith_at++;
-                return arith_negate(arith_primary());
+                value = arith_negate(arith_primary());
+                arith_is_lvalue = false;
+                return value;
         }
 
         if (string_is(arith_at, '+'))
         {
                 arith_at++;
-                return arith_primary();
+                value = arith_primary();
+                arith_is_lvalue = false;
+                return value;
         }
 
         if (string_get(arith_at) >= '0' && string_get(arith_at) <= '9')
@@ -2872,8 +2888,9 @@ static bipolar arith_power()
                 return value;
 
         arith_at += 2;
-
-        return arith_power_of(value, arith_power());
+        value = arith_power_of(value, arith_power());
+        arith_is_lvalue = false;
+        return value;
 }
 
 /* arith_power returns past trailing whitespace. Every higher production
@@ -2891,15 +2908,17 @@ static bipolar arith_power()
                                 return value;                               \
                         arith_at += (width);                                \
                         bipolar right = lower();                            \
+                        arith_is_lvalue = false;                            \
                         value = (result);                                   \
                 }                                                           \
         }
 
 ARITH_LEVEL(arith_multiply, arith_power,
-            op == '*' || op == '/' || op == '%', 1,
+            (op == '*' || op == '/' || op == '%') && next != '=', 1,
             op == '*' ? arith_product(value, right)
                       : arith_divide(value, right, op == '%'))
-ARITH_LEVEL(arith_add, arith_multiply, op == '+' || op == '-', 1,
+ARITH_LEVEL(arith_add, arith_multiply,
+            (op == '+' || op == '-') && next != '=', 1,
             op == '+' ? arith_addition(value, right)
                       : arith_subtraction(value, right))
 ARITH_LEVEL(arith_shift, arith_add,
@@ -2938,6 +2957,7 @@ ARITH_LEVEL(arith_bit_or, arith_bit_xor,
                         arith_active = active && (wanted);                   \
                         bipolar right = lower();                             \
                         arith_active = active;                               \
+                        arith_is_lvalue = false;                             \
                         value = active ? (value operation right) : 0;        \
                 }                                                            \
         }
@@ -2979,23 +2999,117 @@ static bipolar arith_choose()
         arith_active = active && !value;
         left = arith_choose();
         arith_active = active;
+        arith_is_lvalue = false;
 
         return active ? (value ? taken : left) : 0;
 }
 
 
-// The comma sequence is the outer arithmetic grammar, including parenthesis
-// groups, recursive variable values and a ternary's middle operand. Keeping
-// it here prevents those contexts from silently accepting only the first
-// operand, while assignments still bind more tightly through arith_choose.
-static bipolar arith_expression()
+/*
+        Assignment is looser than the ternary and tighter than comma.
+
+        The left side has to still be a variable: `x = 1` writes, and so
+        does the middle of `1 ? x = 1 : 0`, but `y >= z |= 1` is an
+        assignment to the comparison. Bash names that; dash leaves the
+        operator for the leftover-byte check, which is "expecting EOF".
+*/
+static bipolar arith_assign()
 {
         bipolar value = arith_choose();
+        p8 op;
+        p8 next;
+        p8 third;
+        p8 kind = 0;
+        b32 skip = 0;
+        expand_reference target;
+        p8 name_local[EXPAND_LOCAL_NAME];
+        p8 key_local[32];
+
+        arith_space();
+        op = string_get(arith_at);
+        next = op ? string_get(arith_at + 1) : 0;
+        third = next ? string_get(arith_at + 2) : 0;
+
+        if (op == '=' && next != '=')
+        {
+                kind = '=';
+                skip = 1;
+        }
+        else if (op == '<' && next == '<' && third == '=')
+        {
+                kind = 'l';
+                skip = 3;
+        }
+        else if (op == '>' && next == '>' && third == '=')
+        {
+                kind = 'r';
+                skip = 3;
+        }
+        else if (next == '=' &&
+                 (op == '+' || op == '-' || op == '*' || op == '/' ||
+                  op == '%' || op == '&' || op == '|' || op == '^'))
+        {
+                kind = op;
+                skip = 2;
+        }
+
+        if (!kind)
+                return value;
+
+        if (!arith_is_lvalue)
+        {
+                if (arith_bash_mode)
+                {
+                        string_address at = arith_at;
+                        positive n = 0;
+
+                        arith_fail("attempted assignment to non-variable");
+                        while (n + 1 < sizeof(arith_token_buf) &&
+                               string_get(at))
+                                arith_token_buf[n++] = string_get(at++);
+                        arith_token_buf[n] = end;
+                }
+
+                return value;
+        }
+
+        target = arith_held;
+        memory_copy_end(name_local, arith_held_name, target.name_length);
+        target.name = name_local;
+        if (target.key)
+        {
+                memory_copy_end(key_local, arith_held_key, target.key_length);
+                target.key = key_local;
+        }
+
+        {
+                bipolar left = arith_held_value;
+                bipolar right;
+
+                arith_at += skip;
+                arith_is_lvalue = false;
+                right = arith_assign();
+
+                if (kind == '=')
+                        return arith_store(target, right);
+
+                return arith_store(target, arith_combine(kind, left, right));
+        }
+}
+
+// The comma sequence is the outer arithmetic grammar, including parenthesis
+// groups, recursive variable values and a ternary's middle operand. The
+// middle is a full assignment expression; the right arm is only another
+// ternary, so `0 ? 1 : x |= 2` assigns to the conditional.
+static bipolar arith_expression()
+{
+        bipolar value = arith_assign();
 
         while (arith_bash_mode && string_is(arith_at, ','))
         {
                 arith_at++;
-                value = arith_choose();
+                arith_is_lvalue = false;
+                value = arith_assign();
         }
 
         return value;
@@ -3250,6 +3364,7 @@ static bipolar arith_evaluate(string_address text)
         arith_token_buf[0] = end;
         arith_said = false;
         arith_active = true;
+        arith_is_lvalue = false;
         arith_nounset =
             shell_bash_compat &&
             (shell_options & ((positive)1 << ('u' - 'a'))) != 0;
@@ -6026,17 +6141,25 @@ static COLD string_address expand_subscript_key(string_address base,
                         index += (bipolar)shell_array_highest(base,
                                                               base_length) + 1;
 
-                if (arith_bad || index < 0)
+                if (arith_bad)
                 {
-                        //      Bash answers one here and names the
-                        //      array alone when it was being read; the
-                        //      subscript goes in the line only when it was
-                        //      being assigned to, which this shared
-                        //      resolution cannot tell from here.
+                        if (!arith_unset)
+                                shell_arith_report(writer_stderr_once, null,
+                                                   key);
+                        expand_fatal_status(shell_bash_compat ? 1 : 2);
+                        return null;
+                }
+
+                if (index < 0)
+                {
+                        //      A computed index that is still negative is an
+                        //      empty expansion, not a fatal one: bash names
+                        //      the array and the next command still runs.
                         expand_where();
                         string_format(writer_stderr_once,
                                       "%s: bad array subscript\n", base);
-                        expand_fatal_status(shell_bash_compat ? 1 : 2);
+                        if (!shell_bash_compat)
+                                expand_fatal_status(2);
                         return null;
                 }
 

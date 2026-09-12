@@ -163,6 +163,11 @@ static fn exec_input_finish()
 {
         if (exec_input_error())
                 exec_signal = EXEC_SIGNAL_NONE;
+
+        // eval and a sourced file catch a recoverable expansion error.
+        // Leaving expand_failed set re-raised the line abort after eval
+        // returned, so `eval '...'; echo eval:$?` never ran the echo.
+        expand_failed = false;
 }
 
 static fn exec_line_begin()
