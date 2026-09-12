@@ -6205,9 +6205,11 @@ static string_address expand_braced_body(string_address step,
                 bool present = true;
                 positive count = 0;
 
-                // ${#*} and ${#@} are how many parameters there are and not
-                // how long the one string they join into would be.
-                if (length == 1 &&
+                // Bash ${#*} and ${#@} are how many parameters there are.
+                // Dash uses the character length of the joined "$*" string,
+                // including concatenation when IFS is empty; bash --posix
+                // keeps the count. Nounset with no positionals is 0 in both.
+                if (shell_bash_compat && length == 1 &&
                     (string_is(name, '@') || string_is(name, '*')))
                         count = shell_parameter_count;
                 else
