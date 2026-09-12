@@ -1152,6 +1152,7 @@ static fn env_variable_drop(positive index)
         if (dropped.name_length == 4 &&
             memory_is_4(dropped.text, 'P', 'A', 'T', 'H'))
                 hash_forget();
+        env_locale_touch(dropped.text, dropped.name_length);
 
         if (env_index_slots)
                 name_index_remove(env_index, env_index_slots, dropped.hash,
@@ -1544,6 +1545,7 @@ static bool env_borrow_assignment(string_address entry, bool replace)
 
                 env_record_append(entry, hash, length, string_length(mark + 1),
                                   false, true);
+                env_locale_touch(entry, length);
                 return true;
         }
 
@@ -1557,6 +1559,7 @@ static bool env_borrow_assignment(string_address entry, bool replace)
         shell_vars[found].owned = false;
         shell_vars[found].permanent = true;
         shell_vars[found].declared = true;
+        env_locale_touch(entry, length);
 
         return true;
 }
@@ -1966,6 +1969,8 @@ positive env_names_prefix(string_address prefix, positive length,
 
 static bool env_write_noted(const_string name, positive length, bool written)
 {
+        if (written)
+                env_locale_touch(name, length);
         if (!shell_bash_compat || !written)
                 return written;
 
@@ -2124,7 +2129,11 @@ static bool env_write_destination(const_string name, positive name_len,
                 b32 done = env_write_attributed(idx, name, name_len, value,
                                                 assignment, &value, destination);
                 if (done)
+                {
+                        if (done == 1)
+                                env_locale_touch(name, name_len);
                         return done == 1;
+                }
                 idx = env_find_hashed_span(name, name_len, hash);
                 variable = destination ? destination
                     : idx < shell_var_count ? shell_vars + idx : null;
@@ -2162,6 +2171,7 @@ static bool env_write_destination(const_string name, positive name_len,
                 variable->permanent = true;
         if (!destination && variable->permanent)
                 shell_envp_dirty = true;
+        env_locale_touch(name, name_len);
         return true;
 }
 
@@ -5326,6 +5336,7 @@ PURE bool word_is(string_address word, string_address text)
 
 static COLD fn env_unset_noted(string_address name, positive length)
 {
+        env_locale_touch(name, length);
         if (length == 15 && !memory_compare(name, "POSIXLY_CORRECT", 15))
                 shell_posix_changed(false);
         else if (length == 6 && !memory_compare(name, "OPTIND", 6))
@@ -7211,6 +7222,7 @@ static COLD bool local_hide_saved(string_address name, positive length,
         shell_envp_dirty = true;
         if (length == 4 && memory_is_4(name, 'P', 'A', 'T', 'H'))
                 hash_forget();
+        env_locale_touch(name, length);
         // An explicit OPTIND initializer controls cursor reset itself. In
         // particular, local OPTIND=2 must retain a pending bundled byte.
         if (!assigning || !local_getopts_scope(name, length))

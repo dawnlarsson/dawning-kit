@@ -56,12 +56,43 @@ static COLD fn expand_bad_substitution(string_address whole, string_address clos
         writer_stderr_once(str(": bad substitution\n"));
 }
 
-// Resolve LC_CTYPE only for character operations. Keeping this a read of the
-// live environment makes prefix assignments, locals, unset and restoration
-// agree without a second locale cache/invalidation protocol. Other encodings
-// retain the byte path; UTF-8 names may include an @modifier.
-static PURE bool shell_utf8_on()
+// Resolve LC_CTYPE only for character operations. Prefix assignments, locals,
+// unset and restoration still have to agree, so this is not a process-lifetime
+// answer: env_locale_touch bumps the generation when LC_ALL, LC_CTYPE or LANG
+// is written, hidden or dropped, and the next character operation rereads.
+// Other encodings retain the byte path; UTF-8 names may include an @modifier.
+static positive env_locale_generation = 1;
+static positive env_locale_cached;
+static bool env_locale_utf8;
+
+static inline INLINE fn env_locale_touch(const_string name, positive length)
 {
+        if (length == 4)
+        {
+                if (memory_is_4(name, 'L', 'A', 'N', 'G'))
+                        env_locale_generation++;
+                return;
+        }
+        if (length == 6)
+        {
+                if (memory_is_4(name, 'L', 'C', '_', 'A') && name[4] == 'L' &&
+                    name[5] == 'L')
+                        env_locale_generation++;
+                return;
+        }
+        if (length == 8 && memory_is_4(name, 'L', 'C', '_', 'C') &&
+            memory_is_4(name + 4, 'T', 'Y', 'P', 'E'))
+                env_locale_generation++;
+}
+
+static bool shell_utf8_on()
+{
+        string_address locale;
+        string_address code;
+
+        if (env_locale_cached == env_locale_generation)
+                return env_locale_utf8;
+
         // These names never vary. Supply their compile-time DJB2 hashes to
         // the same span lookup used by prepared parameter expansions, instead
         // of scanning and hashing a literal on every character operation.
@@ -71,26 +102,50 @@ static PURE bool shell_utf8_on()
             ((((((((positive)5381 * 33 + 'L') * 33 + 'C') * 33 + '_') * 33 + 'C') * 33 + 'T') * 33 + 'Y') * 33 + 'P') * 33 + 'E';
         static const positive lang_hash =
             ((((positive)5381 * 33 + 'L') * 33 + 'A') * 33 + 'N') * 33 + 'G';
-        string_address locale = env_get_hashed_span("LC_ALL", 6, all_hash, null);
+        locale = env_get_hashed_span("LC_ALL", 6, all_hash, null);
         if (!locale || !locale[0])
                 locale = env_get_hashed_span("LC_CTYPE", 8, type_hash, null);
         if (!locale || !locale[0])
                 locale = env_get_hashed_span("LANG", 4, lang_hash, null);
-        if (!locale || !locale[0])
+        env_locale_cached = env_locale_generation;
+        if (!locale || !locale[0] || (locale[0] == 'C' && !locale[1]))
+        {
+                env_locale_utf8 = false;
                 return false;
-        if (locale[0] == 'C' && !locale[1])
-                return false;
+        }
 
-        string_address code = string_first_of(locale, '.');
+        code = string_first_of(locale, '.');
         code = code ? code + 1 : locale;
         if (byte_to_lower(code[0]) != 'u' ||
             byte_to_lower(code[1]) != 't' ||
             byte_to_lower(code[2]) != 'f')
+        {
+                env_locale_utf8 = false;
                 return false;
+        }
         code += 3;
         if (*code == '-')
                 code++;
-        return code[0] == '8' && (!code[1] || code[1] == '@');
+        env_locale_utf8 = code[0] == '8' && (!code[1] || code[1] == '@');
+        return env_locale_utf8;
+}
+
+static inline INLINE PURE bool expand_bytes_ascii(string_address text,
+                                                  positive size)
+{
+        while (size--)
+                if ((p8)*text++ >= 0x80)
+                        return false;
+        return true;
+}
+
+static inline INLINE positive expand_character_count(string_address text,
+                                                     positive size)
+{
+        if (!size || expand_bytes_ascii(text, size))
+                return size;
+        return shell_utf8_on() ? memory_utf8_span(text, size, positive_max).y
+                               : size;
 }
 
 static PURE positive expand_character_width(string_address text, positive size)
@@ -3743,13 +3798,33 @@ static fn expand_trim(positive start, string_address pattern, bool prefix, bool 
         positive cut = 0;
         bool found = false;
         positive at;
-        bool utf8 = shell_utf8_on();
+        bool utf8 = false;
 
         // An empty value cannot be shortened, and the buffer this reads is
         // only made by the first push: ${nosuch#} as the first expansion of
         // the process has nothing behind it yet.
         if (!length)
                 return;
+
+        // ${x#?} and ${x%?} cut one character. An ASCII edge is one byte even
+        // when the locale is UTF-8, so the matcher and the UTF-8 walker stay
+        // off the path this loop is measured on.
+        if (pattern[0] == '?' && !pattern[1])
+        {
+                p8 edge = prefix ? expand_text[start]
+                                 : expand_text[start + length - 1];
+                if (edge < 0x80 || !shell_utf8_on())
+                        cut = 1;
+                else
+                        cut = prefix ? expand_character_width(expand_text + start,
+                                                              length)
+                                     : length - expand_character_previous(
+                                                    expand_text + start, length);
+                found = true;
+        }
+        else
+                utf8 = shell_utf8_on() &&
+                       !expand_bytes_ascii(expand_text + start, length);
 
         // The four forms a script writes most -- the basename and dirname
         // idioms with a slash, ${x%%.*} and ${x#*.} -- are one star beside
@@ -5655,8 +5730,8 @@ static string_address expand_braced(string_address step, bool quoted)
                 {
                         string_address value = expand_value_of(
                             reference, scratch, address_of present, address_of count);
-                        if (present && count && shell_utf8_on())
-                                count = memory_utf8_span(value, count, positive_max).y;
+                        if (present && count)
+                                count = expand_character_count(value, count);
                 }
 
                 if (!present)
