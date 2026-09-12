@@ -315,6 +315,19 @@ system_read_retry system_wait4_retry system_write_all wait_status_code
 cover('correctness_only', 'test/checks.c#CHECK_stream', 'system_write_all_checked',
       'checked aggregate ABI, partial writes and errno on all three floors; '
       'no shipped isolated timing harness')
+cover('correctness_only', 'test/checks.c#CHECK_verify', '''
+hash_xxh64 hash_xxh64_begin hash_xxh64_add hash_xxh64_finish
+memory_copy_match memory_get64
+''', 'XXH64, LZ match copies, and unaligned little-endian 64-bit loads')
+
+cover('correctness_only', 'test/checks.c#CHECK_zstd', '''
+zstd_bits_open zstd_bits_reload zstd_bits_get
+''', 'backward bitstream open, reload, and get against marked and empty streams')
+
+cover('correctness_only', 'src/sh/zstd.c', '''
+zstd_huffman_stream zstd_huffman_4x zstd_sequences_run
+''', 'Huffman and sequence kernels called from the RFC 8878 decoder')
+
 cover('correctness_only', 'test/checks.c#CHECK_native_reserve', '''
 memory_growth memory_release
 ''', 'exact lifted ARM64 growth, overflow, failure and release checks')

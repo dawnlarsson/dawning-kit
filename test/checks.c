@@ -9097,21 +9097,69 @@ fn check_checksums()
                 {
                         p8 address_to at = pattern + residue;
                         p64 seed;
+                        p64 state[11];
+                        p64 got;
+                        p64 want;
 
                         for (positive i = 0; i < size; i++)
                                 at[i] = (p8)next();
 
                         seed = next();
                         seed = (seed << 32) | next();
+                        want = reference_xxh64(size ? at : null, size, seed);
                         same("hash_xxh64", "all small sizes, residues, and seeds",
-                             hash_xxh64(size ? at : null, size, seed),
-                             reference_xxh64(size ? at : null, size, seed));
+                             hash_xxh64(size ? at : null, size, seed), want);
+
+                        hash_xxh64_begin(state, seed);
+                        hash_xxh64_add(state, size ? at : null, size);
+                        got = hash_xxh64_finish(state);
+                        same("hash_xxh64_add", "one update matches one-shot",
+                             got, want);
+
+                        hash_xxh64_begin(state, seed);
+                        if (size)
+                        {
+                                positive mid = size / 2;
+                                hash_xxh64_add(state, at, mid);
+                                hash_xxh64_add(state, at + mid, size - mid);
+                        }
+                        got = hash_xxh64_finish(state);
+                        same("hash_xxh64_add", "split update matches one-shot",
+                             got, want);
+
+                        if (size && size <= 64)
+                        {
+                                positive i;
+
+                                hash_xxh64_begin(state, seed);
+                                for (i = 0; i < size; i++)
+                                        hash_xxh64_add(state, at + i, 1);
+                                got = hash_xxh64_finish(state);
+                                same("hash_xxh64_add", "byte updates match one-shot",
+                                     got, want);
+                        }
                 }
+
+        {
+                p8 bytes[16];
+                p64 aligned;
+                p64 shifted;
+                positive i;
+
+                for (i = 0; i < 16; i++)
+                        bytes[i] = (p8)i;
+                aligned = memory_get64(bytes);
+                same("memory_get64", "aligned little-endian", aligned,
+                     0x0706050403020100ull);
+                shifted = memory_get64(bytes + 1);
+                same("memory_get64", "offset-1 little-endian", shifted,
+                     0x0807060504030201ull);
+        }
 }
 
 fn check_copy_match()
 {
-        static positive offsets[] = {1, 2, 3, 7, 8, 15, 16, 31, 32, 64};
+        static positive offsets[] = {1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 31, 32, 64};
 
         for (positive e = 0; e < EDGE_COUNT; e++)
                 for (positive o = 0; o < sizeof(offsets) / sizeof(offsets[0]); o++)
@@ -39761,9 +39809,35 @@ static fn frames(void)
         check("a truncated magic fails", n < 0);
 }
 
+static fn bits(void)
+{
+        zstd_bits b;
+        p8 one[] = {0x80};
+        p8 mark[] = {0xC0};
+        p8 zero[] = {0x01, 0x00};
+        p8 eight[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x80};
+
+        check("an empty bitstream fails to open",
+              zstd_bits_open(address_of b, one, 0) != 0);
+        check("a trailing zero fails to open",
+              zstd_bits_open(address_of b, zero, sizeof(zero)) != 0);
+        check("a marked byte opens",
+              zstd_bits_open(address_of b, one, 1) == 0);
+        check("the end mark of 0x80 is skipped",
+              zstd_bits_get(address_of b, 1) == 0);
+        check("reload of a live stream succeeds",
+              zstd_bits_reload(address_of b) == 0);
+        check("a marked C0 byte's first payload bit is one",
+              zstd_bits_open(address_of b, mark, 1) == 0 &&
+                  zstd_bits_get(address_of b, 1) == 1);
+        check("an eight-byte marked stream opens",
+              zstd_bits_open(address_of b, eight, sizeof(eight)) == 0);
+}
+
 b32 main(void)
 {
         frames();
+        bits();
         return test_report(null);
 }
 #endif /* CHECK_zstd */

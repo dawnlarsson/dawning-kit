@@ -349,6 +349,10 @@ memory_hash_33 memory_sum_bytes memory_checksum_bsd16
 memory_to_lower_ascii memory_to_upper_ascii memory_reverse memory_frob
 ''', 'fixed short bodies were measured; native x86-64 is level or slower, and '
      'every production caller carries a runtime size')
+cover('folds_already', 'size', '''
+hash_xxh64 hash_xxh64_add zstd_bits_open zstd_huffman_stream zstd_huffman_4x
+''', 'production spans are compressed-block or hash lengths; short and long '
+     'paths already live in the floor')
 
 # No production caller presents these bounds as literals. The proposed forms
 # duplicate the same bounded scan/copy work and only remove entry dispatch;
@@ -556,6 +560,12 @@ memory_count_records_with_prepared
 cover('folds_already', 'ascii_case', 'memory_search_prepare',
       'the case choice is made once while preparing a reusable needle; splitting '
       'the cold pass would not shorten any repeated search')
+cover('folds_already', 'n', 'zstd_bits_get',
+      'FSE extra-bit widths are table-driven at run time')
+cover('folds_already', 'length', 'memory_copy_match',
+      'match lengths are decoded at run time')
+cover('folds_already', 'seed', 'hash_xxh64_begin',
+      'the seed is a caller value; the mixer does not shrink when it is 0')
 
 
 # ----------------------------------------------------------------------
@@ -565,7 +575,7 @@ cover('nothing_to_fold', None, '''
 _start moonwater_cpu_detect program_initial_identity get_cpu_time term_size working_directory_get
 working_directory_set program_argument_count program_argument_list program_arguments_own
 program_environment_list log_failed log_failure_reset log_flush sleep buffered_flush
-string_hash_33_length
+string_hash_33_length hash_xxh64_finish memory_get64 zstd_bits_reload zstd_sequences_run
 ''', 'no argument, or an argument that is a pointer into memory the caller '
      'owns; nothing the compiler could know shortens the body')
 cover('nothing_to_fold', None, '''

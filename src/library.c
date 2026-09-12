@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        271 routines (260 public, 11 local), 269 of them on all three and 2 local to one.
+        279 routines (269 public, 10 local), 278 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -136,7 +136,9 @@
           file_write                     public  yes     yes     yes
           get_cpu_time                   public  yes     yes     yes
           hash_xxh64                     public  yes     yes     yes
-          hash_xxh64_load8               local   --      --      yes
+          hash_xxh64_add                 public  yes     yes     yes
+          hash_xxh64_begin               public  yes     yes     yes
+          hash_xxh64_finish              public  yes     yes     yes
           host_into                      public  yes     yes     yes
           library_close                  public  yes     yes     yes
           library_get                    public  yes     yes     yes
@@ -176,6 +178,7 @@
           memory_first_of_ascii_case     public  yes     yes     yes
           memory_free                    public  yes     yes     yes
           memory_frob                    public  yes     yes     yes
+          memory_get64                   public  yes     yes     yes
           memory_give                    public  yes     yes     yes
           memory_growth                  public  yes     yes     yes
           memory_hash_33                 public  yes     yes     yes
@@ -342,10 +345,14 @@
           writer_fill                    public  yes     yes     yes
           writer_stderr                  public  yes     yes     yes
           writer_stderr_once             public  yes     yes     yes
+          zstd_bits_get                  public  yes     yes     yes
+          zstd_bits_open                 public  yes     yes     yes
+          zstd_bits_reload               public  yes     yes     yes
+          zstd_huffman_4x                public  yes     yes     yes
           zstd_huffman_stream            public  yes     yes     yes
+          zstd_sequences_run             public  yes     yes     yes
 
         Private to one machine, by choice:
-          hash_xxh64_load8 -- local to riscv64
           memory_span_byte_wide -- local to x86_64
 */
 
@@ -1752,6 +1759,31 @@ __asm__(
     ASM_RODATA_OBJECT_BEGIN(string_diagnostic_format, 1)
     ".asciz \"%s: %s: %s\\n\"\n"
     ASM_OBJECT_END(string_diagnostic_format)
+);
+
+__asm__(
+    ASM_RODATA_OBJECT_BEGIN(zstd_seq_ll_bits, 16)
+    ".byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+    ".byte 1,1,1,1,2,2,3,3,4,6,7,8,9,10,11,12\n"
+    ".byte 13,14,15,16\n"
+    ASM_OBJECT_END(zstd_seq_ll_bits)
+    ASM_RODATA_OBJECT_BEGIN(zstd_seq_ml_bits, 16)
+    ".byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+    ".byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+    ".byte 1,1,1,1,2,2,3,3,4,4,5,7,8,9,10,11\n"
+    ".byte 12,13,14,15,16\n"
+    ASM_OBJECT_END(zstd_seq_ml_bits)
+    ASM_RODATA_OBJECT_BEGIN(zstd_seq_ll_base, 16)
+    ".long 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15\n"
+    ".long 16,18,20,22,24,28,32,40,48,64,128,256,512,1024,2048,4096\n"
+    ".long 8192,16384,32768,65536\n"
+    ASM_OBJECT_END(zstd_seq_ll_base)
+    ASM_RODATA_OBJECT_BEGIN(zstd_seq_ml_base, 16)
+    ".long 3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18\n"
+    ".long 19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34\n"
+    ".long 35,37,39,41,43,47,51,59,67,83,99,131,259,515,1027,2051\n"
+    ".long 4099,8195,16387,32771,65539\n"
+    ASM_OBJECT_END(zstd_seq_ml_base)
 );
 
 #if ARM64
@@ -5473,6 +5505,13 @@ __asm__(
     ".Lmemory_bsd_sum_x64_done:\n   movzwl %ax, %eax\n" ASM_RET
     ASM_END(memory_checksum_bsd16)
 
+    /* Little-endian 64-bit load. Unaligned is the contract: zstd, xxh,
+       and tar headers all sit at arbitrary byte offsets. */
+    ASM_FUNC(memory_get64)
+    "mov (%rdi), %rax\n"
+    ASM_RET
+    ASM_END(memory_get64)
+
     /* XXH64, seed in rdx. Four 64-bit lanes of imul/rol are the stripe;
        the tail is the spec's 8/4/1 remainder and avalanche. zstd's content
        checksum is the low 32 bits of seed 0. Zero size permits null. */
@@ -5543,6 +5582,169 @@ __asm__(
     "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
     ASM_RET
     ASM_END(hash_xxh64)
+
+    /* Streaming XXH64. The caller supplies 88 bytes:
+           0 total, 8 acc[4], 40 seed, 48 hold[32], 80 held.
+       Stripes are the same four imul/rol lanes as the one-shot. The
+       hold is only the 1..31 byte remainder; copying it is a byte
+       loop because that path is not the floor. */
+    ASM_FUNC(hash_xxh64_begin)
+    "xor %eax, %eax\n   mov %rax, (%rdi)\n   mov %rsi, 40(%rdi)\n"
+    "movb $0, 80(%rdi)\n"
+    "movabs $0x9E3779B185EBCA87, %r10\n"
+    "movabs $0xC2B2AE3D27D4EB4F, %r11\n"
+    "lea (%rsi,%r10), %rax\n   add %r11, %rax\n   mov %rax, 8(%rdi)\n"
+    "lea (%rsi,%r11), %rax\n   mov %rax, 16(%rdi)\n"
+    "mov %rsi, 24(%rdi)\n   mov %rsi, %rax\n   sub %r10, %rax\n"
+    "mov %rax, 32(%rdi)\n"
+    ASM_RET
+    ASM_END(hash_xxh64_begin)
+
+    ASM_FUNC(hash_xxh64_add)
+    "test %rdx, %rdx\n   jz .Lxxh64_add_x64_ret\n"
+    "add %rdx, (%rdi)\n"
+    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "mov %rdi, %r15\n   mov %rsi, %r14\n   mov %rdx, %r13\n"
+    "movzbl 80(%r15), %r12d\n   test %r12d, %r12d\n"
+    "jz .Lxxh64_add_x64_bulk\n"
+    "mov $32, %ecx\n   sub %r12d, %ecx\n"
+    "cmp %r13, %rcx\n   cmova %r13, %rcx\n"
+    "test %rcx, %rcx\n   jz .Lxxh64_add_x64_bulk\n"
+    "mov %rcx, %rdx\n   lea 48(%r15,%r12), %rdi\n   mov %r14, %rsi\n"
+    ".Lxxh64_add_x64_fill:\n"
+    "movzbl (%rsi), %eax\n   mov %al, (%rdi)\n"
+    "inc %rsi\n   inc %rdi\n   dec %rcx\n   jnz .Lxxh64_add_x64_fill\n"
+    "add %rdx, %r14\n   sub %rdx, %r13\n   add %edx, %r12d\n"
+    "cmp $32, %r12d\n   jne .Lxxh64_add_x64_held\n"
+    "movabs $0x9E3779B185EBCA87, %r10\n"
+    "movabs $0xC2B2AE3D27D4EB4F, %r11\n"
+    "mov 8(%r15), %rax\n   mov 16(%r15), %rbx\n"
+    "mov 24(%r15), %rcx\n   mov 32(%r15), %rdx\n"
+    "lea 48(%r15), %r9\n"
+    "mov (%r9), %r8\n   imul %r11, %r8\n   add %r8, %rax\n"
+    "rol $31, %rax\n   imul %r10, %rax\n"
+    "mov 8(%r9), %r8\n   imul %r11, %r8\n   add %r8, %rbx\n"
+    "rol $31, %rbx\n   imul %r10, %rbx\n"
+    "mov 16(%r9), %r8\n   imul %r11, %r8\n   add %r8, %rcx\n"
+    "rol $31, %rcx\n   imul %r10, %rcx\n"
+    "mov 24(%r9), %r8\n   imul %r11, %r8\n   add %r8, %rdx\n"
+    "rol $31, %rdx\n   imul %r10, %rdx\n"
+    "mov %rax, 8(%r15)\n   mov %rbx, 16(%r15)\n"
+    "mov %rcx, 24(%r15)\n   mov %rdx, 32(%r15)\n"
+    "xor %r12d, %r12d\n"
+    ".Lxxh64_add_x64_held:\n"
+    "mov %r12b, 80(%r15)\n"
+    ".Lxxh64_add_x64_bulk:\n"
+    "cmp $32, %r13\n   jb .Lxxh64_add_x64_tail\n"
+    "movabs $0x9E3779B185EBCA87, %r10\n"
+    "movabs $0xC2B2AE3D27D4EB4F, %r11\n"
+    "mov 8(%r15), %rax\n   mov 16(%r15), %rbx\n"
+    "mov 24(%r15), %rcx\n   mov 32(%r15), %rdx\n"
+    "cmp $64, %r13\n   jb .Lxxh64_add_x64_stripe\n"
+    ".balign 16\n.Lxxh64_add_x64_stripe64:\n"
+    "prefetcht0 64(%r14)\n"
+    "mov (%r14), %r8\n   imul %r11, %r8\n   add %r8, %rax\n"
+    "rol $31, %rax\n   imul %r10, %rax\n"
+    "mov 8(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rbx\n"
+    "rol $31, %rbx\n   imul %r10, %rbx\n"
+    "mov 16(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rcx\n"
+    "rol $31, %rcx\n   imul %r10, %rcx\n"
+    "mov 24(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rdx\n"
+    "rol $31, %rdx\n   imul %r10, %rdx\n"
+    "mov 32(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rax\n"
+    "rol $31, %rax\n   imul %r10, %rax\n"
+    "mov 40(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rbx\n"
+    "rol $31, %rbx\n   imul %r10, %rbx\n"
+    "mov 48(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rcx\n"
+    "rol $31, %rcx\n   imul %r10, %rcx\n"
+    "mov 56(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rdx\n"
+    "rol $31, %rdx\n   imul %r10, %rdx\n"
+    "add $64, %r14\n   sub $64, %r13\n   cmp $64, %r13\n"
+    "jae .Lxxh64_add_x64_stripe64\n"
+    "cmp $32, %r13\n   jb .Lxxh64_add_x64_save\n"
+    ".balign 16\n.Lxxh64_add_x64_stripe:\n"
+    "mov (%r14), %r8\n   imul %r11, %r8\n   add %r8, %rax\n"
+    "rol $31, %rax\n   imul %r10, %rax\n"
+    "mov 8(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rbx\n"
+    "rol $31, %rbx\n   imul %r10, %rbx\n"
+    "mov 16(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rcx\n"
+    "rol $31, %rcx\n   imul %r10, %rcx\n"
+    "mov 24(%r14), %r8\n   imul %r11, %r8\n   add %r8, %rdx\n"
+    "rol $31, %rdx\n   imul %r10, %rdx\n"
+    "add $32, %r14\n   sub $32, %r13\n   cmp $32, %r13\n"
+    "jae .Lxxh64_add_x64_stripe\n"
+    ".Lxxh64_add_x64_save:\n"
+    "mov %rax, 8(%r15)\n   mov %rbx, 16(%r15)\n"
+    "mov %rcx, 24(%r15)\n   mov %rdx, 32(%r15)\n"
+    ".Lxxh64_add_x64_tail:\n"
+    "test %r13, %r13\n   jz .Lxxh64_add_x64_done\n"
+    "movzbl 80(%r15), %ecx\n   add %r13b, 80(%r15)\n"
+    "lea 48(%r15,%rcx), %rdi\n"
+    ".Lxxh64_add_x64_rest:\n"
+    "movzbl (%r14), %eax\n   mov %al, (%rdi)\n"
+    "inc %r14\n   inc %rdi\n   dec %r13\n   jnz .Lxxh64_add_x64_rest\n"
+    ".Lxxh64_add_x64_done:\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    ".Lxxh64_add_x64_ret:\n"
+    ASM_RET
+    ASM_END(hash_xxh64_add)
+
+    ASM_FUNC(hash_xxh64_finish)
+    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "mov (%rdi), %r15\n   movzbl 80(%rdi), %esi\n"
+    "lea 48(%rdi), %r9\n   mov 40(%rdi), %r8\n"
+    "cmp $32, %r15\n   jb .Lxxh64_fin_x64_small\n"
+    "movabs $0x9E3779B185EBCA87, %r10\n"
+    "movabs $0xC2B2AE3D27D4EB4F, %r11\n"
+    "mov 8(%rdi), %rax\n   mov 16(%rdi), %rbx\n"
+    "mov 24(%rdi), %rcx\n   mov 32(%rdi), %rdx\n"
+    "mov %rax, %r12\n   mov %rbx, %r13\n   mov %rcx, %r14\n   mov %rdx, %r8\n"
+    "rol $1, %rax\n   rol $7, %rbx\n   add %rbx, %rax\n"
+    "rol $12, %rcx\n   add %rcx, %rax\n"
+    "rol $18, %rdx\n   add %rdx, %rax\n"
+    "movabs $0x85EBCA77C2B2AE63, %rbx\n"
+    "mov %r12, %rdx\n   imul %r11, %rdx\n   rol $31, %rdx\n   imul %r10, %rdx\n"
+    "xor %rdx, %rax\n   imul %r10, %rax\n   add %rbx, %rax\n"
+    "mov %r13, %rdx\n   imul %r11, %rdx\n   rol $31, %rdx\n   imul %r10, %rdx\n"
+    "xor %rdx, %rax\n   imul %r10, %rax\n   add %rbx, %rax\n"
+    "mov %r14, %rdx\n   imul %r11, %rdx\n   rol $31, %rdx\n   imul %r10, %rdx\n"
+    "xor %rdx, %rax\n   imul %r10, %rax\n   add %rbx, %rax\n"
+    "mov %r8, %rdx\n   imul %r11, %rdx\n   rol $31, %rdx\n   imul %r10, %rdx\n"
+    "xor %rdx, %rax\n   imul %r10, %rax\n   add %rbx, %rax\n"
+    "jmp .Lxxh64_fin_x64_tail\n"
+    ".Lxxh64_fin_x64_small:\n"
+    "movabs $0x27D4EB2F165667C5, %rax\n   add %r8, %rax\n"
+    ".Lxxh64_fin_x64_tail:\n"
+    "add %r15, %rax\n"
+    "movabs $0x9E3779B185EBCA87, %r10\n"
+    "movabs $0xC2B2AE3D27D4EB4F, %r11\n"
+    "movabs $0x85EBCA77C2B2AE63, %rbx\n"
+    "movabs $0x165667B19E3779F9, %r12\n"
+    "movabs $0x27D4EB2F165667C5, %r13\n"
+    "cmp $8, %rsi\n   jb .Lxxh64_fin_x64_four\n"
+    ".Lxxh64_fin_x64_eight:\n"
+    "mov (%r9), %rdx\n   imul %r11, %rdx\n   rol $31, %rdx\n   imul %r10, %rdx\n"
+    "xor %rdx, %rax\n   rol $27, %rax\n   imul %r10, %rax\n   add %rbx, %rax\n"
+    "add $8, %r9\n   sub $8, %rsi\n   cmp $8, %rsi\n"
+    "jae .Lxxh64_fin_x64_eight\n"
+    ".Lxxh64_fin_x64_four:\n"
+    "cmp $4, %rsi\n   jb .Lxxh64_fin_x64_one\n"
+    "mov (%r9), %edx\n   imul %r10, %rdx\n"
+    "xor %rdx, %rax\n   rol $23, %rax\n   imul %r11, %rax\n   add %r12, %rax\n"
+    "add $4, %r9\n   sub $4, %rsi\n"
+    ".Lxxh64_fin_x64_one:\n"
+    "test %rsi, %rsi\n   jz .Lxxh64_fin_x64_mix\n"
+    ".Lxxh64_fin_x64_byte:\n"
+    "movzbl (%r9), %edx\n   imul %r13, %rdx\n"
+    "xor %rdx, %rax\n   rol $11, %rax\n   imul %r10, %rax\n"
+    "inc %r9\n   dec %rsi\n   jnz .Lxxh64_fin_x64_byte\n"
+    ".Lxxh64_fin_x64_mix:\n"
+    "mov %rax, %rdx\n   shr $33, %rdx\n   xor %rdx, %rax\n   imul %r11, %rax\n"
+    "mov %rax, %rdx\n   shr $29, %rdx\n   xor %rdx, %rax\n   imul %r12, %rax\n"
+    "mov %rax, %rdx\n   shr $32, %rdx\n   xor %rdx, %rax\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(hash_xxh64_finish)
 
     // Four bytes at once shorten DJB2's multiply dependency chain: 33^4 is
     // 1185921 and the four byte weights are 33^3, 33^2, 33 and one.
@@ -6085,40 +6287,90 @@ __asm__(
 
     /* LZ match: dest[i] = dest[i-offset] for length bytes. Disjoint
        copies (length <= offset) are memory_copy_apart. Offset 1 is
-       memory_fill. Overlap copies `offset` bytes at a time: the source
-       and destination then abut, so a vector load never reads a byte
-       this store is about to write, and a long --long match is one
-       memcpy per period rather than 32-byte calls across an 8 MiB
-       stride.
-
-       The chunk cannot live in r11 across memory_copy_apart: that
-       register is caller-saved. rbx holds it. r15 is the fifth push
-       that keeps the stack 16-byte aligned for the call. */
+       memory_fill. Offset 2/4/8 splat the period; remainder after a
+       4-byte store is a byte walk because ax/al restarts the period.
+       Offset >= 32 copies one period at a time through copy_apart:
+       that copy is disjoint (width == offset) and uses the dual-end
+       AVX body, which beat a sliding 32-byte load on the fox-line
+       offset-45 frame. 9-31 copy from dest-offset in 16/8. 3/5/6/7
+       stay a byte walk. */
     ASM_FUNC(memory_copy_match)
     "test %rdx, %rdx\n   jz .Lmatch_x64_done\n"
     "cmp %rsi, %rdx\n   jbe .Lmatch_x64_apart\n"
     "cmp $1, %rsi\n   je .Lmatch_x64_fill\n"
-    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
-    "mov %rdi, %r12\n   mov %rsi, %r13\n   mov %rdx, %r14\n"
-    "cmp $8, %r13\n   jb .Lmatch_x64_tiny\n"
-    ".balign 16\n.Lmatch_x64_loop:\n"
-    "mov %r13, %rbx\n"
-    "cmp %r14, %rbx\n   jbe .Lmatch_x64_do\n   mov %r14, %rbx\n"
-    ".Lmatch_x64_do:\n"
-    "mov %r12, %rdi\n   mov %r12, %rsi\n   sub %r13, %rsi\n"
-    "mov %rbx, %rdx\n   call memory_copy_apart\n"
-    "add %rbx, %r12\n   sub %rbx, %r14\n"
-    "cmp %r13, %r14\n   ja .Lmatch_x64_loop\n"
-    "mov %r12, %rdi\n   mov %r12, %rsi\n   sub %r13, %rsi\n"
-    "mov %r14, %rdx\n"
-    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    "cmp $2, %rsi\n   je .Lmatch_x64_off2\n"
+    "cmp $4, %rsi\n   je .Lmatch_x64_off4\n"
+    "cmp $8, %rsi\n   je .Lmatch_x64_off8\n"
+    "cmp $8, %rsi\n   jb .Lmatch_x64_tiny\n"
+    "mov %rdi, %r8\n   mov %rsi, %r10\n"
+    "cmp $32, %rsi\n   jb .Lmatch_x64_medium\n"
+    ".balign 16\n.Lmatch_x64_period:\n"
+    "cmp %r10, %rdx\n   jb .Lmatch_x64_ptail\n"
+    "push %r8\n   push %r10\n   push %rdx\n"
+    "mov %r8, %rdi\n   mov %r8, %rsi\n   sub %r10, %rsi\n"
+    "mov %r10, %rdx\n"
+    "call memory_copy_apart\n"
+    "pop %rdx\n   pop %r10\n   pop %r8\n"
+    "add %r10, %r8\n   sub %r10, %rdx\n"
+    "jmp .Lmatch_x64_period\n"
+    ".Lmatch_x64_ptail:\n"
+    "test %rdx, %rdx\n   jz .Lmatch_x64_done\n"
+    "mov %r8, %rdi\n   mov %r8, %rsi\n   sub %r10, %rsi\n"
     "jmp memory_copy_apart\n"
+    ".Lmatch_x64_medium:\n"
+    "mov %r8, %r9\n   sub %r10, %r9\n"
+    ASM_USERSPACE_WIDE(
+    "cmp $16, %r10\n   jb .Lmatch_x64_word8\n"
+    "cmp $16, %rdx\n   jb .Lmatch_x64_word8\n"
+    ".Lmatch_x64_xmm:\n"
+    "movdqu (%r9), %xmm0\n   movdqu %xmm0, (%r8)\n"
+    "add $16, %r8\n   add $16, %r9\n   sub $16, %rdx\n"
+    "cmp $16, %rdx\n   jae .Lmatch_x64_xmm\n"
+    )
+    ".Lmatch_x64_word8:\n"
+    "cmp $8, %rdx\n   jb .Lmatch_x64_tail\n"
+    ".balign 16\n.Lmatch_x64_q:\n"
+    "mov (%r9), %r10\n   mov %r10, (%r8)\n"
+    "add $8, %r8\n   add $8, %r9\n   sub $8, %rdx\n"
+    "cmp $8, %rdx\n   jae .Lmatch_x64_q\n"
+    ".Lmatch_x64_tail:\n"
+    "test %rdx, %rdx\n   jz .Lmatch_x64_done\n"
+    "mov %r8, %rdi\n   mov %r9, %rsi\n"
+    "jmp memory_copy_apart\n"
+    ".Lmatch_x64_off2:\n"
+    "movzwl -2(%rdi), %eax\n   imul $0x00010001, %eax, %eax\n"
+    "jmp .Lmatch_x64_splat32\n"
+    ".Lmatch_x64_off4:\n"
+    "movl -4(%rdi), %eax\n"
+    ".Lmatch_x64_splat32:\n"
+    "cmp $8, %rdx\n   jb .Lmatch_x64_splat32t\n"
+    ".balign 16\n.Lmatch_x64_splat32q:\n"
+    "movl %eax, (%rdi)\n   movl %eax, 4(%rdi)\n"
+    "addq $8, %rdi\n   subq $8, %rdx\n"
+    "cmp $8, %rdx\n   jae .Lmatch_x64_splat32q\n"
+    ".Lmatch_x64_splat32t:\n"
+    "test %rdx, %rdx\n   jz .Lmatch_x64_done\n"
+    "cmp $4, %rdx\n   jb .Lmatch_x64_splat32r\n"
+    "movl %eax, (%rdi)\n   addq $4, %rdi\n   subq $4, %rdx\n"
+    "test %rdx, %rdx\n   jz .Lmatch_x64_done\n"
+    ".Lmatch_x64_splat32r:\n"
+    "mov %rdi, %r9\n   sub %rsi, %r9\n"
+    "jmp .Lmatch_x64_byte\n"
+    ".Lmatch_x64_off8:\n"
+    "movq -8(%rdi), %rax\n"
+    "cmp $8, %rdx\n   jb .Lmatch_x64_splat64t\n"
+    ".balign 16\n.Lmatch_x64_splat64q:\n"
+    "movq %rax, (%rdi)\n   addq $8, %rdi\n   subq $8, %rdx\n"
+    "cmp $8, %rdx\n   jae .Lmatch_x64_splat64q\n"
+    ".Lmatch_x64_splat64t:\n"
+    "test %rdx, %rdx\n   jz .Lmatch_x64_done\n"
+    "movq %rdi, %r8\n   leaq -8(%rdi), %r9\n"
+    "jmp .Lmatch_x64_tail\n"
     ".Lmatch_x64_tiny:\n"
-    "sub %r13, %r12\n"
+    "mov %rdi, %r9\n   sub %rsi, %r9\n"
     ".Lmatch_x64_byte:\n"
-    "movzbl (%r12), %eax\n   mov %al, (%r12,%r13)\n"
-    "inc %r12\n   dec %r14\n   jnz .Lmatch_x64_byte\n"
-    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    "movzbl (%r9), %eax\n   mov %al, (%rdi)\n"
+    "inc %r9\n   inc %rdi\n   dec %rdx\n   jnz .Lmatch_x64_byte\n"
     ASM_RET
     ".Lmatch_x64_fill:\n   movzbl -1(%rdi), %esi\n   jmp memory_fill\n"
     ".Lmatch_x64_apart:\n   mov %rdi, %rax\n   sub %rsi, %rax\n"
@@ -6126,6 +6378,85 @@ __asm__(
     ".Lmatch_x64_done:\n"
     ASM_RET
     ASM_END(memory_copy_match)
+
+    /* Backward bitstream used by Huffman, FSE sequences, and FSE table
+       unpack. state is 48 bytes: bits, consumed, ptr, start, limit, last. */
+    ASM_FUNC(zstd_bits_open)
+    "test %rdx, %rdx\n   jz .Lzstd_bits_x64_obad\n"
+    "mov %rsi, 24(%rdi)\n"
+    "lea (%rsi,%rdx), %rax\n   mov %rax, 40(%rdi)\n"
+    "lea 8(%rsi), %rcx\n   mov %rcx, 32(%rdi)\n"
+    "movzbl -1(%rax), %r11d\n   test %r11d, %r11d\n   jz .Lzstd_bits_x64_obad\n"
+    "cmp $8, %rdx\n   jb .Lzstd_bits_x64_osmall\n"
+    "lea -8(%rax), %r8\n   mov %r8, 16(%rdi)\n"
+    "mov (%r8), %rax\n   mov %rax, (%rdi)\n"
+    "bsr %r11d, %eax\n   mov $8, %ecx\n   sub %eax, %ecx\n"
+    "mov %rcx, 8(%rdi)\n"
+    "xor %eax, %eax\n"
+    ASM_RET
+    ".Lzstd_bits_x64_osmall:\n"
+    "xor %eax, %eax\n   xor %r8d, %r8d\n"
+    ".Lzstd_bits_x64_osi:\n"
+    "movzbl (%rsi,%r8), %r9d\n   mov %r8d, %ecx\n   shl $3, %ecx\n"
+    "shl %cl, %r9\n   or %r9, %rax\n"
+    "inc %r8\n   cmp %rdx, %r8\n   jb .Lzstd_bits_x64_osi\n"
+    "mov %rax, (%rdi)\n   mov %rsi, 16(%rdi)\n"
+    "mov $8, %eax\n   sub %edx, %eax\n   shl $3, %eax\n"
+    "bsr %r11d, %ecx\n   mov $8, %edx\n   sub %ecx, %edx\n   add %eax, %edx\n"
+    "mov %rdx, 8(%rdi)\n"
+    "xor %eax, %eax\n"
+    ASM_RET
+    ".Lzstd_bits_x64_obad:\n   mov $-1, %eax\n"
+    ASM_RET
+    ASM_END(zstd_bits_open)
+
+    ASM_FUNC(zstd_bits_reload)
+    "mov (%rdi), %rax\n   mov 8(%rdi), %rdx\n   mov 16(%rdi), %r8\n"
+    "mov 24(%rdi), %r9\n   mov 32(%rdi), %r10\n   mov 40(%rdi), %r11\n"
+    "cmp $64, %rdx\n   ja .Lzstd_bits_x64_rbad\n"
+    "cmp %r10, %r8\n   jae .Lzstd_bits_x64_rfast\n"
+    "cmp %r9, %r8\n   je .Lzstd_bits_x64_rok\n"
+    "mov %rdx, %rcx\n   shr $3, %rcx\n   mov %r8, %rsi\n   sub %rcx, %rsi\n"
+    "cmp %r9, %rsi\n   jae .Lzstd_bits_x64_rreok\n"
+    "mov %r8, %rcx\n   sub %r9, %rcx\n   mov %r9, %rsi\n"
+    ".Lzstd_bits_x64_rreok:\n"
+    "mov %rsi, %r8\n   shl $3, %rcx\n   sub %rcx, %rdx\n"
+    "mov %r11, %rsi\n   sub %r8, %rsi\n   cmp $8, %rsi\n   jb .Lzstd_bits_x64_rpart\n"
+    "mov (%r8), %rax\n   jmp .Lzstd_bits_x64_rok\n"
+    ".Lzstd_bits_x64_rfast:\n"
+    "mov %rdx, %rcx\n   shr $3, %rcx\n   sub %rcx, %r8\n   and $7, %rdx\n"
+    "mov (%r8), %rax\n   jmp .Lzstd_bits_x64_rok\n"
+    ".Lzstd_bits_x64_rpart:\n"
+    "xor %eax, %eax\n   xor %ecx, %ecx\n"
+    ".Lzstd_bits_x64_rparti:\n"
+    "cmp %rsi, %rcx\n   jae .Lzstd_bits_x64_rok\n"
+    "movzbl (%r8,%rcx), %r9d\n   mov %ecx, %r10d\n   shl $3, %r10d\n"
+    "xchg %ecx, %r10d\n   shl %cl, %r9\n   xchg %ecx, %r10d\n"
+    "or %r9, %rax\n   inc %rcx\n"
+    "jmp .Lzstd_bits_x64_rparti\n"
+    ".Lzstd_bits_x64_rok:\n"
+    "mov %rax, (%rdi)\n   mov %rdx, 8(%rdi)\n   mov %r8, 16(%rdi)\n"
+    "xor %eax, %eax\n"
+    ASM_RET
+    ".Lzstd_bits_x64_rbad:\n   mov $-1, %eax\n"
+    ASM_RET
+    ASM_END(zstd_bits_reload)
+
+    ASM_FUNC(zstd_bits_get)
+    "test %rsi, %rsi\n   jz .Lzstd_bits_x64_gzero\n"
+    "mov 8(%rdi), %rcx\n   cmp $64, %rcx\n   jae .Lzstd_bits_x64_gge\n"
+    "mov (%rdi), %rax\n"
+    "shl %cl, %rax\n"
+    "mov $64, %edx\n   sub %esi, %edx\n   mov %edx, %ecx\n"
+    "shr %cl, %rax\n"
+    "add %rsi, 8(%rdi)\n"
+    ASM_RET
+    ".Lzstd_bits_x64_gge:\n"
+    "add %rsi, 8(%rdi)\n"
+    ".Lzstd_bits_x64_gzero:\n"
+    "xor %eax, %eax\n"
+    ASM_RET
+    ASM_END(zstd_bits_get)
 
     /* zstd Huffman: dest[need] from a backward bitstream. cell[i] is
        the symbol in the low 8 bits and the bit count in the high 8.
@@ -6174,8 +6505,9 @@ __asm__(
     "jmp .Lzstd_huff_x64_part_i\n"
     ".Lzstd_huff_x64_look:\n"
     "cmp $64, %r10d\n   jae .Lzstd_huff_x64_fail\n"
-    "mov %rbx, %rax\n   mov %r10d, %ecx\n   shl %cl, %rax\n"
-    "mov $64, %ecx\n   sub %r15d, %ecx\n   shr %cl, %rax\n"
+    "shlx %r10, %rbx, %rax\n"
+    "mov $64, %ecx\n   sub %r15d, %ecx\n"
+    "shrx %rcx, %rax, %rax\n"
     "movzwl (%r14,%rax,2), %edx\n   test %dh, %dh\n   jz .Lzstd_huff_x64_fail\n"
     "mov %dl, (%r12)\n   inc %r12\n   movzbl %dh, %ecx\n   add %ecx, %r10d\n"
     "dec %r13\n   jnz .Lzstd_huff_x64_loop\n"
@@ -6189,6 +6521,301 @@ __asm__(
     ".Lzstd_huff_x64_fail_empty:\n   mov $-1, %rax\n"
     ASM_RET
     ASM_END(zstd_huffman_stream)
+
+    /* Four Huffman streams: jump table then four zstd_huffman_stream calls. */
+    ASM_FUNC(zstd_huffman_4x)
+    "test %rsi, %rsi\n   jz .Lzstd_huff4_x64_ok0\n"
+    "cmp $10, %rcx\n   jb .Lzstd_huff4_x64_bad0\n"
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "sub $40, %rsp\n"
+    "mov %rdi, %r12\n"
+    "lea 3(%rsi), %rax\n   shr $2, %rax\n   mov %rax, %r13\n"
+    "lea (%r13,%r13,2), %rax\n   sub %rax, %rsi\n   mov %rsi, %r14\n"
+    "mov %r8, %rbp\n   mov %r9, %r15\n"
+    "movzwl (%rdx), %ebx\n   movzwl 2(%rdx), %eax\n   mov %rax, (%rsp)\n"
+    "movzwl 4(%rdx), %eax\n   mov %rax, 8(%rsp)\n"
+    "test %ebx, %ebx\n   jz .Lzstd_huff4_x64_fail\n"
+    "cmpq $0, (%rsp)\n   je .Lzstd_huff4_x64_fail\n"
+    "cmpq $0, 8(%rsp)\n   je .Lzstd_huff4_x64_fail\n"
+    "lea 6(%rbx), %r8\n   add (%rsp), %r8\n   add 8(%rsp), %r8\n"
+    "cmp %rcx, %r8\n   ja .Lzstd_huff4_x64_fail\n"
+    "sub %r8, %rcx\n   test %rcx, %rcx\n   jz .Lzstd_huff4_x64_fail\n"
+    "mov %rcx, 16(%rsp)\n"
+    "add $6, %rdx\n   mov %rdx, 24(%rsp)\n"
+    "mov %r12, %rdi\n   mov %r13, %rsi\n   mov 24(%rsp), %rdx\n"
+    "mov %rbx, %rcx\n   mov %rbp, %r8\n   mov %r15, %r9\n"
+    "call zstd_huffman_stream\n   test %eax, %eax\n   jnz .Lzstd_huff4_x64_fail\n"
+    "add %r13, %r12\n   add %rbx, 24(%rsp)\n"
+    "mov %r12, %rdi\n   mov %r13, %rsi\n   mov 24(%rsp), %rdx\n"
+    "mov (%rsp), %rcx\n   mov %rbp, %r8\n   mov %r15, %r9\n"
+    "call zstd_huffman_stream\n   test %eax, %eax\n   jnz .Lzstd_huff4_x64_fail\n"
+    "add %r13, %r12\n   mov (%rsp), %rax\n   add %rax, 24(%rsp)\n"
+    "mov %r12, %rdi\n   mov %r13, %rsi\n   mov 24(%rsp), %rdx\n"
+    "mov 8(%rsp), %rcx\n   mov %rbp, %r8\n   mov %r15, %r9\n"
+    "call zstd_huffman_stream\n   test %eax, %eax\n   jnz .Lzstd_huff4_x64_fail\n"
+    "add %r13, %r12\n   mov 8(%rsp), %rax\n   add %rax, 24(%rsp)\n"
+    "mov %r12, %rdi\n   mov %r14, %rsi\n   mov 24(%rsp), %rdx\n"
+    "mov 16(%rsp), %rcx\n   mov %rbp, %r8\n   mov %r15, %r9\n"
+    "call zstd_huffman_stream\n   test %eax, %eax\n   jnz .Lzstd_huff4_x64_fail\n"
+    "xor %eax, %eax\n"
+    ".Lzstd_huff4_x64_done:\n"
+    "add $40, %rsp\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
+    ASM_RET
+    ".Lzstd_huff4_x64_fail:\n   mov $-1, %rax\n   jmp .Lzstd_huff4_x64_done\n"
+    ".Lzstd_huff4_x64_ok0:\n   xor %eax, %eax\n"
+    ASM_RET
+    ".Lzstd_huff4_x64_bad0:\n   mov $-1, %rax\n"
+    ASM_RET
+    ASM_END(zstd_huffman_4x)
+
+    /* Refill the sequence bitstream in place. A call to a label inside this
+       STT_FUNC is an unannotated intra-function call and objtool refuses it,
+       so the fast load stays here and only the slow path calls a real
+       function. Remaining bits live in rbx/r14/r15; limit is rbp. Numeric
+       labels so every site can expand the same text. Slow path clobbers the
+       caller-saved registers, so r8-r11 are parked first. */
+#define ZSTD_SEQ_RELOAD \
+    "cmp $64, %r14d\n   ja .Lzstd_seq_x64_fail\n" \
+    "cmp %rbp, %r15\n   jb 81f\n" \
+    "mov %r14, %rcx\n   shr $3, %rcx\n   sub %rcx, %r15\n   and $7, %r14\n" \
+    "mov (%r15), %rbx\n   xor %eax, %eax\n   jmp 80f\n" \
+    "81: mov %r8, (%rsp)\n   mov %r9, 8(%rsp)\n" \
+    "mov %r10, 184(%rsp)\n   mov %r11, 192(%rsp)\n" \
+    "mov %rbx, 136(%rsp)\n   mov %r14, 144(%rsp)\n   mov %r15, 152(%rsp)\n" \
+    "lea 136(%rsp), %rdi\n   call zstd_bits_reload\n" \
+    "mov 136(%rsp), %rbx\n   mov 144(%rsp), %r14\n   mov 152(%rsp), %r15\n" \
+    "mov (%rsp), %r8\n   mov 8(%rsp), %r9\n" \
+    "mov 184(%rsp), %r10\n   mov 192(%rsp), %r11\n" \
+    "80: test %eax, %eax\n   jnz .Lzstd_seq_x64_fail\n"
+
+    /* zstd sequence body. job is 96 bytes:
+           0 window, 8 pos in/out, 16 window_size, 24 lits, 32 lit_len,
+           40 seq, 48 seq_len, 56 ll, 64 of, 72 ml, 80 rep, 88 nseq.
+       FSE cell[i] sits at table+4: next in the low 16, nbits, symbol.
+       The window already has room for the block; this only writes it. */
+    ASM_FUNC(zstd_sequences_run)
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "sub $200, %rsp\n   mov %rdi, 96(%rsp)\n"
+    "mov (%rdi), %rax\n   mov %rax, 16(%rsp)\n"
+    "mov 8(%rdi), %r12\n   add %rax, %r12\n"
+    "mov 16(%rdi), %rax\n   mov %rax, 24(%rsp)\n"
+    "mov 24(%rdi), %r13\n   mov 32(%rdi), %rax\n   add %r13, %rax\n"
+    "mov %rax, 32(%rsp)\n"
+    "mov 56(%rdi), %rax\n   mov %rax, 40(%rsp)\n"
+    "mov 64(%rdi), %rax\n   mov %rax, 48(%rsp)\n"
+    "mov 72(%rdi), %rax\n   mov %rax, 56(%rsp)\n"
+    "mov 80(%rdi), %rax\n   mov %rax, 64(%rsp)\n"
+    "mov 88(%rdi), %rax\n   mov %rax, 72(%rsp)\n"
+    "mov 40(%rdi), %rsi\n   mov 48(%rdi), %rdx\n"
+    "test %rdx, %rdx\n   jz .Lzstd_seq_x64_fail\n"
+    "lea 136(%rsp), %rdi\n   call zstd_bits_open\n"
+    "test %eax, %eax\n   jnz .Lzstd_seq_x64_fail\n"
+    "mov 136(%rsp), %rbx\n   mov 144(%rsp), %r14\n   mov 152(%rsp), %r15\n"
+    "mov 168(%rsp), %rbp\n"
+    ".Lzstd_seq_x64_init:\n"
+    "mov 40(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n   mov %edx, 80(%rsp)\n"
+    "mov 48(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n   mov %edx, 84(%rsp)\n"
+    "mov 56(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n   mov %edx, 88(%rsp)\n"
+    ZSTD_SEQ_RELOAD
+    "movb $0, 120(%rsp)\n"
+    "mov 40(%rsp), %rdi\n   cmpb $0, (%rdi)\n   je .Lzstd_seq_x64_mixed\n"
+    "mov 48(%rsp), %rdi\n   cmpb $0, (%rdi)\n   je .Lzstd_seq_x64_mixed\n"
+    "mov 56(%rsp), %rdi\n   cmpb $0, (%rdi)\n   jne .Lzstd_seq_x64_loop_fse\n"
+    ".Lzstd_seq_x64_mixed:\n   movb $1, 120(%rsp)\n"
+    ".Lzstd_seq_x64_loop:\n"
+    "mov 40(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
+    "test %eax, %eax\n   jz 72f\n"
+    "mov 80(%rsp), %eax\n   movzbl 7(%rdi,%rax,4), %r8d\n   jmp 73f\n"
+    "72: movzbl 1(%rdi), %r8d\n"
+    "73: mov 56(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
+    "test %eax, %eax\n   jz 72f\n"
+    "mov 88(%rsp), %eax\n   movzbl 7(%rdi,%rax,4), %r9d\n   jmp 73f\n"
+    "72: movzbl 1(%rdi), %r9d\n"
+    "73: mov 48(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
+    "test %eax, %eax\n   jz 72f\n"
+    "mov 84(%rsp), %eax\n   movzbl 7(%rdi,%rax,4), %r10d\n   jmp .Lzstd_seq_x64_syms\n"
+    "72: movzbl 1(%rdi), %r10d\n"
+    ".Lzstd_seq_x64_syms:\n"
+    "cmp $35, %r8d\n   ja .Lzstd_seq_x64_fail\n"
+    "cmp $52, %r9d\n   ja .Lzstd_seq_x64_fail\n"
+    "cmp $31, %r10d\n   ja .Lzstd_seq_x64_fail\n"
+    "cmp $32, %r14d\n   jbe .Lzstd_seq_x64_extras\n"
+    ZSTD_SEQ_RELOAD
+    ".Lzstd_seq_x64_extras:\n"
+    "mov %r10d, %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n   mov %rdx, %r11\n"
+    "cmp $32, %r14d\n   jbe .Lzstd_seq_x64_more\n"
+    ZSTD_SEQ_RELOAD
+    ".Lzstd_seq_x64_more:\n"
+    "lea zstd_seq_ml_bits(%rip), %rax\n   movzbl (%rax,%r9), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n   mov %rdx, %rsi\n"
+    "lea zstd_seq_ll_bits(%rip), %rax\n   movzbl (%rax,%r8), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n"
+    "lea zstd_seq_ll_base(%rip), %rax\n   mov (%rax,%r8,4), %eax\n"
+    "add %edx, %eax\n   mov %eax, %r8d\n"
+    "lea zstd_seq_ml_base(%rip), %rax\n   mov (%rax,%r9,4), %eax\n"
+    "add %esi, %eax\n   mov %eax, %r9d\n"
+    "cmp $32, %r14d\n   jbe .Lzstd_seq_x64_offgo\n"
+    ZSTD_SEQ_RELOAD
+    ".Lzstd_seq_x64_offgo:\n"
+    "mov %r11, %rdx\n   mov %r10d, %eax\n   mov %r8d, %esi\n"
+    "mov 64(%rsp), %rdi\n"
+    "test %eax, %eax\n   jz .Lzstd_seq_x64_of0\n"
+    "cmp $1, %eax\n   je .Lzstd_seq_x64_of1\n"
+    "mov %eax, %ecx\n   mov $1, %eax\n   shl %cl, %rax\n"
+    "add %rdx, %rax\n   sub $3, %rax\n"
+    "test %rax, %rax\n   jz .Lzstd_seq_x64_fail\n"
+    "mov 4(%rdi), %ecx\n   mov %ecx, 8(%rdi)\n"
+    "mov (%rdi), %ecx\n   mov %ecx, 4(%rdi)\n"
+    "mov %eax, (%rdi)\n"
+    "jmp .Lzstd_seq_x64_offok\n"
+    ".Lzstd_seq_x64_of0:\n"
+    "test %esi, %esi\n   setz %cl\n   movzbl %cl, %ecx\n"
+    "mov (%rdi,%rcx,4), %eax\n   test %eax, %eax\n   jz .Lzstd_seq_x64_fail\n"
+    "test %esi, %esi\n   setnz %cl\n   movzbl %cl, %ecx\n"
+    "mov (%rdi,%rcx,4), %ecx\n   mov %ecx, 4(%rdi)\n"
+    "mov %eax, (%rdi)\n"
+    "jmp .Lzstd_seq_x64_offok\n"
+    ".Lzstd_seq_x64_of1:\n"
+    "xor %ecx, %ecx\n   test %esi, %esi\n   setz %cl\n"
+    "add $1, %ecx\n   add %edx, %ecx\n"
+    "cmp $3, %ecx\n   je .Lzstd_seq_x64_of1d\n"
+    "mov (%rdi,%rcx,4), %eax\n   jmp .Lzstd_seq_x64_of1s\n"
+    ".Lzstd_seq_x64_of1d:\n   mov (%rdi), %eax\n   dec %eax\n"
+    ".Lzstd_seq_x64_of1s:\n"
+    "test %eax, %eax\n   jz .Lzstd_seq_x64_fail\n"
+    "cmp $1, %ecx\n   je .Lzstd_seq_x64_of1n\n"
+    "mov 4(%rdi), %edx\n   mov %edx, 8(%rdi)\n"
+    ".Lzstd_seq_x64_of1n:\n"
+    "mov (%rdi), %edx\n   mov %edx, 4(%rdi)\n   mov %eax, (%rdi)\n"
+    ".Lzstd_seq_x64_offok:\n"
+    "mov %rax, 104(%rsp)\n   mov %r9, 112(%rsp)\n"
+    "lea (%r13,%r8), %rdx\n   cmp 32(%rsp), %rdx\n   ja .Lzstd_seq_x64_fail\n"
+    "test %r8, %r8\n   jz .Lzstd_seq_x64_match\n"
+    "cmp $32, %r8\n   jae .Lzstd_seq_x64_litlong\n"
+    ASM_USERSPACE_WIDE(
+    "movdqu (%r13), %xmm0\n   movdqu 16(%r13), %xmm1\n"
+    "movdqu %xmm0, (%r12)\n   movdqu %xmm1, 16(%r12)\n"
+    "jmp .Lzstd_seq_x64_litdone\n"
+    )
+    "mov (%r13), %rax\n   mov 8(%r13), %rcx\n"
+    "mov 16(%r13), %rdi\n   mov 24(%r13), %rsi\n"
+    "mov %rax, (%r12)\n   mov %rcx, 8(%r12)\n"
+    "mov %rdi, 16(%r12)\n   mov %rsi, 24(%r12)\n"
+    ".Lzstd_seq_x64_litdone:\n"
+    "add %r8, %r12\n   add %r8, %r13\n"
+    "jmp .Lzstd_seq_x64_match\n"
+    ".Lzstd_seq_x64_litlong:\n"
+    "mov %r12, %rdi\n   mov %r13, %rsi\n   mov %r8, %rdx\n"
+    "add %r8, %r12\n   add %r8, %r13\n"
+    "call memory_copy_apart\n"
+    ".Lzstd_seq_x64_match:\n"
+    "mov 104(%rsp), %rax\n"
+    "mov 16(%rsp), %rdx\n   mov %r12, %rcx\n   sub %rdx, %rcx\n"
+    "cmp %rax, %rcx\n   jb .Lzstd_seq_x64_fail\n"
+    "mov 24(%rsp), %rdx\n   test %rdx, %rdx\n   jz .Lzstd_seq_x64_copy\n"
+    "cmp %rdx, %rax\n   ja .Lzstd_seq_x64_fail\n"
+    ".Lzstd_seq_x64_copy:\n"
+    "mov 112(%rsp), %rdx\n   test %rdx, %rdx\n   jz .Lzstd_seq_x64_after\n"
+    "mov 104(%rsp), %rsi\n"
+    "cmp %rsi, %rdx\n   ja .Lzstd_seq_x64_overlap\n"
+    "cmp $32, %rdx\n   jae .Lzstd_seq_x64_mlong\n"
+    "mov %r12, %rdi\n   sub %rsi, %rdi\n"
+    ASM_USERSPACE_WIDE(
+    "movdqu (%rdi), %xmm0\n   movdqu 16(%rdi), %xmm1\n"
+    "movdqu %xmm0, (%r12)\n   movdqu %xmm1, 16(%r12)\n"
+    "jmp .Lzstd_seq_x64_mdone\n"
+    )
+    "mov (%rdi), %rax\n   mov 8(%rdi), %rcx\n"
+    "mov 16(%rdi), %r8\n   mov 24(%rdi), %r9\n"
+    "mov %rax, (%r12)\n   mov %rcx, 8(%r12)\n"
+    "mov %r8, 16(%r12)\n   mov %r9, 24(%r12)\n"
+    ".Lzstd_seq_x64_mdone:\n"
+    "add %rdx, %r12\n"
+    "jmp .Lzstd_seq_x64_after\n"
+    ".Lzstd_seq_x64_mlong:\n"
+    "mov %r12, %rdi\n   mov %r12, %rax\n   sub %rsi, %rax\n   mov %rax, %rsi\n"
+    "add %rdx, %r12\n"
+    "call memory_copy_apart\n"
+    "jmp .Lzstd_seq_x64_after\n"
+    ".Lzstd_seq_x64_overlap:\n"
+    "mov %r12, %rdi\n"
+    "neg %rsi\n   prefetcht0 (%rdi,%rsi,1)\n   neg %rsi\n"
+    "call memory_copy_match\n"
+    "add 112(%rsp), %r12\n"
+    ".Lzstd_seq_x64_after:\n"
+    "decq 72(%rsp)\n   jz .Lzstd_seq_x64_rest\n"
+    "cmpb $0, 120(%rsp)\n   jne .Lzstd_seq_x64_step_rle\n"
+    "mov 40(%rsp), %rdi\n   mov 80(%rsp), %eax\n"
+    "movzbl 6(%rdi,%rax,4), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n"
+    "mov 80(%rsp), %eax\n   movzwl 4(%rdi,%rax,4), %eax\n"
+    "add %edx, %eax\n   mov %eax, 80(%rsp)\n"
+    "mov 56(%rsp), %rdi\n   mov 88(%rsp), %eax\n"
+    "movzbl 6(%rdi,%rax,4), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n"
+    "mov 88(%rsp), %eax\n   movzwl 4(%rdi,%rax,4), %eax\n"
+    "add %edx, %eax\n   mov %eax, 88(%rsp)\n"
+    "mov 48(%rsp), %rdi\n   mov 84(%rsp), %eax\n"
+    "movzbl 6(%rdi,%rax,4), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n"
+    "mov 84(%rsp), %eax\n   movzwl 4(%rdi,%rax,4), %eax\n"
+    "add %edx, %eax\n   mov %eax, 84(%rsp)\n"
+    "cmp $32, %r14d\n   jbe .Lzstd_seq_x64_loop_fse\n"
+    ZSTD_SEQ_RELOAD
+    "jmp .Lzstd_seq_x64_loop_fse\n"
+    ".Lzstd_seq_x64_loop_fse:\n"
+    "mov 40(%rsp), %rdi\n   mov 80(%rsp), %eax\n"
+    "movzbl 7(%rdi,%rax,4), %r8d\n"
+    "mov 56(%rsp), %rdi\n   mov 88(%rsp), %eax\n"
+    "movzbl 7(%rdi,%rax,4), %r9d\n"
+    "mov 48(%rsp), %rdi\n   mov 84(%rsp), %eax\n"
+    "movzbl 7(%rdi,%rax,4), %r10d\n"
+    "jmp .Lzstd_seq_x64_syms\n"
+    ".Lzstd_seq_x64_step_rle:\n"
+    "mov 40(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
+    "test %eax, %eax\n   jz 74f\n"
+    "mov 80(%rsp), %eax\n   movzbl 6(%rdi,%rax,4), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n"
+    "mov 80(%rsp), %eax\n   movzwl 4(%rdi,%rax,4), %eax\n"
+    "add %edx, %eax\n   mov %eax, 80(%rsp)\n"
+    "74: mov 56(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
+    "test %eax, %eax\n   jz 74f\n"
+    "mov 88(%rsp), %eax\n   movzbl 6(%rdi,%rax,4), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n"
+    "mov 88(%rsp), %eax\n   movzwl 4(%rdi,%rax,4), %eax\n"
+    "add %edx, %eax\n   mov %eax, 88(%rsp)\n"
+    "74: mov 48(%rsp), %rdi\n   movzbl (%rdi), %eax\n"
+    "test %eax, %eax\n   jz 74f\n"
+    "mov 84(%rsp), %eax\n   movzbl 6(%rdi,%rax,4), %eax\n"
+    "xor %edx, %edx\n   test %eax, %eax\n   jz 67f\n   shlx %r14, %rbx, %rdx\n   mov $64, %ecx\n   sub %eax, %ecx\n   shrx %rcx, %rdx, %rdx\n   add %eax, %r14d\n67:\n"
+    "mov 84(%rsp), %eax\n   movzwl 4(%rdi,%rax,4), %eax\n"
+    "add %edx, %eax\n   mov %eax, 84(%rsp)\n"
+    "74: cmp $32, %r14d\n   jbe .Lzstd_seq_x64_loop\n"
+    ZSTD_SEQ_RELOAD
+    "jmp .Lzstd_seq_x64_loop\n"
+    ".Lzstd_seq_x64_rest:\n"
+    ZSTD_SEQ_RELOAD
+    "mov 32(%rsp), %rdx\n   sub %r13, %rdx\n"
+    "jz .Lzstd_seq_x64_ok\n"
+    "jb .Lzstd_seq_x64_fail\n"
+    "mov %r12, %rdi\n   mov %r13, %rsi\n"
+    "add %rdx, %r12\n"
+    "call memory_copy_apart\n"
+    ".Lzstd_seq_x64_ok:\n"
+    "mov 96(%rsp), %rdi\n   mov %r12, %rax\n   sub 16(%rsp), %rax\n"
+    "mov %rax, 8(%rdi)\n   xor %eax, %eax\n"
+    ".Lzstd_seq_x64_done:\n"
+    "add $200, %rsp\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
+    ASM_RET
+    ".Lzstd_seq_x64_fail:\n   mov $-1, %rax\n   jmp .Lzstd_seq_x64_done\n"
+    ASM_END(zstd_sequences_run)
+#undef ZSTD_SEQ_RELOAD
     // Exact memmove semantics, followed by one terminator, with the end handed
     // back. The copy core stays single-sourced: keeping dst+n on the stack is
     // enough to survive its caller-saved register use. A real call is required
@@ -10210,6 +10837,12 @@ __asm__(
     ".Lmemory_bsd_sum_arm64_done:\n" ASM_RET
     ASM_END(memory_checksum_bsd16)
 
+    /* See the x86_64 body. */
+    ASM_FUNC(memory_get64)
+    "ldr x0, [x0]\n"
+    ASM_RET
+    ASM_END(memory_get64)
+
     /* See the x86_64 body. rotl n is ror 64-n. */
     ASM_FUNC(hash_xxh64)
     "mov x9, x0\n   mov x15, x1\n   mov x8, x2\n"
@@ -10285,6 +10918,170 @@ __asm__(
     "eor x0, x0, x0, lsr #32\n"
     ASM_RET
     ASM_END(hash_xxh64)
+
+    /* See the x86_64 body. State layout is the same 88 bytes. */
+    ASM_FUNC(hash_xxh64_begin)
+    "str xzr, [x0]\n   str x1, [x0, #40]\n   strb wzr, [x0, #80]\n"
+    "movz x10, #0xca87\n   movk x10, #0x85eb, lsl #16\n"
+    "movk x10, #0x79b1, lsl #32\n   movk x10, #0x9e37, lsl #48\n"
+    "movz x11, #0xeb4f\n   movk x11, #0x27d4, lsl #16\n"
+    "movk x11, #0xae3d, lsl #32\n   movk x11, #0xc2b2, lsl #48\n"
+    "add x3, x1, x10\n   add x3, x3, x11\n   str x3, [x0, #8]\n"
+    "add x4, x1, x11\n   str x4, [x0, #16]\n"
+    "str x1, [x0, #24]\n   sub x6, x1, x10\n   str x6, [x0, #32]\n"
+    ASM_RET
+    ASM_END(hash_xxh64_begin)
+
+    ASM_FUNC(hash_xxh64_add)
+    "cbz x2, .Lxxh64_add_arm64_ret\n"
+    "ldr x3, [x0]\n   add x3, x3, x2\n   str x3, [x0]\n"
+    "mov x9, x0\n   mov x15, x1\n   mov x14, x2\n"
+    "ldrb w13, [x9, #80]\n   cbz w13, .Lxxh64_add_arm64_bulk\n"
+    "mov w3, #32\n   sub w3, w3, w13\n"
+    "cmp x3, x14\n   csel x3, x14, x3, hi\n"
+    "cbz x3, .Lxxh64_add_arm64_bulk\n"
+    "add x4, x9, #48\n   add x4, x4, x13\n"
+    "mov x5, x3\n"
+    ".Lxxh64_add_arm64_fill:\n"
+    "ldrb w6, [x15], #1\n   strb w6, [x4], #1\n"
+    "subs x5, x5, #1\n   b.ne .Lxxh64_add_arm64_fill\n"
+    "add x15, x1, x3\n   sub x14, x2, x3\n"
+    "add w13, w13, w3\n"
+    "cmp w13, #32\n   b.ne .Lxxh64_add_arm64_held\n"
+    "movz x10, #0xca87\n   movk x10, #0x85eb, lsl #16\n"
+    "movk x10, #0x79b1, lsl #32\n   movk x10, #0x9e37, lsl #48\n"
+    "movz x11, #0xeb4f\n   movk x11, #0x27d4, lsl #16\n"
+    "movk x11, #0xae3d, lsl #32\n   movk x11, #0xc2b2, lsl #48\n"
+    "ldp x3, x4, [x9, #8]\n   ldp x5, x6, [x9, #24]\n"
+    "add x8, x9, #48\n"
+    "ldr x12, [x8]\n   mul x12, x12, x11\n   add x3, x3, x12\n"
+    "ror x3, x3, #33\n   mul x3, x3, x10\n"
+    "ldr x12, [x8, #8]\n   mul x12, x12, x11\n   add x4, x4, x12\n"
+    "ror x4, x4, #33\n   mul x4, x4, x10\n"
+    "ldr x12, [x8, #16]\n   mul x12, x12, x11\n   add x5, x5, x12\n"
+    "ror x5, x5, #33\n   mul x5, x5, x10\n"
+    "ldr x12, [x8, #24]\n   mul x12, x12, x11\n   add x6, x6, x12\n"
+    "ror x6, x6, #33\n   mul x6, x6, x10\n"
+    "stp x3, x4, [x9, #8]\n   stp x5, x6, [x9, #24]\n"
+    "mov w13, wzr\n"
+    ".Lxxh64_add_arm64_held:\n"
+    "strb w13, [x9, #80]\n"
+    ".Lxxh64_add_arm64_bulk:\n"
+    "cmp x14, #32\n   b.lo .Lxxh64_add_arm64_tail\n"
+    "movz x10, #0xca87\n   movk x10, #0x85eb, lsl #16\n"
+    "movk x10, #0x79b1, lsl #32\n   movk x10, #0x9e37, lsl #48\n"
+    "movz x11, #0xeb4f\n   movk x11, #0x27d4, lsl #16\n"
+    "movk x11, #0xae3d, lsl #32\n   movk x11, #0xc2b2, lsl #48\n"
+    "ldp x3, x4, [x9, #8]\n   ldp x5, x6, [x9, #24]\n"
+    "cmp x14, #64\n   b.lo .Lxxh64_add_arm64_stripe\n"
+    ".balign 16\n.Lxxh64_add_arm64_stripe64:\n"
+    "prfm pldl1keep, [x15, #64]\n"
+    "ldr x12, [x15]\n   mul x12, x12, x11\n   add x3, x3, x12\n"
+    "ror x3, x3, #33\n   mul x3, x3, x10\n"
+    "ldr x12, [x15, #8]\n   mul x12, x12, x11\n   add x4, x4, x12\n"
+    "ror x4, x4, #33\n   mul x4, x4, x10\n"
+    "ldr x12, [x15, #16]\n   mul x12, x12, x11\n   add x5, x5, x12\n"
+    "ror x5, x5, #33\n   mul x5, x5, x10\n"
+    "ldr x12, [x15, #24]\n   mul x12, x12, x11\n   add x6, x6, x12\n"
+    "ror x6, x6, #33\n   mul x6, x6, x10\n"
+    "ldr x12, [x15, #32]\n   mul x12, x12, x11\n   add x3, x3, x12\n"
+    "ror x3, x3, #33\n   mul x3, x3, x10\n"
+    "ldr x12, [x15, #40]\n   mul x12, x12, x11\n   add x4, x4, x12\n"
+    "ror x4, x4, #33\n   mul x4, x4, x10\n"
+    "ldr x12, [x15, #48]\n   mul x12, x12, x11\n   add x5, x5, x12\n"
+    "ror x5, x5, #33\n   mul x5, x5, x10\n"
+    "ldr x12, [x15, #56]\n   mul x12, x12, x11\n   add x6, x6, x12\n"
+    "ror x6, x6, #33\n   mul x6, x6, x10\n"
+    "add x15, x15, #64\n   sub x14, x14, #64\n   cmp x14, #64\n"
+    "b.hs .Lxxh64_add_arm64_stripe64\n"
+    "cmp x14, #32\n   b.lo .Lxxh64_add_arm64_save\n"
+    ".balign 16\n.Lxxh64_add_arm64_stripe:\n"
+    "ldr x12, [x15]\n   mul x12, x12, x11\n   add x3, x3, x12\n"
+    "ror x3, x3, #33\n   mul x3, x3, x10\n"
+    "ldr x12, [x15, #8]\n   mul x12, x12, x11\n   add x4, x4, x12\n"
+    "ror x4, x4, #33\n   mul x4, x4, x10\n"
+    "ldr x12, [x15, #16]\n   mul x12, x12, x11\n   add x5, x5, x12\n"
+    "ror x5, x5, #33\n   mul x5, x5, x10\n"
+    "ldr x12, [x15, #24]\n   mul x12, x12, x11\n   add x6, x6, x12\n"
+    "ror x6, x6, #33\n   mul x6, x6, x10\n"
+    "add x15, x15, #32\n   sub x14, x14, #32\n   cmp x14, #32\n"
+    "b.hs .Lxxh64_add_arm64_stripe\n"
+    ".Lxxh64_add_arm64_save:\n"
+    "stp x3, x4, [x9, #8]\n   stp x5, x6, [x9, #24]\n"
+    ".Lxxh64_add_arm64_tail:\n"
+    "cbz x14, .Lxxh64_add_arm64_ret\n"
+    "ldrb w3, [x9, #80]\n   add w4, w3, w14\n   strb w4, [x9, #80]\n"
+    "add x4, x9, #48\n   add x4, x4, x3\n"
+    ".Lxxh64_add_arm64_rest:\n"
+    "ldrb w5, [x15], #1\n   strb w5, [x4], #1\n"
+    "subs x14, x14, #1\n   b.ne .Lxxh64_add_arm64_rest\n"
+    ".Lxxh64_add_arm64_ret:\n"
+    ASM_RET
+    ASM_END(hash_xxh64_add)
+
+    ASM_FUNC(hash_xxh64_finish)
+    "mov x9, x0\n   ldr x15, [x0]\n   ldrb w1, [x0, #80]\n"
+    "add x8, x0, #48\n   ldr x2, [x0, #40]\n"
+    "cmp x15, #32\n   b.lo .Lxxh64_fin_arm64_small\n"
+    "movz x10, #0xca87\n   movk x10, #0x85eb, lsl #16\n"
+    "movk x10, #0x79b1, lsl #32\n   movk x10, #0x9e37, lsl #48\n"
+    "movz x11, #0xeb4f\n   movk x11, #0x27d4, lsl #16\n"
+    "movk x11, #0xae3d, lsl #32\n   movk x11, #0xc2b2, lsl #48\n"
+    "ldp x3, x4, [x9, #8]\n   ldp x5, x6, [x9, #24]\n"
+    "mov x12, x3\n   mov x13, x4\n   mov x14, x5\n   mov x16, x6\n"
+    "ror x3, x3, #63\n   ror x4, x4, #57\n   add x0, x3, x4\n"
+    "ror x5, x5, #52\n   add x0, x0, x5\n"
+    "ror x6, x6, #46\n   add x0, x0, x6\n"
+    "movz x7, #0xae63\n   movk x7, #0xc2b2, lsl #16\n"
+    "movk x7, #0xca77, lsl #32\n   movk x7, #0x85eb, lsl #48\n"
+    "mul x2, x12, x11\n   ror x2, x2, #33\n   mul x2, x2, x10\n"
+    "eor x0, x0, x2\n   mul x0, x0, x10\n   add x0, x0, x7\n"
+    "mul x2, x13, x11\n   ror x2, x2, #33\n   mul x2, x2, x10\n"
+    "eor x0, x0, x2\n   mul x0, x0, x10\n   add x0, x0, x7\n"
+    "mul x2, x14, x11\n   ror x2, x2, #33\n   mul x2, x2, x10\n"
+    "eor x0, x0, x2\n   mul x0, x0, x10\n   add x0, x0, x7\n"
+    "mul x2, x16, x11\n   ror x2, x2, #33\n   mul x2, x2, x10\n"
+    "eor x0, x0, x2\n   mul x0, x0, x10\n   add x0, x0, x7\n"
+    "b .Lxxh64_fin_arm64_tail\n"
+    ".Lxxh64_fin_arm64_small:\n"
+    "movz x0, #0x67c5\n   movk x0, #0x1656, lsl #16\n"
+    "movk x0, #0xeb2f, lsl #32\n   movk x0, #0x27d4, lsl #48\n"
+    "add x0, x0, x2\n"
+    ".Lxxh64_fin_arm64_tail:\n"
+    "add x0, x0, x15\n"
+    "mov x9, x8\n"
+    "movz x10, #0xca87\n   movk x10, #0x85eb, lsl #16\n"
+    "movk x10, #0x79b1, lsl #32\n   movk x10, #0x9e37, lsl #48\n"
+    "movz x11, #0xeb4f\n   movk x11, #0x27d4, lsl #16\n"
+    "movk x11, #0xae3d, lsl #32\n   movk x11, #0xc2b2, lsl #48\n"
+    "movz x7, #0xae63\n   movk x7, #0xc2b2, lsl #16\n"
+    "movk x7, #0xca77, lsl #32\n   movk x7, #0x85eb, lsl #48\n"
+    "movz x12, #0x79f9\n   movk x12, #0x9e37, lsl #16\n"
+    "movk x12, #0x67b1, lsl #32\n   movk x12, #0x1656, lsl #48\n"
+    "movz x13, #0x67c5\n   movk x13, #0x1656, lsl #16\n"
+    "movk x13, #0xeb2f, lsl #32\n   movk x13, #0x27d4, lsl #48\n"
+    "cmp x1, #8\n   b.lo .Lxxh64_fin_arm64_four\n"
+    ".Lxxh64_fin_arm64_eight:\n"
+    "ldr x2, [x9], #8\n   mul x2, x2, x11\n   ror x2, x2, #33\n   mul x2, x2, x10\n"
+    "eor x0, x0, x2\n   ror x0, x0, #37\n   mul x0, x0, x10\n   add x0, x0, x7\n"
+    "sub x1, x1, #8\n   cmp x1, #8\n   b.hs .Lxxh64_fin_arm64_eight\n"
+    ".Lxxh64_fin_arm64_four:\n"
+    "cmp x1, #4\n   b.lo .Lxxh64_fin_arm64_one\n"
+    "ldr w2, [x9], #4\n   mul x2, x2, x10\n"
+    "eor x0, x0, x2\n   ror x0, x0, #41\n   mul x0, x0, x11\n   add x0, x0, x12\n"
+    "sub x1, x1, #4\n"
+    ".Lxxh64_fin_arm64_one:\n"
+    "cbz x1, .Lxxh64_fin_arm64_mix\n"
+    ".Lxxh64_fin_arm64_byte:\n"
+    "ldrb w2, [x9], #1\n   mul x2, x2, x13\n"
+    "eor x0, x0, x2\n   ror x0, x0, #53\n   mul x0, x0, x10\n"
+    "subs x1, x1, #1\n   b.ne .Lxxh64_fin_arm64_byte\n"
+    ".Lxxh64_fin_arm64_mix:\n"
+    "eor x0, x0, x0, lsr #33\n   mul x0, x0, x11\n"
+    "eor x0, x0, x0, lsr #29\n   mul x0, x0, x12\n"
+    "eor x0, x0, x0, lsr #32\n"
+    ASM_RET
+    ASM_END(hash_xxh64_finish)
 
     ASM_FUNC(memory_hash_33)
     "mov x2, #5381\n   cmp x1, #4\n   b.lo .Lmemory_hash_33_arm64_tail\n"
@@ -10636,32 +11433,162 @@ __asm__(
     "cbz x2, .Lmatch_arm64_done\n"
     "cmp x2, x1\n   b.ls .Lmatch_arm64_apart\n"
     "cmp x1, #1\n   b.eq .Lmatch_arm64_fill\n"
-    "stp x19, x20, [sp, #-48]!\n   stp x21, x30, [sp, #16]\n"
-    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n"
-    "cmp x20, #8\n   b.lo .Lmatch_arm64_tiny\n"
-    ".balign 16\n.Lmatch_arm64_loop:\n"
-    "mov x2, x20\n"
-    "cmp x2, x21\n   b.ls .Lmatch_arm64_do\n   mov x2, x21\n"
-    ".Lmatch_arm64_do:\n"
-    "str x2, [sp, #32]\n   mov x0, x19\n   sub x1, x19, x20\n"
-    "bl memory_copy_apart\n   ldr x2, [sp, #32]\n"
-    "add x19, x19, x2\n   sub x21, x21, x2\n"
-    "cmp x20, x21\n   b.lo .Lmatch_arm64_loop\n"
-    "mov x0, x19\n   sub x1, x19, x20\n   mov x2, x21\n"
-    "ldp x21, x30, [sp, #16]\n   ldp x19, x20, [sp], #48\n"
+    "cmp x1, #2\n   b.eq .Lmatch_arm64_off2\n"
+    "cmp x1, #4\n   b.eq .Lmatch_arm64_off4\n"
+    "cmp x1, #8\n   b.eq .Lmatch_arm64_off8\n"
+    "cmp x1, #8\n   b.lo .Lmatch_arm64_tiny\n"
+    "mov x4, x0\n   mov x5, x1\n"
+    "cmp x1, #32\n   b.lo .Lmatch_arm64_medium\n"
+    ".Lmatch_arm64_period:\n"
+    "cmp x2, x5\n   b.lo .Lmatch_arm64_ptail\n"
+    "stp x4, x5, [sp, #-32]!\n   stp x2, x30, [sp, #16]\n"
+    "mov x0, x4\n   sub x1, x4, x5\n   mov x2, x5\n"
+    "bl memory_copy_apart\n"
+    "ldp x2, x30, [sp, #16]\n   ldp x4, x5, [sp], #32\n"
+    "add x4, x4, x5\n   sub x2, x2, x5\n"
+    "b .Lmatch_arm64_period\n"
+    ".Lmatch_arm64_ptail:\n"
+    "cbz x2, .Lmatch_arm64_done\n"
+    "mov x0, x4\n   sub x1, x4, x5\n"
     "b memory_copy_apart\n"
+    ".Lmatch_arm64_medium:\n"
+    "sub x3, x4, x5\n   mov x0, x4\n   mov x1, x5\n"
+#ifndef KERNEL_MODE
+    "cmp x1, #16\n   b.lo .Lmatch_arm64_word8\n"
+    "cmp x2, #16\n   b.lo .Lmatch_arm64_word8\n"
+    ".balign 16\n.Lmatch_arm64_q:\n"
+    "ldr q0, [x3]\n   str q0, [x0]\n"
+    "add x0, x0, #16\n   add x3, x3, #16\n   sub x2, x2, #16\n"
+    "cmp x2, #16\n   b.hs .Lmatch_arm64_q\n"
+#endif
+    ".Lmatch_arm64_word8:\n"
+    "cmp x2, #8\n   b.lo .Lmatch_arm64_tail\n"
+    ".Lmatch_arm64_8:\n"
+    "ldur x4, [x3]\n   stur x4, [x0]\n"
+    "add x0, x0, #8\n   add x3, x3, #8\n   sub x2, x2, #8\n"
+    "cmp x2, #8\n   b.hs .Lmatch_arm64_8\n"
+    ".Lmatch_arm64_tail:\n"
+    "cbz x2, .Lmatch_arm64_done\n"
+    "mov x1, x3\n"
+    "b memory_copy_apart\n"
+    ".Lmatch_arm64_off2:\n"
+    "ldurh w3, [x0, #-2]\n   orr w3, w3, w3, lsl #16\n"
+    "b .Lmatch_arm64_splat32\n"
+    ".Lmatch_arm64_off4:\n"
+    "ldur w3, [x0, #-4]\n"
+    ".Lmatch_arm64_splat32:\n"
+    "cmp x2, #8\n   b.lo .Lmatch_arm64_splat32t\n"
+    ".Lmatch_arm64_splat32q:\n"
+    "str w3, [x0]\n   str w3, [x0, #4]\n"
+    "add x0, x0, #8\n   sub x2, x2, #8\n"
+    "cmp x2, #8\n   b.hs .Lmatch_arm64_splat32q\n"
+    ".Lmatch_arm64_splat32t:\n"
+    "cbz x2, .Lmatch_arm64_done\n"
+    "cmp x2, #4\n   b.lo .Lmatch_arm64_splat32r\n"
+    "str w3, [x0], #4\n   sub x2, x2, #4\n"
+    "cbz x2, .Lmatch_arm64_done\n"
+    ".Lmatch_arm64_splat32r:\n"
+    "sub x3, x0, x1\n"
+    "b .Lmatch_arm64_byte\n"
+    ".Lmatch_arm64_off8:\n"
+    "ldur x3, [x0, #-8]\n"
+    "cmp x2, #8\n   b.lo .Lmatch_arm64_splat64t\n"
+    ".Lmatch_arm64_splat64q:\n"
+    "str x3, [x0], #8\n   sub x2, x2, #8\n"
+    "cmp x2, #8\n   b.hs .Lmatch_arm64_splat64q\n"
+    ".Lmatch_arm64_splat64t:\n"
+    "cbz x2, .Lmatch_arm64_done\n"
+    "sub x3, x0, #8\n"
+    "b .Lmatch_arm64_tail\n"
     ".Lmatch_arm64_tiny:\n"
-    "sub x1, x19, x20\n"
+    "sub x3, x0, x1\n"
     ".Lmatch_arm64_byte:\n"
-    "ldrb w0, [x1], #1\n   strb w0, [x19], #1\n"
-    "subs x21, x21, #1\n   b.ne .Lmatch_arm64_byte\n"
-    "ldp x21, x30, [sp, #16]\n   ldp x19, x20, [sp], #48\n"
+    "ldrb w4, [x3], #1\n   strb w4, [x0], #1\n"
+    "subs x2, x2, #1\n   b.ne .Lmatch_arm64_byte\n"
     ASM_RET
     ".Lmatch_arm64_fill:\n   ldrb w1, [x0, #-1]\n   b memory_fill\n"
     ".Lmatch_arm64_apart:\n   sub x1, x0, x1\n   b memory_copy_apart\n"
     ".Lmatch_arm64_done:\n"
     ASM_RET
     ASM_END(memory_copy_match)
+
+    /* See the x86_64 body. */
+    ASM_FUNC(zstd_bits_open)
+    "cbz x2, .Lzstd_bits_arm64_obad\n"
+    "str x1, [x0, #24]\n"
+    "add x3, x1, x2\n   str x3, [x0, #40]\n"
+    "add x4, x1, #8\n   str x4, [x0, #32]\n"
+    "ldrb w4, [x3, #-1]\n   cbz w4, .Lzstd_bits_arm64_obad\n"
+    "cmp x2, #8\n   b.lo .Lzstd_bits_arm64_osmall\n"
+    "sub x5, x3, #8\n   str x5, [x0, #16]\n"
+    "ldr x6, [x5]\n   str x6, [x0]\n"
+    "clz w7, w4\n   mov w8, #31\n   sub w8, w8, w7\n"
+    "mov w9, #8\n   sub w9, w9, w8\n   str x9, [x0, #8]\n"
+    "mov x0, xzr\n"
+    ASM_RET
+    ".Lzstd_bits_arm64_osmall:\n"
+    "mov x6, xzr\n   mov x7, xzr\n"
+    ".Lzstd_bits_arm64_osi:\n"
+    "ldrb w8, [x1, x7]\n   lsl x9, x7, #3\n   lsl x8, x8, x9\n"
+    "orr x6, x6, x8\n   add x7, x7, #1\n   cmp x7, x2\n"
+    "b.lo .Lzstd_bits_arm64_osi\n"
+    "str x6, [x0]\n   str x1, [x0, #16]\n"
+    "mov w7, #8\n   sub w7, w7, w2\n   lsl w7, w7, #3\n"
+    "clz w8, w4\n   mov w9, #31\n   sub w9, w9, w8\n"
+    "mov w8, #8\n   sub w8, w8, w9\n   add w8, w8, w7\n"
+    "str x8, [x0, #8]\n"
+    "mov x0, xzr\n"
+    ASM_RET
+    ".Lzstd_bits_arm64_obad:\n   mov x0, #-1\n"
+    ASM_RET
+    ASM_END(zstd_bits_open)
+
+    ASM_FUNC(zstd_bits_reload)
+    "mov x15, x0\n"
+    "ldr x0, [x15]\n   ldr x1, [x15, #8]\n   ldr x2, [x15, #16]\n"
+    "ldr x3, [x15, #24]\n   ldr x4, [x15, #32]\n   ldr x5, [x15, #40]\n"
+    "cmp x1, #64\n   b.hi .Lzstd_bits_arm64_rbad\n"
+    "cmp x2, x4\n   b.hs .Lzstd_bits_arm64_rfast\n"
+    "cmp x2, x3\n   b.eq .Lzstd_bits_arm64_rok\n"
+    "lsr x6, x1, #3\n   sub x7, x2, x6\n"
+    "cmp x7, x3\n   b.hs .Lzstd_bits_arm64_rreok\n"
+    "sub x6, x2, x3\n   mov x7, x3\n"
+    ".Lzstd_bits_arm64_rreok:\n"
+    "mov x2, x7\n   lsl x6, x6, #3\n   sub x1, x1, x6\n"
+    "sub x8, x5, x2\n   cmp x8, #8\n   b.lo .Lzstd_bits_arm64_rpart\n"
+    "ldr x0, [x2]\n   b .Lzstd_bits_arm64_rok\n"
+    ".Lzstd_bits_arm64_rfast:\n"
+    "lsr x6, x1, #3\n   sub x2, x2, x6\n   and x1, x1, #7\n"
+    "ldr x0, [x2]\n   b .Lzstd_bits_arm64_rok\n"
+    ".Lzstd_bits_arm64_rpart:\n"
+    "mov x0, xzr\n   mov x6, xzr\n"
+    ".Lzstd_bits_arm64_rparti:\n"
+    "cmp x6, x8\n   b.hs .Lzstd_bits_arm64_rok\n"
+    "ldrb w7, [x2, x6]\n   lsl x9, x6, #3\n   lsl x7, x7, x9\n"
+    "orr x0, x0, x7\n   add x6, x6, #1\n"
+    "b .Lzstd_bits_arm64_rparti\n"
+    ".Lzstd_bits_arm64_rok:\n"
+    "str x0, [x15]\n   str x1, [x15, #8]\n   str x2, [x15, #16]\n"
+    "mov x0, xzr\n"
+    ASM_RET
+    ".Lzstd_bits_arm64_rbad:\n   mov x0, #-1\n"
+    ASM_RET
+    ASM_END(zstd_bits_reload)
+
+    ASM_FUNC(zstd_bits_get)
+    "cbz x1, .Lzstd_bits_arm64_gzero\n"
+    "ldr x2, [x0, #8]\n   cmp x2, #64\n   b.hs .Lzstd_bits_arm64_gge\n"
+    "ldr x3, [x0]\n   lsl x3, x3, x2\n"
+    "mov x4, #64\n   sub x4, x4, x1\n   lsr x3, x3, x4\n"
+    "add x2, x2, x1\n   str x2, [x0, #8]\n"
+    "mov x0, x3\n"
+    ASM_RET
+    ".Lzstd_bits_arm64_gge:\n"
+    "add x2, x2, x1\n   str x2, [x0, #8]\n"
+    ".Lzstd_bits_arm64_gzero:\n"
+    "mov x0, xzr\n"
+    ASM_RET
+    ASM_END(zstd_bits_get)
 
     /* See the x86_64 body. */
     ASM_FUNC(zstd_huffman_stream)
@@ -10729,9 +11656,231 @@ __asm__(
     ".Lzstd_huff_arm64_fail_empty:\n   mov x0, #-1\n"
     ASM_RET
     ASM_END(zstd_huffman_stream)
-    // memory_copy_end: exact overlap-aware copy, one terminator, and dst+n.
-    // The x86_64 block carries the contract; a normal bl is both smaller and
-    // friendlier to the return predictor than manufacturing a replacement LR.
+
+    ASM_FUNC(zstd_huffman_4x)
+    "cbz x1, .Lzstd_huff4_arm64_ok0\n"
+    "cmp x3, #10\n   b.lo .Lzstd_huff4_arm64_bad0\n"
+    "stp x19, x20, [sp, #-96]!\n   stp x21, x22, [sp, #16]\n"
+    "stp x23, x24, [sp, #32]\n   stp x25, x26, [sp, #48]\n"
+    "stp x27, x28, [sp, #64]\n   str x30, [sp, #80]\n"
+    "mov x19, x0\n   add x8, x1, #3\n   lsr x20, x8, #2\n"
+    "add x9, x20, x20, lsl #1\n   sub x28, x1, x9\n"
+    "mov x21, x4\n   mov x22, x5\n"
+    "ldrh w24, [x2]\n   ldrh w25, [x2, #2]\n   ldrh w26, [x2, #4]\n"
+    "cbz w24, .Lzstd_huff4_arm64_fail\n   cbz w25, .Lzstd_huff4_arm64_fail\n"
+    "cbz w26, .Lzstd_huff4_arm64_fail\n"
+    "add w8, w24, w25\n   add w8, w8, w26\n   add w8, w8, #6\n"
+    "cmp x3, x8\n   b.lo .Lzstd_huff4_arm64_fail\n"
+    "sub w27, w3, w8\n   cbz w27, .Lzstd_huff4_arm64_fail\n"
+    "add x23, x2, #6\n"
+    "mov x0, x19\n   mov x1, x20\n   mov x2, x23\n   mov x3, x24\n"
+    "mov x4, x21\n   mov x5, x22\n   bl zstd_huffman_stream\n"
+    "cbnz x0, .Lzstd_huff4_arm64_fail\n"
+    "add x19, x19, x20\n   add x23, x23, x24\n"
+    "mov x0, x19\n   mov x1, x20\n   mov x2, x23\n   mov x3, x25\n"
+    "mov x4, x21\n   mov x5, x22\n   bl zstd_huffman_stream\n"
+    "cbnz x0, .Lzstd_huff4_arm64_fail\n"
+    "add x19, x19, x20\n   add x23, x23, x25\n"
+    "mov x0, x19\n   mov x1, x20\n   mov x2, x23\n   mov x3, x26\n"
+    "mov x4, x21\n   mov x5, x22\n   bl zstd_huffman_stream\n"
+    "cbnz x0, .Lzstd_huff4_arm64_fail\n"
+    "add x19, x19, x20\n   add x23, x23, x26\n"
+    "mov x0, x19\n   mov x1, x28\n   mov x2, x23\n   mov x3, x27\n"
+    "mov x4, x21\n   mov x5, x22\n   bl zstd_huffman_stream\n"
+    "cbnz x0, .Lzstd_huff4_arm64_fail\n"
+    "mov x0, xzr\n"
+    ".Lzstd_huff4_arm64_done:\n"
+    "ldr x30, [sp, #80]\n"
+    "ldp x27, x28, [sp, #64]\n   ldp x25, x26, [sp, #48]\n"
+    "ldp x23, x24, [sp, #32]\n   ldp x21, x22, [sp, #16]\n"
+    "ldp x19, x20, [sp], #96\n"
+    ASM_RET
+    ".Lzstd_huff4_arm64_fail:\n   mov x0, #-1\n   b .Lzstd_huff4_arm64_done\n"
+    ".Lzstd_huff4_arm64_ok0:\n   mov x0, xzr\n"
+    ASM_RET
+    ".Lzstd_huff4_arm64_bad0:\n   mov x0, #-1\n"
+    ASM_RET
+    ASM_END(zstd_huffman_4x)
+
+    /* See the x86_64 body. last/limit stay in callee-saved registers. */
+    ASM_FUNC(zstd_sequences_run)
+    "stp x19, x20, [sp, #-272]!\n   stp x21, x22, [sp, #16]\n"
+    "stp x23, x24, [sp, #32]\n   stp x25, x26, [sp, #48]\n"
+    "stp x27, x28, [sp, #64]\n   str x30, [sp, #80]\n"
+    "mov x27, x0\n"
+    "ldr x19, [x0]\n   str x19, [sp, #88]\n"
+    "ldr x2, [x0, #8]\n   add x19, x19, x2\n"
+    "ldr x2, [x0, #16]\n   str x2, [sp, #96]\n"
+    "ldr x20, [x0, #24]\n   ldr x2, [x0, #32]\n   add x2, x20, x2\n"
+    "str x2, [sp, #104]\n"
+    "ldr x2, [x0, #56]\n   str x2, [sp, #112]\n"
+    "ldr x2, [x0, #64]\n   str x2, [sp, #120]\n"
+    "ldr x2, [x0, #72]\n   str x2, [sp, #128]\n"
+    "ldr x2, [x0, #80]\n   str x2, [sp, #136]\n"
+    "ldr x2, [x0, #88]\n   str x2, [sp, #144]\n"
+    "ldr x1, [x0, #40]\n   ldr x2, [x0, #48]\n"
+    "cbz x2, .Lzstd_seq_arm64_fail\n"
+    "add x0, sp, #224\n   bl zstd_bits_open\n"
+    "cbnz x0, .Lzstd_seq_arm64_fail\n"
+    "ldr x23, [sp, #224]\n   ldr x21, [sp, #232]\n   ldr x22, [sp, #240]\n"
+    "ldr x28, [sp, #256]\n"
+    ".Lzstd_seq_arm64_init:\n"
+    "ldr x0, [sp, #112]\n   ldrb w0, [x0]\n   bl .Lzstd_seq_arm64_get\n"
+    "str w0, [sp, #152]\n"
+    "ldr x0, [sp, #120]\n   ldrb w0, [x0]\n   bl .Lzstd_seq_arm64_get\n"
+    "str w0, [sp, #156]\n"
+    "ldr x0, [sp, #128]\n   ldrb w0, [x0]\n   bl .Lzstd_seq_arm64_get\n"
+    "str w0, [sp, #160]\n"
+    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
+    ".Lzstd_seq_arm64_loop:\n"
+    "ldr x0, [sp, #112]\n   ldrb w1, [x0]\n   cbz w1, 1f\n"
+    "ldr w1, [sp, #152]\n   add x0, x0, x1, lsl #2\n   ldrb w8, [x0, #7]\n"
+    "b 2f\n"
+    "1: ldrb w8, [x0, #1]\n"
+    "2: ldr x0, [sp, #128]\n   ldrb w1, [x0]\n   cbz w1, 1f\n"
+    "ldr w1, [sp, #160]\n   add x0, x0, x1, lsl #2\n   ldrb w9, [x0, #7]\n"
+    "b 2f\n"
+    "1: ldrb w9, [x0, #1]\n"
+    "2: ldr x0, [sp, #120]\n   ldrb w1, [x0]\n   cbz w1, 1f\n"
+    "ldr w1, [sp, #156]\n   add x0, x0, x1, lsl #2\n   ldrb w10, [x0, #7]\n"
+    "b 2f\n"
+    "1: ldrb w10, [x0, #1]\n"
+    "2: cmp w8, #35\n   b.hi .Lzstd_seq_arm64_fail\n"
+    "cmp w9, #52\n   b.hi .Lzstd_seq_arm64_fail\n"
+    "cmp w10, #31\n   b.hi .Lzstd_seq_arm64_fail\n"
+    "cmp w21, #32\n   b.ls .Lzstd_seq_arm64_extras\n"
+    "stp x8, x9, [sp, #168]\n   str x10, [sp, #184]\n"
+    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
+    "ldp x8, x9, [sp, #168]\n   ldr x10, [sp, #184]\n"
+    ".Lzstd_seq_arm64_extras:\n"
+    "mov w0, w10\n   bl .Lzstd_seq_arm64_get\n   mov x11, x0\n"
+    "cmp w21, #32\n   b.ls .Lzstd_seq_arm64_more\n"
+    "stp x8, x9, [sp, #168]\n   stp x10, x11, [sp, #184]\n"
+    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
+    "ldp x8, x9, [sp, #168]\n   ldp x10, x11, [sp, #184]\n"
+    ".Lzstd_seq_arm64_more:\n"
+    "adrp x0, zstd_seq_ml_bits\n   add x0, x0, :lo12:zstd_seq_ml_bits\n"
+    "ldrb w0, [x0, x9]\n   bl .Lzstd_seq_arm64_get\n   mov x12, x0\n"
+    "adrp x0, zstd_seq_ll_bits\n   add x0, x0, :lo12:zstd_seq_ll_bits\n"
+    "ldrb w0, [x0, x8]\n   bl .Lzstd_seq_arm64_get\n"
+    "adrp x1, zstd_seq_ll_base\n   add x1, x1, :lo12:zstd_seq_ll_base\n"
+    "ldr w1, [x1, x8, lsl #2]\n   add w8, w1, w0\n"
+    "adrp x1, zstd_seq_ml_base\n   add x1, x1, :lo12:zstd_seq_ml_base\n"
+    "ldr w1, [x1, x9, lsl #2]\n   add w9, w1, w12\n"
+    "cmp w21, #32\n   b.ls .Lzstd_seq_arm64_offgo\n"
+    "stp x8, x9, [sp, #168]\n   stp x10, x11, [sp, #184]\n"
+    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
+    "ldp x8, x9, [sp, #168]\n   ldp x10, x11, [sp, #184]\n"
+    ".Lzstd_seq_arm64_offgo:\n"
+    "mov w0, w10\n   mov x1, x11\n   mov w2, w8\n"
+    "ldr x3, [sp, #136]\n   bl .Lzstd_seq_arm64_offset\n"
+    "cbz x0, .Lzstd_seq_arm64_fail\n"
+    "str x0, [sp, #168]\n   str x9, [sp, #176]\n"
+    "add x1, x20, x8\n   ldr x2, [sp, #104]\n   cmp x1, x2\n"
+    "b.hi .Lzstd_seq_arm64_fail\n"
+    "cbz x8, .Lzstd_seq_arm64_match\n"
+    "mov x0, x19\n   mov x1, x20\n   mov x2, x8\n"
+    "add x19, x19, x8\n   add x20, x20, x8\n"
+    "bl memory_copy_apart\n"
+    ".Lzstd_seq_arm64_match:\n"
+    "ldr x0, [sp, #168]\n"
+    "ldr x2, [sp, #88]\n   sub x3, x19, x2\n   cmp x0, x3\n"
+    "b.hi .Lzstd_seq_arm64_fail\n"
+    "ldr x2, [sp, #96]\n   cbz x2, .Lzstd_seq_arm64_copy\n"
+    "cmp x0, x2\n   b.hi .Lzstd_seq_arm64_fail\n"
+    ".Lzstd_seq_arm64_copy:\n"
+    "ldr x2, [sp, #176]\n   cbz x2, .Lzstd_seq_arm64_after\n"
+    "ldr x1, [sp, #168]\n   mov x0, x19\n"
+    "sub x3, x19, x1\n   prfm pldl1keep, [x3]\n"
+    "bl memory_copy_match\n"
+    "ldr x2, [sp, #176]\n   add x19, x19, x2\n"
+    ".Lzstd_seq_arm64_after:\n"
+    "ldr x0, [sp, #144]\n   sub x0, x0, #1\n   str x0, [sp, #144]\n"
+    "cbz x0, .Lzstd_seq_arm64_rest\n"
+    "ldr x2, [sp, #112]\n   ldrb w1, [x2]\n   cbz w1, 3f\n"
+    "ldr w1, [sp, #152]\n   add x3, x2, x1, lsl #2\n"
+    "ldrb w0, [x3, #6]\n   bl .Lzstd_seq_arm64_get\n"
+    "ldr x2, [sp, #112]\n   ldr w1, [sp, #152]\n   add x3, x2, x1, lsl #2\n"
+    "ldrh w1, [x3, #4]\n   add w0, w1, w0\n   str w0, [sp, #152]\n"
+    "3: ldr x2, [sp, #128]\n   ldrb w1, [x2]\n   cbz w1, 3f\n"
+    "ldr w1, [sp, #160]\n   add x3, x2, x1, lsl #2\n"
+    "ldrb w0, [x3, #6]\n   bl .Lzstd_seq_arm64_get\n"
+    "ldr x2, [sp, #128]\n   ldr w1, [sp, #160]\n   add x3, x2, x1, lsl #2\n"
+    "ldrh w1, [x3, #4]\n   add w0, w1, w0\n   str w0, [sp, #160]\n"
+    "3: ldr x2, [sp, #120]\n   ldrb w1, [x2]\n   cbz w1, 3f\n"
+    "ldr w1, [sp, #156]\n   add x3, x2, x1, lsl #2\n"
+    "ldrb w0, [x3, #6]\n   bl .Lzstd_seq_arm64_get\n"
+    "ldr x2, [sp, #120]\n   ldr w1, [sp, #156]\n   add x3, x2, x1, lsl #2\n"
+    "ldrh w1, [x3, #4]\n   add w0, w1, w0\n   str w0, [sp, #156]\n"
+    "3: cmp w21, #32\n   b.ls .Lzstd_seq_arm64_loop\n"
+    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
+    "b .Lzstd_seq_arm64_loop\n"
+    ".Lzstd_seq_arm64_rest:\n"
+    "bl .Lzstd_seq_arm64_reload\n   cbnz x0, .Lzstd_seq_arm64_fail\n"
+    "ldr x2, [sp, #104]\n   subs x2, x2, x20\n"
+    "b.eq .Lzstd_seq_arm64_ok\n   b.lo .Lzstd_seq_arm64_fail\n"
+    "mov x0, x19\n   mov x1, x20\n   add x19, x19, x2\n"
+    "bl memory_copy_apart\n"
+    ".Lzstd_seq_arm64_ok:\n"
+    "ldr x0, [sp, #88]\n   sub x0, x19, x0\n   str x0, [x27, #8]\n"
+    "mov x0, xzr\n"
+    ".Lzstd_seq_arm64_done:\n"
+    "ldr x30, [sp, #80]\n"
+    "ldp x27, x28, [sp, #64]\n   ldp x25, x26, [sp, #48]\n"
+    "ldp x23, x24, [sp, #32]\n   ldp x21, x22, [sp, #16]\n"
+    "ldp x19, x20, [sp], #272\n"
+    ASM_RET
+    ".Lzstd_seq_arm64_fail:\n   mov x0, #-1\n   b .Lzstd_seq_arm64_done\n"
+    ".Lzstd_seq_arm64_get:\n"
+    "cbz w0, 1f\n"
+    "cmp w21, #64\n   b.hs 2f\n"
+    "mov w3, w0\n   lsl x1, x23, x21\n   mov x2, #64\n   sub x2, x2, x3\n"
+    "lsr x0, x1, x2\n   add w21, w21, w3\n"
+    ASM_RET
+    "2: add w21, w21, w0\n"
+    "1: mov x0, xzr\n"
+    ASM_RET
+    ".Lzstd_seq_arm64_reload:\n"
+    "cmp x21, #64\n   b.hi .Lzstd_seq_arm64_rbad\n"
+    "cmp x22, x28\n   b.lo .Lzstd_seq_arm64_rslow\n"
+    "lsr x0, x21, #3\n   sub x22, x22, x0\n   and x21, x21, #7\n"
+    "ldr x23, [x22]\n   mov x0, xzr\n"
+    ASM_RET
+    ".Lzstd_seq_arm64_rslow:\n"
+    "str x23, [sp, #224]\n   str x21, [sp, #232]\n   str x22, [sp, #240]\n"
+    "str x30, [sp, #216]\n"
+    "add x0, sp, #224\n   bl zstd_bits_reload\n"
+    "ldr x30, [sp, #216]\n"
+    "ldr x23, [sp, #224]\n   ldr x21, [sp, #232]\n   ldr x22, [sp, #240]\n"
+    ASM_RET
+    ".Lzstd_seq_arm64_rbad:\n   mov x0, #-1\n"
+    ASM_RET
+    ".Lzstd_seq_arm64_offset:\n"
+    "cbz w0, 1f\n   cmp w0, #1\n   b.eq 2f\n"
+    "mov w4, w0\n   mov x0, #1\n   lsl x0, x0, x4\n"
+    "add x0, x0, x1\n   sub x0, x0, #3\n"
+    "cbz x0, 9f\n"
+    "ldr w4, [x3, #4]\n   str w4, [x3, #8]\n"
+    "ldr w4, [x3]\n   str w4, [x3, #4]\n"
+    "str w0, [x3]\n"
+    ASM_RET
+    "1: cmp w2, #0\n   cset w4, eq\n"
+    "ldr w0, [x3, x4, lsl #2]\n   cbz w0, 9f\n"
+    "cmp w2, #0\n   cset w4, ne\n"
+    "ldr w4, [x3, x4, lsl #2]\n   str w4, [x3, #4]\n"
+    "str w0, [x3]\n"
+    ASM_RET
+    "2: cmp w2, #0\n   cset w4, eq\n   add w4, w4, #1\n   add w4, w4, w1\n"
+    "cmp w4, #3\n   b.eq 3f\n"
+    "ldr w0, [x3, x4, lsl #2]\n   b 4f\n"
+    "3: ldr w0, [x3]\n   sub w0, w0, #1\n"
+    "4: cbz w0, 9f\n   cmp w4, #1\n   b.eq 5f\n"
+    "ldr w1, [x3, #4]\n   str w1, [x3, #8]\n"
+    "5: ldr w1, [x3]\n   str w1, [x3, #4]\n   str w0, [x3]\n"
+    ASM_RET
+    "9: mov x0, xzr\n"
+    ASM_RET
+    ASM_END(zstd_sequences_run)
     ASM_FUNC(memory_copy_end)
     "add x3, x0, x2\n   stp x3, x30, [sp,  #-16]!\n"
     "bl memory_copy\n   ldp x0, x30, [sp], #16\n"
@@ -13831,7 +14980,7 @@ __asm__(
     ASM_END(memory_checksum_bsd16)
 
     /* Unaligned 8-byte little-endian load. RV64I does not promise ld. */
-    ASM_LOCAL_FUNC(hash_xxh64_load8)
+    ASM_FUNC(memory_get64)
     "lbu t0, 0(a0)\n   lbu t1, 1(a0)\n   slli t1, t1, 8\n   or t0, t0, t1\n"
     "lbu t1, 2(a0)\n   slli t1, t1, 16\n   or t0, t0, t1\n"
     "lbu t1, 3(a0)\n   slli t1, t1, 24\n   or t0, t0, t1\n"
@@ -13840,7 +14989,7 @@ __asm__(
     "lbu t1, 6(a0)\n   slli t1, t1, 48\n   or t0, t0, t1\n"
     "lbu t1, 7(a0)\n   slli t1, t1, 56\n   or a0, t0, t1\n"
     ASM_RET
-    ASM_LOCAL_END(hash_xxh64_load8)
+    ASM_END(memory_get64)
 
     /* See the x86_64 body. Rotate is a shift pair: no Zbb. */
     ASM_FUNC(hash_xxh64)
@@ -13853,16 +15002,16 @@ __asm__(
     "add s1, s8, s5\n   add s1, s1, s6\n"
     "add s2, s8, s6\n   mv s3, s8\n   sub s4, s8, s5\n"
     ".balign 16\n.Lxxh64_rv_stripe:\n"
-    "mv a0, s0\n   call hash_xxh64_load8\n   mul a0, a0, s6\n"
+    "mv a0, s0\n   call memory_get64\n   mul a0, a0, s6\n"
     "add s1, s1, a0\n   slli t0, s1, 31\n   srli t1, s1, 33\n"
     "or s1, t0, t1\n   mul s1, s1, s5\n"
-    "addi a0, s0, 8\n   call hash_xxh64_load8\n   mul a0, a0, s6\n"
+    "addi a0, s0, 8\n   call memory_get64\n   mul a0, a0, s6\n"
     "add s2, s2, a0\n   slli t0, s2, 31\n   srli t1, s2, 33\n"
     "or s2, t0, t1\n   mul s2, s2, s5\n"
-    "addi a0, s0, 16\n   call hash_xxh64_load8\n   mul a0, a0, s6\n"
+    "addi a0, s0, 16\n   call memory_get64\n   mul a0, a0, s6\n"
     "add s3, s3, a0\n   slli t0, s3, 31\n   srli t1, s3, 33\n"
     "or s3, t0, t1\n   mul s3, s3, s5\n"
-    "addi a0, s0, 24\n   call hash_xxh64_load8\n   mul a0, a0, s6\n"
+    "addi a0, s0, 24\n   call memory_get64\n   mul a0, a0, s6\n"
     "add s4, s4, a0\n   slli t0, s4, 31\n   srli t1, s4, 33\n"
     "or s4, t0, t1\n   mul s4, s4, s5\n"
     "addi s0, s0, 32\n   addi a1, a1, -32\n   li t0, 32\n"
@@ -13890,7 +15039,7 @@ __asm__(
     "li s3, 0x27D4EB2F165667C5\n"
     "li t0, 8\n   bltu a1, t0, .Lxxh64_rv_four\n"
     ".Lxxh64_rv_eight:\n"
-    "mv s4, a0\n   mv a0, s0\n   call hash_xxh64_load8\n"
+    "mv s4, a0\n   mv a0, s0\n   call memory_get64\n"
     "mul a0, a0, s6\n   slli t0, a0, 31\n   srli t1, a0, 33\n   or a0, t0, t1\n"
     "mul a0, a0, s5\n   xor a0, s4, a0\n"
     "slli t0, a0, 27\n   srli t1, a0, 37\n   or a0, t0, t1\n"
@@ -13922,6 +15071,174 @@ __asm__(
     "ld s7, 64(sp)\n   ld s8, 72(sp)\n   addi sp, sp, 80\n"
     ASM_RET
     ASM_END(hash_xxh64)
+
+    /* See the x86_64 body. Unaligned 8-byte lanes go through memory_get64. */
+    ASM_FUNC(hash_xxh64_begin)
+    "sd zero, 0(a0)\n   sd a1, 40(a0)\n   sb zero, 80(a0)\n"
+    "li t0, 0x9E3779B185EBCA87\n   li t1, 0xC2B2AE3D27D4EB4F\n"
+    "add t2, a1, t0\n   add t2, t2, t1\n   sd t2, 8(a0)\n"
+    "add t2, a1, t1\n   sd t2, 16(a0)\n"
+    "sd a1, 24(a0)\n   sub t2, a1, t0\n   sd t2, 32(a0)\n"
+    ASM_RET
+    ASM_END(hash_xxh64_begin)
+
+    ASM_FUNC(hash_xxh64_add)
+    "beqz a2, .Lxxh64_add_rv_ret\n"
+    "addi sp, sp, -96\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n   sd s1, 16(sp)\n"
+    "sd s2, 24(sp)\n   sd s3, 32(sp)\n   sd s4, 40(sp)\n   sd s5, 48(sp)\n"
+    "sd s6, 56(sp)\n   sd s7, 64(sp)\n   sd s8, 72(sp)\n   sd s9, 80(sp)\n"
+    "ld t0, 0(a0)\n   add t0, t0, a2\n   sd t0, 0(a0)\n"
+    "mv s0, a0\n   mv s7, a1\n   mv s8, a2\n"
+    "lbu s9, 80(s0)\n   beqz s9, .Lxxh64_add_rv_bulk\n"
+    "li t0, 32\n   sub t0, t0, s9\n"
+    "bltu t0, s8, .Lxxh64_add_rv_take\n   mv t0, s8\n"
+    ".Lxxh64_add_rv_take:\n"
+    "beqz t0, .Lxxh64_add_rv_bulk\n"
+    "addi t1, s0, 48\n   add t1, t1, s9\n"
+    "mv t2, t0\n"
+    ".Lxxh64_add_rv_fill:\n"
+    "lbu t3, 0(s7)\n   sb t3, 0(t1)\n"
+    "addi s7, s7, 1\n   addi t1, t1, 1\n   addi t2, t2, -1\n"
+    "bnez t2, .Lxxh64_add_rv_fill\n"
+    "sub s8, s8, t0\n   add s9, s9, t0\n"
+    "li t0, 32\n   bne s9, t0, .Lxxh64_add_rv_held\n"
+    "li s5, 0x9E3779B185EBCA87\n   li s6, 0xC2B2AE3D27D4EB4F\n"
+    "ld s1, 8(s0)\n   ld s2, 16(s0)\n   ld s3, 24(s0)\n   ld s4, 32(s0)\n"
+    "addi a0, s0, 48\n   call memory_get64\n   mul a0, a0, s6\n"
+    "add s1, s1, a0\n   slli t0, s1, 31\n   srli t1, s1, 33\n"
+    "or s1, t0, t1\n   mul s1, s1, s5\n"
+    "addi a0, s0, 56\n   call memory_get64\n   mul a0, a0, s6\n"
+    "add s2, s2, a0\n   slli t0, s2, 31\n   srli t1, s2, 33\n"
+    "or s2, t0, t1\n   mul s2, s2, s5\n"
+    "addi a0, s0, 64\n   call memory_get64\n   mul a0, a0, s6\n"
+    "add s3, s3, a0\n   slli t0, s3, 31\n   srli t1, s3, 33\n"
+    "or s3, t0, t1\n   mul s3, s3, s5\n"
+    "addi a0, s0, 72\n   call memory_get64\n   mul a0, a0, s6\n"
+    "add s4, s4, a0\n   slli t0, s4, 31\n   srli t1, s4, 33\n"
+    "or s4, t0, t1\n   mul s4, s4, s5\n"
+    "sd s1, 8(s0)\n   sd s2, 16(s0)\n   sd s3, 24(s0)\n   sd s4, 32(s0)\n"
+    "li s9, 0\n"
+    ".Lxxh64_add_rv_held:\n"
+    "sb s9, 80(s0)\n"
+    ".Lxxh64_add_rv_bulk:\n"
+    "li t0, 32\n   bltu s8, t0, .Lxxh64_add_rv_tail\n"
+    "li s5, 0x9E3779B185EBCA87\n   li s6, 0xC2B2AE3D27D4EB4F\n"
+    "ld s1, 8(s0)\n   ld s2, 16(s0)\n   ld s3, 24(s0)\n   ld s4, 32(s0)\n"
+    "andi t0, s7, 7\n   bnez t0, .Lxxh64_add_rv_stripe\n"
+    ".balign 16\n.Lxxh64_add_rv_aligned:\n"
+    "ld t2, 0(s7)\n   mul t2, t2, s6\n"
+    "add s1, s1, t2\n   slli t0, s1, 31\n   srli t1, s1, 33\n"
+    "or s1, t0, t1\n   mul s1, s1, s5\n"
+    "ld t2, 8(s7)\n   mul t2, t2, s6\n"
+    "add s2, s2, t2\n   slli t0, s2, 31\n   srli t1, s2, 33\n"
+    "or s2, t0, t1\n   mul s2, s2, s5\n"
+    "ld t2, 16(s7)\n   mul t2, t2, s6\n"
+    "add s3, s3, t2\n   slli t0, s3, 31\n   srli t1, s3, 33\n"
+    "or s3, t0, t1\n   mul s3, s3, s5\n"
+    "ld t2, 24(s7)\n   mul t2, t2, s6\n"
+    "add s4, s4, t2\n   slli t0, s4, 31\n   srli t1, s4, 33\n"
+    "or s4, t0, t1\n   mul s4, s4, s5\n"
+    "addi s7, s7, 32\n   addi s8, s8, -32\n   li t0, 32\n"
+    "bgeu s8, t0, .Lxxh64_add_rv_aligned\n"
+    "j .Lxxh64_add_rv_save\n"
+    ".balign 16\n.Lxxh64_add_rv_stripe:\n"
+    "mv a0, s7\n   call memory_get64\n   mul a0, a0, s6\n"
+    "add s1, s1, a0\n   slli t0, s1, 31\n   srli t1, s1, 33\n"
+    "or s1, t0, t1\n   mul s1, s1, s5\n"
+    "addi a0, s7, 8\n   call memory_get64\n   mul a0, a0, s6\n"
+    "add s2, s2, a0\n   slli t0, s2, 31\n   srli t1, s2, 33\n"
+    "or s2, t0, t1\n   mul s2, s2, s5\n"
+    "addi a0, s7, 16\n   call memory_get64\n   mul a0, a0, s6\n"
+    "add s3, s3, a0\n   slli t0, s3, 31\n   srli t1, s3, 33\n"
+    "or s3, t0, t1\n   mul s3, s3, s5\n"
+    "addi a0, s7, 24\n   call memory_get64\n   mul a0, a0, s6\n"
+    "add s4, s4, a0\n   slli t0, s4, 31\n   srli t1, s4, 33\n"
+    "or s4, t0, t1\n   mul s4, s4, s5\n"
+    "addi s7, s7, 32\n   addi s8, s8, -32\n   li t0, 32\n"
+    "bgeu s8, t0, .Lxxh64_add_rv_stripe\n"
+    ".Lxxh64_add_rv_save:\n"
+    "sd s1, 8(s0)\n   sd s2, 16(s0)\n   sd s3, 24(s0)\n   sd s4, 32(s0)\n"
+    ".Lxxh64_add_rv_tail:\n"
+    "beqz s8, .Lxxh64_add_rv_done\n"
+    "lbu t0, 80(s0)\n   add t1, t0, s8\n   sb t1, 80(s0)\n"
+    "addi t1, s0, 48\n   add t1, t1, t0\n"
+    ".Lxxh64_add_rv_rest:\n"
+    "lbu t2, 0(s7)\n   sb t2, 0(t1)\n"
+    "addi s7, s7, 1\n   addi t1, t1, 1\n   addi s8, s8, -1\n"
+    "bnez s8, .Lxxh64_add_rv_rest\n"
+    ".Lxxh64_add_rv_done:\n"
+    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
+    "ld s3, 32(sp)\n   ld s4, 40(sp)\n   ld s5, 48(sp)\n   ld s6, 56(sp)\n"
+    "ld s7, 64(sp)\n   ld s8, 72(sp)\n   ld s9, 80(sp)\n   addi sp, sp, 96\n"
+    ".Lxxh64_add_rv_ret:\n"
+    ASM_RET
+    ASM_END(hash_xxh64_add)
+
+    ASM_FUNC(hash_xxh64_finish)
+    "addi sp, sp, -80\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n   sd s1, 16(sp)\n"
+    "sd s2, 24(sp)\n   sd s3, 32(sp)\n   sd s4, 40(sp)\n   sd s5, 48(sp)\n"
+    "sd s6, 56(sp)\n   sd s7, 64(sp)\n   sd s8, 72(sp)\n"
+    "mv s0, a0\n   ld s7, 0(a0)\n   lbu a1, 80(a0)\n"
+    "addi s8, a0, 48\n   ld t6, 40(a0)\n"
+    "li t0, 32\n   bltu s7, t0, .Lxxh64_fin_rv_small\n"
+    "li s5, 0x9E3779B185EBCA87\n   li s6, 0xC2B2AE3D27D4EB4F\n"
+    "ld s1, 8(s0)\n   ld s2, 16(s0)\n   ld s3, 24(s0)\n   ld s4, 32(s0)\n"
+    "slli t0, s1, 1\n   srli t1, s1, 63\n   or a0, t0, t1\n"
+    "slli t0, s2, 7\n   srli t1, s2, 57\n   or t0, t0, t1\n   add a0, a0, t0\n"
+    "slli t0, s3, 12\n   srli t1, s3, 52\n   or t0, t0, t1\n   add a0, a0, t0\n"
+    "slli t0, s4, 18\n   srli t1, s4, 46\n   or t0, t0, t1\n   add a0, a0, t0\n"
+    "li t2, 0x85EBCA77C2B2AE63\n"
+    "mul t0, s1, s6\n   slli t1, t0, 31\n   srli t3, t0, 33\n   or t0, t1, t3\n"
+    "mul t0, t0, s5\n   xor a0, a0, t0\n   mul a0, a0, s5\n   add a0, a0, t2\n"
+    "mul t0, s2, s6\n   slli t1, t0, 31\n   srli t3, t0, 33\n   or t0, t1, t3\n"
+    "mul t0, t0, s5\n   xor a0, a0, t0\n   mul a0, a0, s5\n   add a0, a0, t2\n"
+    "mul t0, s3, s6\n   slli t1, t0, 31\n   srli t3, t0, 33\n   or t0, t1, t3\n"
+    "mul t0, t0, s5\n   xor a0, a0, t0\n   mul a0, a0, s5\n   add a0, a0, t2\n"
+    "mul t0, s4, s6\n   slli t1, t0, 31\n   srli t3, t0, 33\n   or t0, t1, t3\n"
+    "mul t0, t0, s5\n   xor a0, a0, t0\n   mul a0, a0, s5\n   add a0, a0, t2\n"
+    "j .Lxxh64_fin_rv_tail\n"
+    ".Lxxh64_fin_rv_small:\n"
+    "li a0, 0x27D4EB2F165667C5\n   add a0, a0, t6\n"
+    ".Lxxh64_fin_rv_tail:\n"
+    "add a0, a0, s7\n"
+    "mv s0, s8\n"
+    "li s5, 0x9E3779B185EBCA87\n   li s6, 0xC2B2AE3D27D4EB4F\n"
+    "li s1, 0x85EBCA77C2B2AE63\n   li s2, 0x165667B19E3779F9\n"
+    "li s3, 0x27D4EB2F165667C5\n"
+    "li t0, 8\n   bltu a1, t0, .Lxxh64_fin_rv_four\n"
+    ".Lxxh64_fin_rv_eight:\n"
+    "mv s4, a0\n   mv a0, s0\n   call memory_get64\n"
+    "mul a0, a0, s6\n   slli t0, a0, 31\n   srli t1, a0, 33\n   or a0, t0, t1\n"
+    "mul a0, a0, s5\n   xor a0, s4, a0\n"
+    "slli t0, a0, 27\n   srli t1, a0, 37\n   or a0, t0, t1\n"
+    "mul a0, a0, s5\n   add a0, a0, s1\n"
+    "addi s0, s0, 8\n   addi a1, a1, -8\n"
+    "li t0, 8\n   bgeu a1, t0, .Lxxh64_fin_rv_eight\n"
+    ".Lxxh64_fin_rv_four:\n"
+    "li t0, 4\n   bltu a1, t0, .Lxxh64_fin_rv_one\n"
+    "lbu t0, 0(s0)\n   lbu t1, 1(s0)\n   slli t1, t1, 8\n   or t0, t0, t1\n"
+    "lbu t1, 2(s0)\n   slli t1, t1, 16\n   or t0, t0, t1\n"
+    "lbu t1, 3(s0)\n   slli t1, t1, 24\n   or t0, t0, t1\n"
+    "mul t0, t0, s5\n   xor a0, a0, t0\n"
+    "slli t0, a0, 23\n   srli t1, a0, 41\n   or a0, t0, t1\n"
+    "mul a0, a0, s6\n   add a0, a0, s2\n"
+    "addi s0, s0, 4\n   addi a1, a1, -4\n"
+    ".Lxxh64_fin_rv_one:\n"
+    "beqz a1, .Lxxh64_fin_rv_mix\n"
+    ".Lxxh64_fin_rv_byte:\n"
+    "lbu t0, 0(s0)\n   mul t0, t0, s3\n   xor a0, a0, t0\n"
+    "slli t0, a0, 11\n   srli t1, a0, 53\n   or a0, t0, t1\n"
+    "mul a0, a0, s5\n   addi s0, s0, 1\n   addi a1, a1, -1\n"
+    "bnez a1, .Lxxh64_fin_rv_byte\n"
+    ".Lxxh64_fin_rv_mix:\n"
+    "srli t0, a0, 33\n   xor a0, a0, t0\n   mul a0, a0, s6\n"
+    "srli t0, a0, 29\n   xor a0, a0, t0\n   mul a0, a0, s2\n"
+    "srli t0, a0, 32\n   xor a0, a0, t0\n"
+    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
+    "ld s3, 32(sp)\n   ld s4, 40(sp)\n   ld s5, 48(sp)\n   ld s6, 56(sp)\n"
+    "ld s7, 64(sp)\n   ld s8, 72(sp)\n   addi sp, sp, 80\n"
+    ASM_RET
+    ASM_END(hash_xxh64_finish)
 
     // The project RV64 floor includes M; four bytes amortize one dependent
     // multiply by 33^4 exactly as on the other two architectures.
@@ -14262,34 +15579,63 @@ __asm__(
     ASM_RET
     ASM_END(memory_copy)
 
-    /* See the x86_64 body. */
+    /* See the x86_64 body. Unaligned loads go through bytes: no unaligned ld. */
     ASM_FUNC(memory_copy_match)
     "beqz a2, .Lmatch_rv_done\n"
     "bgeu a1, a2, .Lmatch_rv_apart\n"
     "li t0, 1\n   beq a1, t0, .Lmatch_rv_fill\n"
-    "addi sp, sp, -40\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n"
-    "sd s1, 16(sp)\n   sd s2, 24(sp)\n"
-    "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n"
-    "li t0, 8\n   bltu s1, t0, .Lmatch_rv_tiny\n"
-    ".balign 16\n.Lmatch_rv_loop:\n"
-    "mv a2, s1\n"
-    "bleu a2, s2, .Lmatch_rv_do\n   mv a2, s2\n"
-    ".Lmatch_rv_do:\n"
-    "mv a0, s0\n   sub a1, s0, s1\n   sd a2, 32(sp)\n"
-    "call memory_copy_apart\n   ld t0, 32(sp)\n"
-    "add s0, s0, t0\n   sub s2, s2, t0\n"
-    "bltu s1, s2, .Lmatch_rv_loop\n"
-    "mv a0, s0\n   sub a1, s0, s1\n   mv a2, s2\n"
-    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
-    "addi sp, sp, 40\n   tail memory_copy_apart\n"
+    "li t0, 2\n   beq a1, t0, .Lmatch_rv_off2\n"
+    "li t0, 4\n   beq a1, t0, .Lmatch_rv_off4\n"
+    "li t0, 8\n   beq a1, t0, .Lmatch_rv_off8\n"
+    "bltu a1, t0, .Lmatch_rv_tiny\n"
+    "sub t0, a0, a1\n"
+    "li t1, 8\n"
+    ".Lmatch_rv_word:\n"
+    "bltu a2, t1, .Lmatch_rv_tail\n"
+    "lbu t2, 0(t0)\n   lbu t3, 1(t0)\n   lbu t4, 2(t0)\n   lbu t5, 3(t0)\n"
+    "lbu t6, 4(t0)\n   sb t2, 0(a0)\n   sb t3, 1(a0)\n   sb t4, 2(a0)\n"
+    "sb t5, 3(a0)\n   sb t6, 4(a0)\n"
+    "lbu t2, 5(t0)\n   lbu t3, 6(t0)\n   lbu t4, 7(t0)\n"
+    "sb t2, 5(a0)\n   sb t3, 6(a0)\n   sb t4, 7(a0)\n"
+    "addi t0, t0, 8\n   addi a0, a0, 8\n   addi a2, a2, -8\n"
+    "j .Lmatch_rv_word\n"
+    ".Lmatch_rv_tail:\n"
+    "beqz a2, .Lmatch_rv_done\n"
+    "mv a1, t0\n"
+    "tail memory_copy_apart\n"
+    ".Lmatch_rv_off2:\n"
+    "lbu t0, -2(a0)\n   lbu t1, -1(a0)\n   slli t1, t1, 8\n   or t0, t0, t1\n"
+    "slli t1, t0, 16\n   or t0, t0, t1\n   slli t1, t0, 32\n   or t0, t0, t1\n"
+    "j .Lmatch_rv_splat\n"
+    ".Lmatch_rv_off4:\n"
+    "lbu t0, -4(a0)\n   lbu t1, -3(a0)\n   slli t1, t1, 8\n   or t0, t0, t1\n"
+    "lbu t1, -2(a0)\n   slli t1, t1, 16\n   or t0, t0, t1\n"
+    "lbu t1, -1(a0)\n   slli t1, t1, 24\n   or t0, t0, t1\n"
+    "slli t1, t0, 32\n   or t0, t0, t1\n"
+    "j .Lmatch_rv_splat\n"
+    ".Lmatch_rv_off8:\n"
+    "addi sp, sp, -16\n   sd ra, 0(sp)\n   sd a0, 8(sp)\n"
+    "addi a0, a0, -8\n   call memory_get64\n   mv t0, a0\n"
+    "ld a0, 8(sp)\n   ld ra, 0(sp)\n   addi sp, sp, 16\n"
+    ".Lmatch_rv_splat:\n"
+    "li t1, 8\n"
+    ".Lmatch_rv_splatq:\n"
+    "bltu a2, t1, .Lmatch_rv_splatt\n"
+    "sb t0, 0(a0)\n   srli t2, t0, 8\n   sb t2, 1(a0)\n"
+    "srli t2, t0, 16\n   sb t2, 2(a0)\n   srli t2, t0, 24\n   sb t2, 3(a0)\n"
+    "srli t2, t0, 32\n   sb t2, 4(a0)\n   srli t2, t0, 40\n   sb t2, 5(a0)\n"
+    "srli t2, t0, 48\n   sb t2, 6(a0)\n   srli t2, t0, 56\n   sb t2, 7(a0)\n"
+    "addi a0, a0, 8\n   addi a2, a2, -8\n   j .Lmatch_rv_splatq\n"
+    ".Lmatch_rv_splatt:\n"
+    "beqz a2, .Lmatch_rv_done\n"
+    "andi t2, t0, 0xff\n   sb t2, 0(a0)\n   addi a2, a2, -1\n   beqz a2, .Lmatch_rv_done\n"
+    "srli t0, t0, 8\n   addi a0, a0, 1\n   j .Lmatch_rv_splatt\n"
     ".Lmatch_rv_tiny:\n"
-    "sub t0, s0, s1\n"
+    "sub t0, a0, a1\n"
     ".Lmatch_rv_byte:\n"
-    "lbu t1, 0(t0)\n   sb t1, 0(s0)\n"
-    "addi t0, t0, 1\n   addi s0, s0, 1\n   addi s2, s2, -1\n"
-    "bnez s2, .Lmatch_rv_byte\n"
-    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
-    "addi sp, sp, 40\n"
+    "lbu t1, 0(t0)\n   sb t1, 0(a0)\n"
+    "addi t0, t0, 1\n   addi a0, a0, 1\n   addi a2, a2, -1\n"
+    "bnez a2, .Lmatch_rv_byte\n"
     ASM_RET
     ".Lmatch_rv_fill:\n   lbu a1, -1(a0)\n   tail memory_fill\n"
     ".Lmatch_rv_apart:\n   sub a1, a0, a1\n   tail memory_copy_apart\n"
@@ -14297,9 +15643,97 @@ __asm__(
     ASM_RET
     ASM_END(memory_copy_match)
 
-    /* See the x86_64 body. clz is not on the RV floor, so the end-mark
-       high bit is a short walk down from 7. Loads are bytes: an unaligned
-       ld is not in the IMAFD contract. */
+    /* See the x86_64 body. Unaligned 8-byte loads go through memory_get64.
+       The end-mark high bit is a walk from 7: no clz on the RV floor. */
+    ASM_FUNC(zstd_bits_open)
+    "addi sp, sp, -32\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n"
+    "mv s0, a0\n   beqz a2, .Lzstd_bits_rv_obad\n"
+    "sd a1, 24(s0)\n   add t0, a1, a2\n   sd t0, 40(s0)\n"
+    "addi t1, a1, 8\n   sd t1, 32(s0)\n"
+    "lbu t2, -1(t0)\n   beqz t2, .Lzstd_bits_rv_obad\n"
+    "li t3, 8\n   bltu a2, t3, .Lzstd_bits_rv_osmall\n"
+    "addi a0, t0, -8\n   sd a0, 16(s0)\n   call memory_get64\n"
+    "sd a0, 0(s0)\n"
+    "li t3, 7\n"
+    ".Lzstd_bits_rv_ohb:\n   srl t4, t2, t3\n   andi t4, t4, 1\n"
+    "bnez t4, .Lzstd_bits_rv_ohbd\n   addi t3, t3, -1\n   bgez t3, .Lzstd_bits_rv_ohb\n"
+    ".Lzstd_bits_rv_ohbd:\n   li t4, 8\n   sub t4, t4, t3\n   sd t4, 8(s0)\n"
+    "li a0, 0\n   j .Lzstd_bits_rv_odone\n"
+    ".Lzstd_bits_rv_osmall:\n"
+    "li t3, 0\n   li t4, 0\n"
+    ".Lzstd_bits_rv_osi:\n"
+    "add t5, a1, t3\n   lbu t5, 0(t5)\n   slli t6, t3, 3\n   sll t5, t5, t6\n"
+    "or t4, t4, t5\n   addi t3, t3, 1\n   bltu t3, a2, .Lzstd_bits_rv_osi\n"
+    "sd t4, 0(s0)\n   sd a1, 16(s0)\n"
+    "li t3, 8\n   sub t3, t3, a2\n   slli t3, t3, 3\n"
+    "li t5, 7\n"
+    ".Lzstd_bits_rv_ohb2:\n   srl t6, t2, t5\n   andi t6, t6, 1\n"
+    "bnez t6, .Lzstd_bits_rv_ohb2d\n   addi t5, t5, -1\n   bgez t5, .Lzstd_bits_rv_ohb2\n"
+    ".Lzstd_bits_rv_ohb2d:\n   li t6, 8\n   sub t6, t6, t5\n   add t6, t6, t3\n"
+    "sd t6, 8(s0)\n   li a0, 0\n   j .Lzstd_bits_rv_odone\n"
+    ".Lzstd_bits_rv_obad:\n   li a0, -1\n"
+    ".Lzstd_bits_rv_odone:\n"
+    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   addi sp, sp, 32\n"
+    ASM_RET
+    ASM_END(zstd_bits_open)
+
+    ASM_FUNC(zstd_bits_reload)
+    "addi sp, sp, -32\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n"
+    "sd s1, 16(sp)\n   sd s2, 24(sp)\n"
+    "mv s0, a0\n"
+    "ld t0, 8(s0)\n   ld s1, 16(s0)\n"
+    "ld t2, 24(s0)\n   ld t3, 32(s0)\n   ld t4, 40(s0)\n"
+    "li t5, 64\n   bltu t5, t0, .Lzstd_bits_rv_rbad\n"
+    "bgeu s1, t3, .Lzstd_bits_rv_rfast\n"
+    "beq s1, t2, .Lzstd_bits_rv_rok\n"
+    "srli t5, t0, 3\n   sub t6, s1, t5\n"
+    "bgeu t6, t2, .Lzstd_bits_rv_rreok\n"
+    "sub t5, s1, t2\n   mv t6, t2\n"
+    ".Lzstd_bits_rv_rreok:\n"
+    "mv s1, t6\n   slli t5, t5, 3\n   sub t0, t0, t5\n"
+    "sub s2, t4, s1\n   li t5, 8\n   bltu s2, t5, .Lzstd_bits_rv_rpart\n"
+    "sd t0, 8(s0)\n   sd s1, 16(s0)\n"
+    "mv a0, s1\n   call memory_get64\n   sd a0, 0(s0)\n"
+    "j .Lzstd_bits_rv_rok\n"
+    ".Lzstd_bits_rv_rfast:\n"
+    "srli t5, t0, 3\n   sub s1, s1, t5\n   andi t0, t0, 7\n"
+    "sd t0, 8(s0)\n   sd s1, 16(s0)\n"
+    "mv a0, s1\n   call memory_get64\n   sd a0, 0(s0)\n"
+    "j .Lzstd_bits_rv_rok\n"
+    ".Lzstd_bits_rv_rpart:\n"
+    "sd t0, 8(s0)\n   sd s1, 16(s0)\n"
+    "li t3, 0\n   li t4, 0\n"
+    ".Lzstd_bits_rv_rparti:\n"
+    "bgeu t3, s2, .Lzstd_bits_rv_rpartw\n"
+    "add t5, s1, t3\n   lbu t5, 0(t5)\n   slli t6, t3, 3\n   sll t5, t5, t6\n"
+    "or t4, t4, t5\n   addi t3, t3, 1\n   j .Lzstd_bits_rv_rparti\n"
+    ".Lzstd_bits_rv_rpartw:\n"
+    "sd t4, 0(s0)\n"
+    ".Lzstd_bits_rv_rok:\n"
+    "li a0, 0\n   j .Lzstd_bits_rv_rdone\n"
+    ".Lzstd_bits_rv_rbad:\n   li a0, -1\n"
+    ".Lzstd_bits_rv_rdone:\n"
+    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
+    "addi sp, sp, 32\n"
+    ASM_RET
+    ASM_END(zstd_bits_reload)
+
+    ASM_FUNC(zstd_bits_get)
+    "beqz a1, .Lzstd_bits_rv_gzero\n"
+    "ld t0, 8(a0)\n   li t1, 64\n   bgeu t0, t1, .Lzstd_bits_rv_gge\n"
+    "ld t2, 0(a0)\n   sll t2, t2, t0\n"
+    "li t3, 64\n   sub t3, t3, a1\n   srl t2, t2, t3\n"
+    "add t0, t0, a1\n   sd t0, 8(a0)\n"
+    "mv a0, t2\n"
+    ASM_RET
+    ".Lzstd_bits_rv_gge:\n"
+    "add t0, t0, a1\n   sd t0, 8(a0)\n"
+    ".Lzstd_bits_rv_gzero:\n"
+    "li a0, 0\n"
+    ASM_RET
+    ASM_END(zstd_bits_get)
+
+    /* See the x86_64 body. */
     ASM_FUNC(zstd_huffman_stream)
     "beqz a1, .Lzstd_huff_rv_ok_empty\n"
     "beqz a3, .Lzstd_huff_rv_fail_empty\n"
@@ -14385,6 +15819,228 @@ __asm__(
     ".Lzstd_huff_rv_fail_empty:\n   li a0, -1\n"
     ASM_RET
     ASM_END(zstd_huffman_stream)
+
+    ASM_FUNC(zstd_huffman_4x)
+    "beqz a1, .Lzstd_huff4_rv_ok0\n"
+    "li t0, 10\n   bltu a3, t0, .Lzstd_huff4_rv_bad0\n"
+    "addi sp, sp, -112\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n   sd s1, 16(sp)\n"
+    "sd s2, 24(sp)\n   sd s3, 32(sp)\n   sd s4, 40(sp)\n   sd s5, 48(sp)\n"
+    "sd s6, 56(sp)\n   sd s7, 64(sp)\n   sd s8, 72(sp)\n   sd s9, 80(sp)\n"
+    "mv s0, a0\n   addi t0, a1, 3\n   srli s1, t0, 2\n"
+    "slli t0, s1, 1\n   add t0, t0, s1\n   sub s9, a1, t0\n"
+    "mv s2, a4\n   mv s3, a5\n"
+    "lbu s5, 0(a2)\n   lbu t0, 1(a2)\n   slli t0, t0, 8\n   or s5, s5, t0\n"
+    "lbu s6, 2(a2)\n   lbu t0, 3(a2)\n   slli t0, t0, 8\n   or s6, s6, t0\n"
+    "lbu s7, 4(a2)\n   lbu t0, 5(a2)\n   slli t0, t0, 8\n   or s7, s7, t0\n"
+    "beqz s5, .Lzstd_huff4_rv_fail\n   beqz s6, .Lzstd_huff4_rv_fail\n"
+    "beqz s7, .Lzstd_huff4_rv_fail\n"
+    "add t0, s5, s6\n   add t0, t0, s7\n   addi t0, t0, 6\n"
+    "bltu a3, t0, .Lzstd_huff4_rv_fail\n"
+    "sub s8, a3, t0\n   beqz s8, .Lzstd_huff4_rv_fail\n"
+    "addi s4, a2, 6\n"
+    "mv a0, s0\n   mv a1, s1\n   mv a2, s4\n   mv a3, s5\n"
+    "mv a4, s2\n   mv a5, s3\n   call zstd_huffman_stream\n"
+    "bnez a0, .Lzstd_huff4_rv_fail\n"
+    "add s0, s0, s1\n   add s4, s4, s5\n"
+    "mv a0, s0\n   mv a1, s1\n   mv a2, s4\n   mv a3, s6\n"
+    "mv a4, s2\n   mv a5, s3\n   call zstd_huffman_stream\n"
+    "bnez a0, .Lzstd_huff4_rv_fail\n"
+    "add s0, s0, s1\n   add s4, s4, s6\n"
+    "mv a0, s0\n   mv a1, s1\n   mv a2, s4\n   mv a3, s7\n"
+    "mv a4, s2\n   mv a5, s3\n   call zstd_huffman_stream\n"
+    "bnez a0, .Lzstd_huff4_rv_fail\n"
+    "add s0, s0, s1\n   add s4, s4, s7\n"
+    "mv a0, s0\n   mv a1, s9\n   mv a2, s4\n   mv a3, s8\n"
+    "mv a4, s2\n   mv a5, s3\n   call zstd_huffman_stream\n"
+    "bnez a0, .Lzstd_huff4_rv_fail\n"
+    "li a0, 0\n"
+    ".Lzstd_huff4_rv_done:\n"
+    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
+    "ld s3, 32(sp)\n   ld s4, 40(sp)\n   ld s5, 48(sp)\n   ld s6, 56(sp)\n"
+    "ld s7, 64(sp)\n   ld s8, 72(sp)\n   ld s9, 80(sp)\n   addi sp, sp, 112\n"
+    ASM_RET
+    ".Lzstd_huff4_rv_fail:\n   li a0, -1\n   j .Lzstd_huff4_rv_done\n"
+    ".Lzstd_huff4_rv_ok0:\n   li a0, 0\n"
+    ASM_RET
+    ".Lzstd_huff4_rv_bad0:\n   li a0, -1\n"
+    ASM_RET
+    ASM_END(zstd_huffman_4x)
+
+    /* See the x86_64 body. */
+    ASM_FUNC(zstd_sequences_run)
+    "addi sp, sp, -304\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n   sd s1, 16(sp)\n"
+    "sd s2, 24(sp)\n   sd s3, 32(sp)\n   sd s4, 40(sp)\n   sd s5, 48(sp)\n"
+    "sd s6, 56(sp)\n   sd s7, 64(sp)\n   sd s8, 72(sp)\n   sd s9, 80(sp)\n"
+    "sd s10, 88(sp)\n   sd s11, 96(sp)\n"
+    "mv s8, a0\n"
+    "ld s9, 0(a0)\n   sd s9, 112(sp)\n"
+    "ld t0, 8(a0)\n   add s0, s9, t0\n"
+    "ld t0, 16(a0)\n   sd t0, 120(sp)\n"
+    "ld s1, 24(a0)\n   ld t0, 32(a0)\n   add t0, s1, t0\n   sd t0, 128(sp)\n"
+    "ld t0, 56(a0)\n   sd t0, 136(sp)\n"
+    "ld t0, 64(a0)\n   sd t0, 144(sp)\n"
+    "ld t0, 72(a0)\n   sd t0, 152(sp)\n"
+    "ld t0, 80(a0)\n   sd t0, 160(sp)\n"
+    "ld t0, 88(a0)\n   sd t0, 168(sp)\n"
+    "ld t0, 40(a0)\n   ld t1, 48(a0)\n"
+    "beqz t1, .Lzstd_seq_rv_fail\n"
+    "addi a0, sp, 256\n   mv a1, t0\n   mv a2, t1\n"
+    "jal zstd_bits_open\n   bnez a0, .Lzstd_seq_rv_fail\n"
+    "ld s4, 256(sp)\n   ld s2, 264(sp)\n   ld s3, 272(sp)\n"
+    "ld s5, 288(sp)\n"
+    ".Lzstd_seq_rv_init:\n"
+    "ld t0, 136(sp)\n   lbu a0, 0(t0)\n   jal .Lzstd_seq_rv_get\n   sw a0, 176(sp)\n"
+    "ld t0, 144(sp)\n   lbu a0, 0(t0)\n   jal .Lzstd_seq_rv_get\n   sw a0, 180(sp)\n"
+    "ld t0, 152(sp)\n   lbu a0, 0(t0)\n   jal .Lzstd_seq_rv_get\n   sw a0, 184(sp)\n"
+    "jal .Lzstd_seq_rv_reload\n   bnez a0, .Lzstd_seq_rv_fail\n"
+    ".Lzstd_seq_rv_loop:\n"
+    "ld t0, 136(sp)\n   lbu t1, 0(t0)\n   beqz t1, 1f\n"
+    "lwu t1, 176(sp)\n   slli t1, t1, 2\n   add t0, t0, t1\n   lbu s10, 7(t0)\n"
+    "j 2f\n"
+    "1: lbu s10, 1(t0)\n"
+    "2: ld t0, 152(sp)\n   lbu t1, 0(t0)\n   beqz t1, 1f\n"
+    "lwu t1, 184(sp)\n   slli t1, t1, 2\n   add t0, t0, t1\n   lbu s11, 7(t0)\n"
+    "j 2f\n"
+    "1: lbu s11, 1(t0)\n"
+    "2: ld t0, 144(sp)\n   lbu t1, 0(t0)\n   beqz t1, 1f\n"
+    "lwu t1, 180(sp)\n   slli t1, t1, 2\n   add t0, t0, t1\n   lbu t6, 7(t0)\n"
+    "j 2f\n"
+    "1: lbu t6, 1(t0)\n"
+    "2: li t0, 35\n   bltu t0, s10, .Lzstd_seq_rv_fail\n"
+    "li t0, 52\n   bltu t0, s11, .Lzstd_seq_rv_fail\n"
+    "li t0, 31\n   bltu t0, t6, .Lzstd_seq_rv_fail\n"
+    "li t0, 32\n   bgeu t0, s2, .Lzstd_seq_rv_extras\n"
+    "sd t6, 192(sp)\n   jal .Lzstd_seq_rv_reload\n"
+    "ld t6, 192(sp)\n   bnez a0, .Lzstd_seq_rv_fail\n"
+    ".Lzstd_seq_rv_extras:\n"
+    "mv a0, t6\n   jal .Lzstd_seq_rv_get\n   mv t5, a0\n"
+    "li t0, 32\n   bgeu t0, s2, .Lzstd_seq_rv_more\n"
+    "sd s10, 192(sp)\n   sd s11, 200(sp)\n   sd t6, 208(sp)\n   sd t5, 216(sp)\n"
+    "jal .Lzstd_seq_rv_reload\n   bnez a0, .Lzstd_seq_rv_fail\n"
+    "ld s10, 192(sp)\n   ld s11, 200(sp)\n   ld t6, 208(sp)\n   ld t5, 216(sp)\n"
+    ".Lzstd_seq_rv_more:\n"
+    "lla t0, zstd_seq_ml_bits\n   add t0, t0, s11\n   lbu a0, 0(t0)\n"
+    "jal .Lzstd_seq_rv_get\n   mv t4, a0\n"
+    "lla t0, zstd_seq_ll_bits\n   add t0, t0, s10\n   lbu a0, 0(t0)\n"
+    "jal .Lzstd_seq_rv_get\n"
+    "lla t1, zstd_seq_ll_base\n   slli t2, s10, 2\n   add t1, t1, t2\n"
+    "lwu t1, 0(t1)\n   add s10, t1, a0\n"
+    "lla t1, zstd_seq_ml_base\n   slli t2, s11, 2\n   add t1, t1, t2\n"
+    "lwu t1, 0(t1)\n   add s11, t1, t4\n"
+    "li t0, 32\n   bgeu t0, s2, .Lzstd_seq_rv_offgo\n"
+    "sd s10, 192(sp)\n   sd s11, 200(sp)\n   sd t6, 208(sp)\n   sd t5, 216(sp)\n"
+    "jal .Lzstd_seq_rv_reload\n   bnez a0, .Lzstd_seq_rv_fail\n"
+    "ld s10, 192(sp)\n   ld s11, 200(sp)\n   ld t6, 208(sp)\n   ld t5, 216(sp)\n"
+    ".Lzstd_seq_rv_offgo:\n"
+    "mv a0, t6\n   mv a1, t5\n   mv a2, s10\n   ld a3, 160(sp)\n"
+    "jal .Lzstd_seq_rv_offset\n   beqz a0, .Lzstd_seq_rv_fail\n"
+    "sd a0, 192(sp)\n   sd s11, 200(sp)\n"
+    "add t1, s1, s10\n   ld t2, 128(sp)\n   bltu t2, t1, .Lzstd_seq_rv_fail\n"
+    "beqz s10, .Lzstd_seq_rv_match\n"
+    "mv a0, s0\n   mv a1, s1\n   mv a2, s10\n"
+    "add s0, s0, s10\n   add s1, s1, s10\n"
+    "jal memory_copy_apart\n"
+    ".Lzstd_seq_rv_match:\n"
+    "ld a0, 192(sp)\n"
+    "ld t2, 112(sp)\n   sub t3, s0, t2\n   bltu t3, a0, .Lzstd_seq_rv_fail\n"
+    "ld t2, 120(sp)\n   beqz t2, .Lzstd_seq_rv_copy\n"
+    "bltu t2, a0, .Lzstd_seq_rv_fail\n"
+    ".Lzstd_seq_rv_copy:\n"
+    "ld a2, 200(sp)\n   beqz a2, .Lzstd_seq_rv_after\n"
+    "ld a1, 192(sp)\n   mv a0, s0\n"
+    "jal memory_copy_match\n"
+    "ld t0, 200(sp)\n   add s0, s0, t0\n"
+    ".Lzstd_seq_rv_after:\n"
+    "ld t0, 168(sp)\n   addi t0, t0, -1\n   sd t0, 168(sp)\n"
+    "beqz t0, .Lzstd_seq_rv_rest\n"
+    "ld t2, 136(sp)\n   lbu t1, 0(t2)\n   beqz t1, 3f\n"
+    "lwu t1, 176(sp)\n   slli t1, t1, 2\n   add t3, t2, t1\n"
+    "lbu a0, 6(t3)\n   jal .Lzstd_seq_rv_get\n"
+    "ld t2, 136(sp)\n   lwu t1, 176(sp)\n   slli t1, t1, 2\n   add t3, t2, t1\n"
+    "lhu t1, 4(t3)\n   add t0, t1, a0\n   sw t0, 176(sp)\n"
+    "3: ld t2, 152(sp)\n   lbu t1, 0(t2)\n   beqz t1, 3f\n"
+    "lwu t1, 184(sp)\n   slli t1, t1, 2\n   add t3, t2, t1\n"
+    "lbu a0, 6(t3)\n   jal .Lzstd_seq_rv_get\n"
+    "ld t2, 152(sp)\n   lwu t1, 184(sp)\n   slli t1, t1, 2\n   add t3, t2, t1\n"
+    "lhu t1, 4(t3)\n   add t0, t1, a0\n   sw t0, 184(sp)\n"
+    "3: ld t2, 144(sp)\n   lbu t1, 0(t2)\n   beqz t1, 3f\n"
+    "lwu t1, 180(sp)\n   slli t1, t1, 2\n   add t3, t2, t1\n"
+    "lbu a0, 6(t3)\n   jal .Lzstd_seq_rv_get\n"
+    "ld t2, 144(sp)\n   lwu t1, 180(sp)\n   slli t1, t1, 2\n   add t3, t2, t1\n"
+    "lhu t1, 4(t3)\n   add t0, t1, a0\n   sw t0, 180(sp)\n"
+    "3: li t0, 32\n   bgeu t0, s2, .Lzstd_seq_rv_loop\n"
+    "jal .Lzstd_seq_rv_reload\n   bnez a0, .Lzstd_seq_rv_fail\n"
+    "j .Lzstd_seq_rv_loop\n"
+    ".Lzstd_seq_rv_rest:\n"
+    "jal .Lzstd_seq_rv_reload\n   bnez a0, .Lzstd_seq_rv_fail\n"
+    "ld t2, 128(sp)\n   sub t2, t2, s1\n"
+    "beqz t2, .Lzstd_seq_rv_ok\n   bltz t2, .Lzstd_seq_rv_fail\n"
+    "mv a0, s0\n   mv a1, s1\n   mv a2, t2\n   add s0, s0, t2\n"
+    "jal memory_copy_apart\n"
+    ".Lzstd_seq_rv_ok:\n"
+    "ld t0, 112(sp)\n   sub t0, s0, t0\n   sd t0, 8(s8)\n"
+    "li a0, 0\n"
+    ".Lzstd_seq_rv_done:\n"
+    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n   ld s2, 24(sp)\n"
+    "ld s3, 32(sp)\n   ld s4, 40(sp)\n   ld s5, 48(sp)\n   ld s6, 56(sp)\n"
+    "ld s7, 64(sp)\n   ld s8, 72(sp)\n   ld s9, 80(sp)\n   ld s10, 88(sp)\n"
+    "ld s11, 96(sp)\n   addi sp, sp, 304\n"
+    ASM_RET
+    ".Lzstd_seq_rv_fail:\n   li a0, -1\n   j .Lzstd_seq_rv_done\n"
+    ".Lzstd_seq_rv_get:\n"
+    "beqz a0, 1f\n"
+    "li t0, 64\n   bgeu s2, t0, 2f\n"
+    "mv t0, a0\n   sll t1, s4, s2\n"
+    "li t2, 64\n   sub t2, t2, t0\n   srl a0, t1, t2\n   add s2, s2, t0\n"
+    ASM_RET
+    "2: add s2, s2, a0\n"
+    "1: li a0, 0\n"
+    ASM_RET
+    ".Lzstd_seq_rv_reload:\n"
+    "li t0, 64\n   bltu t0, s2, .Lzstd_seq_rv_rbad\n"
+    "bltu s3, s5, .Lzstd_seq_rv_rslow\n"
+    "srli t0, s2, 3\n   sub s3, s3, t0\n   andi s2, s2, 7\n"
+    "andi t0, s3, 7\n   bnez t0, .Lzstd_seq_rv_rget\n"
+    "ld s4, 0(s3)\n   li a0, 0\n"
+    ASM_RET
+    ".Lzstd_seq_rv_rget:\n"
+    "addi sp, sp, -16\n   sd ra, 0(sp)\n   mv a0, s3\n"
+    "jal memory_get64\n   mv s4, a0\n"
+    "ld ra, 0(sp)\n   addi sp, sp, 16\n   li a0, 0\n"
+    ASM_RET
+    ".Lzstd_seq_rv_rslow:\n"
+    "sd s4, 256(sp)\n   sd s2, 264(sp)\n   sd s3, 272(sp)\n"
+    "addi sp, sp, -16\n   sd ra, 0(sp)\n"
+    "addi a0, sp, 272\n   jal zstd_bits_reload\n"
+    "ld ra, 0(sp)\n   addi sp, sp, 16\n"
+    "ld s4, 256(sp)\n   ld s2, 264(sp)\n   ld s3, 272(sp)\n"
+    ASM_RET
+    ".Lzstd_seq_rv_rbad:\n   li a0, -1\n"
+    ASM_RET
+    ".Lzstd_seq_rv_offset:\n"
+    "beqz a0, 1f\n   li t0, 1\n   beq a0, t0, 2f\n"
+    "sll t0, t0, a0\n   add t0, t0, a1\n   addi a0, t0, -3\n"
+    "beqz a0, 9f\n"
+    "lwu t0, 4(a3)\n   sw t0, 8(a3)\n"
+    "lwu t0, 0(a3)\n   sw t0, 4(a3)\n"
+    "sw a0, 0(a3)\n"
+    ASM_RET
+    "1: seqz t0, a2\n   slli t0, t0, 2\n   add t0, a3, t0\n   lwu a0, 0(t0)\n"
+    "beqz a0, 9f\n"
+    "snez t0, a2\n   slli t0, t0, 2\n   add t0, a3, t0\n   lwu t0, 0(t0)\n"
+    "sw t0, 4(a3)\n   sw a0, 0(a3)\n"
+    ASM_RET
+    "2: seqz t0, a2\n   addi t0, t0, 1\n   add t0, t0, a1\n"
+    "li t1, 3\n   beq t0, t1, 3f\n"
+    "slli t1, t0, 2\n   add t1, a3, t1\n   lwu a0, 0(t1)\n   j 4f\n"
+    "3: lwu a0, 0(a3)\n   addi a0, a0, -1\n"
+    "4: beqz a0, 9f\n   li t1, 1\n   beq t0, t1, 5f\n"
+    "lwu t1, 4(a3)\n   sw t1, 8(a3)\n"
+    "5: lwu t1, 0(a3)\n   sw t1, 4(a3)\n   sw a0, 0(a3)\n"
+    ASM_RET
+    "9: li a0, 0\n"
+    ASM_RET
+    ASM_END(zstd_sequences_run)
     // memory_copy_end: exact overlap-aware copy, one terminator, and dst+n.
     // The x86_64 block carries the contract; the only state across the shared
     // core is the end pointer and the caller's return address.
@@ -17341,6 +18997,21 @@ PURE READS(1, 2) p32 memory_checksum_bsd16(address_any block, positive size, p32
 /* XXH64. Zero size permits a null block. zstd's content checksum is the
    low 32 bits of seed 0, little endian. */
 PURE READS(1, 2) p64 hash_xxh64(address_any block, positive size, p64 seed);
+/* Streaming XXH64. state is 88 bytes: total, acc[4], seed, hold[32], held.
+   begin writes the state; add may be split arbitrarily; finish reads it.
+   The concatenation of every add is hash_xxh64 of that span and seed. */
+WRITES(1) fn hash_xxh64_begin(address_any state, p64 seed);
+WRITES(1) READS(2, 3)
+fn hash_xxh64_add(address_any state, address_any data, positive size);
+PURE READS(1) p64 hash_xxh64_finish(address_any state);
+/* Little-endian 64-bit load. Unaligned is the contract. */
+PURE READS(1) p64 memory_get64(address_any source);
+/* Backward bitstream. state is 48 bytes: bits, consumed, ptr, start,
+   limit, last. open/reload return 0 or -1. get(0) is 0. */
+WRITES(1) bipolar zstd_bits_open(address_any state, address_any src,
+                                 positive size);
+WRITES(1) bipolar zstd_bits_reload(address_any state);
+WRITES(1) p64 zstd_bits_get(address_any state, positive n);
 /* dest[i] = dest[i - offset] for length bytes. offset must be nonzero
    when length is. dest[-offset, length) must be a valid span. */
 fn memory_copy_match(address_any dest, positive offset, positive length);
@@ -17350,6 +19021,14 @@ fn memory_copy_match(address_any dest, positive offset, positive length);
 WRITES(1, 2) READS(3, 4)
 bipolar zstd_huffman_stream(address_any dest, positive need, address_any src,
                             positive size, address_any cell, positive max_bits);
+/* Four Huffman streams, 6-byte jump table then the four bodies. */
+WRITES(1, 2) READS(3, 4)
+bipolar zstd_huffman_4x(address_any dest, positive need, address_any src,
+                        positive size, address_any cell, positive max_bits);
+/* One compressed-block sequence body. job is 96 bytes: window, pos in/out,
+   window_size, lits, lit_len, seq, seq_len, ll, of, ml, rep, nseq.
+   FSE cell[i] is at table+4. Writes the window and updates pos. */
+WRITES(1) bipolar zstd_sequences_run(address_any job);
 PURE positive2 string_hash_33_length(string_address source);
 PURE positive memory_span_byte(address_any block, p8 value, positive size);
 // Returns {bytes, characters}, bounded by both size and count. Invalid UTF-8
