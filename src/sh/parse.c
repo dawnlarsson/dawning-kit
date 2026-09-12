@@ -2120,10 +2120,12 @@ static b32 parse_function(bool keyword)
         }
         parse_attach_word(index, parse_look(0)->text,
                           parse_look(0)->length);
-        //      Bash without posix lets a function be named a/b. POSIX
-        //      mode and dash both refuse a name that is not an identifier,
-        //      and eval of that refusal is a special-builtin failure.
-        if ((shell_posix_on() || !shell_bash_compat) &&
+        //      Bash without posix lets a function be named a/b. Dash
+        //      refuses that name in the grammar, so eval of it is a
+        //      special-builtin syntax failure. Bash --posix parses the
+        //      definition and the executor refuses the identifier, which
+        //      ends the process even under command eval.
+        if (!shell_bash_compat &&
             !shell_valid_name(parse_look(0)->text, parse_look(0)->length))
         {
                 parse_fail();

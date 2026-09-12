@@ -6208,18 +6208,22 @@ static b32 exec_define(b32 index)
         positive2 named = string_hash_33_length(name);
         positive name_length = named.y;
 
-        //      The parser already refuses a non-identifier under posix and
-        //      dash. Keep the same rule here so a definition that reached
-        //      the executor another way cannot install a/b.
+        //      Dash already refused a non-identifier in the grammar. Bash
+        //      --posix reaches here: lima 5.2.32 reports an invalid
+        //      identifier and ends the process, including under command
+        //      eval, so this is not an eval syntax error.
         if ((shell_posix_on() || !shell_bash_compat) &&
             !shell_valid_name(name, name_length))
         {
                 shell_diagnostic_where();
                 if (shell_bash_compat)
+                {
                         string_format(log_error,
                                       "`%s': not a valid identifier\n", name);
-                else
-                        log_error(str("Syntax error: Bad function name\n"));
+                        expand_fatal_status(2);
+                        return (shell_status = 2);
+                }
+                log_error(str("Syntax error: Bad function name\n"));
                 exec_special_error_note();
                 return (shell_status = 2);
         }
@@ -7704,12 +7708,12 @@ static bool exec_prefix_assign(exec_kept_value address_to kept,
         if (!promote && (attributes & SHELL_ARRAY_READONLY))
         {
                 /* Dash applies redirections before prefix assignments, so
-                   `r=new true 2>/dev/null` leaves stderr empty. Assignments
-                   still happen first here; skip the sentence so the two
-                   streams match. Bash diagnoses and keeps going. */
-                if (shell_bash_compat)
-                        shell_readonly_refused(null, null, kept->binding.name,
-                                               string_length(kept->binding.name));
+                   `r=new true 2>/dev/null` leaves stderr empty. exec_simple
+                   does that first; still say the sentence so a function
+                   body with no redirect writes `x: is read only` the way
+                   lima dash does. Bash diagnoses and keeps going. */
+                shell_readonly_refused(null, null, kept->binding.name,
+                                       string_length(kept->binding.name));
                 return exec_assignment_error(assignment_error);
         }
         if (append)
@@ -8682,6 +8686,7 @@ static b32 exec_simple(b32 index)
         bool assignments_only;
         bool special = false;
         bool fatal = false;
+        bool redirects_applied = false;
         shell_words arguments;
 
         //      argv grows with the line. A command's words are whatever the
@@ -8860,6 +8865,29 @@ static b32 exec_simple(b32 index)
         }
 
         assignments_only = first == count;
+        /* Dash opens redirections before prefix assignments, so a readonly
+           prefix diagnoses into `2>/dev/null` and a function body with no
+           redirect still writes the sentence. */
+        if (!shell_bash_compat && leading && node->redirect_count &&
+            !exec_line_aborted())
+        {
+                if (!exec_redirect_apply(index))
+                {
+                        exec_redirect_restore(mark);
+                        status = (exec_line_aborted() ? shell_status :
+                                  exec_redirect_status ? exec_redirect_status
+                                                       : 1);
+                        if (!exec_line_aborted())
+                        {
+                                if (first != count)
+                                        special = exec_special_builtin(
+                                            shell_argv[first]);
+                                fatal = special;
+                        }
+                        goto fail;
+                }
+                redirects_applied = true;
+        }
         for (at = 0; at < leading && !exec_line_aborted(); at++)
         {
                 b32 word_index = EXEC_WORD(at);
@@ -9015,7 +9043,8 @@ static b32 exec_simple(b32 index)
         if (exec_trace_on())
                 exec_trace(count, first);
 
-        if (node->redirect_count && !exec_redirect_apply(index))
+        if (node->redirect_count && !redirects_applied &&
+            !exec_redirect_apply(index))
         {
                 exec_redirect_restore(mark);
                 status = (exec_line_aborted() ? shell_status : exec_redirect_status ? exec_redirect_status : 1);
@@ -9118,6 +9147,8 @@ static b32 exec_simple(b32 index)
                 them left the arena behind.
         */
 fail:
+        if (redirects_applied)
+                exec_redirect_restore(mark);
         if (kept && !exec_finish_prefixes(kept, kept_count) && !status)
                 status = shell_status = 2;
         exec_put_back(expanded_kept, expanded_count, true);
