@@ -5951,6 +5951,22 @@ static b32 exec_define(b32 index)
         positive2 named = string_hash_33_length(name);
         positive name_length = named.y;
 
+        //      The parser already refuses a non-identifier under posix and
+        //      dash. Keep the same rule here so a definition that reached
+        //      the executor another way cannot install a/b.
+        if ((shell_posix_on() || !shell_bash_compat) &&
+            !shell_valid_name(name, name_length))
+        {
+                shell_diagnostic_where();
+                if (shell_bash_compat)
+                        string_format(log_error,
+                                      "`%s': not a valid identifier\n", name);
+                else
+                        log_error(str("Syntax error: Bad function name\n"));
+                exec_special_error_note();
+                return (shell_status = 2);
+        }
+
         for (slot = 0; slot < exec_function_count; slot++)
         {
                 if (exec_function_matches(slot, name, named.x, named.y))

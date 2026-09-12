@@ -15703,17 +15703,20 @@ fn shell_hash(writer write, string_address input)
                 positive at = 0;
 
                 //      Bash writes one sentence when the table is empty, and
-                //      a script counting `hash 2>&1` counts it. That sentence
-                //      is a listing, not a side-effect of -r: `hash -r` is
-                //      silent, `hash -l` on an empty table is silent, and so
-                //      is `set -o posix`. Dash writes nothing, which is the
-                //      listing this shell keeps under a POSIX name.
+                //      a script counting `hash 2>/dev/null` still sees it
+                //      because the listing is on the answer channel. `hash
+                //      -r` is silent, `hash -l` on an empty table is silent,
+                //      and so is `set -o posix`. Dash writes nothing, which
+                //      is the listing this shell keeps under a POSIX name.
                 if (!hash_count)
                 {
                         if (shell_bash_compat && !shell_posix_on() &&
                             !as_commands && !reset)
-                                return shell_answer(string_report(
-                                    log_error, 0, "hash: hash table empty\n"));
+                        {
+                                string_format(write,
+                                              "hash: hash table empty\n");
+                                return shell_answer(0);
+                        }
                         return shell_answer(0);
                 }
 
@@ -16294,7 +16297,12 @@ COLD fn shell_type(writer write, string_address input)
         bool no_functions = false;
         p8 which;
 
-        while (shell_option_letter(address_of walk, address_of which))
+        //      Dash's type has no option letters: -t, -p, -P, -a and -f
+        //      are names to look up, so `type -t cd` reports a missing -t
+        //      and then the builtin, and answers 127. Bash keeps the
+        //      letters, including under --posix.
+        while (!shell_dash_compat &&
+               shell_option_letter(address_of walk, address_of which))
         {
                 //      -t on one side and -p and -P on the other ask for
                 //      two different single answers, and the last of them

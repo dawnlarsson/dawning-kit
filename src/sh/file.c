@@ -23527,7 +23527,11 @@ static b32 kill_list(positive count, positive index)
                 if (!kill_number_named(number, name))
                 {
                         string_format(log_error, "kill: unknown signal: %s\n", word);
-                        return 1;
+                        //      Dash answers two for a number that is not a
+                        //      signal and not an exit status with one in
+                        //      it. Bash keeps one.
+                        return kill_shell_spelling && !shell_bash_compat ? 2
+                                                                         : 1;
                 }
 
                 file_line(name);
