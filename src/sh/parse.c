@@ -1614,7 +1614,16 @@ static bool parse_take_redirect(b32 index)
                                  ? 0
                                  : 1;
 
-        if (parse_look(0)->kind != PT_WORD)
+        /*
+                <<< requires a word. The digits in 2>/dev/null look like one
+                because the lexer does not know this operator is still waiting,
+                but they begin the next redirect, and bash then reports them
+                as unexpected. An empty expansion ($empty, "") is a word; a
+                missing token is not.
+        */
+        if (parse_look(0)->kind != PT_WORD ||
+            (op == OP_HERESTRING &&
+             parse_redirect_prefix(parse_position) >= 0))
         {
                 parse_fail();
                 return false;
