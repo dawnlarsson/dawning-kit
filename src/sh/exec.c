@@ -12215,7 +12215,15 @@ static b32 exec_node_kind(b32 index)
                 status = exec_node(node->left);
 
         exec_redirect_restore(mark);
-        exec_expansion_done(expanded, substitutions);
+        /* lima bash 5.2 leaves process-substitution write ends open after a
+           brace group. `>(sed > file)` has not seen EOF, so a later cat of
+           that file is still empty; the writer finishes when this shell
+           itself leaves. A simple command still closes them, which is why
+           `echo z > >(cat > written)` settles before sleep. */
+        if (shell_bash_compat && node->kind == NODE_GROUP)
+                shell_store_rewind(address_of expand_store, expanded);
+        else
+                exec_expansion_done(expanded, substitutions);
 
         shell_status = status;
 
