@@ -2185,6 +2185,11 @@ static b32 parse_pipeline(bool inverted);
 
 static PURE bool parse_time_reserved()
 {
+        /* POSIX and dash treat time as an ordinary command name. Bash,
+           including --posix, reserves it in pipeline position. */
+        if (!shell_bash_compat)
+                return false;
+
         if (parse_look(0)->kind != PT_WORD ||
             parse_look(0)->length != 4 ||
             parse_keyword(0) != PARSE_KEYWORD_TIME)
@@ -2193,7 +2198,7 @@ static PURE bool parse_time_reserved()
         /* In Bash POSIX mode, a following option-shaped word makes `time`
            an ordinary command name. This is what lets a function or the
            external POSIX time utility receive -p itself. */
-        return !(shell_bash_compat && shell_posix_on() &&
+        return !(shell_posix_on() &&
                  parse_look(1)->kind == PT_WORD &&
                  string_is(parse_look(1)->text, '-'));
 }
