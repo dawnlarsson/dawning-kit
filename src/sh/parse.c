@@ -866,7 +866,10 @@ bool parse_feed(string_address line)
                 line = parse_pending;
         }
 
-        unfinished = lex_unfinished(line);
+        // The unfinished walk and the token walk read the same bytes. Skip
+        // the first when a span of lex_closed already proves nothing on the
+        // line can still be open.
+        unfinished = lex_line_closed(line) ? LEX_COMPLETE : lex_unfinished(line);
 
         if (unfinished)
                 return parse_hold(line, unfinished);
