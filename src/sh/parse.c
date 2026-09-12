@@ -130,6 +130,10 @@ typedef struct
         b32 fd;
         string_address text;
         positive text_length;
+        // `{name}` or `{name[index]}` as the descriptor, which bash looks up
+        // when the redirect is applied. Empty when the descriptor is a number.
+        string_address var;
+        positive var_length;
         // A here-document carries its body in place of a file name. Which of
         // the two arenas the body sits in depends on whether the command it
         // belongs to outlived the line that wrote it.
@@ -1219,6 +1223,30 @@ static CONST bool parse_redirect_operator(b32 op)
                (op >= OP_ANDGREAT && op <= OP_HERESTRING);
 }
 
+/* `{name}` or `{name[index]}` as a redirect descriptor. Dash has no such
+   form, so a word that looks like one stays an operand under a dash name. */
+static PURE bool parse_redirect_brace(string_address text, positive length)
+{
+        positive base;
+        const_string subscript;
+        positive subscript_length;
+
+        if (!shell_bash_compat || length < 3 || text[0] != '{' ||
+            text[length - 1] != '}')
+                return false;
+
+        text++;
+        length -= 2;
+
+        if (shell_valid_name(text, length))
+                return true;
+
+        return env_reference_element_span(text, length, address_of base,
+                                          address_of subscript,
+                                          address_of subscript_length) &&
+               subscript_length;
+}
+
 /* Return the number of descriptor tokens before a redirect operator, or -1.
    Alias scans and the grammar must agree on this exact two-token prefix. */
 static PURE b32 parse_redirect_prefix(b32 at)
@@ -1239,12 +1267,16 @@ static PURE b32 parse_redirect_prefix(b32 at)
 
         // &> always means descriptors one and two. In "echo 2&>file", the 2
         // is therefore an argument, unlike the descriptor prefix in 2>file.
-        return token->kind == PT_WORD &&
-               string_digits_exact(token->text, address_of descriptor) &&
-               descriptor <= 0x7fffffff &&
-               next->kind == PT_OP && next->joined &&
-               next->op != OP_ANDGREAT && next->op != OP_ANDDGREAT &&
-               parse_redirect_operator(next->op) ? 1 : -1;
+        if (token->kind != PT_WORD || next->kind != PT_OP || !next->joined ||
+            next->op == OP_ANDGREAT || next->op == OP_ANDDGREAT ||
+            !parse_redirect_operator(next->op))
+                return -1;
+
+        if (string_digits_exact(token->text, address_of descriptor) &&
+            descriptor <= 0x7fffffff)
+                return 1;
+
+        return parse_redirect_brace(token->text, token->length) ? 1 : -1;
 }
 
 /* The token after a redirect: past its descriptor prefix, the operator, and
@@ -1541,30 +1573,41 @@ static fn parse_alias_command()
 static bool parse_take_redirect(b32 index)
 {
         string_address delimiter;
+        string_address brace_name = null;
+        positive brace_length = 0;
         b32 descriptor = -1;
         b32 op;
         b32 slot;
 
         if (parse_look(0)->kind == PT_WORD)
         {
+                parse_token address_to prefix = parse_look(0);
                 positive parsed;
 
-                if (!string_digits_exact(parse_look(0)->text,
-                                         address_of parsed) ||
-                    parsed > 0x7fffffff)
+                if (parse_redirect_brace(prefix->text, prefix->length))
+                {
+                        brace_name = prefix->text + 1;
+                        brace_length = prefix->length - 2;
+                        parse_position++;
+                }
+                else if (!string_digits_exact(prefix->text,
+                                              address_of parsed) ||
+                         parsed > 0x7fffffff)
                 {
                         parse_state = PARSE_SYNTAX;
                         return false;
                 }
-
-                descriptor = (b32)parsed;
-                parse_position++;
+                else
+                {
+                        descriptor = (b32)parsed;
+                        parse_position++;
+                }
         }
 
         op = parse_look(0)->op;
         parse_position++;
 
-        if (descriptor < 0)
+        if (descriptor < 0 && !brace_length)
                 descriptor = (op == OP_LESS || op == OP_DLESS ||
                               op == OP_HERESTRING ||
                               op == OP_LESSAND || op == OP_LESSGREAT)
@@ -1609,6 +1652,8 @@ static bool parse_take_redirect(b32 index)
         slot = parse_redirect_used++;
         parse_redirects[slot].op = op;
         parse_redirects[slot].fd = descriptor;
+        parse_redirects[slot].var = brace_name;
+        parse_redirects[slot].var_length = brace_length;
         parse_redirects[slot].kept = false;
         parse_redirects[slot].raw = false;
         parse_redirects[slot].body = 0;
@@ -2227,6 +2272,8 @@ static bool parse_merge_streams(b32 index)
         slot = parse_redirect_used++;
         parse_redirects[slot].op = OP_GREATAND;
         parse_redirects[slot].fd = 2;
+        parse_redirects[slot].var = null;
+        parse_redirects[slot].var_length = 0;
         parse_redirects[slot].kept = false;
         parse_redirects[slot].raw = false;
         parse_redirects[slot].body = 0;
@@ -2677,6 +2724,9 @@ static bool parse_keep_measure(b32 index, parse_kept_body address_to body)
                 parse_redirect address_to redirect = parse_redirects + node->redirect + i;
                 if (redirect->text_length >= PARSE_KEPT_TEXT ||
                     !parse_keep_amount(body, 3, redirect->text_length + 1) ||
+                    (redirect->var_length &&
+                     (redirect->var_length >= PARSE_KEPT_TEXT ||
+                      !parse_keep_amount(body, 3, redirect->var_length + 1))) ||
                     (redirect->body_length && (redirect->body_length >= PARSE_KEPT_TEXT ||
                      !parse_keep_amount(body, 3, redirect->body_length + 1))))
                         return false;
@@ -2755,6 +2805,9 @@ static b32 parse_keep_tree(b32 index, b32 address_to cursor)
                 parse_redirect address_to target = parse_redirects + cursor[2]++;
                 *target = *source;
                 target->text = parse_keep_text(cursor, source->text, source->text_length);
+                if (source->var_length)
+                        target->var = parse_keep_text(cursor, source->var,
+                                                      source->var_length);
                 if (source->body_length)
                 {
                         target->body = cursor[3];

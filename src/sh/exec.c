@@ -85,6 +85,9 @@ fn trap_child_began();
 static b32 exec_child_status(bipolar child);
 static b32 job_wait_foreground(positive number);
 static fn exec_pipe_status_publish(bipolar address_to values, positive count);
+static fn exec_coproc_child();
+static fn exec_coproc_reaped(bipolar pid);
+static fn exec_coproc_drop_finished();
 
 fn exec_child_began()
 {
@@ -100,6 +103,7 @@ fn exec_child_began()
         //      close descriptors somebody else is still handing out.
         shell_substitutions_forget();
         shell_background_child();
+        exec_coproc_child();
 }
 
 /*
@@ -116,6 +120,7 @@ static fn exec_helper_began()
         trap_child_began();
         shell_substitutions_forget();
         shell_background_child();
+        exec_coproc_child();
 }
 
 static DEAD_END fn exec_child_leave(b32 status)
@@ -1091,6 +1096,7 @@ static fn job_child_changed(bipolar pid, positive status)
         }
 
         shell_background_reaped(pid, status);
+        exec_coproc_reaped(pid);
 
         // A here-document writer is a child too, and belongs to no job.
         at = job_find(pid, true);
@@ -5097,6 +5103,41 @@ static COLD b32 exec_redirect_refused(p8 op, string_address target,
                              target, why);
 }
 
+/* `{name}` / `{name[index]}` names the descriptor stored in that variable. */
+static bipolar exec_redirect_var_fd(string_address name, positive length)
+{
+        string_address value = null;
+        positive fd;
+        positive base;
+        const_string subscript;
+        positive subscript_length;
+
+        if (env_reference_element_span(name, length, address_of base,
+                                       address_of subscript,
+                                       address_of subscript_length) &&
+            subscript_length)
+        {
+                positive key_length;
+                string_address key = shell_expand_subscript(
+                    name, base, (string_address)subscript, subscript_length,
+                    address_of key_length);
+
+                if (key)
+                        value = shell_array_get(name, base, key, key_length,
+                                                null);
+        }
+        else
+                value = env_get_hashed_span(name, length,
+                                            env_name_hash(name, length),
+                                            null);
+
+        if (!value || !string_digits_exact(value, address_of fd) ||
+            fd > 0x7fffffff)
+                return -1;
+
+        return (bipolar)fd;
+}
+
 static bool exec_redirect_apply(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -5151,6 +5192,32 @@ static bool exec_redirect_apply(b32 index)
                 if (exec_line_aborted())
                         return false;
 
+                b32 fd = want->fd;
+
+                if (want->var_length)
+                {
+                        bipolar named = exec_redirect_var_fd(want->var,
+                                                            want->var_length);
+                        p8 shown[64];
+                        positive shown_length;
+
+                        if (named < 0)
+                        {
+                                shown_length = want->var_length < 63
+                                                   ? want->var_length
+                                                   : 63;
+                                memory_copy(shown, want->var, shown_length);
+                                shown[shown_length] = end;
+                                string_format(log_error,
+                                              "%s: ambiguous redirect\n",
+                                              shown);
+                                exec_redirect_status = 1;
+                                return false;
+                        }
+
+                        fd = (b32)named;
+                }
+
                 /*
                         rbash: the redirections that can make a file or cut
                         one down. A duplication says nothing about the file
@@ -5193,7 +5260,7 @@ static bool exec_redirect_apply(b32 index)
                         if (!exec_save_fd(1, node) || !exec_save_fd(2, node))
                                 return false;
                 }
-                else if (!exec_save_fd(want->fd, node))
+                else if (!exec_save_fd(fd, node))
                         return false;
 
                 if (want->op == OP_DLESS)
@@ -5264,7 +5331,7 @@ static bool exec_redirect_apply(b32 index)
 
                         if (string_is(target, '-') && string_is(target + 1, end))
                         {
-                                system_close(want->fd);
+                                system_close(fd);
                                 continue;
                         }
 
@@ -5277,10 +5344,10 @@ static bool exec_redirect_apply(b32 index)
                                               target);
                         }
 
-                        if ((b32)source == want->fd)
+                        if ((b32)source == fd)
                                 continue;
 
-                        opened = system_duplicate(source, want->fd, 0);
+                        opened = system_duplicate(source, fd, 0);
                 }
                 else if (want->op == OP_LESS)
                         opened = system_open_at(AT_FDCWD,
@@ -5334,14 +5401,14 @@ static bool exec_redirect_apply(b32 index)
                 // dup3 onto the descriptor it was handed is an error rather
                 // than the no-op dup2 makes of it, and open answers with
                 // exactly that descriptor when it was the lowest one free.
-                if (opened != want->fd)
+                if (opened != fd)
                 {
-                        if (system_duplicate(opened, want->fd, 0) < 0)
+                        if (system_duplicate(opened, fd, 0) < 0)
                         {
                                 system_close(opened);
                                 exec_redirect_diagnostic_restore(redirect_mark);
                                 return string_report(log_error, false, "Cannot redirect descriptor: %p\n",
-                                              (positive)want->fd);
+                                              (positive)fd);
                         }
 
                         system_close(opened);
@@ -9032,6 +9099,11 @@ static b32 exec_simple(b32 index)
                         exec_redirect_restore(mark);
         }
 
+        /* lima bash waitchld's leftover children when a simple command
+           finishes, which is when a coproc that died during `sleep` is
+           forgotten so a later unquoted wait $C_PID sees nothing. */
+        exec_coproc_drop_finished();
+
         shell_store_rewind(address_of exec_store, arena_mark);
 
         if (fatal)
@@ -9465,6 +9537,8 @@ static b32 exec_for(b32 index, bool selecting)
         string_address name = parse_words[node->word];
         shell_mark mark = shell_store_mark(address_of exec_store);
         positive base = exec_items_used;
+        positive substitutions =
+            expand_substitutions_ever ? expand_substitutions_count : 0;
         b32 count;
         b32 status = 0;
 
@@ -9556,6 +9630,13 @@ static b32 exec_for(b32 index, bool selecting)
                 exec_loop_depth++;
                 status = exec_node(node->right);
                 exec_loop_depth--;
+
+                /* lima bash 5.2 unlinks the process-substitution fifo list
+                   after each execute_command of a for action, so a second
+                   `<( )` path in the word list is gone once the first body
+                   has run. */
+                if (expand_substitutions_ever)
+                        shell_substitutions_close(substitutions);
 
                 if (!exec_loop_again())
                         break;
@@ -10747,6 +10828,97 @@ static b32 coproc_kept(b32 descriptor)
         return (b32)moved;
 }
 
+#define EXEC_COPROC_LIVE 8
+
+typedef struct
+{
+        p8 name[EXEC_COPROC_NAME + 1];
+        positive name_length;
+        bipolar pid;
+} exec_coproc_slot;
+
+static exec_coproc_slot exec_coprocs[EXEC_COPROC_LIVE];
+static positive exec_coproc_count;
+
+static fn exec_coproc_child()
+{
+        exec_coproc_count = 0;
+}
+
+static fn exec_coproc_unset(exec_coproc_slot address_to slot)
+{
+        p8 pid_name[EXEC_COPROC_NAME + 5];
+
+        env_unset_span(slot->name, slot->name_length);
+        memory_copy(pid_name, slot->name, slot->name_length);
+        memory_copy_end(pid_name + slot->name_length, (string_address) "_PID", 4);
+        pid_name[slot->name_length + 4] = end;
+        env_unset(pid_name);
+}
+
+static fn exec_coproc_reaped(bipolar pid)
+{
+        for (positive at = 0; at < exec_coproc_count; at++)
+                if (exec_coprocs[at].pid == pid)
+                        exec_coproc_unset(exec_coprocs + at);
+}
+
+static fn exec_coproc_drop_finished()
+{
+        positive into = 0;
+
+        if (!exec_coproc_count)
+                return;
+
+        /* Wait only these children. wait4(-1) here would collect a lastpipe
+           stage the pipeline still has to wait for. */
+        for (positive at = 0; at < exec_coproc_count; at++)
+        {
+                positive status = 0;
+                bipolar got = system_call_4(syscall(wait4),
+                                            (positive)exec_coprocs[at].pid,
+                                            (positive)address_of status,
+                                            JOB_NO_HANG | JOB_UNTRACED |
+                                                JOB_CONTINUED,
+                                            0);
+
+                if (got > 0)
+                        job_child_changed(got, status);
+        }
+
+        for (positive at = 0; at < exec_coproc_count; at++)
+        {
+                bipolar pid = exec_coprocs[at].pid;
+                positive found = shell_wait_find_job(pid);
+
+                if (found < shell_wait_count &&
+                    !(shell_wait_table[found].flags & SHELL_WAIT_DONE))
+                {
+                        exec_coprocs[into++] = exec_coprocs[at];
+                        continue;
+                }
+
+                shell_wait_drop(pid);
+        }
+
+        exec_coproc_count = into;
+}
+
+static fn exec_coproc_remember(string_address name, positive name_length,
+                               bipolar pid)
+{
+        exec_coproc_slot address_to slot;
+
+        if (exec_coproc_count >= EXEC_COPROC_LIVE)
+                return;
+
+        slot = exec_coprocs + exec_coproc_count++;
+        memory_copy(slot->name, name, name_length);
+        slot->name[name_length] = end;
+        slot->name_length = name_length;
+        slot->pid = pid;
+}
+
 static b32 exec_coproc(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -10761,6 +10933,14 @@ static b32 exec_coproc(b32 index)
 
         if (name_length > EXEC_COPROC_NAME)
                 return string_report(log_error, 1, "coproc: %s: name too long\n", name);
+
+        if (exec_coproc_count)
+        {
+                shell_diagnostic_where();
+                string_format(log_error,
+                              "warning: execute_coproc: coproc [%b:%s] still exists\n",
+                              exec_coprocs[0].pid, exec_coprocs[0].name);
+        }
 
         log_flush();
 
@@ -10829,6 +11009,8 @@ static b32 exec_coproc(b32 index)
         // wait can be told what it answered.
         if (!shell_background_started(address_of child, 1, false, false))
                 log_error(str("No room to retain coprocess\n"));
+
+        exec_coproc_remember(name, name_length, child);
 
         return 0;
 }
