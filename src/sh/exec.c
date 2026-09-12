@@ -7840,29 +7840,32 @@ static b32 exec_dispatch(b32 command_word)
         bool disabled = shell_builtin_disabled(name);
         bool colon = initial == ':' && !string_get(name + 1);
 
-        /* With no function at all, or in a personality where : / true / false
-           cannot be overridden, the answer needs neither a name hash nor a
-           table walk. Bash ordinary mode reaches the lookup only when a
-           function could actually have claimed this name. */
-        if (!disabled &&
-            (!shell_bash_compat || shell_posix_on() || !exec_function_count))
+        /* `:` is a special builtin, so POSIX finds it before a function.
+           true and false are ordinary: a function of that name still wins.
+           With no function at all, none of the three needs a name hash. */
+        if (!disabled)
         {
-                if (colon)
+                if (colon && (!shell_bash_compat || shell_posix_on() ||
+                              !exec_function_count))
                 {
                         shell_status = 0;
                         return 0;
                 }
-                if (initial == 't' && name[1] == 'r' && name[2] == 'u' &&
-                    name[3] == 'e' && !name[4])
+                if (!exec_function_count)
                 {
-                        shell_status = 0;
-                        return 0;
-                }
-                if (initial == 'f' && name[1] == 'a' && name[2] == 'l' &&
-                    name[3] == 's' && name[4] == 'e' && !name[5])
-                {
-                        shell_status = 1;
-                        return 1;
+                        if (initial == 't' && name[1] == 'r' &&
+                            name[2] == 'u' && name[3] == 'e' && !name[4])
+                        {
+                                shell_status = 0;
+                                return 0;
+                        }
+                        if (initial == 'f' && name[1] == 'a' &&
+                            name[2] == 'l' && name[3] == 's' && name[4] == 'e' &&
+                            !name[5])
+                        {
+                                shell_status = 1;
+                                return 1;
+                        }
                 }
         }
 
