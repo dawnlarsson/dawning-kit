@@ -2944,6 +2944,226 @@ static bipolar arith_expression()
         return value;
 }
 
+/*
+        A plain decimal operand, and only that.
+
+        Leading zeros are octal in this grammar, 08 is a diagnostic, and
+        0x / base# are a different literal. Those all belong to the walker.
+        A lone 0 is a decimal zero. Anything that does not fit in a signed
+        machine word is left to the saturating reader as well.
+*/
+static bool arith_plain_natural(string_address address_to at,
+                                bipolar address_to value)
+{
+        string_address step = address_to at;
+        p8 seen = string_get(step);
+        positive held = 0;
+
+        if (seen < '0' || seen > '9')
+                return false;
+
+        if (seen == '0')
+        {
+                p8 next = string_get(step + 1);
+
+                if ((next >= '0' && next <= '9') || next == 'x' ||
+                    next == 'X' || next == '#' ||
+                    expand_name_character(next))
+                        return false;
+
+                address_to at = step + 1;
+                address_to value = 0;
+                return true;
+        }
+
+        do
+        {
+                positive digit = (positive)(seen - '0');
+
+                if (held > (positive)bipolar_max / 10 ||
+                    (held == (positive)bipolar_max / 10 &&
+                     digit > (positive)bipolar_max % 10))
+                        return false;
+
+                held = held * 10 + digit;
+                step++;
+                seen = string_get(step);
+        } while (seen >= '0' && seen <= '9');
+
+        if (expand_name_character(seen))
+                return false;
+
+        address_to at = step;
+        address_to value = (bipolar)held;
+        return true;
+}
+
+// A variable that already holds a decimal, the way a loop counter does
+// after the first assignment. Octal, bases and nested expressions go
+// through arith_value_of instead of being guessed at here.
+static bool arith_plain_scalar(string_address text, bipolar address_to value)
+{
+        string_address step;
+        bool negative = false;
+        bipolar magnitude;
+
+        if (!text)
+                return false;
+
+        step = text + string_span(text, string_set_blanks);
+        if (!string_get(step))
+        {
+                address_to value = 0;
+                return true;
+        }
+
+        if (string_is(step, '-') || string_is(step, '+'))
+        {
+                negative = string_is(step, '-');
+                step++;
+        }
+
+        if (!arith_plain_natural(address_of step, address_of magnitude))
+                return false;
+
+        step += string_span(step, string_set_blanks);
+        if (string_get(step))
+                return false;
+
+        address_to value = negative ? arith_negate(magnitude) : magnitude;
+        return true;
+}
+
+/*
+        A loop counter is a name plus one.
+
+        $((i + 1)) and the assigning cousins a script actually writes used
+        to walk every precedence level for two operands and one operator.
+        The forms below are recognised as a whole expression. Anything
+        else -- parentheses, a comma, a ternary, a base, a quote, a dollar,
+        an octal -- is left on the cursor for the grammar.
+
+        A miss does not move arith_at. A hit leaves it at the far end, so
+        the leftover-byte check still means every byte belonged.
+*/
+static HOT bool arith_increment_fast(bipolar address_to value)
+{
+        string_address at = arith_at;
+        p8 first = string_get(at);
+        p8 name_local[EXPAND_LOCAL_NAME];
+        expand_reference name = {0};
+        string_address name_start;
+        positive name_length;
+        bool prefix = false;
+        bool postfix = false;
+        bool assign = false;
+        bool add = true;
+        bipolar delta = 1;
+        bipolar held;
+        bipolar next;
+
+        if (arith_bash_mode && (first == '+' || first == '-') &&
+            string_get(at + 1) == first)
+        {
+                prefix = true;
+                add = first == '+';
+                at = arith_skip_space(at + 2);
+        }
+
+        if (!expand_assignable_name(at))
+                return false;
+
+        name_start = at;
+        name_length = string_span(at, string_set_name);
+        if (!name_length || name_length >= EXPAND_LOCAL_NAME)
+                return false;
+
+        at += name_length;
+        if (string_is(at, '['))
+                return false;
+
+        at = arith_skip_space(at);
+
+        if (prefix)
+        {
+                if (string_get(at))
+                        return false;
+        }
+        else
+        {
+                p8 op = string_get(at);
+                p8 more = string_get(at + 1);
+
+                if (arith_bash_mode && (op == '+' || op == '-') &&
+                    more == op)
+                {
+                        postfix = true;
+                        add = op == '+';
+                        at = arith_skip_space(at + 2);
+                        if (string_get(at))
+                                return false;
+                }
+                else if ((op == '+' || op == '-') && more == '=')
+                {
+                        assign = true;
+                        add = op == '+';
+                        at = arith_skip_space(at + 2);
+                        if (!arith_plain_natural(address_of at, address_of delta))
+                                return false;
+                        at = arith_skip_space(at);
+                        if (string_get(at))
+                                return false;
+                }
+                else if (op == '+' || op == '-')
+                {
+                        add = op == '+';
+                        at = arith_skip_space(at + 1);
+                        if (!arith_plain_natural(address_of at, address_of delta))
+                                return false;
+                        at = arith_skip_space(at);
+                        if (string_get(at))
+                                return false;
+                }
+                else
+                        return false;
+        }
+
+        memory_copy_end(name_local, name_start, name_length);
+        name.name = name_local;
+        name.name_length = name_length;
+
+        {
+                positive2 hashed = string_hash_33_length(name_local);
+                string_address raw = env_get_hashed_span(name_local, hashed.y,
+                                                         hashed.x, null);
+
+                if (!raw || !arith_plain_scalar(raw, address_of held))
+                        held = arith_value_of(name);
+        }
+
+        arith_at = at;
+        if (arith_bad)
+        {
+                address_to value = held;
+                return true;
+        }
+
+        next = add ? arith_addition(held, delta)
+                   : arith_subtraction(held, delta);
+
+        if (prefix || assign)
+                address_to value = arith_store(name, next);
+        else if (postfix)
+        {
+                arith_store(name, next);
+                address_to value = held;
+        }
+        else
+                address_to value = next;
+
+        return true;
+}
+
 static bipolar arith_evaluate(string_address text)
 {
         bipolar value;
@@ -2982,7 +3202,8 @@ static bipolar arith_evaluate(string_address text)
                 return 0;
         }
 
-        value = arith_expression();
+        if (!arith_increment_fast(address_of value))
+                value = arith_expression();
 
         // Every byte has to belong to the grammar. This catches comma and
         // postfix increment/decrement instead of returning the left prefix.
@@ -2995,6 +3216,20 @@ static bipolar arith_evaluate(string_address text)
 }
 
 /*
+        Parameter, command and quote expansion of an arithmetic body.
+
+        $((i + 1)) has nothing to expand. Walking it through the parameter
+        expander allocates a second copy of the same bytes.
+*/
+static string_address arith_expand_body(string_address text)
+{
+        if (!string_get(text + string_span_without_set(text, "$`\"'\\")))
+                return text;
+
+        return expand_capture(text, true, EXPAND_CAPTURE_TEXT);
+}
+
+/*
         The interior of ((...)) has the same parameter, command and quote
         expansion as arithmetic expansion, but it is a command token rather
         than a word. Capture it whole: no field splitting or pathname lookup.
@@ -3003,7 +3238,7 @@ static string_address shell_expand_arithmetic_text(string_address text)
 {
         expand_begin();
 
-        return expand_capture(text, true, EXPAND_CAPTURE_TEXT);
+        return arith_expand_body(text);
 }
 
 /*
@@ -3750,7 +3985,7 @@ static string_address expand_arithmetic(string_address step, bool quoted)
 
         // What was written with a dollar in front takes its turn first; what is
         // left over is arithmetic, where a bare name is a value too.
-        ready = expand_capture(text, true, false);
+        ready = arith_expand_body(text);
 
         // A nested expansion already diagnosed the whole word.  In an
         // interactive shell that diagnosis returns here instead of exiting
