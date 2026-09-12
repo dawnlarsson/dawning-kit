@@ -178,6 +178,9 @@ static p8 parse_kept_text[PARSE_KEPT_TEXT];
 #define PARSE_OK 0
 #define PARSE_INCOMPLETE 1
 #define PARSE_SYNTAX 2
+/* a=( *(...) ) with extglob off: bash reports a syntax error, answers 1,
+   and keeps reading. POSIX mode of the same bash exits 127 instead. */
+#define PARSE_COMPOUND_SYNTAX 3
 
 /*
         Where this parse starts, which is not always the beginning.
@@ -1081,7 +1084,13 @@ static b32 parse_word_new(string_address text, positive length)
                         flags |= PARSE_WORD_APPEND;
 
                 if (string_is(text + name_length + assignment, '('))
+                {
                         flags |= PARSE_WORD_COMPOUND;
+
+                        if (!lex_compound_body_legal(text + name_length +
+                                                     assignment))
+                                parse_state = PARSE_COMPOUND_SYNTAX;
+                }
 
                 parse_word_name_hashes[parse_word_used] =
                     memory_hash_33(text, name_length);

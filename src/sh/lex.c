@@ -1138,6 +1138,76 @@ static PURE bool lex_assignment_head(string_address text, positive length)
         return text[at] == '[' && text[length - 1] == ']' && length - at > 2;
 }
 
+/*
+        Whether the body of a=(...) is still words.
+
+        The assignment parentheses are one token so they are not a subshell,
+        but the interior is the same language as any other word list: an
+        unquoted ( opens a nested command, which is a syntax error here,
+        unless it is a substitution, a process substitution, or an extended
+        pattern while that option is on. lex_nesting that swallowed the
+        assignment counted every parenthesis, so *(a|b)* would otherwise
+        look like one element.
+*/
+static bool lex_compound_body_legal(string_address open)
+{
+        string_address at = open + 1;
+
+        if (string_not(open, '('))
+                return true;
+
+        while (string_get(at))
+        {
+                p8 c = string_get(at);
+                string_address stop;
+                b32 skipped;
+
+                if (lex_is_space(c))
+                {
+                        at++;
+                        continue;
+                }
+
+                if ((c == '<' || c == '>') && string_is(at + 1, '('))
+                {
+                        stop = lex_nesting(at + 1);
+
+                        if (stop <= at + 1)
+                                return false;
+
+                        at = stop;
+                        continue;
+                }
+
+                if (shell_extglob_asked() && lex_extended_head(c) &&
+                    string_is(at + 1, '('))
+                {
+                        stop = lex_nesting(at + 1);
+
+                        if (stop <= at + 1)
+                                return false;
+
+                        at = stop;
+                        continue;
+                }
+
+                skipped = lex_skip_held(address_of at);
+
+                if (skipped == LEX_SKIP_UNCLOSED)
+                        return false;
+
+                if (skipped)
+                        continue;
+
+                if (c == '(')
+                        return false;
+
+                at++;
+        }
+
+        return true;
+}
+
 /* Find the closing bracket whose following bytes prove this is an assignment.
    Reuse the lexer's quote/substitution walker so a `]` held inside either one
    cannot close the subscript. */
@@ -1213,6 +1283,8 @@ static b32 lex_word(string_address address_to at)
                         }
                 }
 
+                /* a=(...) stays one word so the parenthesis is not a
+                   subshell. Unquoted ( inside the body is diagnosed later. */
                 if (c == '(' && step > start && step[-1] == '=' &&
                     lex_assignment_head(start, (positive)(step - start - 1)))
                 {

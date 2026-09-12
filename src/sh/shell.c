@@ -1358,6 +1358,8 @@ static fn run_line_inner(string_address line)
         if (parse_state)
         {
                 parse_token address_to tok = parse_look(0);
+                bool compound = parse_state == PARSE_COMPOUND_SYNTAX &&
+                                shell_bash_compat;
 
                 shell_syntax_where();
                 if (shell_bash_compat)
@@ -1389,7 +1391,10 @@ static fn run_line_inner(string_address line)
                         string_format(log_error,
                                       "Syntax error: \"%s\" unexpected\n",
                                       tok->text);
-                shell_status = 2;
+                /* Compound-assignment interior errors are not the fatal
+                   status-2 class: bash answers 1 and keeps the rest of the
+                   script, and its POSIX mode exits 127. */
+                shell_status = compound ? (shell_posix_on() ? 127 : 1) : 2;
                 parse_reset();
 
                 shell_syntax_generation += 2;
@@ -1398,13 +1403,15 @@ static fn run_line_inner(string_address line)
                    file, stdin stream or -c string has no enclosing builtin
                    to receive this error, so the rest of that input must not
                    run. Use the ordinary fatal boundary so an installed EXIT
-                   trap is still honored. */
-                if (shell_run_depth == 1 && !shell_source_depth)
+                   trap is still honored. Recoverable compound errors are the
+                   exception under bash without POSIX. */
+                if (!(compound && !shell_posix_on()) &&
+                    shell_run_depth == 1 && !shell_source_depth)
                 {
                         if (string_is(shell_option_flags, 'c'))
-                                exec_child_leave(2);
+                                exec_child_leave(shell_status);
                         if (!shell_is_interactive)
-                                expand_fatal_status(2);
+                                expand_fatal_status(shell_status);
                 }
 
                 return;
