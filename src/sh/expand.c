@@ -8861,11 +8861,19 @@ static positive shell_expand_without_braces(string_address word,
         if (split)
                 return expand_split(out);
 
-        /* A redirect kept whole: no field split and no glob. An unquoted
-           expansion to nothing is still no target, while a quoted empty
-           expansion is one empty target. */
+        /* A redirect kept whole: no field split and no glob. expand_emit
+           would still pathname-expand, and lima bash 5.2.32 --posix does
+           not: > .* creates that name even with failglob on, and a glob
+           with a slash stays the pattern, so the open fails, even with
+           globstar. An unquoted expansion to nothing is still no target,
+           while a quoted empty expansion is one empty target. */
         if (expand_length || expand_quoted_seen)
-                expand_emit(0, expand_length, out);
+        {
+                string_address kept = expand_keep_field(0, expand_length);
+
+                if (expand_failed || !shell_words_add(out, kept))
+                        expand_fail_state();
+        }
 
         return out->count;
 }
@@ -9278,8 +9286,10 @@ RETURNS_NONNULL string_address shell_expand_word(string_address word)
 /* A redirect is a single whole word in POSIX/non-Bash policy. Dash has no
    brace expansion, so that path is enough. Bash --posix still honours the
    braceexpand extra option (on by default, including under --posix) and
-   treats several brace fields as an ambiguous redirect, but it does not
-   split or glob. Bash's default policy additionally splits and
+   treats several brace fields as an ambiguous redirect, but lima 5.2.32
+   --posix does not split or glob the word: failglob, globstar and
+   globskipdots apply to pathname expansion of command words, not to the
+   name opened here. Bash's default policy additionally splits and
    pathname-expands, and still requires exactly one target. The caller
    supplies its reusable word table so a one-off large glob does not leave
    another retained array here.
