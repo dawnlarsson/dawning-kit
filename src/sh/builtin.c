@@ -12759,20 +12759,40 @@ static bipolar trap_pending_number()
         action, so every trapped signal goes back to what it was. An ignored
         one stays ignored, which is what POSIX asks for and what keeps a
         subshell from dying of a signal its parent chose to sit out.
+
+        dash also forgets the catch strings, the same reset lima 0.5.x runs
+        on every fork, so `trap | wc -l` in a pipeline is 0. An ignored trap
+        stays in the table and still lists. Bash keeps every entry: listing
+        through a pipe still names them.
 */
 fn trap_default_all()
 {
         positive at = 0;
+        positive kept = 0;
 
         while (at < trap_count)
         {
                 positive number = trap_table[at].number;
+                string_address action = trap_table[at].action;
+                bool catch = string_get(action);
 
-                if (number && string_get(trap_table[at].action))
+                if (number && catch)
                         shell_default((b32)number);
+
+                if (shell_bash_compat || !catch)
+                {
+                        if (kept != at)
+                                trap_table[kept] = trap_table[at];
+
+                        kept++;
+                }
+                else
+                        memory_free(action, trap_table[at].action_room);
 
                 at++;
         }
+
+        trap_count = kept;
 
         // Signal handlers write these bytes asynchronously; keep the volatile
         // byte stores rather than casting that contract away for a bulk fill.
