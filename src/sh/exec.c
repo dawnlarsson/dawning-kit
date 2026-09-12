@@ -102,6 +102,22 @@ fn exec_child_began()
         shell_background_child();
 }
 
+/*
+        A here-document or here-string expander is a helper, not a subshell.
+
+        Host bash keeps $BASH_SUBSHELL at 0 in the body, and ${x?} at the top
+        of -c still leaves 127 rather than a nested-shell 1. The helper still
+        marks itself forked so an interactive expansion error leaves this
+        process instead of aborting the parent's input line.
+*/
+static fn exec_helper_began()
+{
+        exec_forked = true;
+        trap_child_began();
+        shell_substitutions_forget();
+        shell_background_child();
+}
+
 static DEAD_END fn exec_child_leave(b32 status)
 {
         shell_status = status;
@@ -4698,22 +4714,70 @@ static positive exec_here_expand(string_address body, positive length,
 }
 
 /*
+        Bytes a here-document or here-string helper wrote, and the status it
+        left. A non-zero status is the command's, not the script's: ${x?} in
+        the body ends the helper with the nounset status and the script
+        continues, the same way host bash and dash treat that expansion.
+*/
+static bool exec_helper_collect(bipolar child, b32 reading, positive start,
+                                string_address address_to out,
+                                positive address_to out_length)
+{
+        positive filled = 0;
+        positive raw_status = 0;
+
+        //      A here-document is as long as it is. Take another page of
+        //      room whenever the last one filled, rather than deciding in
+        //      advance how much of it is allowed to arrive.
+        for (;;)
+        {
+                bipolar got;
+
+                if (!token_room(start + filled + 4096))
+                {
+                        token_overflow = true;
+                        break;
+                }
+
+                got = system_read_retry(reading, token_storage + start + filled,
+                                        token_storage_room - start - filled - 1);
+
+                if (got <= 0)
+                        break;
+
+                filled += (positive)got;
+        }
+
+        system_close(reading);
+
+        system_wait4_retry(child, address_of raw_status, 0, null);
+
+        exec_redirect_status = wait_status_code(raw_status);
+
+        if (exec_redirect_status)
+                return false;
+
+        token_used = start + filled;
+        address_to out = token_storage + start;
+        address_to out_length = filled;
+
+        return true;
+}
+
+/*
         Expand a here-document outside the shell process.
 
-        Parameter assignment in a here body belongs to the context executing
-        the redirected command, not to the parent shell. More importantly, an
-        expansion error ends that context with status two and does not become
-        the interactive shell's recoverable line signal. The child writes the
-        bounded result back; the parent collects it before making the pipe the
-        command will read.
+        Parameter assignment in a here body belongs to the helper, not to the
+        parent: bash leaves ${x:=made} unset after the redirect, and that is
+        the personality this isolation matches. An expansion error ends the
+        helper rather than the script, and because the helper is not a
+        subshell the status is still 127 at the top of bash -c.
 */
 static bool exec_here_expand_isolated(string_address body, positive length,
                                       string_address address_to out,
                                       positive address_to out_length)
 {
         positive start = token_used;
-        positive filled = 0;
-        positive raw_status = 0;
         b32 ends[2];
         bipolar child;
 
@@ -4729,7 +4793,7 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 positive made;
 
                 system_close(ends[0]);
-                exec_child_began();
+                exec_helper_began();
                 trap_default_all();
                 token_overflow = false;
 
@@ -4756,42 +4820,58 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 return false;
         }
 
-        //      A here-document is as long as it is. Take another page of
-        //      room whenever the last one filled, rather than deciding in
-        //      advance how much of it is allowed to arrive.
-        for (;;)
-        {
-                bipolar got;
+        return exec_helper_collect(child, ends[0], start, out, out_length);
+}
 
-                if (!token_room(start + filled + 4096))
-                {
-                        token_overflow = true;
-                        break;
-                }
+/*
+        Expand a here-string the same way: in a helper that is not a subshell.
 
-                got = system_read_retry(ends[0], token_storage + start + filled,
-                                        token_storage_room - start - filled - 1);
+        Host bash treats ${x?} here as a command status, not a process exit,
+        and ${x:=} does not stick. Expanding in the parent did both of those
+        the other way round.
+*/
+static bool exec_here_string_expand_isolated(string_address word,
+                                             string_address address_to out,
+                                             positive address_to out_length)
+{
+        positive start = token_used;
+        b32 ends[2];
+        bipolar child;
 
-                if (got <= 0)
-                        break;
-
-                filled += (positive)got;
-        }
-
-        system_close(ends[0]);
-
-        system_wait4_retry(child, address_of raw_status, 0, null);
-
-        exec_redirect_status = wait_status_code(raw_status);
-
-        if (exec_redirect_status)
+        if (system_pipe(ends, 0) < 0)
                 return false;
 
-        token_used = start + filled;
-        address_to out = token_storage + start;
-        address_to out_length = filled;
+        log_flush();
+        child = shell_clone();
 
-        return true;
+        if (child == 0)
+        {
+                string_address expanded;
+                positive made;
+
+                system_close(ends[0]);
+                exec_helper_began();
+                trap_default_all();
+
+                expanded = shell_expand_word(word);
+                made = string_length(expanded);
+
+                if (system_write_all(ends[1], expanded, made) != made ||
+                    system_write_all(ends[1], "\n", 1) != 1)
+                        system_call_1(syscall(exit_group), 1);
+
+                system_call_1(syscall(exit_group), 0);
+        }
+
+        system_close(ends[1]);
+
+        if (child < 0)
+        {
+                system_close(ends[0]);
+                return false;
+        }
+
+        return exec_helper_collect(child, ends[0], start, out, out_length);
 }
 
 /*
@@ -4959,9 +5039,7 @@ static bool exec_redirect_apply(b32 index)
                 b32 redirect_mark = exec_save_count;
                 bool both = want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT;
 
-                if (want->op == OP_HERESTRING)
-                        target = shell_expand_word(want->text);
-                else if (want->op != OP_DLESS)
+                if (want->op != OP_DLESS && want->op != OP_HERESTRING)
                 {
                         shell_words fields;
                         b32 expanded;
@@ -5041,31 +5119,57 @@ static bool exec_redirect_apply(b32 index)
 
                         if (!want->raw)
                         {
-                                if (!exec_here_expand_isolated(body, length,
-                                                               address_of body,
-                                                               address_of length))
-                                        return false;
+                                if (shell_bash_compat)
+                                {
+                                        if (!exec_here_expand_isolated(
+                                                body, length, address_of body,
+                                                address_of length))
+                                                return false;
+                                }
+                                else
+                                {
+                                        // Dash expands the body here so
+                                        // ${x:=word} sticks. ${x?} must not
+                                        // exit_group: it is that command's
+                                        // status, and the script continues.
+                                        bool kept = expand_redirect_error;
+
+                                        expand_redirect_error = true;
+                                        length = exec_here_expand(
+                                            body, length, address_of body);
+                                        expand_redirect_error = kept;
+
+                                        if (expand_failed)
+                                        {
+                                                exec_redirect_status =
+                                                    shell_status ? shell_status
+                                                                 : 2;
+                                                expand_failed = false;
+                                                return false;
+                                        }
+
+                                        if (token_overflow)
+                                        {
+                                                log_error(str(
+                                                    "Here-document too long\n"));
+                                                exec_redirect_status = 2;
+                                                return false;
+                                        }
+                                }
                         }
 
                         opened = exec_here_pipe(body, length);
                 }
                 else if (want->op == OP_HERESTRING)
                 {
-                        positive length = string_length(target);
-                        p8 address_to body;
+                        string_address body;
+                        positive length;
 
-                        if (length > positive_max - 2)
+                        if (!exec_here_string_expand_isolated(want->text,
+                                                              address_of body,
+                                                              address_of length))
                                 return false;
 
-                        body = shell_store_take(address_of exec_store,
-                                                length + 2);
-
-                        if (!body)
-                                return false;
-
-                        memory_copy(body, target, length);
-                        body[length++] = '\n';
-                        body[length] = end;
                         opened = exec_here_pipe(body, length);
                 }
                 else if (want->op == OP_GREATAND || want->op == OP_LESSAND)

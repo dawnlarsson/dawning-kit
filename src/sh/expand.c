@@ -336,6 +336,9 @@ static bool expand_quoted_seen;
 // word, so that "the word expanded to nothing" can still be asked.
 static positive expand_empty_count;
 static bool expand_failed;
+// A here-document expanded in this process (dash) turns ${x?} into the
+// command's status rather than ending the script, so ${x:=} can still stick.
+static bool expand_redirect_error;
 static bool expand_name_at_empty;
 static bool expand_explicit_empty;
 static positive expand_depth;
@@ -4117,6 +4120,12 @@ static PURE b32 expand_nounset_status(b32 indirect)
 static COLD fn expand_fatal_status(b32 status)
 {
         shell_status = status;
+
+        if (expand_redirect_error)
+        {
+                expand_failed = true;
+                return;
+        }
 
         if (shell_is_interactive)
         {
