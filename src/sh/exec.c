@@ -2163,7 +2163,7 @@ static b32 job_wait_foreground(positive number)
         {
                 bool interrupted;
 
-                status = shell_wait_one(last, address_of interrupted);
+                status = shell_wait_one(last, address_of interrupted, true);
                 at = job_find(number, false);
 
                 if (at < job_count)
@@ -2473,7 +2473,7 @@ static fn job_prune()
         not a wait for anybody in particular but for whoever ends first.
 */
 static b32 job_wait_job(positive found, string_address into,
-                        bool address_to interrupted)
+                        bool address_to interrupted, bool forget)
 {
         bipolar last = job_table[found].last;
         b32 answer;
@@ -2481,7 +2481,7 @@ static b32 job_wait_job(positive found, string_address into,
         if (into)
                 env_set_number(into, (positive)last);
 
-        answer = shell_wait_one(last, interrupted);
+        answer = shell_wait_one(last, interrupted, forget);
         found = job_find(last, true);
 
         if (found < job_count)
@@ -2509,7 +2509,8 @@ static b32 job_wait_next(bool force, string_address into)
                 for (positive at = 0; at < job_count; at++)
                         if (job_table[at].state == JOB_FINISHED)
                                 return job_wait_job(at, into,
-                                                    address_of interrupted);
+                                                    address_of interrupted,
+                                                    true);
 
                 if (!force)
                         for (positive at = 0; at < job_count; at++)
@@ -2643,7 +2644,7 @@ fn job_wait(writer write, string_address input)
                                 break;
 
                         answer = job_wait_job(at, into,
-                                              address_of interrupted);
+                                              address_of interrupted, true);
 
                         if (interrupted)
                                 return shell_answer(answer);
@@ -2716,7 +2717,8 @@ fn job_wait(writer write, string_address input)
                                         env_set_number(into, pid);
 
                                 answer = shell_wait_one((bipolar)pid,
-                                                        address_of interrupted);
+                                                        address_of interrupted,
+                                                        shell_posix_on());
                                 job_prune();
 
                                 if (interrupted)
@@ -2735,7 +2737,8 @@ fn job_wait(writer write, string_address input)
                         continue;
                 }
 
-                answer = job_wait_job(found, into, address_of interrupted);
+                answer = job_wait_job(found, into, address_of interrupted,
+                                      shell_posix_on());
 
                 if (interrupted)
                         break;

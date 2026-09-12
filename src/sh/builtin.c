@@ -15253,9 +15253,11 @@ COLD fn shell_dot(writer write, string_address input)
 
 /* A background job remains known after the kernel has reaped it. POSIX lets a
    later wait recover that status, then requires the successful wait to forget
-   it. A pipeline has several waitable children but one public identity: the
-   PID of its last command. Keeping one flat row per child avoids a second
-   allocation and lets the WNOHANG reaper record any stage directly. */
+   it. Bash without posix, and dash, keep the status so a later wait of the
+   same pid answers again. A pipeline has several waitable children but one
+   public identity: the PID of its last command. Keeping one flat row per child
+   avoids a second allocation and lets the WNOHANG reaper record any stage
+   directly. */
 typedef struct
 {
         bipolar job;
@@ -15378,7 +15380,20 @@ static bipolar shell_wait_call(bipolar pid, positive address_to status)
         return got;
 }
 
-static b32 shell_wait_one(bipolar job, bool address_to interrupted)
+static COLD fn shell_wait_not_child(bipolar job)
+{
+        if (!shell_bash_compat)
+                return;
+
+        shell_diagnostic_where();
+        string_format(log_error,
+                      "wait: pid %b is not a child of this shell\n", job);
+}
+
+/* One job, waited. forget is what POSIX requires of a successful wait, and
+   what wait with no operands does: the row is dropped. Bash without posix,
+   and dash, leave it, so wait "$p" twice still answers. */
+static b32 shell_wait_one(bipolar job, bool address_to interrupted, bool forget)
 {
         positive first = shell_wait_find_job(job);
         b32 status = 0;
@@ -15388,7 +15403,10 @@ static b32 shell_wait_one(bipolar job, bool address_to interrupted)
         address_to interrupted = false;
 
         if (first >= shell_wait_count)
+        {
+                shell_wait_not_child(job);
                 return 127;
+        }
 
         job_flags = shell_wait_table[first].flags;
 
@@ -15420,6 +15438,7 @@ static b32 shell_wait_one(bipolar job, bool address_to interrupted)
                         if (got < 0)
                         {
                                 shell_wait_drop(job);
+                                shell_wait_not_child(job);
                                 return 127;
                         }
 
@@ -15439,7 +15458,8 @@ static b32 shell_wait_one(bipolar job, bool address_to interrupted)
         if (job_flags & SHELL_WAIT_INVERT)
                 status = status ? 0 : 1;
 
-        shell_wait_drop(job);
+        if (forget)
+                shell_wait_drop(job);
         return status;
 }
 
@@ -15457,7 +15477,7 @@ COLD fn shell_wait(writer write, string_address input)
                         bool interrupted;
 
                         answer = shell_wait_one(shell_wait_table[0].job,
-                                                address_of interrupted);
+                                                address_of interrupted, true);
                         if (interrupted)
                                 return shell_answer(answer);
                 }
@@ -15476,7 +15496,8 @@ COLD fn shell_wait(writer write, string_address input)
                                       shell_argv[at]));
 
                 answer = shell_wait_one((bipolar)pid,
-                                        address_of interrupted);
+                                        address_of interrupted,
+                                        shell_posix_on());
 
                 if (interrupted)
                         break;
