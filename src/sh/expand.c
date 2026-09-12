@@ -36,6 +36,7 @@ bool env_assign(const_string name, const_string value);
 //      Where a diagnostic came from, written through the caller's writer:
 //      these lines go out unbuffered, so the prefix has to travel with them.
 static COLD fn shell_diagnostic_where_to(writer write);
+COLD fn shell_prompt_written(writer write, string_address text);
 
 static COLD fn expand_where()
 {
@@ -5023,7 +5024,12 @@ static inline INLINE positive shell_ansi_byte(p8 address_to into, p8 value, bool
 static fn transform_quoted(string_address value, positive length, p8 mark)
 {
         positive at = 0;
-        bool awkward = string_span_max(value, length, shell_quote_value) < length;
+        // In the C locale a high byte is not a character, so @Q has to spell
+        // it in $'...' the way bash 5.2 does. UTF-8 may keep it inside quotes.
+        bool high = !shell_utf8_on();
+        bool awkward = string_span_max(value, length,
+                                       high ? shell_quote_printable
+                                            : shell_quote_value) < length;
 
         if (!awkward)
         {
@@ -5066,7 +5072,7 @@ static fn transform_quoted(string_address value, positive length, p8 mark)
                 }
                 p8 written[4];
                 expand_push_run(written,
-                                shell_ansi_byte(written, value[at++], false), mark);
+                                shell_ansi_byte(written, value[at++], high), mark);
         }
 
         expand_push('\'', mark);
@@ -5309,6 +5315,279 @@ static COLD fn transform_attributes(expand_reference reference, p8 mark)
                 expand_push_run(letters, count, mark);
 }
 
+// declare -p / @A compound values: double quotes, or $'...' with high bytes
+// escaped. Distinct from @Q, which prefers a single-quoted reusable form.
+static COLD fn transform_declare_quoted(string_address value, positive length,
+                                        p8 mark)
+{
+        bool control = string_span_max(value, length, shell_quote_printable) <
+                       length;
+        positive at = 0;
+
+        if (control)
+                expand_push_run((string_address) "$'", 2, mark);
+        else
+                expand_push('"', mark);
+
+        while (at < length)
+        {
+                if ((control ? shell_quote_ansi : shell_quote_double)[value[at]])
+                {
+                        positive run = string_span_max(
+                            value + at, length - at,
+                            control ? shell_quote_ansi : shell_quote_double);
+                        expand_push_run(value + at, run, mark);
+                        at += run;
+                        continue;
+                }
+                p8 byte = value[at++];
+                if (control)
+                {
+                        p8 escaped[4];
+                        expand_push_run(escaped,
+                                        shell_ansi_byte(escaped, byte, true),
+                                        mark);
+                }
+                else
+                {
+                        if (byte == '\\' || byte == '"' || byte == '$' ||
+                            byte == '`')
+                                expand_push('\\', mark);
+                        expand_push(byte, mark);
+                }
+        }
+
+        expand_push(control ? '\'' : '"', mark);
+}
+
+static COLD fn transform_declare_key(string_address key, positive length,
+                                     p8 mark)
+{
+        if (string_span_max(key, length, string_set_name) != length)
+                transform_declare_quoted(key, length, mark);
+        else
+                expand_push_run(key, length, mark);
+}
+
+static p8 transform_write_mark;
+
+static fn transform_write(address_any data, positive length)
+{
+        if (!length && data)
+                length = string_length(data);
+        if (length)
+                expand_push_run(data, length, transform_write_mark);
+}
+
+static COLD fn transform_prompt(string_address value, positive length, p8 mark)
+{
+        p8 address_to held = shell_store_take(address_of expand_store,
+                                              length + 1);
+
+        if (!held)
+        {
+                expand_fail_state();
+                return;
+        }
+
+        memory_copy(held, value, length);
+        held[length] = end;
+        transform_write_mark = mark;
+        shell_prompt_written(transform_write, held);
+}
+
+static COLD bool transform_name_readonly(const_string name, positive length,
+                                         p8 attributes)
+{
+        p8 named[EXPAND_LOCAL_NAME];
+
+        if (length >= EXPAND_LOCAL_NAME)
+                return (attributes & SHELL_ARRAY_READONLY) != 0;
+
+        memory_copy_end(named, name, length);
+        return env_readonly(named) || (attributes & SHELL_ARRAY_READONLY);
+}
+
+/*
+        ${v@A} as bash 5.2 writes it: a reusable assignment. A name with no
+        flags is `v='...'`; export, integer, readonly and array flags become
+        `declare -x v='...'` and the rest. Associative names without a
+        subscript have no scalar value, so they stop at `declare -A v`.
+*/
+static COLD fn transform_assign(expand_reference reference, p8 mark)
+{
+        string_address name = reference.name;
+        positive length = reference.name_length
+                              ? reference.name_length
+                              : string_length(name);
+        const_string base = name;
+        positive base_length = length;
+        p8 attributes;
+        bool exported;
+        bool readonly;
+        p8 letters[8];
+        positive flags;
+        p8 scratch[32];
+        bool present = true;
+        positive value_length = 0;
+        string_address value = null;
+
+        if (!expand_assignable_name(name))
+                return;
+
+        shell_reference_resolve(name, length, address_of base,
+                                address_of base_length);
+        attributes = reference.key
+                         ? shell_array_attributes(base, base_length)
+                         : shell_variable_attributes(base, base_length);
+        if (reference.key && !(attributes & SHELL_ARRAY_EITHER))
+                attributes = shell_variable_attributes(base, base_length);
+        exported = shell_variable_exported(base, base_length);
+        readonly = transform_name_readonly(base, base_length, attributes);
+        flags = shell_attribute_letters(letters, attributes, readonly, exported);
+
+        if (!(attributes & SHELL_ARRAY_ASSOCIATIVE) || reference.key)
+        {
+                value = expand_value_of(reference, scratch, address_of present,
+                                        address_of value_length);
+                if (!present)
+                        value = null;
+        }
+
+        if (!flags && !value)
+        {
+                if (shell_options & ((positive)1 << ('u' - 'a')))
+                {
+                        expand_where();
+                        string_format(writer_stderr_once,
+                                      shell_bash_compat
+                                          ? "%s: unbound variable\n"
+                                          : "%s: parameter not set\n",
+                                      expand_reference_text(reference));
+                        expand_fatal_status(expand_nounset_status(false));
+                }
+                return;
+        }
+
+        if (flags)
+        {
+                expand_push_run((string_address) "declare -", 9, mark);
+                expand_push_run(letters, flags, mark);
+                expand_push(' ', mark);
+        }
+
+        expand_push_run(base, base_length, mark);
+
+        if (value)
+        {
+                expand_push('=', mark);
+                transform_quoted(value, value_length, mark);
+        }
+}
+
+static COLD fn expand_value_transform(p8 which, string_address value,
+                                      positive length, bool present, p8 mark)
+{
+        positive start;
+
+        if (which == 'Q' || which == 'K' || which == 'k')
+        {
+                if (present)
+                        transform_quoted(value, length, mark);
+                return;
+        }
+
+        if (which == 'P')
+        {
+                if (present)
+                        transform_prompt(value, length, mark);
+                return;
+        }
+
+        if (which == 'a' || which == 'A')
+                return;
+
+        if (which == 'E')
+        {
+                p8 address_to held;
+
+                if (!present)
+                        return;
+
+                held = shell_store_take(address_of expand_store, length + 1);
+                if (!held)
+                {
+                        expand_fail_state();
+                        return;
+                }
+
+                memory_copy(held, value, length);
+                held[length] = end;
+                expand_ansi(held, mark, false);
+                return;
+        }
+
+        start = expand_length;
+        expand_push_run(value, length, mark);
+        if (which == 'U')
+                memory_to_upper_ascii(expand_text + start, length);
+        else if (which == 'L')
+                memory_to_lower_ascii(expand_text + start, length);
+        else if (which == 'u' && length)
+                expand_text[start] = byte_to_upper(expand_text[start]);
+}
+
+/*
+        $* and $@ run the letter on each parameter, then join the way those
+        names already join: quoted @ keeps field breaks, * uses the first
+        IFS byte. @A is the one exception -- it is `set --` plus the quoted
+        parameters as one string, and quoted @ still splits that string on
+        IFS so `declare`/`set` flags become their own words.
+*/
+static COLD fn expand_positional_transform(p8 which, p8 form, bool quoted)
+{
+        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+        p8 between = string_get(expand_ifs());
+        bool fields = quoted ? form == '@' : !between;
+        positive at;
+
+        if (!shell_parameter_count)
+        {
+                if (form == '@')
+                        expand_name_at_empty = true;
+                return;
+        }
+
+        if (which == 'A')
+        {
+                // Quoted * keeps the assignment one field; quoted @ and
+                // unquoted forms mark it as a field so IFS can take it apart.
+                p8 lead = (quoted && form == '*') ? MARK_QUOTED : MARK_FIELD;
+
+                expand_push_run((string_address) "set -- ", 7, lead);
+                for (at = 0; at < shell_parameter_count; at++)
+                {
+                        if (at && between)
+                                expand_push(between, lead);
+                        transform_quoted(shell_parameter[at],
+                                         string_length(shell_parameter[at]),
+                                         lead);
+                }
+                return;
+        }
+
+        for (at = 0; at < shell_parameter_count && !expand_failed; at++)
+        {
+                if (at)
+                        expand_sequence_between(fields, between, mark);
+                if (which == 'a')
+                        continue;
+                expand_value_transform(which, shell_parameter[at],
+                                       string_length(shell_parameter[at]), true,
+                                       mark);
+        }
+}
+
 static COLD fn expand_transform(expand_reference reference, string_address word,
                                 bool quoted, b32 parameter_mode)
 {
@@ -5319,11 +5598,30 @@ static COLD fn expand_transform(expand_reference reference, string_address word,
         bool present = true;
         positive length;
         p8 address_to held;
+        string_address name = reference.name;
+        bool all = string_get(name + 1) == end &&
+                   (string_is(name, '@') || string_is(name, '*'));
 
         // Attribute queries follow namerefs and evaluate explicit subscripts.
         if (which == 'a')
         {
-                transform_attributes(reference, mark);
+                if (all)
+                        expand_positional_transform(which, string_get(name),
+                                                    quoted);
+                else
+                        transform_attributes(reference, mark);
+                return;
+        }
+
+        if (all)
+        {
+                expand_positional_transform(which, string_get(name), quoted);
+                return;
+        }
+
+        if (which == 'A')
+        {
+                transform_assign(reference, mark);
                 return;
         }
 
@@ -5331,7 +5629,7 @@ static COLD fn expand_transform(expand_reference reference, string_address word,
         //      and a name holding nothing push the same nothing and Q tells
         //      them apart: one is no bytes at all and the other is a pair of
         //      quotes with nothing between them.
-        if (which == 'Q')
+        if (which == 'Q' || which == 'K' || which == 'k')
                 expand_value_of(reference, scratch, address_of present, null);
 
         expand_push_parameter_as(reference, quoted, parameter_mode);
@@ -5361,9 +5659,9 @@ static COLD fn expand_transform(expand_reference reference, string_address word,
                 return;
         }
 
-        //      Q and E both answer with a different number of bytes than they
-        //      were given, so the value comes out of the buffer before
-        //      anything is written back into it.
+        //      Q, K, k, E and P all answer with a different number of bytes
+        //      than they were given, so the value comes out of the buffer
+        //      before anything is written back into it.
         held = shell_store_copy(address_of expand_store,
                                 expand_text + start, length);
 
@@ -5378,10 +5676,12 @@ static COLD fn expand_transform(expand_reference reference, string_address word,
 
         //      Nothing is nothing: an unset name has no bytes to quote, and
         //      Bash writes none rather than a pair of empty quotes.
-        if (which == 'Q' && present)
+        if ((which == 'Q' || which == 'K' || which == 'k') && present)
                 transform_quoted(held, length, mark);
         else if (which == 'E')
                 expand_ansi(held, mark, false);
+        else if (which == 'P')
+                transform_prompt(held, length, mark);
 }
 
 /* Bash ${!prefix@} is a field list; ${!prefix*} is the same sorted names
@@ -5718,6 +6018,176 @@ done:
 }
 
 /*
+        @A and @K name the array, not each element. Per-element application
+        would turn ${a[@]@A} into one assignment per value; bash writes a
+        single declare (or a key/value listing) and lets IFS split the flags.
+*/
+static COLD fn expand_array_whole_transform(string_address name, positive length,
+                                            p8 form, p8 which, bool quoted)
+{
+        p8 mark_join = (quoted && form == '*') ? MARK_QUOTED : MARK_FIELD;
+        p8 mark_body = quoted ? MARK_QUOTED : MARK_FIELD;
+        p8 between = string_get(expand_ifs());
+        bool fields = quoted ? form == '@' : !between;
+        p8 attributes;
+        bool exported;
+        bool readonly;
+        bool keyed;
+        p8 letters[8];
+        positive flags;
+        positive count;
+        positive at;
+        shell_mark held;
+        shell_array_item address_to items;
+        p8 written[32];
+
+        shell_dynamic_wanted(name, length);
+        attributes = shell_array_attributes(name, length);
+        keyed = (attributes & SHELL_ARRAY_ASSOCIATIVE) != 0;
+        exported = shell_variable_exported(name, length);
+        readonly = transform_name_readonly(name, length, attributes);
+        flags = shell_attribute_letters(letters, attributes, readonly, exported);
+        count = shell_array_length(name, length);
+
+        if (which == 'k')
+        {
+                if (!count)
+                {
+                        if (form == '@')
+                                expand_name_at_empty = true;
+                        return;
+                }
+
+                held = shell_store_mark(address_of expand_store);
+                if (count > positive_max / sizeof(items[0]) ||
+                    !(items = (shell_array_item address_to)shell_store_take(
+                          address_of expand_store, count * sizeof(items[0]))))
+                {
+                        expand_fail_state();
+                        return;
+                }
+
+                shell_array_items(name, length, items, count);
+                for (at = 0; at < count && !expand_failed; at++)
+                {
+                        if (at)
+                                expand_sequence_between(fields, between,
+                                                        mark_body);
+                        if (items[at].key)
+                                expand_push_run(items[at].key,
+                                                items[at].key_length,
+                                                mark_body);
+                        else
+                                expand_push_run(
+                                    written,
+                                    bipolar_into_string(
+                                        written, (bipolar)items[at].index),
+                                    mark_body);
+                        expand_sequence_between(fields, between, mark_body);
+                        expand_push_run(items[at].value, items[at].value_length,
+                                        mark_body);
+                }
+                shell_store_rewind(address_of expand_store, held);
+                return;
+        }
+
+        if (which == 'K')
+        {
+                if (!count)
+                {
+                        if (form == '@')
+                                expand_name_at_empty = true;
+                        return;
+                }
+
+                held = shell_store_mark(address_of expand_store);
+                if (count > positive_max / sizeof(items[0]) ||
+                    !(items = (shell_array_item address_to)shell_store_take(
+                          address_of expand_store, count * sizeof(items[0]))))
+                {
+                        expand_fail_state();
+                        return;
+                }
+
+                shell_array_items(name, length, items, count);
+                for (at = 0; at < count && !expand_failed; at++)
+                {
+                        if (at)
+                                expand_push(' ', mark_body);
+                        if (items[at].key)
+                                transform_declare_key(items[at].key,
+                                                      items[at].key_length,
+                                                      mark_body);
+                        else
+                                expand_push_run(
+                                    written,
+                                    bipolar_into_string(
+                                        written, (bipolar)items[at].index),
+                                    mark_body);
+                        expand_push(' ', mark_body);
+                        transform_declare_quoted(items[at].value,
+                                                 items[at].value_length,
+                                                 mark_body);
+                }
+                if (keyed && count)
+                        expand_push(' ', mark_body);
+                shell_store_rewind(address_of expand_store, held);
+                return;
+        }
+
+        expand_push_run((string_address) "declare -", 9, mark_join);
+        if (flags)
+                expand_push_run(letters, flags, mark_join);
+        expand_push(' ', mark_join);
+        expand_push_run(name, length, mark_join);
+
+        if (!(attributes & SHELL_ARRAY_ASSIGNED) && !count)
+                return;
+
+        expand_push('=', mark_join);
+        expand_push('(', mark_body);
+
+        if (count)
+        {
+                held = shell_store_mark(address_of expand_store);
+                if (count > positive_max / sizeof(items[0]) ||
+                    !(items = (shell_array_item address_to)shell_store_take(
+                          address_of expand_store, count * sizeof(items[0]))))
+                {
+                        expand_fail_state();
+                        return;
+                }
+
+                shell_array_items(name, length, items, count);
+                for (at = 0; at < count && !expand_failed; at++)
+                {
+                        if (at)
+                                expand_push(' ', mark_body);
+                        expand_push('[', mark_body);
+                        if (items[at].key)
+                                transform_declare_key(items[at].key,
+                                                      items[at].key_length,
+                                                      mark_body);
+                        else
+                                expand_push_run(
+                                    written,
+                                    bipolar_into_string(
+                                        written, (bipolar)items[at].index),
+                                    mark_body);
+                        expand_push_run((string_address) "]=", 2, mark_body);
+                        transform_declare_quoted(items[at].value,
+                                                 items[at].value_length,
+                                                 mark_body);
+                }
+                if (keyed && count)
+                        expand_push(' ', mark_body);
+                shell_store_rewind(address_of expand_store, held);
+        }
+
+        expand_push(')', mark_body);
+}
+
+/*
         What the whole array answers to.
 
         ${#a[@]} is a count and not a length, ${!a[@]} is the subscripts,
@@ -5752,6 +6222,15 @@ static COLD fn expand_array_form(string_address name, positive length,
                                 bipolar_into_string(written, (bipolar)held),
                                 mark);
 
+                return;
+        }
+
+        if (operation == '@' && !string_get(word + 1) &&
+            (string_get(word) == 'A' || string_get(word) == 'K' ||
+             string_get(word) == 'k'))
+        {
+                expand_array_whole_transform(name, length, form,
+                                             string_get(word), quoted);
                 return;
         }
 
@@ -6108,8 +6587,10 @@ static string_address expand_braced_body(string_address step,
         //      ${v@X}: one letter naming a transformation of the value. It
         //      takes no doubled form and no pattern -- the letter is the
         //      whole of the word behind it.
-        else if (!colon && seen == '@' && string_get(step + 1) &&
-                 step + 1 != close)
+        //      ${v@} with no letter is still a transform: bash refuses it as
+        //      a bad substitution. The letter is read as the word below, and
+        //      an empty word takes the unknown-letter path.
+        else if (!colon && seen == '@')
         {
                 operation = seen;
                 step++;
@@ -6332,17 +6813,6 @@ static string_address expand_braced_body(string_address step,
                 return close + 1;
         }
 
-        if (operation == '@')
-        {
-                p8 which = string_get(word);
-                if (!which || string_get(word + 1) ||
-                    !string_first_of((string_address)"QEULua", which))
-                {
-                        expand_bad_substitution(whole, close);
-                        expand_fatal_status((shell_bash_compat || (parameter_mode & EXPAND_PARAMETER_INDIRECT)) ? 1 : 2);
-                        return close + 1;
-                }
-        }
         if (operation == '#' || operation == '%' || operation == '/' ||
             operation == ':' || operation == '^' || operation == ',' ||
             operation == '@')
