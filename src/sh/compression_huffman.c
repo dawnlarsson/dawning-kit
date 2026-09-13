@@ -1,5 +1,6 @@
-/* Shared Huffman codebook construction: 1..288 symbols, block-sized counts.
-   Clipped depths require the caller's Kraft check before emitting a tree.
+/* Shared Huffman codebook construction: 1..288 symbols, limits 1..15,
+   block-sized counts.
+   Length limiting redistributes complete code space before assigning lengths.
    Per-symbol bit emission lives in the codec/assembly streaming kernels. */
 #ifndef COMPRESSION_HUFFMAN_INCLUDED
 #define COMPRESSION_HUFFMAN_INCLUDED
@@ -64,6 +65,8 @@ static bool compression_build_lengths(p32 address_to freq, positive n, p8 addres
         positive used = 0;
         positive at;
         positive next;
+        positive counts[16] = {0};
+        positive slots = 0;
 
         memory_fill(length, 0, n);
         for (at = 0; at < n; at++)
@@ -135,6 +138,44 @@ static bool compression_build_lengths(p32 address_to freq, positive n, p8 addres
                 if (!depth)
                         depth = 1;
                 length[at] = depth;
+                counts[depth]++;
+                slots += (positive)1 << (limit - depth);
+        }
+
+        /* Merely truncating deep leaves oversubscribes the code space and
+           forces entire blocks into fixed or stored output. Split a shorter
+           code and remove one maximum-length code until the Kraft sum is
+           exact, preserving the number of leaves at every step. */
+        positive capacity = (positive)1 << limit;
+        if (slots > capacity)
+        {
+                while (slots > capacity)
+                {
+                        positive bits = limit - 1;
+                        while (bits && !counts[bits]) bits--;
+                        if (!bits || !counts[limit]) return false;
+                        counts[bits]--;
+                        counts[bits + 1] += 2;
+                        counts[limit]--;
+                        slots--;
+                }
+                positive sorted = 0;
+                for (at = 0; at < n; at++)
+                        if (freq[at])
+                        {
+                                positive place = sorted;
+                                while (place && freq[heap[place - 1]] > freq[at])
+                                {
+                                        heap[place] = heap[place - 1];
+                                        place--;
+                                }
+                                heap[place] = (p32)at;
+                                sorted++;
+                        }
+                positive item = 0;
+                for (positive bits = limit; bits; bits--)
+                        for (positive take = 0; take < counts[bits]; take++)
+                                length[heap[item++]] = (p8)bits;
         }
 
         return true;

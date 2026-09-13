@@ -577,7 +577,7 @@ cover('worth_it', 'mode', 'lzma_range_encode lzma_range_decode',
 cover('folds_already', 'n', 'huffman_encode_back',
       'literal stream lengths are runtime block slices; empty input already '
       'takes the exact terminal-byte path')
-cover('nothing_to_fold', None, 'lzma_range_shift deflate_decode_span',
+cover('nothing_to_fold', None, 'lzma_range_shift deflate_decode_span lzma_decode_span',
       'a pointer to evolving range or token-loop state; values live in memory '
       'and are not known at the call site')
 

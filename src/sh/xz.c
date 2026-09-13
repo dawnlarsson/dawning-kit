@@ -3,8 +3,8 @@
 
         Decode is a range coder plus the twelve-state LZMA machine, then
         LZMA2 chunks and the stream wrapper. Encode walks the pending
-        window into 64 KiB LZMA2 chunks using a stamped hash chain, repeat
-        distances and memory_common_prefix. Probability state survives
+        window into 64 KiB LZMA2 chunks using a 1 MiB rolling hash chain,
+        repeat distances and memory_common_prefix. Probability state survives
         compressed chunks; a raw fallback resets it. Range trees use shared
         assembly kernels with a scalar refill tail. Checksums are hash_crc32/hash_crc64. Concatenated
         streams are accepted the way xz -d accepts them. There is no
@@ -29,6 +29,8 @@
 #define XZ_HASH_BITS 16
 #define XZ_HASH_SIZE (1u << XZ_HASH_BITS)
 #define XZ_ENC_WIN 32768
+#define XZ_ENC_DICT (1024 * 1024)
+#define XZ_PENDING 65536
 
 #define XZ_CHECK_NONE 0
 #define XZ_CHECK_CRC32 1
@@ -45,10 +47,13 @@ static positive xz_in_mem_at;
 
 static p8 xz_out_buf[XZ_OUT + XZ_MATCH_MAX];
 static positive xz_out_fill;
+static positive xz_out_taken;
+static positive xz_out_hashed;
 static bipolar xz_out_fd;
 static p8 address_to xz_out_mem;
 static positive xz_out_cap;
 static positive xz_out_used;
+static bool xz_out_failed;
 static string_address xz_why;
 static b32 xz_status;
 
@@ -92,26 +97,51 @@ static xz_range_state xz_rc;
 static p32 xz_code;
 static bool xz_encoding;
 
-static p16 xz_is_match[XZ_STATES][XZ_POS];
-static p16 xz_is_rep[XZ_STATES];
-static p16 xz_is_rep0[XZ_STATES];
-static p16 xz_is_rep1[XZ_STATES];
-static p16 xz_is_rep2[XZ_STATES];
-static p16 xz_is_rep0_long[XZ_STATES][XZ_POS];
-static p16 xz_dist_slot[4][XZ_DIST_SLOTS];
-static p16 xz_dist_special[XZ_FULL_DIST - 14];
-static p16 xz_dist_align[XZ_ALIGN];
-static p16 xz_match_choice;
-static p16 xz_match_choice2;
-static p16 xz_match_low[XZ_POS][XZ_LEN_LOW];
-static p16 xz_match_mid[XZ_POS][XZ_LEN_MID];
-static p16 xz_match_high[XZ_LEN_HIGH];
-static p16 xz_rep_choice;
-static p16 xz_rep_choice2;
-static p16 xz_rep_low[XZ_POS][XZ_LEN_LOW];
-static p16 xz_rep_mid[XZ_POS][XZ_LEN_MID];
-static p16 xz_rep_high[XZ_LEN_HIGH];
-static p16 xz_lit[XZ_PROB_LIT];
+typedef struct
+{
+        p16 is_match[XZ_STATES][XZ_POS];
+        p16 is_rep[XZ_STATES];
+        p16 is_rep0[XZ_STATES];
+        p16 is_rep1[XZ_STATES];
+        p16 is_rep2[XZ_STATES];
+        p16 is_rep0_long[XZ_STATES][XZ_POS];
+        p16 dist_slot[4][XZ_DIST_SLOTS];
+        p16 dist_special[XZ_FULL_DIST - 14];
+        p16 dist_align[XZ_ALIGN];
+        p16 match_choice;
+        p16 match_choice2;
+        p16 match_low[XZ_POS][XZ_LEN_LOW];
+        p16 match_mid[XZ_POS][XZ_LEN_MID];
+        p16 match_high[XZ_LEN_HIGH];
+        p16 rep_choice;
+        p16 rep_choice2;
+        p16 rep_low[XZ_POS][XZ_LEN_LOW];
+        p16 rep_mid[XZ_POS][XZ_LEN_MID];
+        p16 rep_high[XZ_LEN_HIGH];
+        p16 lit[XZ_PROB_LIT];
+
+} xz_probability_state;
+static xz_probability_state xz_models;
+#define xz_is_match xz_models.is_match
+#define xz_is_rep xz_models.is_rep
+#define xz_is_rep0 xz_models.is_rep0
+#define xz_is_rep1 xz_models.is_rep1
+#define xz_is_rep2 xz_models.is_rep2
+#define xz_is_rep0_long xz_models.is_rep0_long
+#define xz_dist_slot xz_models.dist_slot
+#define xz_dist_special xz_models.dist_special
+#define xz_dist_align xz_models.dist_align
+#define xz_match_choice xz_models.match_choice
+#define xz_match_choice2 xz_models.match_choice2
+#define xz_match_low xz_models.match_low
+#define xz_match_mid xz_models.match_mid
+#define xz_match_high xz_models.match_high
+#define xz_rep_choice xz_models.rep_choice
+#define xz_rep_choice2 xz_models.rep_choice2
+#define xz_rep_low xz_models.rep_low
+#define xz_rep_mid xz_models.rep_mid
+#define xz_rep_high xz_models.rep_high
+#define xz_lit xz_models.lit
 
 static p8 address_to xz_dict;
 static positive xz_dict_cap;
@@ -128,8 +158,8 @@ static p32 xz_crc32;
 static p64 xz_crc64;
 
 static p32 xz_head[XZ_HASH_SIZE];
-static p16 xz_prev[65536];
-static p32 xz_inner_stamp;
+static p32 xz_prev[XZ_ENC_DICT];
+static positive xz_match_abs;
 static p8 xz_hold[XZ_ENC_WIN + XZ_MATCH_MAX];
 static positive xz_hold_fill;
 static positive xz_hold_at;
@@ -142,7 +172,9 @@ static p8 address_to xz_enc_mem;
 static positive xz_enc_mem_len;
 static positive xz_enc_mem_at;
 static p8 xz_level;
-static p8 xz_pending[65536];
+static p8 xz_pending_storage[2 * XZ_ENC_DICT + XZ_PENDING];
+static positive xz_pending_position;
+#define xz_pending (xz_pending_storage + xz_pending_position)
 static positive xz_pending_n;
 static bool xz_need_reset;
 static bool xz_enc_have_lzma;
@@ -231,28 +263,53 @@ static bipolar xz_in_byte(void)
         return xz_in_buf[xz_in_at++];
 }
 
+/* Hash completed output spans once, before a drain or block check. A
+   watermark separates blocks even when both share the same output slab. */
+static fn xz_output_check(void)
+{
+        if (xz_encoding || xz_out_hashed == xz_out_fill)
+                return;
+        positive n = xz_out_fill - xz_out_hashed;
+        p8 address_to p = xz_out_buf + xz_out_hashed;
+        if (xz_check == XZ_CHECK_CRC32)
+                xz_crc32 = hash_crc32(xz_crc32, p, n);
+        else if (xz_check == XZ_CHECK_CRC64)
+                xz_crc64 = hash_crc64(xz_crc64, p, n);
+        xz_out_hashed = xz_out_fill;
+}
+
 static bool xz_out_flush(void)
 {
+        if (xz_out_failed)
+                return false;
         if (!xz_out_fill)
                 return true;
+        xz_output_check();
         if (xz_out_mem)
         {
-                if (xz_out_used + xz_out_fill > xz_out_cap)
+                if (xz_out_used > xz_out_cap ||
+                    xz_out_fill > xz_out_cap - xz_out_used)
+                {
+                        xz_out_failed = true;
                         return xz_fail("xz output is too small");
+                }
                 memory_copy(xz_out_mem + xz_out_used, xz_out_buf, xz_out_fill);
                 xz_out_used += xz_out_fill;
-                xz_out_fill = 0;
+                xz_out_fill = xz_out_taken = xz_out_hashed = 0;
                 return true;
         }
         if (xz_out_fd < 0)
         {
-                xz_out_fill = 0;
+                xz_out_fill = xz_out_taken = xz_out_hashed = 0;
                 return true;
         }
         if (system_write_all((positive)xz_out_fd, xz_out_buf, xz_out_fill) !=
             xz_out_fill)
+        {
+                xz_out_failed = true;
                 return xz_fail("xz write failed");
-        xz_out_fill = 0;
+        }
+        xz_out_fill = xz_out_taken = xz_out_hashed = 0;
         return true;
 }
 
@@ -271,10 +328,6 @@ static bool xz_emit(p8 byte)
                 }
         }
         xz_unpacked++;
-        if (xz_check == XZ_CHECK_CRC32)
-                xz_crc32 = xz_crc32_byte(xz_crc32, byte);
-        else if (xz_check == XZ_CHECK_CRC64)
-                xz_crc64 = xz_crc64_byte(xz_crc64, byte);
         xz_out_buf[xz_out_fill++] = byte;
         if (!xz_pull && xz_out_fill >= XZ_OUT)
                 return xz_out_flush();
@@ -323,10 +376,6 @@ static bool xz_emit_match(positive dist, positive length)
         if (xz_dict_full > xz_dict_size)
                 xz_dict_full = xz_dict_size;
         xz_unpacked += length;
-        if (xz_check == XZ_CHECK_CRC32)
-                xz_crc32 = hash_crc32(xz_crc32, into, length);
-        else if (xz_check == XZ_CHECK_CRC64)
-                xz_crc64 = hash_crc64(xz_crc64, into, length);
         xz_out_fill += length;
         xz_lz2_match_left = 0;
         if (!xz_pull && xz_out_fill >= XZ_OUT)
@@ -831,10 +880,6 @@ static bool xz_lzma2_raw(void)
                 xz_dict_full += take;
                 if (xz_dict_full > xz_dict_size)
                         xz_dict_full = xz_dict_size;
-                if (xz_check == XZ_CHECK_CRC32)
-                        xz_crc32 = hash_crc32(xz_crc32, bytes, take);
-                else if (xz_check == XZ_CHECK_CRC64)
-                        xz_crc64 = hash_crc64(xz_crc64, bytes, take);
                 xz_out_fill += take;
                 xz_in_at += take;
                 xz_in_abs += take;
@@ -849,6 +894,64 @@ static bool xz_lzma2_raw(void)
         return true;
 }
 
+/* Span ABI: fixed-width fields followed by the probability and dictionary
+   pointers. The kernel emits into a contiguous part of the dictionary; the
+   framing layer transfers that span once and owns checksums and refills. */
+typedef struct
+{
+        p32 range, code;
+        p8 address_to next;
+        p8 address_to limit;
+        xz_probability_state address_to model;
+        p8 address_to dict;
+        positive size, pos, full;
+        p64 unpacked, stop;
+        positive room;
+        p32 state, lc, lp, pb;
+        positive rep[4];
+        positive error;
+} xz_decode_job;
+
+static bool xz_decode_fast(void)
+{
+        positive have = xz_in_have - xz_in_at;
+        p64 packed = xz_in_abs - xz_lz2_pack_from;
+        if (packed >= xz_lz2_pack_want)
+                return true;
+        if (have > xz_lz2_pack_want - packed)
+                have = (positive)(xz_lz2_pack_want - packed);
+        positive room = XZ_OUT > xz_out_fill ? XZ_OUT - xz_out_fill : 0;
+        if (room > xz_dict_size - xz_dict_pos)
+                room = xz_dict_size - xz_dict_pos;
+        if (have < 64 || room < XZ_MATCH_MAX)
+                return true;
+        xz_decode_job job = {xz_range, xz_code, xz_in_buf + xz_in_at,
+                xz_in_buf + xz_in_at + have, address_of xz_models, xz_dict,
+                xz_dict_size, xz_dict_pos, xz_dict_full, xz_unpacked,
+                xz_lz2_chunk_from + xz_lz2_want, room,
+                xz_state, xz_lc, xz_lp, xz_pb,
+                {xz_rep[0], xz_rep[1], xz_rep[2], xz_rep[3]}, 0};
+        lzma_decode_span(address_of job);
+        positive produced = job.pos - xz_dict_pos;
+        positive consumed = (positive)(job.next - (xz_in_buf + xz_in_at));
+        xz_range = job.range;
+        xz_code = job.code;
+        xz_in_at += consumed;
+        xz_in_abs += consumed;
+        xz_state = (p8)job.state;
+        for (positive i = 0; i < 4; i++) xz_rep[i] = job.rep[i];
+        memory_copy_apart(xz_out_buf + xz_out_fill, xz_dict + xz_dict_pos, produced);
+        xz_out_fill += produced;
+        xz_dict_pos = job.pos;
+        if (xz_dict_pos == xz_dict_size) xz_dict_pos = 0;
+        xz_dict_full = job.full;
+        xz_unpacked = job.unpacked;
+        if (job.error) return xz_fail("xz distance or chunk length");
+        if (!xz_pull && xz_out_fill >= XZ_OUT)
+                return xz_out_flush();
+        return true;
+}
+
 static bool xz_lzma2_lzma(void)
 {
         while (xz_unpacked - xz_lz2_chunk_from < xz_lz2_want)
@@ -858,6 +961,9 @@ static bool xz_lzma2_lzma(void)
                         xz_paused = true;
                         return true;
                 }
+                p64 before = xz_unpacked;
+                if (!xz_decode_fast()) return false;
+                if (xz_unpacked != before) continue;
                 if (!xz_lzma_packet())
                         return false;
                 if (xz_paused)
@@ -1156,6 +1262,7 @@ static bool xz_block(void)
                 if (!xz_pad4(xz_block_hdr_size + packed))
                         return false;
         }
+        xz_output_check();
         if (!xz_check_read(~xz_crc32, ~xz_crc64))
                 return false;
         xz_block_live = false;
@@ -1358,13 +1465,15 @@ static bool xz_stream(void)
 
 static bool xz_stream_decode(void)
 {
+        xz_encoding = false;
         bool any = false;
 
         xz_why = null;
+        xz_out_failed = false;
         xz_in_at = 0;
         xz_in_have = 0;
         xz_in_eof = false;
-        xz_out_fill = 0;
+        xz_out_fill = xz_out_taken = xz_out_hashed = 0;
         xz_pull = false;
         xz_paused = false;
         xz_finished = false;
@@ -1410,37 +1519,43 @@ static bipolar xz_inflate_mem(p8 address_to src, positive src_len,
         return ok ? (bipolar)xz_out_used : -1;
 }
 
-static fn xz_put(p8 byte)
+static bool xz_put(p8 byte)
 {
+        if (xz_out_failed)
+                return false;
+        if (xz_out_fill >= XZ_OUT && !xz_out_flush())
+                return false;
         xz_out_buf[xz_out_fill++] = byte;
-        if (xz_out_fill == XZ_OUT)
-                xz_out_flush();
+        if (xz_out_fill == XZ_OUT && !xz_out_flush())
+                return false;
+        return true;
 }
 
-static fn xz_put32(p32 v)
+static bool xz_put32(p32 v)
 {
-        xz_put((p8)v);
-        xz_put((p8)(v >> 8));
-        xz_put((p8)(v >> 16));
-        xz_put((p8)(v >> 24));
+        return xz_put((p8)v) && xz_put((p8)(v >> 8)) &&
+               xz_put((p8)(v >> 16)) && xz_put((p8)(v >> 24));
 }
 
-static fn xz_put64(p64 v)
+static bool xz_put64(p64 v)
 {
         p8 at;
 
         for (at = 0; at < 8; at++)
-                xz_put((p8)(v >> (8 * at)));
+                if (!xz_put((p8)(v >> (8 * at))))
+                        return false;
+        return true;
 }
 
-static fn xz_put_vli(p64 v)
+static bool xz_put_vli(p64 v)
 {
         while (v >= 0x80)
         {
-                xz_put((p8)(v | 0x80));
+                if (!xz_put((p8)(v | 0x80)))
+                        return false;
                 v >>= 7;
         }
-        xz_put((p8)v);
+        return xz_put((p8)v);
 }
 
 static p8 xz_prop_from_dict(positive dict)
@@ -1459,15 +1574,11 @@ static bool xz_write_header(p8 check)
 
         flags[0] = 0;
         flags[1] = check;
-        xz_put(0xfd);
-        xz_put(0x37);
-        xz_put(0x7a);
-        xz_put(0x58);
-        xz_put(0x5a);
-        xz_put(0);
-        xz_put(flags[0]);
-        xz_put(flags[1]);
-        xz_put32(~xz_crc32_bytes(0xffffffffu, flags, 2));
+        if (!xz_put(0xfd) || !xz_put(0x37) || !xz_put(0x7a) ||
+            !xz_put(0x58) || !xz_put(0x5a) || !xz_put(0) ||
+            !xz_put(flags[0]) || !xz_put(flags[1]) ||
+            !xz_put32(~xz_crc32_bytes(0xffffffffu, flags, 2)))
+                return false;
         xz_check = check;
         xz_index_n = 0;
         xz_block_unpadded = 0;
@@ -1479,11 +1590,12 @@ static bool xz_write_uncompressed_chunk(p8 address_to src, positive n, bool rese
 {
         positive at;
 
-        xz_put(reset ? 1 : 2);
-        xz_put((p8)((n - 1) >> 8));
-        xz_put((p8)(n - 1));
+        if (!xz_put(reset ? 1 : 2) || !xz_put((p8)((n - 1) >> 8)) ||
+            !xz_put((p8)(n - 1)))
+                return false;
         for (at = 0; at < n; at++)
-                xz_put(src[at]);
+                if (!xz_put(src[at]))
+                        return false;
         xz_block_unpadded += 3 + n;
         xz_block_unpacked += n;
         return true;
@@ -1511,7 +1623,8 @@ static bool xz_write_block_header(p8 dict_prop)
                 positive at;
 
                 for (at = 0; at < 12; at++)
-                        xz_put(header[at]);
+                        if (!xz_put(header[at]))
+                                return false;
         }
         xz_block_unpadded = 12;
         return true;
@@ -1572,8 +1685,10 @@ static bool xz_write_index_footer(void)
                 index[n++] = 0;
         crc = ~xz_crc32_bytes(0xffffffffu, index, n);
         for (at = 0; at < n; at++)
-                xz_put(index[at]);
-        xz_put32(crc);
+                if (!xz_put(index[at]))
+                        return false;
+        if (!xz_put32(crc))
+                return false;
         back = n / 4;
         if (!back)
                 back = 1;
@@ -1585,12 +1700,10 @@ static bool xz_write_index_footer(void)
         body[3] = (p8)(back >> 24);
         body[4] = flags[0];
         body[5] = flags[1];
-        xz_put32(~xz_crc32_bytes(0xffffffffu, body, 6));
-        xz_put32(back);
-        xz_put(flags[0]);
-        xz_put(flags[1]);
-        xz_put('Y');
-        xz_put('Z');
+        if (!xz_put32(~xz_crc32_bytes(0xffffffffu, body, 6)) ||
+            !xz_put32(back) || !xz_put(flags[0]) || !xz_put(flags[1]) ||
+            !xz_put('Y') || !xz_put('Z'))
+                return false;
         return xz_out_flush();
 }
 
@@ -1821,6 +1934,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
         positive pos;
         p8 reset;
         positive at;
+        bool raw = false;
 
         if (!n)
                 return true;
@@ -1838,15 +1952,19 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                 xz_probs_reset();
         }
         xz_rc_enc_init();
-        xz_inner_stamp += 0x10000;
-        if (!(xz_inner_stamp & 0xffff0000u))
-        {
-                memory_fill(xz_head, 0, sizeof(xz_head));
-                xz_inner_stamp = 0x10000;
-        }
         pos = 0;
         while (pos < n)
         {
+                /* Stop spending range-coder work on a chunk already showing
+                   expansion. The raw frame still carries every byte and its
+                   checksum; the next compressed chunk resets the models. */
+                if (pos >= 8192 && !(pos & 1023) &&
+                    (positive)(xz_rc.next - xz_rc_buf) >= pos + 128)
+                {
+                        xz_enc_seen_span(src + pos, n - pos);
+                        raw = true;
+                        break;
+                }
                 positive match = 0;
                 positive dist = 0;
                 positive rep_len = 0;
@@ -1858,7 +1976,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                 for (r = 0; r < 4; r++)
                 {
                         positive d = xz_rep[r];
-                        if (d <= pos && d <= xz_dict_full && limit >= 2 &&
+                        if (d && d <= xz_match_abs + pos && d <= xz_dict_full && limit >= 2 &&
                             src[pos] == src[pos - d] &&
                             src[pos + 1] == src[pos - d + 1])
                         {
@@ -1873,25 +1991,26 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                 {
                         p16 h = xz_chunk_hash(src + pos);
                         p32 old = xz_head[h];
-                        positive chain = (old & 0xffff0000u) == xz_inner_stamp
-                                            ? old & 0xffff : 0;
+                        positive chain = old;
                         positive tries = xz_level <= 1 ? 4 : xz_level <= 3 ? 8 : 32;
                         positive nice = xz_level <= 1 ? 32 : xz_level <= 3 ? 64
                                                                                   : XZ_MATCH_MAX;
-                        xz_prev[pos] = (p16)chain;
-                        xz_head[h] = xz_inner_stamp | (p16)(pos + 1);
+                        xz_prev[(xz_match_abs + pos) & (XZ_ENC_DICT - 1)] = old;
+                        xz_head[h] = (p32)(xz_match_abs + pos + 1);
                         while (chain && tries--)
                         {
                                 positive there = chain - 1;
-                                if (there >= pos)
+                                if (there >= xz_match_abs + pos)
                                         break;
-                                positive d = pos - there;
+                                positive d = xz_match_abs + pos - there;
+                                if (d > XZ_ENC_DICT) break;
+                                p8 address_to candidate = src + pos - d;
                                 if (d <= xz_dict_full &&
-                                    src[pos] == src[there] &&
-                                    (!match || src[pos + match] == src[there + match]))
+                                    src[pos] == candidate[0] &&
+                                    (!match || src[pos + match] == candidate[match]))
                                 {
                                         positive k = memory_common_prefix(src + pos,
-                                                                          src + there, limit);
+                                                                          candidate, limit);
                                         if (k >= (xz_level <= 1 && d >= 128 ? 4 : 3) &&
                                             k > match)
                                         {
@@ -1901,7 +2020,7 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                                                         break;
                                         }
                                 }
-                                positive next = xz_prev[there];
+                                positive next = xz_prev[there & (XZ_ENC_DICT - 1)];
                                 if (next >= chain)
                                         break;
                                 chain = next;
@@ -1921,18 +2040,16 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
                         else
                                 xz_enc_match(dist, match);
                         xz_enc_seen_span(src + pos, match);
-                        for (k = 1; k < match; k++)
+                        k = match >= 128 && dist <= 16 ? match - 2 * dist : 1;
+                        for (; k < match; k++)
                         {
                                 if (pos + k + 3 <= n)
                                 {
                                         p16 hh = xz_chunk_hash(src + pos + k);
 
                                         p32 old = xz_head[hh];
-                                        xz_prev[pos + k] =
-                                            (old & 0xffff0000u) == xz_inner_stamp
-                                                ? (p16)old : 0;
-                                        xz_head[hh] = xz_inner_stamp |
-                                                      (p16)(pos + k + 1);
+                                        xz_prev[(xz_match_abs + pos + k) & (XZ_ENC_DICT - 1)] = old;
+                                        xz_head[hh] = (p32)(xz_match_abs + pos + k + 1);
                                 }
                         }
                         pos += match;
@@ -1951,22 +2068,22 @@ static bool xz_lzma_chunk(p8 address_to src, positive n)
         xz_rc_n = (positive)(xz_rc.next - xz_rc_buf);
         if (xz_rc_full)
                 return xz_fail("xz compressed chunk");
-        if (!xz_rc_n || xz_rc_n > 65536 || xz_rc_n >= n)
+        if (raw || !xz_rc_n || xz_rc_n > 65536 || xz_rc_n >= n)
         {
                 /* Speculative probabilities/reps were not sent. The next
                    compressed chunk must start a fresh LZMA model. */
                 xz_enc_have_lzma = false;
                 return xz_write_uncompressed_chunk(src, n, reset >= 3);
         }
-        xz_put((p8)(0x80 | (reset << 5) | ((n - 1) >> 16)));
-        xz_put((p8)((n - 1) >> 8));
-        xz_put((p8)(n - 1));
-        xz_put((p8)((xz_rc_n - 1) >> 8));
-        xz_put((p8)(xz_rc_n - 1));
-        if (reset >= 2)
-                xz_put(0x5d);
+        if (!xz_put((p8)(0x80 | (reset << 5) | ((n - 1) >> 16))) ||
+            !xz_put((p8)((n - 1) >> 8)) || !xz_put((p8)(n - 1)) ||
+            !xz_put((p8)((xz_rc_n - 1) >> 8)) ||
+            !xz_put((p8)(xz_rc_n - 1)) ||
+            (reset >= 2 && !xz_put(0x5d)))
+                return false;
         for (at = 0; at < xz_rc_n; at++)
-                xz_put(xz_rc_buf[at]);
+                if (!xz_put(xz_rc_buf[at]))
+                        return false;
         xz_block_unpadded += 5 + (reset >= 2 ? 1 : 0) + xz_rc_n;
         xz_block_unpacked += n;
         xz_enc_have_lzma = true;
@@ -1981,8 +2098,9 @@ static bool xz_flush_pending(bool last)
                 return true;
         if (!xz_pending_n && last && !xz_block_unpadded)
                 return true;
-        if (!xz_block_unpadded)
-                xz_write_block_header(xz_prop_from_dict(65536));
+        if (!xz_block_unpadded &&
+            !xz_write_block_header(xz_prop_from_dict(XZ_ENC_DICT)))
+                return false;
         while (at < xz_pending_n)
         {
                 positive take = xz_pending_n - at;
@@ -1993,28 +2111,52 @@ static bool xz_flush_pending(bool last)
                         return false;
                 at += take;
         }
+        xz_match_abs += xz_pending_n;
+        xz_pending_position += xz_pending_n;
+        if (xz_pending_position + XZ_PENDING > sizeof(xz_pending_storage))
+        {
+                memory_copy_apart(xz_pending_storage,
+                    xz_pending_storage + xz_pending_position - XZ_ENC_DICT,
+                    XZ_ENC_DICT);
+                xz_pending_position = XZ_ENC_DICT;
+        }
+        if (xz_match_abs >= 0x80000000u)
+        {
+                positive shift = xz_match_abs - XZ_ENC_DICT;
+                /* shift is a whole dictionary multiple, so ring slots remain
+                   stable after subtracting it from the absolute positions. */
+                for (positive i = 0; i < XZ_HASH_SIZE; i++)
+                        xz_head[i] = xz_head[i] > shift ? xz_head[i] - shift : 0;
+                for (positive i = 0; i < XZ_ENC_DICT; i++)
+                        xz_prev[i] = xz_prev[i] > shift ? xz_prev[i] - shift : 0;
+                xz_match_abs -= shift;
+        }
         xz_pending_n = 0;
         if (last)
         {
-                xz_put(0);
+                if (!xz_put(0))
+                        return false;
                 xz_block_unpadded += 1;
                 {
                         p64 padded = xz_block_unpadded;
 
                         while (padded & 3)
                         {
-                                xz_put(0);
+                                if (!xz_put(0))
+                                        return false;
                                 padded++;
                         }
                 }
                 if (xz_check == XZ_CHECK_CRC32)
                 {
-                        xz_put32(~xz_crc32);
+                        if (!xz_put32(~xz_crc32))
+                                return false;
                         xz_block_unpadded += 4;
                 }
                 else if (xz_check == XZ_CHECK_CRC64)
                 {
-                        xz_put64(~xz_crc64);
+                        if (!xz_put64(~xz_crc64))
+                                return false;
                         xz_block_unpadded += 8;
                 }
                 if (xz_index_n < 32)
@@ -2024,7 +2166,7 @@ static bool xz_flush_pending(bool last)
                         xz_index_n++;
                 }
         }
-        return true;
+        return !xz_out_failed;
 }
 
 static bool xz_enc_pull(void)
@@ -2115,17 +2257,17 @@ static bool xz_encode_body(bool finish)
                 }
                 if (xz_hold_at >= xz_hold_fill)
                         break;
-                if (xz_pending_n == sizeof(xz_pending) &&
+                if (xz_pending_n == XZ_PENDING &&
                     !xz_flush_pending(false))
                         return false;
                 have = xz_hold_fill - xz_hold_at;
-                room = sizeof(xz_pending) - xz_pending_n;
+                room = XZ_PENDING - xz_pending_n;
                 take = have < room ? have : room;
                 memory_copy(xz_pending + xz_pending_n, xz_hold + xz_hold_at,
                             take);
                 xz_pending_n += take;
                 xz_hold_at += take;
-                if (xz_pending_n == sizeof(xz_pending) &&
+                if (xz_pending_n == XZ_PENDING &&
                     !xz_flush_pending(false))
                         return false;
                 if (!finish && xz_hold_at >= xz_hold_fill && !xz_hold_eof)
@@ -2138,9 +2280,11 @@ static bool xz_encode_body(bool finish)
 
 static bool xz_encode_setup(p8 level)
 {
+        xz_encoding = true;
         xz_why = null;
+        xz_out_failed = false;
         xz_level = level ? level : 6;
-        xz_out_fill = 0;
+        xz_out_fill = xz_out_taken = xz_out_hashed = 0;
         xz_hold_fill = 0;
         xz_hold_at = 0;
         xz_hold_abs = 0;
@@ -2153,9 +2297,10 @@ static bool xz_encode_setup(p8 level)
         xz_crc32 = 0xffffffffu;
         xz_crc64 = 0xffffffffffffffffull;
         xz_index_n = 0;
-        xz_inner_stamp = 0;
+        xz_match_abs = 0;
+        xz_pending_position = 0;
         memory_fill(xz_head, 0, sizeof(xz_head));
-        if (!xz_dict_open(65536))
+        if (!xz_dict_open(XZ_ENC_DICT))
                 return false;
         if (!xz_props(0x5d))
                 return false;
@@ -2215,11 +2360,13 @@ static fn xz_in_from_fd(bipolar in)
 
 static bool xz_decode_begin(bipolar in)
 {
+        xz_encoding = false;
         xz_why = null;
+        xz_out_failed = false;
         xz_in_from_fd(in);
         xz_out_fd = -1;
         xz_out_mem = null;
-        xz_out_fill = 0;
+        xz_out_fill = xz_out_taken = xz_out_hashed = 0;
         xz_pull = true;
         xz_paused = false;
         xz_finished = false;
@@ -2255,12 +2402,13 @@ static bipolar xz_decode_read(p8 address_to dst, positive n)
 
                 if (xz_out_fill)
                 {
-                        take = xz_out_fill > n - copied ? n - copied : xz_out_fill;
-                        memory_copy(dst + copied, xz_out_buf, take);
-                        if (take < xz_out_fill)
-                                memory_copy_apart(xz_out_buf, xz_out_buf + take,
-                                                  xz_out_fill - take);
-                        xz_out_fill -= take;
+                        xz_output_check();
+                        positive left = xz_out_fill - xz_out_taken;
+                        take = left > n - copied ? n - copied : left;
+                        memory_copy_apart(dst + copied, xz_out_buf + xz_out_taken, take);
+                        xz_out_taken += take;
+                        if (xz_out_taken == xz_out_fill)
+                                xz_out_fill = xz_out_taken = xz_out_hashed = 0;
                         copied += take;
                         continue;
                 }
@@ -2571,13 +2719,8 @@ static b32 file_xz(void)
                         }
                         else
                         {
-                                positive flags = FILE_WRITE | O_CLOEXEC;
-
-                                if (!force)
-                                        flags = 01 | FILE_CREATE | FILE_EXCLUSIVE |
-                                                O_CLOEXEC;
-                                out = system_open_at_mode(AT_FDCWD, out_name, flags,
-                                                          0666);
+                                out = system_open_output_at(AT_FDCWD, out_name,
+                                                            force, 0666);
                                 if (out < 0)
                                 {
                                         string_format(log_error, "xz: %s: %s\n",

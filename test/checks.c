@@ -40037,6 +40037,61 @@ static fn bits(void)
               zstd_bits_open(address_of b, eight, sizeof(eight)) == 0);
 }
 
+/* A single RLE sequence expands a five-byte match from one prior byte.  The
+   sequence walker must reject it before writing when only three bytes remain,
+   and the identical job must retain its ordinary result with enough room. */
+static fn sequence_capacity(void)
+{
+        zstd_fse ll = {0};
+        zstd_fse of = {0};
+        zstd_fse ml = {0};
+        zstd_seq_job job = {0};
+        p8 sequence[8] = {0x80};
+        p8 literals[1] = {0};
+        p8 window[32];
+        p32 rep[3] = {1, 1, 1};
+        bool guard = true;
+
+        zstd_fse_rle(address_of ll, 0);
+        zstd_fse_rle(address_of of, 0);
+        zstd_fse_rle(address_of ml, 2);
+        check("sequence capacity RLE tables",
+              zstd_seq_fuse(address_of ll, 0) &&
+                  zstd_seq_fuse(address_of of, 1) &&
+                  zstd_seq_fuse(address_of ml, 2));
+
+        memory_fill(window, 0x5a, sizeof(window));
+        window[0] = 'A';
+        job.window = window;
+        job.pos = 1;
+        job.window_size = 16;
+        job.lits = literals;
+        job.lit_len = 0;
+        job.seq = sequence;
+        job.seq_len = 1;
+        job.ll = address_of ll;
+        job.of = address_of of;
+        job.ml = address_of ml;
+        job.rep = rep;
+        job.nseq = 1;
+        job.output_end = window + 4;
+        check("sequence output limit is enforced",
+              zstd_sequences_run(address_of job) != 0 && job.pos == 1);
+        for (positive i = 1; i < sizeof(window); i++)
+                guard &= window[i] == 0x5a;
+        check("rejected sequence leaves the destination untouched", guard);
+
+        memory_fill(window, 0x5a, sizeof(window));
+        rep[0] = rep[1] = rep[2] = 1;
+        window[0] = 'A';
+        job.pos = 1;
+        job.output_end = window + 16;
+        check("sequence with enough room keeps its ordinary result",
+              zstd_sequences_run(address_of job) == 0 && job.pos == 6 &&
+                  !memory_compare(window, "AAAAAA", 6) &&
+                  window[6] == 0x5a);
+}
+
 static fn roundtrip(void)
 {
         p8 src[4096];
@@ -40115,11 +40170,82 @@ static fn literal_codebooks(void)
                 }
 }
 
+static fn pull_block_shapes(void)
+{
+        static p8 packed[3 * ZSTD_BLOCK_MAX + 64];
+        static p8 expected[3 * ZSTD_BLOCK_MAX];
+        static p8 back[3 * ZSTD_BLOCK_MAX];
+        const positive takes[] = {1, 7, 511, 512, 4097, 131072};
+        for (positive shape = 0; shape < 8; shape++)
+        {
+                p8 header[6] = {0x28,0xb5,0x2f,0xfd,0,0x58};
+                memory_copy_apart(packed, header, sizeof(header));
+                positive pn = 6, size = 0;
+                for (positive block = 0; block < 3; block++)
+                {
+                        positive n = block == 0 && (shape & 4) ? 4097 : ZSTD_BLOCK_MAX;
+                        bool rle = (shape >> (block % 2)) & 1;
+                        p32 h = (p32)(n << 3) | (rle ? 2 : 0) | (block == 2);
+                        packed[pn++] = (p8)h; packed[pn++] = (p8)(h >> 8); packed[pn++] = (p8)(h >> 16);
+                        if (rle)
+                        {
+                                packed[pn++] = (p8)('a' + block);
+                                memory_fill(expected + size, 'a' + block, n);
+                        }
+                        else
+                        {
+                                for (positive i = 0; i < n; i++) packed[pn + i] = expected[size + i] = (p8)(i * 17 + block);
+                                pn += n;
+                        }
+                        size += n;
+                }
+                for (positive cut = 0; cut < 2; cut++)
+                {
+                        zstd_decode_begin(-1);
+                        zstd_src.mem = packed; zstd_src.mem_len = pn - cut;
+                        positive n = 0, step = 0;
+                        bipolar got = 0;
+                        while (n < sizeof(back))
+                        {
+                                positive take = takes[step++ % array_count(takes)];
+                                if (take > sizeof(back) - n) take = sizeof(back) - n;
+                                got = zstd_decode_read(back + n, take);
+                                if (got <= 0) break;
+                                n += (positive)got;
+                        }
+                        if (got >= 0)
+                        {
+                                p8 extra;
+                                got = zstd_decode_read(address_of extra, 1);
+                        }
+                        bool done = zstd_decode_end();
+                        if (cut)
+                                check("pull reader refuses a truncated raw/RLE block", got < 0 && !done);
+                        else
+                                check("pull raw/RLE boundaries and final block survive partial reads",
+                                      got == 0 && done && n == size && !memory_compare(back, expected, size));
+                }
+        }
+        p8 compressed[1024];
+        p8 data[512];
+        memory_fill(data, 'x', sizeof(data));
+        bipolar n = zstd_deflate_mem(data, sizeof(data), compressed, sizeof(compressed), 3);
+        if (n > 4)
+        {
+                zstd_decode_begin(-1);
+                zstd_src.mem = compressed; zstd_src.mem_len = (positive)n - 4;
+                bipolar got = zstd_decode_read(back, sizeof(back));
+                check("pull reader refuses a completely missing checksum", got < 0 && !zstd_decode_end());
+        }
+}
+
 b32 main(void)
 {
+        pull_block_shapes();
         literal_codebooks();
         frames();
         bits();
+        sequence_capacity();
         roundtrip();
         return test_report(null);
 }
@@ -55097,7 +55223,11 @@ static fn floor_checksums(void)
         if (!p) return;
         for (positive i = 0; i < 4096; i++) p[4096 + i] = (p8)(i * 37 + i / 11);
         const positive sizes[] = {0,1,2,3,4,5,6,7,8,9,15,16,17,31,32,33,63,64,
-                                  65,127,128,129,255,256,257,1023,1024,4095,4096};
+                                  65,127,128,129,255,256,257,1023,1024,1025,1039,1040,1055,1056,1087,1088,1089,4095,4096};
+        p8 pclmul = cpu_has_pclmul;
+        for (positive path = 0; path < (pclmul ? 2 : 1); path++)
+        {
+        cpu_has_pclmul = path ? pclmul : 0;
         for (positive k = 0; k < array_count(sizes); k++)
                 for (positive edge = 0; edge < 2; edge++)
                         for (positive seed = 0; seed < 3; seed++)
@@ -55119,6 +55249,8 @@ static fn floor_checksums(void)
                                       c64 == hash_crc64(hash_crc64(initial, src, split),
                                                         src + split, n - split));
                         }
+        }
+        cpu_has_pclmul = pclmul;
         memory_free(p, 3 * 4096);
 }
 
@@ -55279,7 +55411,7 @@ static fn floor_deflate(void)
 {
         p8 address_to input = floor_pages(3);
         p8 address_to output = floor_pages(11);
-        static p16 lit[512], dist[64];
+        static p16 lit[2048], dist[256];
         check("deflate guarded mappings", input && output);
         if (!input || !output) return;
         memory_fill(input + 4096, 0, 4096);
@@ -55288,8 +55420,8 @@ static fn floor_deflate(void)
                 for (positive d = 0; d < 30; d++)
                         for (positive residue = 0; residue < 8; residue++)
                         {
-                                for (positive i = 0; i < 512; i++) lit[i] = (i & 1) ? 0 : (1 << 9) | (257 + l);
-                                for (positive i = 0; i < 64; i++) dist[i] = (i & 1) ? 0 : (1 << 9) | d;
+                                for (positive i = 0; i < 2048; i++) lit[i] = (i & 1) ? 0 : (1 << 9) | (257 + l);
+                                for (positive i = 0; i < 256; i++) dist[i] = (i & 1) ? 0 : (1 << 9) | d;
                                 p8 address_to dst = output + 10 * 4096 - 258 - residue;
                                 p8 want[258];
                                 positive distance = gzip_dist_base[d], length = gzip_len_base[l];
@@ -55318,10 +55450,164 @@ static fn floor_deflate(void)
         memory_free(input,3*4096);memory_free(output,11*4096);
 }
 
+static fn floor_lzma_span(void)
+{
+        static p8 plain[16384];
+        static xz_probability_state model;
+        p8 address_to input = floor_pages(6);
+        p8 address_to output = floor_pages(3);
+        check("LZMA span guard mappings", input && output);
+        if (!input || !output) return;
+        check("LZMA span ABI", sizeof(xz_decode_job) == 144 &&
+              __builtin_offsetof(xz_decode_job, error) == 136 &&
+              __builtin_offsetof(xz_decode_job, rep) == 104);
+        for (positive trial = 0; trial < 12; trial++)
+        {
+                p32 random = 0x57139021u + (p32)trial;
+                xz_dict_open(4096);
+                memory_fill(xz_dict, 0, 4096);
+                xz_unpacked = 0;
+                xz_lc = (p8)(trial % 5);
+                xz_lp = (p8)(trial % (5 - xz_lc));
+                xz_pb = (p8)(trial % 5);
+                xz_probs_reset();
+                xz_rc_enc_init();
+                positive at = 0;
+                while (at < sizeof(plain))
+                {
+                        random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+                        positive n = 1;
+                        if (at > 8 && (random & 3))
+                        {
+                                positive dist = (random >> 8) % (at < 4096 ? at : 4096) + 1;
+                                positive which = (random >> 6) & 3;
+                                bool repeat = (random & 4) && xz_rep[which] <= xz_dict_full;
+                                if (repeat) dist = xz_rep[which];
+                                if (trial < 7 && !repeat) dist = trial + 1;
+                                n = 2 + ((random >> 16) % 272);
+                                if (n > sizeof(plain) - at) n = sizeof(plain) - at;
+                                if (n >= 2)
+                                {
+                                        for (positive k = 0; k < n; k++) plain[at + k] = plain[at + k - dist];
+                                        if (repeat) xz_enc_repeat(which, n);
+                                        else xz_enc_match(dist, n);
+                                        xz_enc_seen_span(plain + at, n);
+                                }
+                        }
+                        if (n == 1)
+                        {
+                                plain[at] = (p8)random;
+                                xz_enc_literal(plain[at]);
+                        }
+                        at += n;
+                }
+                xz_rc_enc_flush();
+                positive packed = (positive)(xz_rc.next - xz_rc_buf);
+                check("LZMA differential fixture fits", !xz_rc.full && packed <= XZ_IN && packed > 64);
+                if (xz_rc.full || packed > XZ_IN || packed <= 64) break;
+                p8 address_to bytes = input + 5 * 4096 - packed;
+                memory_copy_apart(bytes, xz_rc_buf, packed);
+                memory_copy_apart(xz_in_buf, bytes, packed);
+                xz_in_at = 0; xz_in_have = packed; xz_in_eof = true;
+                xz_in_mem = null; xz_in_fd = -1; xz_in_abs = 0;
+                xz_unpacked = 0; xz_dict_pos = 0; xz_dict_full = 0;
+                memory_fill(xz_dict, 0, 4096);
+                memory_fill(output + 4096, 0, 4096);
+                xz_probs_reset();
+                memory_copy_apart(address_of model, address_of xz_models, sizeof(model));
+                xz_why = null; xz_pull = true; xz_paused = false;
+                xz_check = XZ_CHECK_NONE; xz_lz2_match_left = 0;
+                xz_out_fill = xz_out_taken = xz_out_hashed = 0;
+                check("LZMA differential range init", xz_rc_init());
+                xz_decode_job job = {xz_range, xz_code, bytes + 5, bytes + packed,
+                    address_of model, output + 4096, 4096, 0, 0, 0, sizeof(plain),
+                    4096, 0, xz_lc, xz_lp, xz_pb, {1,1,1,1}, 0};
+                positive spans = 0;
+                while (xz_unpacked < sizeof(plain))
+                {
+                        job.room = 4096 - job.pos;
+                        if (trial & 1 && job.room > 273) job.room = 273;
+                        p64 before = job.unpacked;
+                        lzma_decode_span(address_of job);
+                        if (job.pos == 4096) job.pos = 0;
+                        check("LZMA valid packet span", !job.error && job.next <= job.limit);
+                        if (job.error) break;
+                        if (job.unpacked > before)
+                        {
+                                spans++;
+                                while (xz_unpacked < job.unpacked)
+                                {
+                                        xz_out_fill = 0;
+                                        if (!xz_lzma_packet()) break;
+                                }
+                                bool same = !xz_why && xz_unpacked == job.unpacked &&
+                                    xz_range == job.range && xz_code == job.code &&
+                                    xz_in_at == (positive)(job.next - bytes) &&
+                                    xz_dict_pos == job.pos && xz_dict_full == job.full &&
+                                    xz_state == job.state &&
+                                    !memory_compare(xz_rep, job.rep, sizeof(xz_rep)) &&
+                                    !memory_compare(address_of xz_models, address_of model, sizeof(model)) &&
+                                    !memory_compare(xz_dict, output + 4096, 4096);
+                                check("LZMA span equals scalar packets, range, models, repeats and dictionary", same);
+                                if (!same) break;
+                        }
+                        else
+                        {
+                                check("LZMA short span consumes no input", job.next == bytes + xz_in_at);
+                                xz_out_fill = 0;
+                                bool ok = xz_lzma_packet();
+                                check("LZMA scalar refill/wrap tail", ok);
+                                if (!ok) break;
+                                job.range = xz_range; job.code = xz_code;
+                                job.next = bytes + xz_in_at; job.pos = xz_dict_pos;
+                                job.full = xz_dict_full; job.unpacked = xz_unpacked;
+                                job.state = xz_state;
+                                memory_copy_apart(job.rep, xz_rep, sizeof(xz_rep));
+                                memory_copy_apart(address_of model, address_of xz_models, sizeof(model));
+                                memory_copy_apart(output + 4096, xz_dict, 4096);
+                        }
+                }
+                check("LZMA span exercised to completion", spans && xz_unpacked == sizeof(plain));
+        }
+        xz_dict_close();
+        memory_free(input, 6 * 4096);
+        memory_free(output, 3 * 4096);
+}
+
+static fn floor_codebook(void)
+{
+        p32 freq[288];
+        p8 length[288];
+        for (positive kind = 0; kind < 3; kind++)
+                for (positive rotate = 0; rotate < 19; rotate++)
+                {
+                        positive n = kind == 0 ? 19 : kind == 1 ? 256 : 288;
+                        p8 limit = kind == 0 ? 7 : kind == 1 ? 11 : 15;
+                        memory_fill(freq, 0, sizeof(freq));
+                        p32 a = 1, b = 1;
+                        for (positive i = 0; i < (kind ? 24 : 19); i++)
+                        {
+                                freq[(i + rotate) % n] = a;
+                                p32 next = a + b; a = b; b = next;
+                        }
+                        bool valid = compression_build_lengths(freq, n, length, limit);
+                        positive kraft = 0;
+                        for (positive i = 0; i < n; i++)
+                        {
+                                if (freq[i] && !length[i]) valid = false;
+                                if (length[i] > limit) valid = false;
+                                if (length[i] && length[i] <= limit) kraft += (positive)1 << (limit - length[i]);
+                        }
+                        check("length-limited skewed Huffman codebook is complete", valid && kraft == (positive)1 << limit);
+                }
+}
+
 #ifdef CHECK_compression_floor
 b32 main(void)
 {
         floor_checksums();
+        floor_codebook();
+        floor_lzma_span();
         floor_range();
         floor_huffman();
         floor_deflate();
@@ -55410,8 +55696,8 @@ b32 main(void)
         string_format(log,"  The copy row is a traffic proxy, not an entropy-coding lower bound.\n");
         bench_report("copy traffic proxy",compression_copy_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
         bench_report("CRC32 dependent byte reference",compression_crc_scalar_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
-        bench_report("CRC32 slicing-by-eight",compression_crc32_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
-        bench_report("CRC64 slicing-by-eight",compression_crc64_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
+        bench_report("CRC32 dispatched kernel",compression_crc32_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
+        bench_report("CRC64 dispatched kernel",compression_crc64_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
         bench_report("backward Huffman kernel",compression_huffman_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
         bench_report("scalar range trees",compression_range_c_work,7,32*4096,"byte");
         bench_report("assembly range trees",compression_range_asm_work,7,32*4096,"byte");

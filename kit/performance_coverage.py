@@ -326,6 +326,10 @@ hash_crc32 hash_crc64 huffman_encode_back lzma_range_encode
       'CRC/range references; copy traffic is a proxy, not an entropy floor')
 cover('benchmark_context', 'test/checks.c#BENCH_compression_floor', 'lzma_range_shift',
       'carry flushing inside the measured range-tree work; not isolated')
+cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'lzma_decode_span',
+      'packet-state differential and guarded input/output; xz benchmarks '
+      'include the span, but no isolated native span timing row exists',
+      anchors={'lzma_decode_span': 'floor_lzma_span'})
 cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'lzma_range_decode',
       'scalar-model differential and guarded input; end-to-end xz timing is '
       'available, but there is no isolated decode timing row',

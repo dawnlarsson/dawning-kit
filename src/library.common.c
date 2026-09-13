@@ -292,6 +292,20 @@ static inline INLINE CONST bipolar bipolar_from_magnitude(positive magnitude,
         system_call_4(syscall(openat), (positive)(bipolar)(directory),       \
                       (positive)(path), (positive)(flags), (positive)(mode))
 
+#if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
+/* Output files are created exclusively unless replacement was requested.
+   Replacement still refuses a final-component symlink atomically: applying
+   O_NOFOLLOW in the same openat call keeps O_TRUNC from reaching its target. */
+static bipolar system_open_output_at(bipolar directory, string_address path,
+                                     bool replace, positive mode)
+{
+        positive flags = FILE_WRITE | O_CLOEXEC |
+                         (replace ? O_NOFOLLOW : FILE_EXCLUSIVE);
+
+        return system_open_at_mode(directory, path, flags, mode);
+}
+#endif
+
 /* One-shot I/O stays visibly distinct from the EINTR-retrying helpers. */
 #define system_read_once(handle, into, length)                               \
         system_call_3(syscall(read), (positive)(handle), (positive)(into),   \

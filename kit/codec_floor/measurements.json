@@ -1,0 +1,1568 @@
+{
+  "machine": "Linux-7.1.8-arch1-3-x86_64-with-glibc2.44",
+  "cpu": 6,
+  "runner": [],
+  "runs": 5,
+  "corpora": {
+    "elf": {
+      "bytes": 16777216,
+      "sha256": "4fa0db10084fd8219c788b74f462c13f8d519b4309ae827a50449c5858ee3ca6"
+    },
+    "rep": {
+      "bytes": 33554432,
+      "sha256": "facb58ac139bf9fc0e1f8b1f147003236b1b69e84f3a4c94166fa66f18f89932"
+    },
+    "rnd": {
+      "bytes": 8388608,
+      "sha256": "4172e1377f79434d97c967d7a43dd9e0c451d95a02c6f6e0842096858741ea9f"
+    },
+    "src": {
+      "bytes": 16777216,
+      "sha256": "0f71dc3c98302348ff2a0192325bb1614996a9994ac38b68c1e456ed6d38fbb8"
+    }
+  },
+  "measurements": [
+    {
+      "binary": "before",
+      "codec": "gzip",
+      "corpus": "elf",
+      "operation": "encode",
+      "seconds": [
+        0.521109842,
+        0.526386016,
+        0.525557402,
+        0.522624792,
+        0.527182299
+      ],
+      "median_seconds": 0.525557402,
+      "MiB_per_second": 30.443867670995147,
+      "compressed_bytes": 8816669
+    },
+    {
+      "binary": "before",
+      "codec": "gzip",
+      "corpus": "elf",
+      "operation": "decode",
+      "seconds": [
+        0.050216851,
+        0.050243261,
+        0.050219096,
+        0.050399324,
+        0.050237129
+      ],
+      "median_seconds": 0.050237129,
+      "MiB_per_second": 318.48953788740596,
+      "compressed_bytes": 8816669
+    },
+    {
+      "binary": "now",
+      "codec": "gzip",
+      "corpus": "elf",
+      "operation": "encode",
+      "seconds": [
+        0.325050664,
+        0.322709764,
+        0.322372141,
+        0.322900101,
+        0.324656194
+      ],
+      "median_seconds": 0.322900101,
+      "MiB_per_second": 49.55092906582894,
+      "compressed_bytes": 6034888
+    },
+    {
+      "binary": "now",
+      "codec": "gzip",
+      "corpus": "elf",
+      "operation": "decode",
+      "seconds": [
+        0.034428733,
+        0.034305613,
+        0.034289202,
+        0.034265818,
+        0.034298439
+      ],
+      "median_seconds": 0.034298439,
+      "MiB_per_second": 466.4935334229059,
+      "compressed_bytes": 6034888
+    },
+    {
+      "binary": "reference",
+      "codec": "gzip",
+      "corpus": "elf",
+      "operation": "encode",
+      "seconds": [
+        0.398939127,
+        0.400067783,
+        0.39886689,
+        0.400525191,
+        0.399625724
+      ],
+      "median_seconds": 0.399625724,
+      "MiB_per_second": 40.03746265343019,
+      "compressed_bytes": 6054807
+    },
+    {
+      "binary": "reference",
+      "codec": "gzip",
+      "corpus": "elf",
+      "operation": "decode",
+      "seconds": [
+        0.040727045,
+        0.040686159,
+        0.040570261,
+        0.040656142,
+        0.040670789
+      ],
+      "median_seconds": 0.040670789,
+      "MiB_per_second": 393.40274416608935,
+      "compressed_bytes": 6054807
+    },
+    {
+      "binary": "before",
+      "codec": "xz",
+      "corpus": "elf",
+      "operation": "encode",
+      "seconds": [
+        0.277681272,
+        0.277534248,
+        0.277619256,
+        0.277293546,
+        0.277335033
+      ],
+      "median_seconds": 0.277534248,
+      "MiB_per_second": 57.6505426458215,
+      "compressed_bytes": 5664124
+    },
+    {
+      "binary": "before",
+      "codec": "xz",
+      "corpus": "elf",
+      "operation": "decode",
+      "seconds": [
+        0.264533678,
+        0.264812229,
+        0.264431977,
+        0.264678358,
+        0.267714482
+      ],
+      "median_seconds": 0.264678358,
+      "MiB_per_second": 60.45073016510099,
+      "compressed_bytes": 5664124
+    },
+    {
+      "binary": "now",
+      "codec": "xz",
+      "corpus": "elf",
+      "operation": "encode",
+      "seconds": [
+        0.327199143,
+        0.32703231,
+        0.327038361,
+        0.326573931,
+        0.326588929
+      ],
+      "median_seconds": 0.32703231,
+      "MiB_per_second": 48.924829476329116,
+      "compressed_bytes": 5564668
+    },
+    {
+      "binary": "now",
+      "codec": "xz",
+      "corpus": "elf",
+      "operation": "decode",
+      "seconds": [
+        0.144470594,
+        0.144621026,
+        0.144361219,
+        0.144282932,
+        0.14421215
+      ],
+      "median_seconds": 0.144361219,
+      "MiB_per_second": 110.8330901528339,
+      "compressed_bytes": 5564668
+    },
+    {
+      "binary": "reference",
+      "codec": "xz",
+      "corpus": "elf",
+      "operation": "encode",
+      "seconds": [
+        0.538778315,
+        0.539502774,
+        0.539550413,
+        0.543834157,
+        0.542238945
+      ],
+      "median_seconds": 0.539550413,
+      "MiB_per_second": 29.65431888196887,
+      "compressed_bytes": 5180716
+    },
+    {
+      "binary": "reference",
+      "codec": "xz",
+      "corpus": "elf",
+      "operation": "decode",
+      "seconds": [
+        0.103549505,
+        0.103790627,
+        0.103900544,
+        0.103570365,
+        0.103505232
+      ],
+      "median_seconds": 0.103570365,
+      "MiB_per_second": 154.48434501510158,
+      "compressed_bytes": 5180716
+    },
+    {
+      "binary": "before",
+      "codec": "zstd",
+      "corpus": "elf",
+      "operation": "encode",
+      "seconds": [
+        0.096074918,
+        0.095970212,
+        0.095853032,
+        0.095727788,
+        0.095930797
+      ],
+      "median_seconds": 0.095930797,
+      "MiB_per_second": 166.78689743399087,
+      "compressed_bytes": 6999783
+    },
+    {
+      "binary": "before",
+      "codec": "zstd",
+      "corpus": "elf",
+      "operation": "decode",
+      "seconds": [
+        0.013861875,
+        0.013888785,
+        0.013824775,
+        0.013769682,
+        0.013749785
+      ],
+      "median_seconds": 0.013824775,
+      "MiB_per_second": 1157.3425245618826,
+      "compressed_bytes": 6999783
+    },
+    {
+      "binary": "now",
+      "codec": "zstd",
+      "corpus": "elf",
+      "operation": "encode",
+      "seconds": [
+        0.081195304,
+        0.081194864,
+        0.08117134,
+        0.081040855,
+        0.081002012
+      ],
+      "median_seconds": 0.08117134,
+      "MiB_per_second": 197.11390744565756,
+      "compressed_bytes": 6056010
+    },
+    {
+      "binary": "now",
+      "codec": "zstd",
+      "corpus": "elf",
+      "operation": "decode",
+      "seconds": [
+        0.013939821,
+        0.013883746,
+        0.013733304,
+        0.013704981,
+        0.013688871
+      ],
+      "median_seconds": 0.013733304,
+      "MiB_per_second": 1165.0510321478357,
+      "compressed_bytes": 6056010
+    },
+    {
+      "binary": "reference",
+      "codec": "zstd",
+      "corpus": "elf",
+      "operation": "encode",
+      "seconds": [
+        0.043847687,
+        0.04444646,
+        0.044466507,
+        0.04397152,
+        0.044091945
+      ],
+      "median_seconds": 0.044091945,
+      "MiB_per_second": 362.87807217395374,
+      "compressed_bytes": 6028951
+    },
+    {
+      "binary": "reference",
+      "codec": "zstd",
+      "corpus": "elf",
+      "operation": "decode",
+      "seconds": [
+        0.011356486,
+        0.011250407,
+        0.01115555,
+        0.011055673,
+        0.01105404
+      ],
+      "median_seconds": 0.01115555,
+      "MiB_per_second": 1434.2636624819036,
+      "compressed_bytes": 6028951
+    },
+    {
+      "binary": "before",
+      "codec": "gzip",
+      "corpus": "rep",
+      "operation": "encode",
+      "seconds": [
+        0.064373649,
+        0.064210052,
+        0.064303838,
+        0.064005449,
+        0.06331312
+      ],
+      "median_seconds": 0.064210052,
+      "MiB_per_second": 498.36433709787366,
+      "compressed_bytes": 61194
+    },
+    {
+      "binary": "before",
+      "codec": "gzip",
+      "corpus": "rep",
+      "operation": "decode",
+      "seconds": [
+        0.01605048,
+        0.016019962,
+        0.016008381,
+        0.015999664,
+        0.01599237
+      ],
+      "median_seconds": 0.016008381,
+      "MiB_per_second": 1998.952923471774,
+      "compressed_bytes": 61194
+    },
+    {
+      "binary": "now",
+      "codec": "gzip",
+      "corpus": "rep",
+      "operation": "encode",
+      "seconds": [
+        0.006339267,
+        0.006357913,
+        0.006128192,
+        0.006035789,
+        0.006112312
+      ],
+      "median_seconds": 0.006128192,
+      "MiB_per_second": 5221.768508558478,
+      "compressed_bytes": 32661
+    },
+    {
+      "binary": "now",
+      "codec": "gzip",
+      "corpus": "rep",
+      "operation": "decode",
+      "seconds": [
+        0.006655922,
+        0.006633479,
+        0.00690017,
+        0.006913665,
+        0.006897736
+      ],
+      "median_seconds": 0.006897736,
+      "MiB_per_second": 4639.203355999708,
+      "compressed_bytes": 32661
+    },
+    {
+      "binary": "reference",
+      "codec": "gzip",
+      "corpus": "rep",
+      "operation": "encode",
+      "seconds": [
+        0.029156757,
+        0.029106683,
+        0.029028878,
+        0.028929281,
+        0.028963585
+      ],
+      "median_seconds": 0.029028878,
+      "MiB_per_second": 1102.3505627740763,
+      "compressed_bytes": 32594
+    },
+    {
+      "binary": "reference",
+      "codec": "gzip",
+      "corpus": "rep",
+      "operation": "decode",
+      "seconds": [
+        0.044075123,
+        0.04404096,
+        0.044016333,
+        0.044010382,
+        0.044024328
+      ],
+      "median_seconds": 0.044024328,
+      "MiB_per_second": 726.8708337808132,
+      "compressed_bytes": 32594
+    },
+    {
+      "binary": "before",
+      "codec": "xz",
+      "corpus": "rep",
+      "operation": "encode",
+      "seconds": [
+        0.048527242,
+        0.048413359,
+        0.048272976,
+        0.047914423,
+        0.048610509
+      ],
+      "median_seconds": 0.048413359,
+      "MiB_per_second": 660.9745876133072,
+      "compressed_bytes": 10896
+    },
+    {
+      "binary": "before",
+      "codec": "xz",
+      "corpus": "rep",
+      "operation": "decode",
+      "seconds": [
+        0.015219511,
+        0.01518201,
+        0.015141495,
+        0.015110657,
+        0.015090238
+      ],
+      "median_seconds": 0.015141495,
+      "MiB_per_second": 2113.397653270037,
+      "compressed_bytes": 10896
+    },
+    {
+      "binary": "now",
+      "codec": "xz",
+      "corpus": "rep",
+      "operation": "encode",
+      "seconds": [
+        0.010844837,
+        0.01071798,
+        0.010604146,
+        0.010658066,
+        0.010538904
+      ],
+      "median_seconds": 0.010658066,
+      "MiB_per_second": 3002.4208894934595,
+      "compressed_bytes": 10360
+    },
+    {
+      "binary": "now",
+      "codec": "xz",
+      "corpus": "rep",
+      "operation": "decode",
+      "seconds": [
+        0.007074397,
+        0.007058046,
+        0.007033861,
+        0.007015746,
+        0.007013252
+      ],
+      "median_seconds": 0.007033861,
+      "MiB_per_second": 4549.421718740248,
+      "compressed_bytes": 10360
+    },
+    {
+      "binary": "reference",
+      "codec": "xz",
+      "corpus": "rep",
+      "operation": "encode",
+      "seconds": [
+        0.071592567,
+        0.071651888,
+        0.07159945,
+        0.07140225,
+        0.071160627
+      ],
+      "median_seconds": 0.071592567,
+      "MiB_per_second": 446.9737759228553,
+      "compressed_bytes": 5016
+    },
+    {
+      "binary": "reference",
+      "codec": "xz",
+      "corpus": "rep",
+      "operation": "decode",
+      "seconds": [
+        0.04530479,
+        0.045249385,
+        0.045201826,
+        0.045167022,
+        0.045143136
+      ],
+      "median_seconds": 0.045201826,
+      "MiB_per_second": 707.9360024083983,
+      "compressed_bytes": 5016
+    },
+    {
+      "binary": "before",
+      "codec": "zstd",
+      "corpus": "rep",
+      "operation": "encode",
+      "seconds": [
+        0.018223324,
+        0.017753082,
+        0.017628479,
+        0.017609924,
+        0.017608832
+      ],
+      "median_seconds": 0.017628479,
+      "MiB_per_second": 1815.2445256337771,
+      "compressed_bytes": 2830
+    },
+    {
+      "binary": "before",
+      "codec": "zstd",
+      "corpus": "rep",
+      "operation": "decode",
+      "seconds": [
+        0.002456787,
+        0.002414117,
+        0.002387087,
+        0.002373982,
+        0.002387717
+      ],
+      "median_seconds": 0.002387717,
+      "MiB_per_second": 13401.923259749794,
+      "compressed_bytes": 2830
+    },
+    {
+      "binary": "now",
+      "codec": "zstd",
+      "corpus": "rep",
+      "operation": "encode",
+      "seconds": [
+        0.003927835,
+        0.003813532,
+        0.003868134,
+        0.003942173,
+        0.003665965
+      ],
+      "median_seconds": 0.003868134,
+      "MiB_per_second": 8272.72271332896,
+      "compressed_bytes": 1037
+    },
+    {
+      "binary": "now",
+      "codec": "zstd",
+      "corpus": "rep",
+      "operation": "decode",
+      "seconds": [
+        0.002508935,
+        0.002382077,
+        0.002380404,
+        0.002395362,
+        0.002363983
+      ],
+      "median_seconds": 0.002382077,
+      "MiB_per_second": 13433.654747516559,
+      "compressed_bytes": 1037
+    },
+    {
+      "binary": "reference",
+      "codec": "zstd",
+      "corpus": "rep",
+      "operation": "encode",
+      "seconds": [
+        0.00932091,
+        0.012089632,
+        0.009909924,
+        0.011754814,
+        0.012103037
+      ],
+      "median_seconds": 0.011754814,
+      "MiB_per_second": 2722.288927753344,
+      "compressed_bytes": 1068
+    },
+    {
+      "binary": "reference",
+      "codec": "zstd",
+      "corpus": "rep",
+      "operation": "decode",
+      "seconds": [
+        0.002502382,
+        0.002495981,
+        0.002434215,
+        0.002412995,
+        0.002407946
+      ],
+      "median_seconds": 0.002434215,
+      "MiB_per_second": 13145.921785873476,
+      "compressed_bytes": 1068
+    },
+    {
+      "binary": "before",
+      "codec": "gzip",
+      "corpus": "rnd",
+      "operation": "encode",
+      "seconds": [
+        0.113981027,
+        0.113858247,
+        0.113736169,
+        0.113580116,
+        0.1137266
+      ],
+      "median_seconds": 0.113736169,
+      "MiB_per_second": 70.33822283920958,
+      "compressed_bytes": 8391279
+    },
+    {
+      "binary": "before",
+      "codec": "gzip",
+      "corpus": "rnd",
+      "operation": "decode",
+      "seconds": [
+        0.003618305,
+        0.003510394,
+        0.003474947,
+        0.003442015,
+        0.003444098
+      ],
+      "median_seconds": 0.003474947,
+      "MiB_per_second": 2302.1933859710666,
+      "compressed_bytes": 8391279
+    },
+    {
+      "binary": "now",
+      "codec": "gzip",
+      "corpus": "rnd",
+      "operation": "encode",
+      "seconds": [
+        0.085881693,
+        0.08569294,
+        0.086008771,
+        0.085847068,
+        0.085695304
+      ],
+      "median_seconds": 0.085847068,
+      "MiB_per_second": 93.18897181206002,
+      "compressed_bytes": 8391176
+    },
+    {
+      "binary": "now",
+      "codec": "gzip",
+      "corpus": "rnd",
+      "operation": "decode",
+      "seconds": [
+        0.001265914,
+        0.001101566,
+        0.001034169,
+        0.001021105,
+        0.001015304
+      ],
+      "median_seconds": 0.001034169,
+      "MiB_per_second": 7735.679564945382,
+      "compressed_bytes": 8391176
+    },
+    {
+      "binary": "reference",
+      "codec": "gzip",
+      "corpus": "rnd",
+      "operation": "encode",
+      "seconds": [
+        0.113723264,
+        0.113758881,
+        0.11357222,
+        0.113599322,
+        0.113518851
+      ],
+      "median_seconds": 0.113599322,
+      "MiB_per_second": 70.42295551728733,
+      "compressed_bytes": 8389914
+    },
+    {
+      "binary": "reference",
+      "codec": "gzip",
+      "corpus": "rnd",
+      "operation": "decode",
+      "seconds": [
+        0.007171268,
+        0.007068155,
+        0.005854739,
+        0.007084696,
+        0.0070228
+      ],
+      "median_seconds": 0.007068155,
+      "MiB_per_second": 1131.8370918577762,
+      "compressed_bytes": 8389914
+    },
+    {
+      "binary": "before",
+      "codec": "xz",
+      "corpus": "rnd",
+      "operation": "encode",
+      "seconds": [
+        0.229661933,
+        0.229375615,
+        0.229123042,
+        0.229003468,
+        0.229368282
+      ],
+      "median_seconds": 0.229368282,
+      "MiB_per_second": 34.878405724815956,
+      "compressed_bytes": 8389052
+    },
+    {
+      "binary": "before",
+      "codec": "xz",
+      "corpus": "rnd",
+      "operation": "decode",
+      "seconds": [
+        0.003709407,
+        0.003574844,
+        0.003520292,
+        0.003494954,
+        0.003494203
+      ],
+      "median_seconds": 0.003520292,
+      "MiB_per_second": 2272.5387553077985,
+      "compressed_bytes": 8389052
+    },
+    {
+      "binary": "now",
+      "codec": "xz",
+      "corpus": "rnd",
+      "operation": "encode",
+      "seconds": [
+        0.066045705,
+        0.066223538,
+        0.065843445,
+        0.066142677,
+        0.06584034
+      ],
+      "median_seconds": 0.066045705,
+      "MiB_per_second": 121.12823990598632,
+      "compressed_bytes": 8389052
+    },
+    {
+      "binary": "now",
+      "codec": "xz",
+      "corpus": "rnd",
+      "operation": "decode",
+      "seconds": [
+        0.001101746,
+        0.000969258,
+        0.000899266,
+        0.000887794,
+        0.000884028
+      ],
+      "median_seconds": 0.000899266,
+      "MiB_per_second": 8896.14418870501,
+      "compressed_bytes": 8389052
+    },
+    {
+      "binary": "reference",
+      "codec": "xz",
+      "corpus": "rnd",
+      "operation": "encode",
+      "seconds": [
+        0.776319975,
+        0.774686742,
+        0.77503764,
+        0.776484864,
+        0.778271214
+      ],
+      "median_seconds": 0.776319975,
+      "MiB_per_second": 10.305029185935863,
+      "compressed_bytes": 8389088
+    },
+    {
+      "binary": "reference",
+      "codec": "xz",
+      "corpus": "rnd",
+      "operation": "decode",
+      "seconds": [
+        0.001434861,
+        0.001371813,
+        0.001253461,
+        0.001184531,
+        0.001163742
+      ],
+      "median_seconds": 0.001253461,
+      "MiB_per_second": 6382.328608548651,
+      "compressed_bytes": 8389088
+    },
+    {
+      "binary": "before",
+      "codec": "zstd",
+      "corpus": "rnd",
+      "operation": "encode",
+      "seconds": [
+        0.007125884,
+        0.007031557,
+        0.007004716,
+        0.006987173,
+        0.00684165
+      ],
+      "median_seconds": 0.007004716,
+      "MiB_per_second": 1142.0877020567286,
+      "compressed_bytes": 8388813
+    },
+    {
+      "binary": "before",
+      "codec": "zstd",
+      "corpus": "rnd",
+      "operation": "decode",
+      "seconds": [
+        0.001125411,
+        0.001015434,
+        0.000974979,
+        0.000969057,
+        0.000842921
+      ],
+      "median_seconds": 0.000974979,
+      "MiB_per_second": 8205.304934772954,
+      "compressed_bytes": 8388813
+    },
+    {
+      "binary": "now",
+      "codec": "zstd",
+      "corpus": "rnd",
+      "operation": "encode",
+      "seconds": [
+        0.007836586,
+        0.007703957,
+        0.007664944,
+        0.007583361,
+        0.0074976
+      ],
+      "median_seconds": 0.007664944,
+      "MiB_per_second": 1043.7127785930334,
+      "compressed_bytes": 8388813
+    },
+    {
+      "binary": "now",
+      "codec": "zstd",
+      "corpus": "rnd",
+      "operation": "decode",
+      "seconds": [
+        0.001228253,
+        0.001087038,
+        0.001048897,
+        0.00103982,
+        0.001042325
+      ],
+      "median_seconds": 0.001048897,
+      "MiB_per_second": 7627.059663627601,
+      "compressed_bytes": 8388813
+    },
+    {
+      "binary": "reference",
+      "codec": "zstd",
+      "corpus": "rnd",
+      "operation": "encode",
+      "seconds": [
+        0.003520862,
+        0.003383735,
+        0.003292364,
+        0.003414353,
+        0.003239415
+      ],
+      "median_seconds": 0.003383735,
+      "MiB_per_second": 2364.251337649077,
+      "compressed_bytes": 8388814
+    },
+    {
+      "binary": "reference",
+      "codec": "zstd",
+      "corpus": "rnd",
+      "operation": "decode",
+      "seconds": [
+        0.002057539,
+        0.001857003,
+        0.001771111,
+        0.001773345,
+        0.001781371
+      ],
+      "median_seconds": 0.001781371,
+      "MiB_per_second": 4490.923002563756,
+      "compressed_bytes": 8388814
+    },
+    {
+      "binary": "before",
+      "codec": "gzip",
+      "corpus": "src",
+      "operation": "encode",
+      "seconds": [
+        0.388215908,
+        0.388928313,
+        0.385799446,
+        0.387346707,
+        0.386114677
+      ],
+      "median_seconds": 0.387346707,
+      "MiB_per_second": 41.30666328344441,
+      "compressed_bytes": 3428713
+    },
+    {
+      "binary": "before",
+      "codec": "gzip",
+      "corpus": "src",
+      "operation": "decode",
+      "seconds": [
+        0.029412888,
+        0.029357514,
+        0.02925929,
+        0.029193345,
+        0.02926995
+      ],
+      "median_seconds": 0.02926995,
+      "MiB_per_second": 546.6357134193943,
+      "compressed_bytes": 3428713
+    },
+    {
+      "binary": "now",
+      "codec": "gzip",
+      "corpus": "src",
+      "operation": "encode",
+      "seconds": [
+        0.235173308,
+        0.233528774,
+        0.233856428,
+        0.235755891,
+        0.233331054
+      ],
+      "median_seconds": 0.233856428,
+      "MiB_per_second": 68.41804664868994,
+      "compressed_bytes": 3407837
+    },
+    {
+      "binary": "now",
+      "codec": "gzip",
+      "corpus": "src",
+      "operation": "decode",
+      "seconds": [
+        0.023960513,
+        0.0238734,
+        0.023905539,
+        0.023935977,
+        0.023822143
+      ],
+      "median_seconds": 0.023905539,
+      "MiB_per_second": 669.300951549346,
+      "compressed_bytes": 3407837
+    },
+    {
+      "binary": "reference",
+      "codec": "gzip",
+      "corpus": "src",
+      "operation": "encode",
+      "seconds": [
+        0.238129151,
+        0.23798966,
+        0.238005449,
+        0.237690639,
+        0.237502226
+      ],
+      "median_seconds": 0.23798966,
+      "MiB_per_second": 67.22981158088969,
+      "compressed_bytes": 3410190
+    },
+    {
+      "binary": "reference",
+      "codec": "gzip",
+      "corpus": "src",
+      "operation": "decode",
+      "seconds": [
+        0.024135531,
+        0.024223977,
+        0.024265134,
+        0.024089895,
+        0.02406029
+      ],
+      "median_seconds": 0.024135531,
+      "MiB_per_second": 662.9230572967298,
+      "compressed_bytes": 3410190
+    },
+    {
+      "binary": "before",
+      "codec": "xz",
+      "corpus": "src",
+      "operation": "encode",
+      "seconds": [
+        0.190523066,
+        0.19248775,
+        0.191133581,
+        0.190667777,
+        0.191129052
+      ],
+      "median_seconds": 0.191129052,
+      "MiB_per_second": 83.71307152195784,
+      "compressed_bytes": 3697820
+    },
+    {
+      "binary": "before",
+      "codec": "xz",
+      "corpus": "src",
+      "operation": "decode",
+      "seconds": [
+        0.11377458,
+        0.112656103,
+        0.112916261,
+        0.113114873,
+        0.113162834
+      ],
+      "median_seconds": 0.113114873,
+      "MiB_per_second": 141.44912667673682,
+      "compressed_bytes": 3697820
+    },
+    {
+      "binary": "now",
+      "codec": "xz",
+      "corpus": "src",
+      "operation": "encode",
+      "seconds": [
+        0.135047553,
+        0.134859171,
+        0.135044939,
+        0.135060558,
+        0.135301991
+      ],
+      "median_seconds": 0.135047553,
+      "MiB_per_second": 118.47678572894988,
+      "compressed_bytes": 2490916
+    },
+    {
+      "binary": "now",
+      "codec": "xz",
+      "corpus": "src",
+      "operation": "decode",
+      "seconds": [
+        0.061608093,
+        0.06119619,
+        0.061156496,
+        0.061113115,
+        0.061054304
+      ],
+      "median_seconds": 0.061156496,
+      "MiB_per_second": 261.623883748997,
+      "compressed_bytes": 2490916
+    },
+    {
+      "binary": "reference",
+      "codec": "xz",
+      "corpus": "src",
+      "operation": "encode",
+      "seconds": [
+        0.253452296,
+        0.254746012,
+        0.248266211,
+        0.248054293,
+        0.248525607
+      ],
+      "median_seconds": 0.248525607,
+      "MiB_per_second": 64.37968382066963,
+      "compressed_bytes": 2185064
+    },
+    {
+      "binary": "reference",
+      "codec": "xz",
+      "corpus": "src",
+      "operation": "decode",
+      "seconds": [
+        0.041058216,
+        0.040906472,
+        0.040839276,
+        0.040871706,
+        0.040859023
+      ],
+      "median_seconds": 0.040871706,
+      "MiB_per_second": 391.46885623027333,
+      "compressed_bytes": 2185064
+    },
+    {
+      "binary": "before",
+      "codec": "zstd",
+      "corpus": "src",
+      "operation": "encode",
+      "seconds": [
+        0.052538205,
+        0.052429561,
+        0.052324293,
+        0.052199459,
+        0.052251737
+      ],
+      "median_seconds": 0.052324293,
+      "MiB_per_second": 305.7853070274643,
+      "compressed_bytes": 3916773
+    },
+    {
+      "binary": "before",
+      "codec": "zstd",
+      "corpus": "src",
+      "operation": "decode",
+      "seconds": [
+        0.007854159,
+        0.00773225,
+        0.007713525,
+        0.007699348,
+        0.007690331
+      ],
+      "median_seconds": 0.007713525,
+      "MiB_per_second": 2074.2786209936444,
+      "compressed_bytes": 3916773
+    },
+    {
+      "binary": "now",
+      "codec": "zstd",
+      "corpus": "src",
+      "operation": "encode",
+      "seconds": [
+        0.043101407,
+        0.042981834,
+        0.042876596,
+        0.042831282,
+        0.042830209
+      ],
+      "median_seconds": 0.042876596,
+      "MiB_per_second": 373.16395172788435,
+      "compressed_bytes": 2478024
+    },
+    {
+      "binary": "now",
+      "codec": "zstd",
+      "corpus": "src",
+      "operation": "decode",
+      "seconds": [
+        0.00716194,
+        0.007088563,
+        0.007054098,
+        0.007060119,
+        0.007046424
+      ],
+      "median_seconds": 0.007060119,
+      "MiB_per_second": 2266.2507529972227,
+      "compressed_bytes": 2478024
+    },
+    {
+      "binary": "reference",
+      "codec": "zstd",
+      "corpus": "src",
+      "operation": "encode",
+      "seconds": [
+        0.030170087,
+        0.030448851,
+        0.030393486,
+        0.03028367,
+        0.030726852
+      ],
+      "median_seconds": 0.030393486,
+      "MiB_per_second": 526.4285906526155,
+      "compressed_bytes": 2487989
+    },
+    {
+      "binary": "reference",
+      "codec": "zstd",
+      "corpus": "src",
+      "operation": "decode",
+      "seconds": [
+        0.007294489,
+        0.007255366,
+        0.007200674,
+        0.007188791,
+        0.007143726
+      ],
+      "median_seconds": 0.007200674,
+      "MiB_per_second": 2222.014217002464,
+      "compressed_bytes": 2487989
+    },
+    {
+      "binary": "before",
+      "codec": "tar",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.003008742,
+        0.002846869,
+        0.002733315,
+        0.002948099,
+        0.002744968
+      ],
+      "median_seconds": 0.002846869,
+      "MiB_per_second": 5620.20943007915,
+      "compressed_bytes": 16811520
+    },
+    {
+      "binary": "before",
+      "codec": "tar",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.003224437,
+        0.00296521,
+        0.002891252,
+        0.003056412,
+        0.002831229
+      ],
+      "median_seconds": 0.00296521,
+      "MiB_per_second": 5395.907878362747,
+      "compressed_bytes": 16811520
+    },
+    {
+      "binary": "now",
+      "codec": "tar",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.002853762,
+        0.002566172,
+        0.002604143,
+        0.002580779,
+        0.002423375
+      ],
+      "median_seconds": 0.002580779,
+      "MiB_per_second": 6199.678469175392,
+      "compressed_bytes": 16811520
+    },
+    {
+      "binary": "now",
+      "codec": "tar",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.003100364,
+        0.002717736,
+        0.002713849,
+        0.00268215,
+        0.002577924
+      ],
+      "median_seconds": 0.002713849,
+      "MiB_per_second": 5895.685426860522,
+      "compressed_bytes": 16811520
+    },
+    {
+      "binary": "reference",
+      "codec": "tar",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.003559164,
+        0.003572349,
+        0.003260675,
+        0.00340782,
+        0.003448817
+      ],
+      "median_seconds": 0.003448817,
+      "MiB_per_second": 4639.271959051466,
+      "compressed_bytes": 16814080
+    },
+    {
+      "binary": "reference",
+      "codec": "tar",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.003917066,
+        0.003562891,
+        0.00358871,
+        0.003518548,
+        0.00378612
+      ],
+      "median_seconds": 0.00358871,
+      "MiB_per_second": 4458.426565534691,
+      "compressed_bytes": 16814080
+    },
+    {
+      "binary": "before",
+      "codec": "tgz",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.387701993,
+        0.386914156,
+        0.390327056,
+        0.388077909,
+        0.386127752
+      ],
+      "median_seconds": 0.387701993,
+      "MiB_per_second": 41.268810294715195,
+      "compressed_bytes": 3467334
+    },
+    {
+      "binary": "before",
+      "codec": "tgz",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.031972097,
+        0.031782561,
+        0.031636187,
+        0.031539967,
+        0.031556337
+      ],
+      "median_seconds": 0.031636187,
+      "MiB_per_second": 505.7499502073369,
+      "compressed_bytes": 3467334
+    },
+    {
+      "binary": "now",
+      "codec": "tgz",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.236410248,
+        0.236360765,
+        0.236118441,
+        0.235941689,
+        0.235732176
+      ],
+      "median_seconds": 0.236118441,
+      "MiB_per_second": 67.76260224418473,
+      "compressed_bytes": 3434114
+    },
+    {
+      "binary": "now",
+      "codec": "tgz",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.026467214,
+        0.026153315,
+        0.026063196,
+        0.025991933,
+        0.026031687
+      ],
+      "median_seconds": 0.026063196,
+      "MiB_per_second": 613.8924788809477,
+      "compressed_bytes": 3434114
+    },
+    {
+      "binary": "reference",
+      "codec": "tgz",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.241918117,
+        0.241976817,
+        0.242043392,
+        0.241998968,
+        0.241947382
+      ],
+      "median_seconds": 0.241976817,
+      "MiB_per_second": 66.12203680652597,
+      "compressed_bytes": 3437974
+    },
+    {
+      "binary": "reference",
+      "codec": "tgz",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.028867595,
+        0.028576489,
+        0.028682798,
+        0.02853445,
+        0.028569146
+      ],
+      "median_seconds": 0.028576489,
+      "MiB_per_second": 559.9008331639342,
+      "compressed_bytes": 3437974
+    },
+    {
+      "binary": "before",
+      "codec": "txz",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.219151162,
+        0.219724747,
+        0.21960326,
+        0.220062241,
+        0.219668572
+      ],
+      "median_seconds": 0.219668572,
+      "MiB_per_second": 72.83700100713541,
+      "compressed_bytes": 3584676
+    },
+    {
+      "binary": "before",
+      "codec": "txz",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.09400722,
+        0.093780806,
+        0.09486547,
+        0.094562653,
+        0.093808078
+      ],
+      "median_seconds": 0.09400722,
+      "MiB_per_second": 170.19969317250312,
+      "compressed_bytes": 3584676
+    },
+    {
+      "binary": "now",
+      "codec": "txz",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.222835071,
+        0.222550106,
+        0.222779536,
+        0.222877039,
+        0.223135675
+      ],
+      "median_seconds": 0.222835071,
+      "MiB_per_second": 71.80198309089326,
+      "compressed_bytes": 2296332
+    },
+    {
+      "binary": "now",
+      "codec": "txz",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.05129341,
+        0.051119444,
+        0.05110684,
+        0.0510372,
+        0.051071884
+      ],
+      "median_seconds": 0.05110684,
+      "MiB_per_second": 313.0696399933942,
+      "compressed_bytes": 2296332
+    },
+    {
+      "binary": "reference",
+      "codec": "txz",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        1.898084159,
+        1.905172662,
+        1.902775086,
+        1.902432083,
+        1.9055287
+      ],
+      "median_seconds": 1.902775086,
+      "MiB_per_second": 8.408771019613823,
+      "compressed_bytes": 1745268
+    },
+    {
+      "binary": "reference",
+      "codec": "txz",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.039902519,
+        0.039712843,
+        0.039646869,
+        0.03954606,
+        0.03965258
+      ],
+      "median_seconds": 0.03965258,
+      "MiB_per_second": 403.5046395467836,
+      "compressed_bytes": 1745268
+    },
+    {
+      "binary": "before",
+      "codec": "tzst",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.054287585,
+        0.054180555,
+        0.054080257,
+        0.054014042,
+        0.053937509
+      ],
+      "median_seconds": 0.054080257,
+      "MiB_per_second": 295.8565821904286,
+      "compressed_bytes": 4001481
+    },
+    {
+      "binary": "before",
+      "codec": "tzst",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.010244631,
+        0.010112413,
+        0.010030239,
+        0.009946042,
+        0.010013298
+      ],
+      "median_seconds": 0.010030239,
+      "MiB_per_second": 1595.176346246585,
+      "compressed_bytes": 4001481
+    },
+    {
+      "binary": "now",
+      "codec": "tzst",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.043719497,
+        0.043653724,
+        0.043618758,
+        0.043558124,
+        0.043567211
+      ],
+      "median_seconds": 0.043618758,
+      "MiB_per_second": 366.814662627487,
+      "compressed_bytes": 2495382
+    },
+    {
+      "binary": "now",
+      "codec": "tzst",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.009476651,
+        0.009412601,
+        0.009330517,
+        0.009302344,
+        0.009248854
+      ],
+      "median_seconds": 0.009330517,
+      "MiB_per_second": 1714.803156138079,
+      "compressed_bytes": 2495382
+    },
+    {
+      "binary": "reference",
+      "codec": "tzst",
+      "corpus": "tar-src",
+      "operation": "encode",
+      "seconds": [
+        0.034480271,
+        0.036629982,
+        0.036653617,
+        0.036858641,
+        0.036798778
+      ],
+      "median_seconds": 0.036653617,
+      "MiB_per_second": 436.51899347341356,
+      "compressed_bytes": 2497553
+    },
+    {
+      "binary": "reference",
+      "codec": "tzst",
+      "corpus": "tar-src",
+      "operation": "decode",
+      "seconds": [
+        0.012401797,
+        0.012064955,
+        0.011928739,
+        0.011717974,
+        0.011655257
+      ],
+      "median_seconds": 0.011928739,
+      "MiB_per_second": 1341.2985228363198,
+      "compressed_bytes": 2497553
+    }
+  ],
+  "checks": 124,
+  "failures": [],
+  "binaries": {
+    "before": "e02cfd167646b8386eca1993a09d59dff9e36f01c113b87352c794ff46c1dcff",
+    "now": "83f70553b3af8e1d2be1c0644c5f2bfb399212b11d3aa2271acffd27ef0f2cd9"
+  }
+}
