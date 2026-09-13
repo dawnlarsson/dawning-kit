@@ -9501,7 +9501,7 @@ static b32 util_linux_swaplabel()
         positive have = storage_read(handle, bytes, sizeof(bytes), 0);
         memory_zero(address_of identity, sizeof(identity));
         identity.path = path;
-        storage_probe_swap(handle, address_of identity, bytes, have);
+        storage_probe_swap(handle, address_of identity, bytes, have, null);
         if (!identity.type_length ||
             !file_look(handle, "", AT_EMPTY_PATH, address_of facts))
         {
@@ -9564,7 +9564,7 @@ static b32 util_linux_swaplabel()
            metadata write, then prove the pathname still names this inode. */
         have = storage_read(handle, bytes, sizeof(bytes), 0);
         memory_zero(address_of identity, sizeof(identity));
-        storage_probe_swap(handle, address_of identity, bytes, have);
+        storage_probe_swap(handle, address_of identity, bytes, have, null);
         if (!identity.type_length ||
             !ul_swap_identity_holds(handle, path, address_of facts) ||
             storage_write(handle, metadata, sizeof(metadata), 1036) !=
@@ -13410,23 +13410,15 @@ static string_address ul_ipcs_field(address_any opaque, p8 column,
                                     p8 address_to scratch)
 {
         string_address value = ul_ipc_field(opaque, column, scratch);
-        p8 hold[48];
-        positive length;
-        positive pad;
-
         if (!ul_ipcs_size_align ||
             (column != UL_IPC_SIZE && column != UL_IPC_USEDBYTES))
                 return value;
-        length = string_length(value);
-        if (length >= ul_ipcs_size_align || length >= array_count(hold))
+        positive length = string_length(value);
+        if (length >= ul_ipcs_size_align || length >= 48)
                 return value;
-        for (positive i = 0; i <= length; i++)
-                hold[i] = value[i];
-        pad = ul_ipcs_size_align - length;
-        for (positive i = 0; i < pad; i++)
-                scratch[i] = ' ';
-        for (positive i = 0; i <= length; i++)
-                scratch[pad + i] = hold[i];
+        positive pad = ul_ipcs_size_align - length;
+        memory_copy(scratch + pad, value, length + 1);
+        memory_fill(scratch, ' ', pad);
         return scratch;
 }
 

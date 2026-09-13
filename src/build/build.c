@@ -846,19 +846,10 @@ static bool build_lines_next(build_lines address_to walk)
         if (!walk->at || !*walk->at)
                 return false;
 
-        stop = string_first_of(walk->at, '\n');
+        stop = string_first_of_or_end(walk->at, '\n');
         walk->line = walk->at;
-
-        if (stop)
-        {
-                walk->length = (positive)(stop - walk->at);
-                walk->at = stop + 1;
-        }
-        else
-        {
-                walk->length = string_length(walk->at);
-                walk->at += walk->length;
-        }
+        walk->length = (positive)(stop - walk->at);
+        walk->at = stop + (*stop != end);
 
         return true;
 }
@@ -5518,6 +5509,40 @@ static fn build_usage()
         log_flush();
 }
 
+/* Command metadata owns validation and setup order. Profiles are resolved
+   before this table, so a profile can still shadow a command name. */
+#define BUILD_COMMANDS(X) \
+    X(CONFIG, "config", 2, 0, true, true, null) \
+    X(VERIFY_CONFIG, "verify-config", 3, 0, true, false, \
+      "verify_config: usage: build verify-config <built .config> [profile ...]\n") \
+    X(ASM, "asm", 5, 5, false, false, \
+      "asm: usage: asm <arch> <input.asm> <output.S>\n") \
+    X(SPARK, "spark", 4, 0, true, true, \
+      "spark: usage: spark <source_without_extension> <output> [debug]\n") \
+    X(KEY, "key", 3, 0, true, true, null) \
+    X(KEY_ONE, "key-one", 3, 0, true, true, null) \
+    X(SIZE, "size", 3, 0, false, false, null) \
+    X(FREESTANDING, "freestanding", 2, 0, false, true, null) \
+    X(FLOOR, "floor", 2, 0, true, false, null) \
+    X(HELP, "--help", 2, 0, false, false, null) \
+    X(HELP_SHORT, "-h", 2, 0, false, false, null)
+#define BUILD_COMMAND_ID(id, ...) BUILD_##id,
+enum { BUILD_COMMANDS(BUILD_COMMAND_ID) };
+#undef BUILD_COMMAND_ID
+
+static const struct
+{
+        string_address name;
+        p8 minimum, maximum;
+        bool safe, config;
+        string_address usage;
+} build_commands[] = {
+#define BUILD_COMMAND_ROW(id, ...) {__VA_ARGS__},
+        BUILD_COMMANDS(BUILD_COMMAND_ROW)
+#undef BUILD_COMMAND_ROW
+};
+#undef BUILD_COMMANDS
+
 static string_address build_words_kept[BUILD_ARGUMENT_ROOM];
 
 b32 main()
@@ -5584,123 +5609,59 @@ b32 main()
                         command = null;
         }
 
-        if (command && word_is(command, "config"))
+        for (positive mode = 0; command && mode < array_count(build_commands); mode++)
         {
-                build_is_safe();
-                build_config_load();
-                return build_config((string_address address_to)(arguments + 2),
-                                    count - 2);
-        }
-
-        if (command && word_is(command, "verify-config"))
-        {
-                build_is_safe();
-
-                if (count < 3)
+                if (!word_is(command, build_commands[mode].name))
+                        continue;
+                if (build_commands[mode].safe)
+                        build_is_safe();
+                if (build_commands[mode].config)
+                        build_config_load();
+                if (count < build_commands[mode].minimum ||
+                    (build_commands[mode].maximum && count > build_commands[mode].maximum))
                 {
-                        string_format(log_error,
-                                      "verify_config: usage: build verify-config <built .config> [profile ...]\n");
-                        log_flush();
+                        if (build_commands[mode].usage)
+                        {
+                                string_format(log_error, "%s", build_commands[mode].usage);
+                                log_flush();
+                        }
                         return 1;
                 }
 
-                return build_verify_config(arguments[2],
-                                           (string_address address_to)(arguments + 3),
-                                           count - 3);
-        }
-
-        if (command && word_is(command, "asm"))
-        {
-                if (count != 5)
+                switch (mode)
                 {
-                        string_format(log_error,
-                                      "asm: usage: asm <arch> <input.asm> <output.S>\n");
-                        log_flush();
-                        return 1;
-                }
-
-                return build_asm(arguments[2], arguments[3], arguments[4]);
-        }
-
-        if (command && word_is(command, "spark"))
-        {
-                build_is_safe();
-                build_config_load();
-
-                if (count < 4)
+                case BUILD_CONFIG:
+                        return build_config(arguments + 2, count - 2);
+                case BUILD_VERIFY_CONFIG:
+                        return build_verify_config(arguments[2], arguments + 3, count - 3);
+                case BUILD_ASM:
+                        return build_asm(arguments[2], arguments[3], arguments[4]);
+                case BUILD_SPARK:
+                        return build_spark(arguments[2], arguments[3], count > 4 ? arguments[4] : null);
+                case BUILD_KEY:
+                case BUILD_KEY_ONE:
                 {
-                        string_format(log_error,
-                                      "spark: usage: spark <source_without_extension> <output> [debug]\n");
+                        bool good = true;
+                        string_address answer = mode == BUILD_KEY
+                            ? build_key(arguments[2]) : build_key_one(arguments[2], address_of good);
+                        if (!good)
+                                return 1;
+                        string_format(log, "%s\n", answer);
                         log_flush();
-                        return 1;
+                        return 0;
                 }
-
-                return build_spark(arguments[2], arguments[3],
-                                   count > 4 ? arguments[4] : null);
-        }
-
-        if (command && word_is(command, "key"))
-        {
-                build_is_safe();
-                build_config_load();
-
-                if (count < 3)
-                        return 1;
-
-                string_format(log, "%s\n", build_key(arguments[2]));
-                log_flush();
-                return 0;
-        }
-
-        if (command && word_is(command, "key-one"))
-        {
-                bool good = true;
-                string_address answer;
-
-                build_is_safe();
-                build_config_load();
-
-                if (count < 3)
-                        return 1;
-
-                answer = build_key_one(arguments[2], address_of good);
-
-                if (!good)
-                        return 1;
-
-                string_format(log, "%s\n", answer);
-                log_flush();
-                return 0;
-        }
-
-        if (command && word_is(command, "size"))
-        {
-                if (count < 3)
-                        return 1;
-
-                build_size(arguments[2]);
-                return 0;
-        }
-
-        if (command && word_is(command, "freestanding"))
-        {
-                build_config_load();
-
-                return build_freestanding((string_address address_to)(arguments + 2),
-                                          count - 2);
-        }
-
-        if (command && word_is(command, "floor"))
-        {
-                build_is_safe();
-
-                return build_floor(count > 2 ? arguments[2] : null);
-        }
-
-        if (command && (word_is(command, "--help") || word_is(command, "-h")))
-        {
-                build_usage();
-                return 0;
+                case BUILD_SIZE:
+                        build_size(arguments[2]);
+                        return 0;
+                case BUILD_FREESTANDING:
+                        return build_freestanding(arguments + 2, count - 2);
+                case BUILD_FLOOR:
+                        return build_floor(count > 2 ? arguments[2] : null);
+                case BUILD_HELP:
+                case BUILD_HELP_SHORT:
+                        build_usage();
+                        return 0;
+                }
         }
 
         /*

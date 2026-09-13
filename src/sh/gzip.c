@@ -1068,12 +1068,9 @@ static positive gzip_src_fill;
 static positive gzip_src_at;
 static positive gzip_src_abs;
 static bool gzip_src_eof;
-static p8 address_to gzip_enc_mem;
-static positive gzip_enc_mem_len;
-static positive gzip_enc_mem_at;
 static p8 address_to gzip_feed;
 static positive gzip_feed_len;
-static positive gzip_feed_at;
+static bool gzip_feed_last;
 
 static bool gzip_enc_pull(void)
 {
@@ -1110,35 +1107,17 @@ static bool gzip_enc_pull(void)
                 return true;
         if (gzip_feed)
         {
-                positive left = gzip_feed_len - gzip_feed_at;
-                positive take = left > room ? room : left;
-
-                if (take)
+                positive take = min(gzip_feed_len, room);
+                memory_copy(gzip_src_hold + gzip_src_fill, gzip_feed, take);
+                gzip_src_fill += take;
+                gzip_feed += take;
+                gzip_feed_len -= take;
+                if (!gzip_feed_len)
                 {
-                        memory_copy(gzip_src_hold + gzip_src_fill,
-                                    gzip_feed + gzip_feed_at, take);
-                        gzip_src_fill += take;
-                        gzip_feed_at += take;
-                }
-                if (gzip_feed_at >= gzip_feed_len)
                         gzip_feed = null;
-                return true;
-        }
-        if (gzip_enc_mem)
-        {
-                positive left = gzip_enc_mem_len - gzip_enc_mem_at;
-                positive take = left > room ? room : left;
-
-                if (take)
-                {
-                        memory_copy(gzip_src_hold + gzip_src_fill,
-                                    gzip_enc_mem + gzip_enc_mem_at, take);
-                        gzip_src_fill += take;
-                        gzip_enc_mem_at += take;
+                        gzip_src_eof = gzip_feed_last;
                 }
-                if (gzip_enc_mem_at >= gzip_enc_mem_len)
-                        gzip_src_eof = true;
-                return gzip_src_at < gzip_src_fill || gzip_src_eof;
+                return true;
         }
         if (gzip_input.fd < 0)
                 return true;
@@ -1736,6 +1715,7 @@ static bool gzip_encode_setup(p8 level)
         gzip_src_eof = false;
         gzip_hash_ready = false;
         gzip_feed = null;
+        gzip_feed_last = false;
 
         if (!gzip_out_reserve(10))
                 return false;
@@ -1762,10 +1742,8 @@ static bool gzip_encode_trailer(void)
         return gzip_put_flush();
 }
 
-static bool gzip_stream_encode(p8 level)
+static bool gzip_stream_encode(void)
 {
-        if (!gzip_encode_setup(level))
-                return false;
         for (;;)
         {
                 if (!gzip_enc_pull())
@@ -1786,15 +1764,18 @@ static bipolar gzip_deflate_mem(p8 address_to src, positive src_len,
         bool ok;
 
         gzip_input.fd = -1;
-        gzip_enc_mem = src;
-        gzip_enc_mem_len = src_len;
-        gzip_enc_mem_at = 0;
         gzip_out_fd = -1;
         gzip_output.bytes = dst;
         gzip_output.room = dst_cap;
         gzip_output.used = 0;
-        ok = gzip_stream_encode(level);
-        gzip_enc_mem = null;
+        ok = gzip_encode_setup(level);
+        gzip_feed = src;
+        gzip_feed_len = src_len;
+        gzip_feed_last = true;
+        gzip_src_eof = !src_len;
+        if (ok)
+                ok = gzip_stream_encode();
+        gzip_feed = null;
         gzip_output.bytes = null;
         return ok ? (bipolar)gzip_output.used : -1;
 }
@@ -1906,7 +1887,6 @@ static bool gzip_encode_begin(bipolar out, p8 level)
         gzip_out_fd = out;
         gzip_output.bytes = null;
         gzip_input.fd = -1;
-        gzip_enc_mem = null;
         gzip_feed = null;
         return gzip_encode_setup(level);
 }
@@ -1915,7 +1895,6 @@ static bool gzip_encode_write(p8 address_to src, positive n)
 {
         gzip_feed = src;
         gzip_feed_len = n;
-        gzip_feed_at = 0;
         gzip_src_eof = false;
         while (gzip_feed)
         {
@@ -1923,8 +1902,6 @@ static bool gzip_encode_write(p8 address_to src, positive n)
                         return false;
                 if (!gzip_deflate_pump(false))
                         return false;
-                if (gzip_feed && gzip_feed_at >= gzip_feed_len)
-                        gzip_feed = null;
         }
         return gzip_out_flush();
 }
@@ -1945,13 +1922,12 @@ static b32 gzip_stream(bipolar in, bipolar out, bool decode, p8 level)
         gzip_input.mem = null;
         gzip_out_fd = out;
         gzip_output.bytes = null;
-        gzip_enc_mem = null;
         gzip_feed = null;
         gzip_status = 0;
         if (decode)
                 ok = gzip_stream_decode();
         else
-                ok = gzip_stream_encode(level);
+                ok = gzip_encode_setup(level) && gzip_stream_encode();
         if (!ok)
         {
                 if (gzip_why)

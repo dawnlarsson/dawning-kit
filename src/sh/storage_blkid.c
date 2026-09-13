@@ -352,7 +352,8 @@ static fn storage_probe_ext(storage_identity address_to identity,
 }
 
 static fn storage_probe_fat(storage_identity address_to identity,
-                            p8 address_to bytes, positive have)
+                            p8 address_to bytes, positive have,
+                            p64 address_to signature_offset)
 {
         positive sector;
         bool fat32;
@@ -377,6 +378,9 @@ static fn storage_probe_fat(storage_identity address_to identity,
 
         serial_at = fat32 ? 67 : 39;
         label_at = fat32 ? 71 : 43;
+        if (signature_offset)
+                *signature_offset = storage_bytes(bytes, have, 82,
+                    (p8 address_to)"FAT32", 5) ? 82 : 54;
         storage_set_type(identity, (string_address)"vfat");
         storage_uuid_fat(identity->uuid, storage_le32(bytes + serial_at));
         identity->uuid_length = 9;
@@ -932,7 +936,8 @@ static bool storage_udf_metadata(bipolar handle,
    structures beginning at sector 16.  Walk a bounded sixteen descriptors and
    require the complete BEA -> NSR -> TEA order, not an isolated NSR word. */
 static fn storage_probe_udf(bipolar handle,
-                            storage_identity address_to identity)
+                            storage_identity address_to identity,
+                            p64 address_to signature_offset)
 {
         p8 descriptor[2048];
         bool beginning = false;
@@ -969,6 +974,8 @@ static fn storage_probe_udf(bipolar handle,
                         if (beginning || namespace_seen)
                                 return;
                         beginning = true;
+                        if (signature_offset)
+                                *signature_offset = sector * 2048 + 1;
                 }
                 else if (memory_is_5(name, 'N', 'S', 'R', '0', '2') ||
                          memory_is_5(name, 'N', 'S', 'R', '0', '3'))
@@ -1118,7 +1125,8 @@ static bool storage_swap_magic(bipolar handle, p8 address_to bytes,
 
 static fn storage_probe_swap(bipolar handle,
                              storage_identity address_to identity,
-                             p8 address_to bytes, positive have)
+                             p8 address_to bytes, positive have,
+                             p64 address_to signature_offset)
 {
         p64 offset;
         bool modern;
@@ -1127,6 +1135,8 @@ static fn storage_probe_swap(bipolar handle,
                                 address_of offset, address_of modern))
                 return;
 
+        if (signature_offset)
+                *signature_offset = offset;
         storage_set_type(identity, (string_address)"swap");
 
         if (modern && have >= 1068)
@@ -1333,7 +1343,8 @@ enum
    recognisers, including NTFS's conditional secondary metadata read. */
 static fn storage_probe_kind(p8 kind, bipolar handle,
                               storage_identity address_to identity,
-                              p8 address_to bytes, positive have)
+                              p8 address_to bytes, positive have,
+                              p64 address_to signature_offset)
 {
         switch (kind)
         {
@@ -1347,73 +1358,25 @@ static fn storage_probe_kind(p8 kind, bipolar handle,
                 if (identity->type_length)
                         storage_probe_ntfs_label(handle, identity, bytes, have);
                 break;
-        case STORAGE_FAT: storage_probe_fat(identity, bytes, have); break;
+        case STORAGE_FAT: storage_probe_fat(identity, bytes, have, signature_offset); break;
         case STORAGE_EXT: storage_probe_ext(identity, bytes, have); break;
         case STORAGE_EROFS: storage_probe_erofs(identity, bytes, have); break;
-        case STORAGE_SWAP: storage_probe_swap(handle, identity, bytes, have); break;
+        case STORAGE_SWAP: storage_probe_swap(handle, identity, bytes, have, signature_offset); break;
         case STORAGE_BTRFS: storage_probe_btrfs(handle, identity, bytes); break;
-        case STORAGE_UDF: storage_probe_udf(handle, identity); break;
+        case STORAGE_UDF: storage_probe_udf(handle, identity, signature_offset); break;
         case STORAGE_ISO9660: storage_probe_iso9660(handle, identity, bytes); break;
         }
 }
 
-static bool storage_signature_location(
-    p8 kind, bipolar handle,
-    p64 address_to offset, p8 address_to length,
-    string_address address_to usage)
-{
-        static const struct { p32 offset; p8 length; } locations[] = {
-            [STORAGE_LUKS] = {0, 6}, [STORAGE_XFS] = {0, 4},
-            [STORAGE_SQUASHFS] = {0, 4}, [STORAGE_F2FS] = {0x400, 4},
-            [STORAGE_EXFAT] = {3, 8}, [STORAGE_NTFS] = {3, 8},
-            [STORAGE_FAT] = {54, 5}, [STORAGE_EXT] = {0x438, 2},
-            [STORAGE_EROFS] = {0x400, 4}, [STORAGE_SWAP] = {0, 10},
-            [STORAGE_BTRFS] = {0x10040, 8}, [STORAGE_UDF] = {0, 5},
-            [STORAGE_ISO9660] = {0x8001, 5},
-        };
-        address_to offset = locations[kind].offset;
-        address_to length = locations[kind].length;
-        address_to usage = kind == STORAGE_LUKS ? (string_address)"crypto"
-                           : kind == STORAGE_SWAP ? (string_address)"other"
-                           : (string_address)"filesystem";
-        if (kind == STORAGE_FAT)
-        {
-                p8 boot[90];
-
-                if (storage_read(handle, boot, sizeof(boot), 0) != sizeof(boot))
-                        return false;
-                address_to offset = storage_bytes(
-                    boot, sizeof(boot), 82, (p8 address_to)"FAT32", 5)
-                    ? 82 : 54;
-        }
-        else if (kind == STORAGE_SWAP)
-        {
-                p8 bytes[STORAGE_PROBE_ROOM];
-                bool modern;
-                positive have = storage_read(handle, bytes,
-                                             sizeof(bytes), 0);
-
-                return storage_swap_magic(handle, bytes, have, offset,
-                                           address_of modern);
-        }
-        else if (kind == STORAGE_UDF)
-        {
-                p8 descriptor[2048];
-
-                for (positive sector = 16; sector < 32; sector++)
-                        if (storage_read(handle, descriptor,
-                                         sizeof(descriptor), sector * 2048) ==
-                                sizeof(descriptor) &&
-                            memory_is_5(descriptor + 1,
-                                        'B', 'E', 'A', '0', '1'))
-                        {
-                                address_to offset = sector * 2048 + 1;
-                                return true;
-                        }
-                return false;
-        }
-        return true;
-}
+static const struct { p32 offset; p8 length; } storage_signature_locations[] = {
+    [STORAGE_LUKS] = {0, 6}, [STORAGE_XFS] = {0, 4},
+    [STORAGE_SQUASHFS] = {0, 4}, [STORAGE_F2FS] = {0x400, 4},
+    [STORAGE_EXFAT] = {3, 8}, [STORAGE_NTFS] = {3, 8},
+    [STORAGE_FAT] = {54, 5}, [STORAGE_EXT] = {0x438, 2},
+    [STORAGE_EROFS] = {0x400, 4}, [STORAGE_SWAP] = {0, 10},
+    [STORAGE_BTRFS] = {0x10040, 8}, [STORAGE_UDF] = {0, 5},
+    [STORAGE_ISO9660] = {0x8001, 5},
+};
 
 /* Enumerate every filesystem/container recogniser over one open descriptor.
    The recognisers remain the sole source of validation and metadata; wipefs
@@ -1435,15 +1398,18 @@ static positive storage_each_signature_handle(
         {
                 storage_signature signature = {0};
                 signature.identity.path = path;
-                storage_probe_kind(order[at], handle, address_of signature.identity,
-                                     bytes, have);
+                p8 kind = order[at];
+                signature.offset = storage_signature_locations[kind].offset;
+                signature.length = storage_signature_locations[kind].length;
+                signature.usage = kind == STORAGE_LUKS ? (string_address)"crypto"
+                                : kind == STORAGE_SWAP ? (string_address)"other"
+                                : (string_address)"filesystem";
+                storage_probe_kind(kind, handle, address_of signature.identity,
+                                   bytes, have, address_of signature.offset);
                 if (!signature.identity.type_length)
                         continue;
                 found++;
-                if (storage_signature_location(
-                        order[at], handle, address_of signature.offset,
-                        address_of signature.length, address_of signature.usage) &&
-                    signature.length <= sizeof(signature.magic) &&
+                if (signature.length <= sizeof(signature.magic) &&
                     storage_read(handle, signature.magic, signature.length,
                                  signature.offset) == signature.length &&
                     !visitor(address_of signature, context))
@@ -1491,7 +1457,7 @@ bool storage_probe_device(string_address path,
         /* Container and fixed-superblock formats precede the deliberately
            broad boot-sector families. */
         for (p8 kind = 0; kind < STORAGE_PROBES && !identity->type_length; kind++)
-                storage_probe_kind(kind, handle, identity, bytes, have);
+                storage_probe_kind(kind, handle, identity, bytes, have, null);
 
         system_close(handle);
         return identity->type_length || identity->partuuid_length ||

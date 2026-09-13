@@ -140,25 +140,7 @@ static inline INLINE p8 address_to storage_line_next(
 /* Return one whitespace-delimited field and terminate it in place. */
 static string_address storage_field(p8 address_to address_to cursor)
 {
-        p8 address_to at = *cursor;
-        p8 address_to answer;
-
-        at += string_span_of_set(at, " \t");
-
-        if (!*at)
-        {
-                address_to cursor = at;
-                return null;
-        }
-
-        answer = at;
-        at += string_span_without_set(at, " \t");
-
-        if (*at)
-                *at++ = end;
-
-        address_to cursor = at;
-        return answer;
+        return string_token_next(null, " \t", cursor);
 }
 
 /* Parse one line after its newline has already become NUL. */

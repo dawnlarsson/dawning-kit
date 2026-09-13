@@ -370,79 +370,7 @@ static bipolar http_trailer_line(p8 address_to line, positive line_length)
         return 0;
 }
 
-static bipolar http_trailers_buffer(p8 address_to bytes, positive size)
-{
-        positive at = 0;
-
-        while (at < size && at < HTTP_HEAD_MAX)
-        {
-                positive span = memory_span_without_byte(bytes + at, '\n',
-                                                         size - at);
-                positive line_length;
-                bipolar line;
-
-                if (span == size - at)
-                        return HTTP_MALFORMED;
-                line_length = span + 1;
-                if (line_length > HTTP_HEAD_MAX - at)
-                        return HTTP_MALFORMED;
-                line = http_trailer_line(bytes + at, line_length);
-                if (line < 0)
-                        return line;
-                at += line_length;
-                if (line)
-                        return at == size ? HTTP_OK : HTTP_MALFORMED;
-        }
-
-        return HTTP_MALFORMED;
-}
-
-/*
-        Chunked, unwrapped in place.
-
-        Each chunk is a hexadecimal length on its own line, that many bytes,
-        then a blank line, ending with a zero length and a complete trailer
-        section. Unwrapping in place is safe because what is written is always
-        behind what is read.
-*/
-static bipolar http_unchunk(p8 address_to bytes, positive size)
-{
-        positive read = 0;
-        positive written = 0;
-
-        for (;;)
-        {
-                positive line = read;
-                positive length;
-                positive span = memory_span_without_byte(
-                    bytes + read, '\n', size - read);
-
-                if (span == size - read)
-                        return HTTP_MALFORMED;
-
-                if (http_chunk_line(bytes + line, span + 1,
-                                    address_of length))
-                        return HTTP_MALFORMED;
-                read += span + 1;
-
-                if (!length)
-                        return http_trailers_buffer(bytes + read, size - read)
-                                   ? HTTP_MALFORMED
-                                   : (bipolar)written;
-
-                if (length > size - read)
-                        return HTTP_MALFORMED;
-
-                memory_copy(bytes + written, bytes + read, length);
-                written += length;
-                read += length;
-
-                if (read < size && bytes[read] == '\r')
-                        read++;
-                if (read >= size || bytes[read++] != '\n')
-                        return HTTP_MALFORMED;
-        }
-}
+static bipolar http_unchunk(p8 address_to bytes, positive size);
 
 /*
         The whole exchange.
@@ -719,6 +647,10 @@ typedef struct
         http_link address_to link;
         p8 address_to stash;
         positive stash_used;
+        // Streaming reuses the consumed header buffer for split lines and I/O.
+        p8 address_to scratch;
+        // A memory body compacts payload behind its read cursor.
+        p8 address_to output;
 } http_body;
 
 static fn http_link_close(http_link address_to link)
@@ -787,102 +719,109 @@ static bipolar http_body_read(http_body address_to body, p8 address_to into,
                 if (take > room)
                         take = room;
                 memory_copy(into, body->stash, take);
-                memory_copy(body->stash, body->stash + take, body->stash_used - take);
+                body->stash += take;
                 body->stash_used -= take;
                 address_to got = take;
                 return HTTP_OK;
         }
 
-        return http_link_read(body->link, into, room, got);
+        if (body->link)
+                return http_link_read(body->link, into, room, got);
+        *got = 0;
+        return HTTP_OK;
 }
 
-static bipolar http_copy_n(http_body address_to body, bipolar dest, positive want)
+/* One transfer loop for exact lengths, EOF bodies and in-place decoding.
+   Stashed payload is already contiguous; only fresh socket data needs bounce. */
+static bipolar http_copy(http_body address_to body, bipolar dest, positive want,
+                          bool exact)
 {
-        p8 bounce[8192];
-
+        if (!body->link && exact && want > body->stash_used)
+                return HTTP_NO_REPLY;
         while (want)
         {
-                positive take = want;
+                p8 address_to data = body->scratch;
+                positive take = min(want, (positive)8192);
                 positive got = 0;
 
-                if (take > sizeof bounce)
-                        take = sizeof bounce;
-                if (http_body_read(body, bounce, take, address_of got))
+                if (body->stash_used)
+                {
+                        data = body->stash;
+                        got = min(take, body->stash_used);
+                        body->stash += got;
+                        body->stash_used -= got;
+                }
+                else if (http_body_read(body, data, take, address_of got))
                         return HTTP_NO_REPLY;
                 if (!got)
-                        return HTTP_NO_REPLY;
-                if (system_write_all((positive)dest, bounce, got) != got)
+                        return exact ? HTTP_NO_REPLY : HTTP_OK;
+                if (!body->link)
+                {
+                        memory_copy(body->output, data, got);
+                        body->output += got;
+                }
+                else if (system_write_all((positive)dest, data, got) != got)
                         return HTTP_NO_REPLY;
                 want -= got;
         }
-
         return HTTP_OK;
 }
 
-static bipolar http_copy_all(http_body address_to body, bipolar dest)
+/* Borrow complete framing lines from the current span. Socket lines split
+   across reads use the caller's scratch and retain the streaming line limit;
+   complete memory responses have their existing whole-response bound. */
+static bipolar http_line(http_body address_to body, positive limit,
+                          p8 address_to address_to line,
+                          positive address_to length)
 {
-        p8 bounce[8192];
-
-        for (;;)
+        positive used = body->stash_used;
+        positive span = memory_span_without_byte(body->stash, '\n', used);
+        if (span < used && (!body->link || span < limit))
         {
-                positive got = 0;
-
-                if (http_body_read(body, bounce, sizeof bounce, address_of got))
-                        return HTTP_NO_REPLY;
-                if (!got)
-                        return HTTP_OK;
-                if (system_write_all((positive)dest, bounce, got) != got)
-                        return HTTP_NO_REPLY;
+                *line = body->stash;
+                *length = span + 1;
+                body->stash += span + 1;
+                body->stash_used -= span + 1;
+                return HTTP_OK;
         }
-}
+        if (!body->link || used >= limit)
+                return HTTP_MALFORMED;
 
-static bipolar http_line(http_body address_to body, p8 address_to into, positive room,
-                         positive address_to length)
-{
-        positive used = 0;
-
-        while (used + 1 < room)
+        p8 address_to scratch = body->scratch;
+        memory_copy(scratch, body->stash, used);
+        body->stash_used = 0;
+        while (used < limit)
         {
                 positive got = 0;
-                p8 byte;
-
-                if (http_body_read(body, address_of byte, 1, address_of got))
+                if (http_link_read(body->link, scratch + used, limit - used,
+                                    address_of got))
                         return HTTP_NO_REPLY;
                 if (!got)
                         return HTTP_MALFORMED;
-                into[used++] = byte;
-                if (byte == '\n')
+                span = memory_span_without_byte(scratch + used, '\n', got);
+                if (span < got)
                 {
-                        address_to length = used;
-                        into[used] = end;
+                        *line = scratch;
+                        *length = used + span + 1;
+                        body->stash = scratch + *length;
+                        body->stash_used = got - span - 1;
                         return HTTP_OK;
                 }
+                used += got;
         }
-
         return HTTP_MALFORMED;
 }
 
-static bipolar http_body_fill(http_body address_to body, p8 address_to into,
-                              positive want)
+static bipolar http_body_byte(http_body address_to body, p8 address_to byte)
 {
-        positive have = 0;
-
-        while (have < want)
-        {
-                positive got = 0;
-
-                if (http_body_read(body, into + have, want - have, address_of got) ||
-                    !got)
-                        return HTTP_NO_REPLY;
-                have += got;
-        }
-
-        return HTTP_OK;
+        positive got = 0;
+        return http_body_read(body, byte, 1, address_of got) || !got
+                   ? HTTP_MALFORMED : HTTP_OK;
 }
 
 static bipolar http_copy_trailers(http_body address_to body)
 {
-        p8 line[HTTP_HEAD_MAX + 1];
+        p8 address_to line;
         positive total = 0;
 
         while (total < HTTP_HEAD_MAX)
@@ -890,7 +829,8 @@ static bipolar http_copy_trailers(http_body address_to body)
                 positive line_length = 0;
                 bipolar parsed;
 
-                if (http_line(body, line, sizeof line, address_of line_length))
+                if (http_line(body, HTTP_HEAD_MAX, address_of line,
+                              address_of line_length))
                         return HTTP_MALFORMED;
                 if (line_length > HTTP_HEAD_MAX - total)
                         return HTTP_MALFORMED;
@@ -907,7 +847,7 @@ static bipolar http_copy_trailers(http_body address_to body)
 
 static bipolar http_copy_chunked(http_body address_to body, bipolar dest)
 {
-        p8 line[128];
+        p8 address_to line;
 
         for (;;)
         {
@@ -915,23 +855,35 @@ static bipolar http_copy_chunked(http_body address_to body, bipolar dest)
                 positive size = 0;
                 p8 delimiter;
 
-                if (http_line(body, line, sizeof line, address_of line_length))
+                if (http_line(body, 127, address_of line,
+                              address_of line_length))
                         return HTTP_MALFORMED;
                 if (http_chunk_line(line, line_length, address_of size))
                         return HTTP_MALFORMED;
                 if (!size)
                         return http_copy_trailers(body);
-                if (http_copy_n(body, dest, size))
+                if (http_copy(body, dest, size, true))
                         return HTTP_NO_REPLY;
-                if (http_body_fill(body, address_of delimiter, 1))
+                if (http_body_byte(body, address_of delimiter))
                         return HTTP_MALFORMED;
                 if (delimiter == '\n')
                         continue;
                 if (delimiter != '\r' ||
-                    http_body_fill(body, address_of delimiter, 1) ||
+                    http_body_byte(body, address_of delimiter) ||
                     delimiter != '\n')
                         return HTTP_MALFORMED;
         }
+}
+
+
+/* The memory frontend retains strict whole-body consumption and transfers no
+   allocation: the same chunk decoder compacts within the response store. */
+static bipolar http_unchunk(p8 address_to bytes, positive size)
+{
+        http_body body = {.stash = bytes, .stash_used = size, .output = bytes};
+        if (http_copy_chunked(address_of body, -1) || body.stash_used)
+                return HTTP_MALFORMED;
+        return (bipolar)(body.output - bytes);
 }
 
 
@@ -1277,6 +1229,7 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                 body.link = address_of link;
                 body.stash = head + header;
                 body.stash_used = used - (positive)header;
+                body.scratch = head;
 
                 if (answer >= 300 && answer < 400)
                 {
@@ -1318,10 +1271,10 @@ static bipolar http_fetch_to(string_address start, bipolar dest, bool check_cert
                 if (response.body_kind == HTTP_BODY_CHUNKED)
                         status = http_copy_chunked(address_of body, dest);
                 else if (response.body_kind == HTTP_BODY_LENGTH)
-                        status = http_copy_n(address_of body, dest,
-                                             response.body_length);
+                        status = http_copy(address_of body, dest,
+                                           response.body_length, true);
                 else
-                        status = http_copy_all(address_of body, dest);
+                        status = http_copy(address_of body, dest, positive_max, false);
 
                 http_link_close(address_of link);
                 return status;

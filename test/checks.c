@@ -39305,6 +39305,7 @@ static fn fetching(void)
 */
 static fn streaming_chunk_boundaries(void)
 {
+        p8 scratch[HTTP_HEAD_MAX];
         static string_address framed[] = {"1\nA\n0\n\n",
                                           "1\r\nA\r\n0\r\n\r\n"};
         p8 address_to pages = memory(3 * 4096);
@@ -39356,7 +39357,7 @@ static fn streaming_chunk_boundaries(void)
                         http_body body = {
                             .link = address_of link,
                             .stash = pages + 8192,
-                            .stash_used = 0,
+                            .stash_used = 0, .scratch = scratch,
                         };
                         check("chunk delimiter at empty stash boundary",
                               http_copy_chunked(address_of body, output[0]) ==
@@ -39377,11 +39378,18 @@ static fn streaming_chunk_boundaries(void)
                 static const p8 bad_extension[] = {
                     '1', ';', 1, '\n', 'A', '\n', '0', '\n', '\n'};
                 static const p8 valid_trailer[] =
-                    "1;ok=\"yes\t\"\r\nA\r\n0\r\nX-Test: yes\r\n\r\n";
+                    "1;ok=\"yes\t\"\r\nA\r\n2\nBC\n0\r\nX-Test: yes\r\n\r\n";
                 static const p8 bad_trailer[] =
                     "0\r\nX-Test: bad\x01\r\n\r\n";
                 static const p8 missing_terminator[] = "0\r\n";
-                static const struct
+                p8 at_limit[128], over_limit[129];
+                memory_fill(at_limit, 'a', sizeof at_limit);
+                memory_fill(over_limit, 'a', sizeof over_limit);
+                memory_copy(at_limit, "0;", 2);
+                memory_copy(over_limit, "0;", 2);
+                memory_copy(at_limit + 126, "\n\n", 2);
+                memory_copy(over_limit + 127, "\n\n", 2);
+                const struct
                 {
                         const p8 address_to bytes;
                         positive length;
@@ -39392,9 +39400,12 @@ static fn streaming_chunk_boundaries(void)
                     {bad_trailer, sizeof bad_trailer - 1, HTTP_MALFORMED},
                     {missing_terminator, sizeof missing_terminator - 1,
                      HTTP_MALFORMED},
+                    {at_limit, sizeof at_limit, HTTP_OK},
+                    {over_limit, sizeof over_limit, HTTP_MALFORMED},
                 };
 
                 for (positive which = 0; which < array_count(cases); which++)
+                for (positive split = 0; split <= cases[which].length; split++)
                 {
                         b32 input[2];
                         b32 output[2];
@@ -39423,18 +39434,30 @@ static fn streaming_chunk_boundaries(void)
                         }
 
                         check("streaming chunk parser input queues",
-                              socket_send(input[1], cases[which].bytes,
-                                          cases[which].length, 0, null, 0) ==
-                                  (bipolar)cases[which].length);
+                              socket_send(input[1], cases[which].bytes + split,
+                                          cases[which].length - split, 0, null, 0) ==
+                                  (bipolar)(cases[which].length - split));
                         socket_shutdown(input[1], SHUT_BOTH);
 
+                        /* Header and body share this backing buffer in the client. */
+                        p8 address_to stash = scratch + 71;
+                        memory_copy(stash, cases[which].bytes, split);
                         http_link link = {.handle = input[0], .tls = false};
                         http_body body = {.link = address_of link,
-                                          .stash = null,
-                                          .stash_used = 0};
-                        check("streaming chunk extensions and trailers share strict framing",
+                                          .stash = stash, .stash_used = split,
+                                          .scratch = scratch};
+                        check("chunk framing survives every header/socket split",
                               http_copy_chunked(address_of body, output[0]) ==
                                   cases[which].expected);
+                        socket_shutdown(output[0], SHUT_BOTH);
+                        if (cases[which].expected == HTTP_OK)
+                        {
+                                p8 decoded[4];
+                                positive wanted = cases[which].bytes == valid_trailer ? 3 : 0;
+                                check("borrowed chunk payload survives scratch reuse",
+                                      system_read_retry(output[1], decoded, sizeof decoded) == wanted &&
+                                      !memory_compare(decoded, "ABC", wanted));
+                        }
                         socket_close(input[0]);
                         socket_close(input[1]);
                         socket_close(output[0]);
@@ -39442,6 +39465,19 @@ static fn streaming_chunk_boundaries(void)
                 }
         }
 
+        p8 address_to wire = memory(20032);
+        check("large chunk allocation", !system_failed(wire) && wire != null);
+        if (!system_failed(wire) && wire)
+        {
+                memory_copy(wire, "4e20\r\n", 6);
+                for (positive at = 0; at < 20000; at++) wire[6 + at] = (p8)at;
+                memory_copy(wire + 20006, "\r\n0\r\n\r\n", 7);
+                check("in-place chunk crosses copy blocks", http_unchunk(wire, 20013) == 20000);
+                bool same = true;
+                for (positive at = 0; at < 20000; at++) same &= wire[at] == (p8)at;
+                check("overlapping chunk compaction preserves binary payload", same);
+                memory_free(wire, 20032);
+        }
         memory_free(pages, 3 * 4096);
 }
 
