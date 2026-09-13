@@ -4554,10 +4554,11 @@ builtins_add(Utility(
     operands=(("-l",), ("-ln",), ("-lr",), ("-l", "1"), ("-l", "1", "2"),
               ("-Z",), ("-s",), ("-s", "echo"), ("-s", "1"), ("-s", "2"),
               ("-s", "one=two"), ("-s", "one=two", "echo"), ("-s", "nosuch"),
-              ("-e", "-"), ("-e", "-", "1"), ("-sl",)),
+              ("-e", "-"), ("-e", "-", "1"), ("-e", "true", "1"),
+              ("-e", "false", "1"), ("-e", "fc_editor", "1"), ("-sl",)),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=builtins_wrap(
-        "fc", prologue="history -c 2>/dev/null; printf 'echo one\\necho two\\n' > hf; history -r hf 2>/dev/null\n"),
+        "fc", prologue="history -c 2>/dev/null; printf 'echo one\\necho two\\n' > hf; history -r hf 2>/dev/null; fc_editor() { printf 'echo edited\\n' > \"$1\"; }\n"),
     max_flags=0))
 
 # --- which (our builtin vs the external GNU program: deliberate) ------------
@@ -9516,6 +9517,11 @@ shell_PROBE_RESTRICTED = (
     'cd /tmp >/dev/null 2>&1; echo "cd=$?"\n'
     'echo x > mw_restricted_out 2>/dev/null; echo "redir=$?"\n'
     '/bin/true >/dev/null 2>&1; echo "slash=$?"\n'
+    'command /bin/true >/dev/null 2>&1; echo "command-slash=$?"\n'
+    'command ./probe.sh >/dev/null 2>&1; echo "command-relative=$?"\n'
+    'shell_pipe=$(/bin/printf x 2>/dev/null | cat); echo "pipeline-first=[$shell_pipe]:$?"\n'
+    'shell_pipe=$(printf x | /bin/cat 2>/dev/null | cat); echo "pipeline-middle=[$shell_pipe]:$?"\n'
+    'printf x | /bin/cat >/dev/null 2>&1; echo "pipeline-last=$?"\n'
     'command -p true >/dev/null 2>&1; echo "cmdp=$?"\n'
     'hash -p /bin/true mw_h >/dev/null 2>&1; echo "hashp=$?"\n'
     'PATH=/tmp; echo "path=$?:$PATH"\n'
@@ -15782,7 +15788,9 @@ def harness_core_state(argv):
     def canvas_sources(work, arch):
         paint = (root / "src/canvas/paint.c").read_text()
         text = (root / "src/canvas/text.c").read_text()
-        cells = section(canvas, "struct target\n", "static void target_row")
+        cells = section(canvas, "#define target_mark(pixels)",
+                        "// The border and titlebar")
+        cells += section(canvas, "struct target\n", "static void target_row")
         cells += section(compose, "struct shape\n", "static _Bool shape_span")
         cells += paint[paint.index("static CONST int round_inset"):]
         cells += section(compose, "static _Bool shape_span", "static void shape_blit")
@@ -15859,6 +15867,7 @@ typedef int64_t s64;
 #define max_t(t,a,b) max((t)(a),(t)(b))
 #define clamp(a,b,c) min(max(a,b),c)
 #define clamp_t(t,a,b,c) clamp((t)(a),(t)(b),(t)(c))
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 static unsigned allocations, fail_allocation, copies, fail_copy, failures, checks;
 static unsigned cpu_records, network_records, growing, captures;
 /* Takes void * so it serves both a bare int lock and a struct mutex whose
@@ -15913,12 +15922,27 @@ static void snapshot_networks(struct snapshot_builder *build, struct snapshot_he
 #define WINDOW_FRAME 1u
 #define WINDOW_FULLSCREEN 2u
 #define WINDOW_MINIMIZED 4u
+#define WINDOW_PASSTHROUGH 8u
 #define true 1
 #define false 0
 #define CONST
 #define INK_DESKTOP 0
 #define WRITE_ONCE(a,b) ((a)=(b))
 static int canvas_title=24, canvas_border=2, canvas_cell_w=8, canvas_cell_h=16, canvas_bar=10;
+#define pane_title(pane) ((pane)->style & WINDOW_FRAME ? canvas_title : 0)
+#define pane_border(pane) ((pane)->style & WINDOW_FRAME ? canvas_border : 0)
+struct drm_rect { int x1,y1,x2,y2; };
+struct target {
+    u32 *pixels; unsigned pitch; int width,height,x,y; u32 opaque;
+    const u32 *ink; struct drm_rect clip;
+};
+static void drm_rect_init(struct drm_rect *r,int x,int y,int w,int h) {
+    *r=(struct drm_rect){x,y,x+w,y+h};
+}
+static int drm_rect_width(const struct drm_rect *r) { return r->x2-r->x1; }
+static int drm_rect_height(const struct drm_rect *r) { return r->y2-r->y1; }
+static unsigned long canvas_painted,canvas_runs;
+#define target_mark(pixels) do { canvas_painted+=(pixels);canvas_runs++; } while(0)
 struct pane { unsigned display,style,max_width,max_height; int width,height,x,y,edge;
     int saved_x,saved_y,saved_w,saved_h; unsigned saved_display; unsigned arranged;
     unsigned columns,rows,max_columns,max_rows,grid_columns,grid_rows,damage_row,damage_rows;
@@ -15942,6 +15966,10 @@ static void console_regrid(struct pane *p) { (void)p;regrids++; }
 // harness can say is that a reshape asks the view whether it still fits.
 static _Bool pane_view_clamp(struct pane *p) { (void)p;view_clamps++;return 0; }
 static void wake_up_interruptible(int *wait) { (void)wait;wakes++; }
+static void canvas_rect_fill(u32 *at,unsigned long pitch,unsigned long w,
+                             unsigned long h,u32 colour) {
+    for (unsigned long y=0;y<h;y++) for (unsigned long x=0;x<w;x++) at[y*pitch+x]=colour;
+}
 '''
     source += section(pane, "/*\n        The size a window of cells will actually be given",
                       "static void pane_refresh")
@@ -15969,24 +15997,18 @@ static void pane_reshape(struct pane *p,int x,int y,int w,int h) {
                       "static void drag_move")
     source += section(drag, "/*\n        Filling the screen",
                       "/*\n        Taking an arranged titlebar")
+    source += section(canvas, "static inline PURE _Bool drm_rects_overlap",
+                      "static inline void canvas_rect_join")
     source += section(canvas, "static void pane_frame", "// Which edges")
+    source += section(pane, "static PURE _Bool pane_visible",
+                      "/*\n        The highest z")
     #   The close button, which lives below the edge defines rather than
     #   beside pane_frame: the range from pane_frame is cut for the pixel
     #   geometry checks too, and those have no shared page to ask about.
     source += section(canvas, "/*\n        The close button, in desktop",
                       "// The first format in the plane's own order")
     source += r'''
-struct drm_rect { int x1,y1,x2,y2; };
-struct target { u32 *pixels; unsigned pitch; int x,y; const u32 *ink; };
-static void drm_rect_init(struct drm_rect *r,int x,int y,int w,int h) {
-    *r=(struct drm_rect){x,y,x+w,y+h};
-}
-static unsigned long canvas_painted,canvas_runs;
 #define memory_copy_apart memcpy
-static void canvas_rect_fill(u32 *at,unsigned long pitch,unsigned long w,
-                             unsigned long h,u32 colour) {
-    for (unsigned long y=0;y<h;y++) for (unsigned long x=0;x<w;x++) at[y*pitch+x]=colour;
-}
 '''
     source += section(compose, "static void target_rectangle", "/*\n        The run of one row")
     source += section(compose, "#define DESKTOP_PIECES", "static HOT void compose_clip")
@@ -16639,9 +16661,38 @@ static void reset(void) {
     cpu_records=network_records=growing=captures=0;
     assert(!snapshot_lock);
 }
+static void check_focus_visibility(void) {
+    struct output saved=screen;
+    struct pane shared={0};
+    struct pane p={.shared=&shared,.width=1,.height=1,.x=100,.y=50};
+    screen=(struct output){.width=800,.height=600,.x=100,.y=50};
+
+    check(pane_visible(&p) && pane_focusable(&p,0),
+          "a visible one-pixel client remains eligible for explicit focus");
+    p.x=900;
+    check(!pane_visible(&p) && !pane_focusable(&p,1),
+          "a pane wholly beyond an output cannot acquire focus");
+    p.x=100;p.width=0;p.style=WINDOW_FRAME;
+    check(!pane_visible(&p) && !pane_focusable(&p,1),
+          "a zero-width pane cannot use its frame to retain focus");
+    p.width=1;p.height=0;
+    check(!pane_visible(&p) && !pane_focusable(&p,1),
+          "a zero-height pane cannot use its titlebar to retain focus");
+    p.height=1;p.style=WINDOW_MINIMIZED;
+    check(!pane_focusable(&p,0) && pane_focusable(&p,1),
+          "Alt-Tab alone may preview a visible minimized pane");
+    p.style=WINDOW_PASSTHROUGH;
+    check(!pane_focusable(&p,0) && !pane_focusable(&p,1),
+          "a pass-through pane cannot acquire focus while cycling");
+    p.style=0;p.shared=NULL;
+    check(!pane_focusable(&p,0),
+          "the client eligibility helper does not absorb console focus");
+    screen=saved;
+}
 int main(void) {
     check_spawn_dispatch();
     check_console_teardown();
+    check_focus_visibility();
     const unsigned capacities[]={0,111,112,113,4095,4096,4097,8192,SPARK_SNAPSHOT_MAX_BYTES};
     const unsigned records[]={0,1,32,171};
     unsigned char *output=malloc(SPARK_SNAPSHOT_MAX_BYTES+1);
@@ -16882,7 +16933,8 @@ int main(void) {
     unsigned random=0x12345678;
     for (unsigned scene=0;scene<2000;scene++) {
         u32 pixels[32*32]={0},ink[]={0x12345678};
-        struct target t={.pixels=pixels,.pitch=32,.ink=ink};
+        struct target t={.pixels=pixels,.pitch=32,.width=32,.height=32,
+                         .ink=ink};
         pane_count=scene%17;
         for (unsigned p=0;p<pane_count;p++) {
             random=random*1664525+1013904223;
@@ -20135,17 +20187,36 @@ def harness_floodlight(argv):
     #   Against the lexed source, not the text: commenting a call out leaves it
     #   in the file for a regex to find, and a check that a comment satisfies
     #   is worse than no check because it reads as a passing one.
+    exec_source = (ROOT / 'src/sh/exec.c').read_text()
+    shell_main_source = (ROOT / 'src/sh/shell.c').read_text()
+    tools_source = (ROOT / 'src/sh/tools.c').read_text()
+    monitor_source = (ROOT / 'src/sh/monitor.c').read_text()
     shell_tokens = [token.value for token in lex(shell)[0]]
+    exec_tokens = [token.value for token in lex(exec_source)[0]]
+    shell_main_tokens = [token.value for token in lex(shell_main_source)[0]]
+    tools_tokens = [token.value for token in lex(tools_source)[0]]
+    monitor_tokens = [token.value for token in lex(monitor_source)[0]]
+    utilities_tokens = [token.value for token in
+                        lex((ROOT / 'programs/utilities.c').read_text())[0]]
+    build_tokens = [token.value for token in
+                    lex((ROOT / 'src/build/build.c').read_text())[0]]
 
     def calls(*sequence):
         window = len(sequence)
         return any(shell_tokens[i:i + window] == list(sequence)
                    for i in range(len(shell_tokens) - window))
 
+    def source_calls(tokens, *sequence):
+        window = len(sequence)
+        return any(tokens[i:i + window] == list(sequence)
+                   for i in range(len(tokens) - window))
+
     for ok, what in (
-            (calls('if', '(', 'own_process', ')', 'floodlight_apply', '(', 'name', ')', ';'),
-             'the dispatcher confines the applet it is about to run, and only '
-             'when the process exists to run it'),
+            (calls('floodlight_launch_decide', '(', 'null', ',', 'arguments',
+                   ',', 'count', ',', 'true', ',', 'own_process', ',', 'true',
+                   ')', '!', '=', 'FLOODLIGHT_LAUNCH_ALLOW'),
+             'the dispatcher makes the central decision in the final applet '
+             'process and refuses anything it cannot enforce'),
             #   A seccomp filter cannot be taken off, so confining a process
             #   that goes on to do other things takes its next exec with it.
             #   The build tool includes this file and runs find inside its own
@@ -20155,12 +20226,13 @@ def harness_floodlight(argv):
              'a caller that keeps its process is not confined'),
             (calls('return', 'shell_tool_named_in', '(', 'name', ',', 'false', ')', ';'),
              'and neither is one that only borrowed the argument vector'),
-            (calls('floodlight_may', '(', 'name', ',', 'FLOODLIGHT_RUN', ',', 'true', ')'),
+            (calls('floodlight_may', '(', 'subject', ',', 'FLOODLIGHT_RUN',
+                   ',', 'true', ')'),
              'the dispatcher refuses an applet the register refuses'),
             (calls('shell_tail_command', '&', '&', '!', 'floodlight_confines', '(', 'name', ')'),
              "an applet that must be confined never runs in the shell's own process"),
-            (calls('floodlight_may', '(', 'name', ',', 'FLOODLIGHT_SPAWN', ',',
-                   'floodlight_built_in', '(', 'name', ')', ')'),
+            (calls('tool', '?', 'floodlight_built_in', '(', 'subject', ')',
+                   ':', 'true'),
              'a register that cannot be read leaves the built-in answers '
              'standing, so removing the device grants nothing'),
             (calls('file_look', '(', 'handle', ',', '(', 'string_address', ')',
@@ -20170,12 +20242,37 @@ def harness_floodlight(argv):
             (calls('(', 'facts', '.', 'mode', '&', 'MODE_FORMAT', ')',
                    '!', '=', 'MODE_CHARACTER', '|', '|'),
              'and that what it opened is a character device'),
-            (calls('facts', '.', 'rdev_major', '!', '=', '10', ')'),
-             'and on the misc major the register is on'),
-            (calls('(', 'positive', ')', 'got', '>', '=', 'sizeof',
-                   '(', 'report', ')', '-', '1'),
+            (calls('facts', '.', 'rdev_major', '!', '=',
+                   'FLOODLIGHT_DEVICE_MAJOR', '|', '|', 'facts', '.',
+                   'rdev_minor', '!', '=', 'FLOODLIGHT_DEVICE_MINOR'),
+             'and authenticates both the fixed major and minor'),
+            (calls('used', '>', '=', 'sizeof', '(', 'report', ')', '-', '1'),
              'a report that filled the buffer is thrown away rather than half '
              'believed'),
+            (calls('got', '=', 'system_read_retry', '(', '(', 'positive', ')',
+                   'handle', ',', 'report', '+', 'used'),
+             'the reader retries interrupted reads and accumulates short reads'),
+            (calls('program_entry_identity', '?',
+                   'FLOODLIGHT_REPORT_REFUSED', ':',
+                   'FLOODLIGHT_REPORT_BUILTIN'),
+             'a Spark-started shell fails closed when its promised policy '
+             'device is unavailable'),
+            (calls('floodlight_report_state', '=', 'state', ';'),
+             'the reader publishes one explicit final report state'),
+            (calls('if', '(', '!', 'floodlight_external_final', '(', 'path',
+                   ',', 'arguments', ',', 'count', ')', ')'),
+             'every ordinary external exec passes the central final decision'),
+            (calls('equal', '=', 'memory_first_of', '(', 'argument', '+', '2',
+                   ',', "'='", ',', 'length', '-', '2', ')'),
+             'long --flag=value words use a bounded flag-name match'),
+            (source_calls(exec_tokens, 'floodlight_launch_decide', '(',
+                          'executable', ',', 'words'),
+             'the pipeline and coprocess direct-spawn path uses the same '
+             'executable and argument decision'),
+            (source_calls(shell_main_tokens, 'policy', '=',
+                          'floodlight_launch_decide', '(', 'path', ',',
+                          'arguments', ',', 'count', ',', 'tool'),
+             'the Spark backend is gated before publishing a spawn request'),
             (calls('if', '(', '!', 'floodlight_row_count', ')'),
              'an untouched register costs an applet one comparison, not a walk'),
             (calls('syscall', '(', 'prctl', ')', ',', 'PR_SET_NO_NEW_PRIVS'),
@@ -20183,7 +20280,75 @@ def harness_floodlight(argv):
             (calls('syscall', '(', 'seccomp', ')', ',', 'SECCOMP_SET_MODE_FILTER'),
              'the confinement is a seccomp filter, so it survives exec'),
             (calls('BPF_JUMP_EQUAL', ',', '1', ',', '0', ',', 'FLOODLIGHT_AUDIT_ARCH'),
-             'the filter checks which architecture the call arrived on')):
+             'the filter checks which architecture the call arrived on'),
+            (calls('BPF_JUMP_BITS', ',', '(', 'p8', ')', '(', 'count', '+',
+                   '1', ')', ',', '0', ',', '0x40000000u'),
+             'the x86 filter refuses the x32 syscall table before comparing '
+             'native syscall numbers'),
+            (source_calls(utilities_tokens, 'shell_tool_as_called_final', '(', ')'),
+             'the standalone utility image uses the process-final confined entry'),
+            (source_calls(build_tokens, 'shell_tool_as_called', '(', ')') and
+             not source_calls(build_tokens, 'shell_tool_as_called_final', '(', ')'),
+             'the embedded build-tool dispatcher remains nonfinal')):
+        check(ok, what)
+
+    #   fc hands an attacker-observable pathname to an arbitrary editor.  The
+    #   workspace must be private before the file exists, and the parent must
+    #   retain cleanup control even when the editor is shell syntax containing
+    #   `exit`.  These checks cover the concrete syscall and control-flow
+    #   boundaries; the fc differential rows above exercise successful,
+    #   failing and function editors in the complete shell.
+    history_edit = exec_source[exec_source.index('#define HISTORY_EDIT_RANDOM'):
+                               exec_source.index('\nfn shell_fc')]
+    history_tokens = [token.value for token in lex(history_edit)[0]]
+
+    for ok, what in (
+            (source_calls(history_tokens, 'syscall', '(', 'getrandom', ')'),
+             'fc draws every temporary name from the kernel CSPRNG'),
+            ('syscall(getpid)' not in history_edit,
+             'fc has no predictable pid-based temporary name fallback'),
+            (source_calls(history_tokens, 'system_make_directory_exact_at',
+                          '(', 'AT_FDCWD', ',', 'path', ',', '0700', ')'),
+             'fc creates an exact private 0700 directory before its edit '
+             'file, independent of the caller umask'),
+            (source_calls(history_tokens, 'FILE_READ_WRITE', '|',
+                          'FILE_CREATE', '|', 'FILE_EXCLUSIVE', '|',
+                          'O_NOFOLLOW', '|', 'O_CLOEXEC'),
+             'the edit file is created exclusively without following a link'),
+            (source_calls(history_tokens, 'system_open_at', '(', 'directory',
+                          ',', '"commands"', ',', 'FILE_READ', '|',
+                          'O_NOFOLLOW', '|', 'O_CLOEXEC'),
+             'fc reopens the edited file relative to the held directory and '
+             'refuses a symlink replacement'),
+            (source_calls(history_tokens, 'child', '=', 'shell_clone', '(', ')'),
+             'the editor runs in a child whose exit cannot skip parent cleanup'),
+            (history_edit.index('history_edit_cleanup(directory, (string_address)path);\n'
+                                '        directory = -1;') <
+             history_edit.index('history_run_text('),
+             'fc removes its complete workspace before edited commands run'),
+            (history_edit.count('history_edit_cleanup(') >= 4,
+             'success, editor failure and I/O failure all converge on cleanup')):
+        check(ok, what)
+
+    #   comm and cmdline are untrusted procfs bytes.  One renderer owns their
+    #   terminal boundary in ps and monitor, while -C keeps comparing raw comm
+    #   bytes so escaping cannot change selection semantics.
+    for ok, what in (
+            (tools_source.count('static fn terminal_safe_field(') == 1,
+             'process fields have one shared terminal-safe renderer'),
+            (source_calls(tools_tokens, 'writer_hex_escaped', '(', 'output',
+                          ',', 'value', ',', 'length', ',', 'HEX_CONTROL', '|',
+                          'HEX_TAB', '|', 'HEX_HIGH'),
+             'the renderer escapes terminal controls, tabs and high bytes'),
+            (tools_source.count('terminal_safe_field(ps_bytes,') == 2,
+             'ps renders both COMM and ARGS through the shared boundary'),
+            (source_calls(monitor_tokens, 'terminal_safe_field', '(',
+                          'monitor_row_write'),
+             'monitor renders command names through the same boundary'),
+            (bool(re.search(r'ps_command_selected\(\s*selected_commands,\s*'
+                            r'command_count,\s*process->command\)',
+                            tools_source)),
+             'ps command selection still matches raw process names')):
         check(ok, what)
 
     #   A guard that is correct and not called is not a guard. Testing plain()
@@ -20283,21 +20448,48 @@ static long raw_call(long n, long a, long b, long c, long d, long e)
         return syscall(n, a, b, c, d, e);
 }
 
+static int fail_call;
+static long checked_call_5(long n, long a, long b, long c, long d, long e)
+{
+        if (fail_call == 1 && n == SYS_prctl)
+                return -ENOSYS;
+        return raw_call(n, a, b, c, d, e);
+}
+
+static long checked_call_3(long n, long a, long b, long c)
+{
+        if (fail_call == 2 && n == SYS_seccomp)
+                return -EPERM;
+        return raw_call(n, a, b, c, 0, 0);
+}
+
 #define syscall(name) syscall_name_##name
-#define system_call_5(n, a, b, c, d, e) raw_call((long)(n), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e))
-#define system_call_3(n, a, b, c) raw_call((long)(n), (long)(a), (long)(b), (long)(c), 0, 0)
+#define system_call_5(n, a, b, c, d, e) checked_call_5((long)(n), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e))
+#define system_call_3(n, a, b, c) checked_call_3((long)(n), (long)(a), (long)(b), (long)(c))
 """ + builder + r"""
 int main(void)
 {
-        pid_t child = fork();
+        p32 refused[2] = {(p32)SYS_execve, (p32)SYS_execveat};
+        pid_t child;
         int status = 0;
 
+        fail_call = 1;
+        if (floodlight_confine(refused, 2))
+                return 8;
+        fail_call = 2;
+        if (floodlight_confine(refused, 2))
+                return 9;
+        fail_call = 0;
+        if (!floodlight_confine(NULL, 0))
+                return 10;
+
+        child = fork();
         if (child == 0) {
-                p32 refused[2] = {(p32)SYS_execve, (p32)SYS_execveat};
                 char *argv[] = {(char *)"/bin/sh", (char *)"-c",
                                 (char *)"exit 7", NULL};
 
-                floodlight_confine(refused, 2);
+                if (!floodlight_confine(refused, 2))
+                        _exit(11);
 
                 /* A call the filter says nothing about still works, or the
                    filter has refused the program rather than the exec. */
@@ -20371,13 +20563,15 @@ int main(void)
 typedef unsigned char p8;
 typedef unsigned long positive;
 typedef long bipolar;
-typedef const char *string_address;
+typedef p8 *string_address;
 typedef void fn;
 #define address_to *
 #define address_of &
 #define null ((void *)0)
+#define end '\0'
 static positive string_length(string_address s) { return strlen(s); }
 static int memory_compare(const void *a, const void *b, positive n) { return memcmp(a, b, n); }
+static p8 *memory_first_of(const void *a, p8 byte, positive n) { return memchr(a, byte, n); }
 static void memory_copy_apart(void *d, const void *s, positive n) { memcpy(d, s, n); }
 static bool word_is(string_address a, string_address b) { return !strcmp(a, b); }
 """
@@ -20869,6 +21063,62 @@ int main(void)
                 reread();
                 check(!reader_says("awk", FLOODLIGHT_SPAWN, "", &said),
                       "a deviation given back stops reaching the reader");
+
+                {
+                        static const char valid[] =
+                            "# floodlight\n"
+                            "curl network deny changed 1s ago by uid 7\n";
+                        static const char partial[] =
+                            "# floodlight\n"
+                            "env spawn deny changed 2s ago by uid 8\n"
+                            "broken row\n";
+                        static const char trailing[] =
+                            "# floodlight\n"
+                            "env spawn deny changed 2s ago by uid 8 extra\n";
+                        static const char tampered[] =
+                            "# floodlight: TAMPERED; refusing report\n";
+                        static const char builtin[] =
+                            "# floodlight (sealed)\n"
+                            "awk spawn deny built in\n";
+                        static const char valued_flag[] =
+                            "# floodlight\n"
+                            "tar flag --output deny changed 3s ago by uid 9\n";
+
+                        check(reader_accept(valid, sizeof(valid) - 1),
+                              "a complete strict report is accepted");
+                        said = true;
+                        check(floodlight_row_count == 1 &&
+                              reader_says("curl", FLOODLIGHT_NETWORK, "", &said) &&
+                              !said,
+                              "an accepted report is published as one snapshot");
+
+                        check(!reader_accept(valid, sizeof(valid) - 2),
+                              "a report without its final newline is refused");
+                        check(floodlight_row_count == 1,
+                              "a truncated report publishes no partial state");
+                        check(!reader_accept(partial, sizeof(partial) - 1),
+                              "a malformed later row rejects the whole report");
+                        check(floodlight_row_count == 1,
+                              "a malformed later row leaves the old snapshot intact");
+                        check(!reader_accept(trailing, sizeof(trailing) - 1),
+                              "unexpected report fields are refused");
+                        check(!reader_accept(tampered, sizeof(tampered) - 1),
+                              "the driver's tamper banner is never policy input");
+                        check(reader_accept(builtin, sizeof(builtin) - 1) &&
+                              floodlight_row_count == 0,
+                              "built-in rows authenticate grammar but are not duplicated");
+
+                        check(reader_accept(valued_flag,
+                                            sizeof(valued_flag) - 1),
+                              "a long flag policy row is accepted");
+                        check(reader_flag_refused("tar", "--output") &&
+                              reader_flag_refused("tar", "--output=file"),
+                              "a denied long flag covers its separate and =value spellings");
+                        check(!reader_flag_refused("tar", "--outputx") &&
+                              !reader_flag_refused("tar", "--out") &&
+                              !reader_flag_refused("tar", "-o=value"),
+                              "flag lookalikes and short options remain distinct");
+                }
         }
 
         /* --- the lock is balanced whatever happened ------------------------ */
@@ -20895,20 +21145,56 @@ int main(void)
 static void reread(void)
 {
         struct seq_file seq = {0};
+        floodlight_row staged[FLOODLIGHT_ROWS];
+        positive count = 0;
 
         mock_report_length = 0; mock_report[0] = 0;
         floodlight_show(&seq, NULL);
         mock_report[mock_report_length] = 0;
 
-        floodlight_row_count = 0;
-        floodlight_report_read = true;   /* do not go near a device */
-        floodlight_take(mock_report);
+        if (!floodlight_take(mock_report, mock_report_length, staged, &count))
+                return;
+
+        if (count)
+                memcpy(floodlight_rows, staged, count * sizeof(staged[0]));
+        floodlight_row_count = count;
+        floodlight_report_state = FLOODLIGHT_REPORT_VALID;
+}
+
+/* Feed hostile/truncated reports without letting the parser mutate the
+   caller's literal.  Publish only on complete success, like floodlight_load. */
+static bool reader_accept(const char *report, size_t length)
+{
+        floodlight_row staged[FLOODLIGHT_ROWS];
+        positive count = 0;
+        char *copy = malloc(length + 1);
+        bool accepted;
+
+        if (!copy)
+                return false;
+        memcpy(copy, report, length);
+        copy[length] = 0;
+        accepted = floodlight_take(copy, length, staged, &count);
+        if (accepted) {
+                if (count)
+                        memcpy(floodlight_rows, staged,
+                               count * sizeof(staged[0]));
+                floodlight_row_count = count;
+                floodlight_report_state = FLOODLIGHT_REPORT_VALID;
+        }
+        free(copy);
+        return accepted;
 }
 
 static bool reader_says(const char *name, positive setting, const char *detail,
                         bool *answer)
 {
         return floodlight_says(name, setting, detail, answer);
+}
+
+static bool reader_flag_refused(const char *name, const char *argument)
+{
+        return floodlight_flag_refused(name, argument);
 }
 """
 
@@ -21393,6 +21679,62 @@ def harness_compression(argv):
                         check(label + '/' + codec + '/level-' + other_level,
                               encoded.returncode == decoded.returncode == 0 and decoded.stdout == data,
                               encoded.stderr.decode(errors='replace') + decoded.stderr.decode(errors='replace'))
+
+                    # Opening a path component and then retaining that directory
+                    # descriptor closes the swap race without changing normal
+                    # command-line semantics: intermediate directory symlinks
+                    # still resolve once, at open time.
+                    resolved = root / ('resolved-' + label + '-' + codec)
+                    resolved.mkdir()
+                    alias = root / ('alias-' + label + '-' + codec)
+                    alias.symlink_to(resolved, target_is_directory=True)
+                    source = resolved / 'linked-input'
+                    linked_data = b'intermediate symlink\n' * 257
+                    source.write_bytes(linked_data)
+                    linked = call(runner + [str(farms[label] / codec), '-k',
+                                            str(alias / source.name)])
+                    product = resolved / (source.name + ext)
+                    back = call(command(refs[codec], codec, True),
+                                product.read_bytes() if product.is_file() else b'')
+                    check(label + '/' + codec + '/intermediate-directory-symlink',
+                          linked.returncode == back.returncode == 0 and
+                          back.stdout == linked_data,
+                          linked.stderr.decode(errors='replace') +
+                          back.stderr.decode(errors='replace'))
+
+                    search_only = root / ('search-only-' + label + '-' + codec)
+                    search_only.mkdir()
+                    search_source = search_only / 'known-input'
+                    search_source.write_bytes(linked_data)
+                    search_only.chmod(0o311)
+                    try:
+                        searched = call(runner + [str(farms[label] / codec),
+                                                  '-k', str(search_source)])
+                        search_product = search_only / (search_source.name + ext)
+                        back = call(command(refs[codec], codec, True),
+                                    search_product.read_bytes()
+                                    if search_product.is_file() else b'')
+                        check(label + '/' + codec + '/search-only-parent',
+                              searched.returncode == back.returncode == 0 and
+                              back.stdout == linked_data,
+                              searched.stderr.decode(errors='replace') +
+                              back.stderr.decode(errors='replace'))
+                    finally:
+                        search_only.chmod(0o700)
+
+                    if codec == 'zstd':
+                        named = resolved / 'named-output.zst'
+                        source.write_bytes(linked_data)
+                        explicit = call(runner + [str(farms[label] / codec), '-k',
+                                                  '-o', str(alias / named.name),
+                                                  str(source)])
+                        back = call(command(refs[codec], codec, True),
+                                    named.read_bytes() if named.is_file() else b'')
+                        check(label + '/' + codec + '/symlink-directory-output',
+                              explicit.returncode == back.returncode == 0 and
+                              back.stdout == linked_data,
+                              explicit.stderr.decode(errors='replace') +
+                              back.stderr.decode(errors='replace'))
                 print(label + ': codec matrix checked', flush=True)
 
         # Exercise the pull/write adapters and compressed EOF through tar in both directions.

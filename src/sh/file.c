@@ -742,6 +742,391 @@ static COLD bipolar file_temporary_open(string_address path, p8 address_to into,
                                        marker_length, value, attempts, mode);
 }
 
+typedef struct
+{
+        string_address encoded;
+        string_address decoded;
+} file_codec_suffix;
+
+typedef struct
+{
+        string_address name;
+        string_address decode_name;
+        string_address cat_name;
+        string_address usage;
+        string_address version;
+        b32 address_to status;
+        const file_codec_suffix address_to suffixes;
+        positive suffix_count;
+        string_address decode_suffix_error;
+        string_address encode_suffix_error;
+        positive features;
+        bool decompress;
+        bool stdout_out;
+        bool test;
+        bool remove_source;
+        bool replace;
+        p8 level;
+        string_address output_path;
+        b32 (*run)(bipolar, bipolar, bool, p8);
+} file_codec_cli;
+
+#define FILE_CODEC_COMPRESS_OPTION 1
+#define FILE_CODEC_OUTPUT_OPTION 2
+#define FILE_CODEC_REMOVE_OPTION 4
+#define FILE_CODEC_LONG_QUIET 8
+#define FILE_CODEC_LEVEL_WORDS 16
+#define FILE_CODEC_NO_NAME 32
+#define FILE_CODEC_SHORT_VERSION 64
+
+static string_address file_called_name(string_address fallback)
+{
+        string_address path = program_argument(0);
+        string_address slash;
+
+        if (!path)
+                return fallback;
+        slash = string_last_of(path, '/');
+        return slash && slash[1] ? slash + 1 : path;
+}
+
+static fn file_codec_print(string_address text)
+{
+        string_format(log, "%s\n", text);
+        log_flush();
+}
+
+static bool file_codec_parse(file_codec_cli address_to codec,
+                             positive address_to first,
+                             b32 address_to result)
+{
+        positive count = (positive)program_argument_count();
+
+        for (*first = 1; *first < count; (*first)++)
+        {
+                string_address word = program_argument((b32)*first);
+
+                if (string_equals(word, "--"))
+                {
+                        (*first)++;
+                        break;
+                }
+                if (word[0] != '-' || !word[1])
+                        break;
+                if (word[1] == '-')
+                {
+                        if (string_equals(word, "--decompress") ||
+                            string_equals(word, "--uncompress"))
+                                codec->decompress = true;
+                        else if (string_equals(word, "--compress") &&
+                                 (codec->features &
+                                  FILE_CODEC_COMPRESS_OPTION))
+                                codec->decompress = false;
+                        else if (string_equals(word, "--stdout") ||
+                                 string_equals(word, "--to-stdout"))
+                        {
+                                codec->stdout_out = true;
+                                if (!(codec->features &
+                                      FILE_CODEC_REMOVE_OPTION))
+                                        codec->remove_source = false;
+                        }
+                        else if (string_equals(word, "--force"))
+                                codec->replace = true;
+                        else if (string_equals(word, "--test"))
+                        {
+                                codec->test = true;
+                                codec->decompress = true;
+                                if (!(codec->features &
+                                      FILE_CODEC_REMOVE_OPTION))
+                                        codec->remove_source = false;
+                        }
+                        else if (string_equals(word, "--keep"))
+                                codec->remove_source = false;
+                        else if (string_equals(word, "--rm") &&
+                                 (codec->features & FILE_CODEC_REMOVE_OPTION))
+                                codec->remove_source = true;
+                        else if (string_equals(word, "--quiet") &&
+                                 (codec->features & FILE_CODEC_LONG_QUIET))
+                                ;
+                        else if (string_equals(word, "--fast") &&
+                                 (codec->features & FILE_CODEC_LEVEL_WORDS))
+                                codec->level = 1;
+                        else if (string_equals(word, "--best") &&
+                                 (codec->features & FILE_CODEC_LEVEL_WORDS))
+                                codec->level = 9;
+                        else if (string_equals(word, "--help"))
+                        {
+                                file_codec_print(codec->usage);
+                                *result = 0;
+                                return false;
+                        }
+                        else if (string_equals(word, "--version"))
+                        {
+                                file_codec_print(codec->version);
+                                *result = 0;
+                                return false;
+                        }
+                        else if ((codec->features &
+                                  FILE_CODEC_OUTPUT_OPTION) &&
+                                 string_length(word) >= 9 &&
+                                 !memory_compare(word, "--output=", 9))
+                                codec->output_path = word + 9;
+                        else
+                        {
+                                string_format(log_error,
+                                              "%s: unrecognized option '%s'\n",
+                                              codec->name, word);
+                                *result = 2;
+                                return false;
+                        }
+                        continue;
+                }
+
+                for (string_address letter = word + 1; *letter; letter++)
+                {
+                        if (*letter >= '1' && *letter <= '9')
+                                codec->level = (p8)(*letter - '0');
+                        else if (*letter == 'd')
+                                codec->decompress = true;
+                        else if (*letter == 'z' &&
+                                 (codec->features &
+                                  FILE_CODEC_COMPRESS_OPTION))
+                                codec->decompress = false;
+                        else if (*letter == 'c')
+                        {
+                                codec->stdout_out = true;
+                                if (!(codec->features &
+                                      FILE_CODEC_REMOVE_OPTION))
+                                        codec->remove_source = false;
+                        }
+                        else if (*letter == 'f')
+                                codec->replace = true;
+                        else if (*letter == 'k')
+                                codec->remove_source = false;
+                        else if (*letter == 'n' &&
+                                 (codec->features & FILE_CODEC_NO_NAME))
+                                ;
+                        else if (*letter == 'q')
+                                ;
+                        else if (*letter == 't')
+                        {
+                                codec->test = true;
+                                codec->decompress = true;
+                                if (!(codec->features &
+                                      FILE_CODEC_REMOVE_OPTION))
+                                        codec->remove_source = false;
+                        }
+                        else if (*letter == 'V' &&
+                                 (codec->features & FILE_CODEC_SHORT_VERSION))
+                        {
+                                file_codec_print(codec->version);
+                                *result = 0;
+                                return false;
+                        }
+                        else if (*letter == 'h')
+                        {
+                                file_codec_print(codec->usage);
+                                *result = 0;
+                                return false;
+                        }
+                        else if (*letter == 'o' &&
+                                 (codec->features & FILE_CODEC_OUTPUT_OPTION))
+                        {
+                                if (letter[1])
+                                {
+                                        codec->output_path = letter + 1;
+                                        break;
+                                }
+                                if (*first + 1 >= count)
+                                {
+                                        string_format(
+                                            log_error,
+                                            "%s: option requires an argument -- 'o'\n",
+                                            codec->name);
+                                        *result = 2;
+                                        return false;
+                                }
+                                codec->output_path =
+                                    program_argument((b32)++*first);
+                        }
+                        else
+                        {
+                                p8 shown[2] = {*letter, end};
+
+                                string_format(log_error,
+                                              "%s: invalid option -- '%s'\n",
+                                              codec->name, shown);
+                                *result = 2;
+                                return false;
+                        }
+                }
+        }
+        return true;
+}
+
+static bool file_codec_name(string_address input, p8 address_to output,
+                            positive room,
+                            const file_codec_suffix address_to suffixes,
+                            positive suffix_count, bool decode)
+{
+        positive length = string_length(input);
+
+        if (!decode)
+        {
+                positive suffix = string_length(suffixes[0].encoded);
+
+                if (length > room || suffix >= room - length)
+                        return false;
+                memory_copy(output, input, length);
+                memory_copy_end(output + length, suffixes[0].encoded, suffix);
+                return true;
+        }
+
+        for (positive i = 0; i < suffix_count; i++)
+        {
+                positive from = string_length(suffixes[i].encoded);
+                positive to = string_length(suffixes[i].decoded);
+
+                if (length < from ||
+                    memory_compare(input + length - from, suffixes[i].encoded,
+                                   from))
+                        continue;
+                positive prefix = length - from;
+                if (prefix > room || to >= room - prefix)
+                        return false;
+                memory_copy(output, input, prefix);
+                memory_copy_end(output + prefix, suffixes[i].decoded, to);
+                return true;
+        }
+        return false;
+}
+
+static b32 file_codec_paths(file_codec_cli address_to codec, positive first,
+                            positive count)
+{
+        p8 output_name[FILE_PATH_MAX];
+
+        for (positive at = first; at < count && !*codec->status; at++)
+        {
+                string_address path = program_argument((b32)at);
+                system_path_file input, output;
+                p8 output_leaf[SYSTEM_PATH_LEAF_ROOM];
+                string_address output_display = null;
+                bipolar in = 0;
+                bipolar out = codec->test ? -1 : 1;
+
+                system_path_file_reset(address_of input);
+                system_path_file_reset(address_of output);
+                if (!string_equals(path, "-"))
+                {
+                        in = system_path_file_open(address_of input, path, false,
+                                                   false, 0);
+                        if (in < 0)
+                        {
+                                string_format(log_error, "%s: %s: %s\n",
+                                              codec->name, path, file_reason(in));
+                                *codec->status = 1;
+                                break;
+                        }
+
+                        if (!codec->test && !codec->stdout_out)
+                        {
+                                string_address named = codec->output_path;
+
+                                if (named)
+                                {
+                                        out = system_path_file_open(
+                                            address_of output, named, true,
+                                            codec->replace, 0666);
+                                        output_display = named;
+                                }
+                                else if (!file_codec_name(
+                                             path, output_name,
+                                             sizeof(output_name), codec->suffixes,
+                                             codec->suffix_count,
+                                             codec->decompress) ||
+                                         !file_codec_name(
+                                             (string_address)input.leaf,
+                                             output_leaf, sizeof(output_leaf),
+                                             codec->suffixes,
+                                             codec->suffix_count,
+                                             codec->decompress))
+                                {
+                                        string_format(
+                                            log_error, "%s: %s\n", codec->name,
+                                            codec->decompress
+                                                ? codec->decode_suffix_error
+                                                : codec->encode_suffix_error);
+                                        *codec->status = 1;
+                                        system_path_file_release(address_of input);
+                                        break;
+                                }
+                                else
+                                {
+                                        output_display = (string_address)output_name;
+                                        out = system_path_file_open_sibling(
+                                            address_of output, input.directory,
+                                            (string_address)output_leaf,
+                                            codec->replace, 0666);
+                                }
+
+                                if (out < 0)
+                                {
+                                        string_format(log_error, "%s: %s: %s\n",
+                                                      codec->name, output_display,
+                                                      file_reason(out));
+                                        *codec->status = 1;
+                                        system_path_file_release(address_of input);
+                                        break;
+                                }
+                        }
+                }
+
+                bool had_input = input.handle >= 0;
+                codec->run(in, out, codec->decompress, codec->level);
+                bipolar closed = system_path_file_finish(
+                    address_of input, address_of output, !*codec->status,
+                    codec->remove_source && had_input);
+
+                if (closed < 0 && !*codec->status)
+                {
+                        string_format(log_error, "%s: %s: %s\n", codec->name,
+                                      output_display ? output_display : path,
+                                      file_reason(closed));
+                        *codec->status = 1;
+                }
+                codec->output_path = null;
+        }
+
+        log_flush();
+        return *codec->status;
+}
+
+static b32 file_codec_main(file_codec_cli address_to codec)
+{
+        positive first;
+        b32 result;
+        string_address called = file_called_name(codec->name);
+
+        *codec->status = 0;
+        if (codec->decode_name && string_equals(called, codec->decode_name))
+                codec->decompress = true;
+        if (codec->cat_name && string_equals(called, codec->cat_name))
+        {
+                codec->decompress = true;
+                codec->stdout_out = true;
+                if (!(codec->features & FILE_CODEC_REMOVE_OPTION))
+                        codec->remove_source = false;
+        }
+        if (!file_codec_parse(codec, address_of first, address_of result))
+                return result;
+        if (first >= (positive)program_argument_count())
+                return codec->run(0, codec->test ? -1 : 1,
+                                  codec->decompress, codec->level);
+        return file_codec_paths(codec, first,
+                                (positive)program_argument_count());
+}
+
 bipolar file_link_text(string_address path, p8 address_to into, positive limit)
 {
         bipolar length = system_read_link_at(AT_FDCWD, path, into, limit - 1);

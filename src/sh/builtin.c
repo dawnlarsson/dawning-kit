@@ -381,6 +381,9 @@ string_address shell_arguments();
 fn shell_execute_command();
 bipolar shell_spawn_tool(string_address address_to arguments,
                          b32 output, bool quiet);
+static bool floodlight_external_final(
+    string_address executable, string_address address_to arguments,
+    positive count);
 fn parse_nest_enter();
 fn parse_nest_leave();
 static bool exec_arithmetic_value(string_address text,
@@ -423,10 +426,15 @@ bipolar shell_exec_file(string_address path,
                          positive count,
                          string_address address_to environment)
 {
-        bipolar answered = system_execute(path, arguments, environment);
+        bipolar answered;
         string_address address_to fallback;
         positive entries;
         positive bytes;
+
+        if (!floodlight_external_final(path, arguments, count))
+                return -ERROR_ACCESS;
+
+        answered = system_execute(path, arguments, environment);
 
         if (answered != -ERROR_EXEC_FORMAT)
                 return answered;
@@ -14107,6 +14115,8 @@ static string_address shell_tool_name(string_address path)
 */
 
 #define FLOODLIGHT_PATH "/dev/floodlight"
+#define FLOODLIGHT_DEVICE_MAJOR 10
+#define FLOODLIGHT_DEVICE_MINOR 249
 
 /*
         What is refused when the register cannot be read.
@@ -14163,7 +14173,17 @@ typedef struct
 
 static floodlight_row floodlight_rows[FLOODLIGHT_ROWS];
 static positive floodlight_row_count;
-static bool floodlight_report_read;
+
+/* A missing device means something different on a stock kernel and in an
+   image the Spark loader started.  The latter promises both Moonwater devices
+   exist, so silently using defaults there would turn removing or replacing
+   the policy device into an allowance. */
+#define FLOODLIGHT_REPORT_UNREAD 0
+#define FLOODLIGHT_REPORT_BUILTIN 1
+#define FLOODLIGHT_REPORT_VALID 2
+#define FLOODLIGHT_REPORT_REFUSED 3
+
+static p8 floodlight_report_state;
 
 /*
         One word of a report line.
@@ -14206,32 +14226,81 @@ static bool floodlight_is(floodlight_token word, string_address name)
 }
 
 /* Everything the register says that this shell does not already know. */
-static fn floodlight_take(string_address text)
+static bool floodlight_report_number(floodlight_token word, bool seconds)
+{
+        positive digits = word.length - (seconds && word.length != 0);
+
+        if (!digits || (seconds && word.at[word.length - 1] != 's'))
+                return false;
+
+        for (positive at = 0; at < digits; at++)
+                if (word.at[at] < '0' || word.at[at] > '9')
+                        return false;
+
+        return true;
+}
+
+/* Parse into caller-owned staging rows. Nothing becomes an active answer
+   until the complete report, including its final newline, has been accepted. */
+static bool floodlight_take(string_address text, positive length,
+                            floodlight_row address_to rows,
+                            positive address_to count_out)
 {
         string_address at = text;
+        string_address end_at = text + length;
+        positive count = 0;
+        bool header = false;
 
-        while (address_to at && floodlight_row_count < FLOODLIGHT_ROWS)
+        address_to count_out = 0;
+
+        if (!length || text[length - 1] != '\n')
+                return false;
+
+        while (at < end_at)
         {
+                string_address line_end = at;
                 floodlight_token subject, said, state, detail = {null, 0};
+                floodlight_token origin, tail;
                 floodlight_row address_to row;
                 positive i;
 
+                while (line_end < end_at && address_to line_end != '\n')
+                        line_end++;
+
+                /* The length check above makes every line newline-terminated. */
+                if (line_end >= end_at)
+                        return false;
+
+                address_to line_end = end;
+
                 if (address_to at == '#')
-                        goto line;
+                {
+                        if (header ||
+                            (!word_is(at, "# floodlight") &&
+                             !word_is(at, "# floodlight (sealed)")))
+                                return false;
+
+                        header = true;
+                        at = line_end + 1;
+                        continue;
+                }
+
+                if (!header || !address_to at)
+                        return false;
 
                 subject = floodlight_word(&at);
                 said = floodlight_word(&at);
                 state = floodlight_word(&at);
 
                 if (!subject.length || !said.length || !state.length)
-                        goto line;
+                        return false;
 
                 for (i = 0; i < FLOODLIGHT_SETTINGS; i++)
                         if (floodlight_is(said, floodlight_settings[i]))
                                 break;
 
                 if (i == FLOODLIGHT_SETTINGS)
-                        goto line;
+                        return false;
 
                 /* A flag row carries the flag between the setting and the
                    state, so the state is one word further along. */
@@ -14240,22 +14309,44 @@ static fn floodlight_take(string_address text)
                         detail = state;
                         state = floodlight_word(&at);
                         if (!state.length)
-                                goto line;
+                                return false;
                 }
 
-                /*
-                        Only what deviates. A row this kernel was built with
-                        says what this shell already believes, and keeping it
-                        would be carrying the same answer twice.
-                */
-                if (!floodlight_is(floodlight_word(&at), "changed"))
-                        goto line;
+                if (!floodlight_is(state, "allow") &&
+                    !floodlight_is(state, "deny"))
+                        return false;
+
+                origin = floodlight_word(&at);
+
+                if (floodlight_is(origin, "built"))
+                {
+                        if (!floodlight_is(floodlight_word(&at), "in") ||
+                            floodlight_word(&at).length)
+                                return false;
+
+                        at = line_end + 1;
+                        continue;
+                }
+
+                if (!floodlight_is(origin, "changed") ||
+                    !floodlight_report_number(floodlight_word(&at), true) ||
+                    !floodlight_is(floodlight_word(&at), "ago") ||
+                    !floodlight_is(floodlight_word(&at), "by") ||
+                    !floodlight_is(floodlight_word(&at), "uid"))
+                        return false;
+
+                tail = floodlight_word(&at);
+
+                if (!floodlight_report_number(tail, false) ||
+                    floodlight_word(&at).length)
+                        return false;
 
                 if (subject.length >= FLOODLIGHT_NAME ||
-                    detail.length >= FLOODLIGHT_DETAIL)
-                        goto line;
+                    detail.length >= FLOODLIGHT_DETAIL ||
+                    count >= FLOODLIGHT_ROWS)
+                        return false;
 
-                row = address_of floodlight_rows[floodlight_row_count++];
+                row = rows + count++;
                 memory_copy_apart(row->subject, subject.at, subject.length);
                 row->subject[subject.length] = 0;
                 if (detail.length)
@@ -14264,29 +14355,32 @@ static fn floodlight_take(string_address text)
                 row->setting = (p8)i;
                 row->allowed = (p8)floodlight_is(state, "allow");
 
-        line:
-                while (address_to at && address_to at != '\n')
-                        at++;
-                at += address_to at == '\n';
+                at = line_end + 1;
         }
+
+        address_to count_out = count;
+        return header;
 }
 
 static fn floodlight_load()
 {
         p8 report[FLOODLIGHT_REPORT];
+        floodlight_row parsed[FLOODLIGHT_ROWS];
         file_facts facts;
         bipolar handle;
         bipolar got;
+        positive used = 0;
+        positive parsed_count = 0;
+        p8 state = program_entry_identity ? FLOODLIGHT_REPORT_REFUSED
+                                          : FLOODLIGHT_REPORT_BUILTIN;
 
-        if (floodlight_report_read)
+        if (floodlight_report_state != FLOODLIGHT_REPORT_UNREAD)
                 return;
-
-        floodlight_report_read = true;
 
         handle = system_open_at(AT_FDCWD, FLOODLIGHT_PATH, FILE_READ);
 
         if (handle < 0)
-                return;
+                goto publish;
 
         /*
                 The register, and not something wearing its name.
@@ -14301,17 +14395,34 @@ static fn floodlight_load()
         */
         if (!file_look(handle, (string_address)"", AT_EMPTY_PATH, &facts) ||
             (facts.mode & MODE_FORMAT) != MODE_CHARACTER ||
-            facts.rdev_major != 10)
+            facts.rdev_major != FLOODLIGHT_DEVICE_MAJOR ||
+            facts.rdev_minor != FLOODLIGHT_DEVICE_MINOR)
         {
                 system_close(handle);
-                return;
+                state = FLOODLIGHT_REPORT_REFUSED;
+                goto publish;
         }
 
-        got = system_read_once(handle, report, sizeof(report) - 1);
+        /* seq_file reads may be short without being complete. Keep going to
+           EOF, with system_read_retry owning EINTR, and reject a report that
+           cannot be proved whole inside the fixed bound. */
+        while (used < sizeof(report) - 1)
+        {
+                got = system_read_retry((positive)handle, report + used,
+                                        sizeof(report) - 1 - used);
+
+                if (got <= 0)
+                        break;
+
+                used += (positive)got;
+        }
+
         system_close(handle);
 
-        if (got <= 0)
-                return;
+        state = FLOODLIGHT_REPORT_REFUSED;
+
+        if (got < 0 || !used)
+                goto publish;
 
         /*
                 A report that filled the buffer is one that may have been cut,
@@ -14319,11 +14430,24 @@ static fn floodlight_load()
                 is the half that refuses something. Thrown away, so the
                 built-in answers stand.
         */
-        if ((positive)got >= sizeof(report) - 1)
-                return;
+        if (used >= sizeof(report) - 1)
+                goto publish;
 
-        report[got] = 0;
-        floodlight_take((string_address)report);
+        report[used] = 0;
+
+        if (!floodlight_take((string_address)report, used, parsed,
+                             address_of parsed_count))
+                goto publish;
+
+        if (parsed_count)
+                memory_copy_apart(floodlight_rows, parsed,
+                                  parsed_count * sizeof(parsed[0]));
+
+        floodlight_row_count = parsed_count;
+        state = FLOODLIGHT_REPORT_VALID;
+
+publish:
+        floodlight_report_state = state;
 }
 
 /*
@@ -14332,8 +14456,10 @@ static fn floodlight_load()
         A count of zero is every machine nobody has changed, and the whole of
         the work there is the compare that finds it.
 */
-static bool floodlight_says(string_address name, positive setting,
-                            string_address detail, bool address_to answer)
+static bool floodlight_says_length(string_address name, positive setting,
+                                   string_address detail,
+                                   positive detail_length,
+                                   bool address_to answer)
 {
         positive i;
 
@@ -14361,7 +14487,8 @@ static bool floodlight_says(string_address name, positive setting,
                         held.at = (string_address)row->detail;
                         held.length = string_length((string_address)row->detail);
 
-                        if (!floodlight_is(held, detail))
+                        if (held.length != detail_length ||
+                            memory_compare(held.at, detail, detail_length))
                                 continue;
                 }
 
@@ -14370,6 +14497,41 @@ static bool floodlight_says(string_address name, positive setting,
         }
 
         return false;
+}
+
+static bool floodlight_says(string_address name, positive setting,
+                            string_address detail, bool address_to answer)
+{
+        return floodlight_says_length(name, setting, detail,
+                                      string_length(detail), answer);
+}
+
+/* A long option's value may share its argv word (`--output=file`).  Ask for
+   the complete word first, so an explicitly more-specific rule wins, then
+   ask for the bounded name before '='.  Short-option clusters and lookalike
+   prefixes remain distinct. */
+static bool floodlight_flag_refused(string_address name,
+                                    string_address argument)
+{
+        positive length = string_length(argument);
+        bool allowed;
+
+        if (floodlight_says_length(name, FLOODLIGHT_FLAG, argument, length,
+                                   address_of allowed))
+                return !allowed;
+
+        if (length < 4 || argument[0] != '-' || argument[1] != '-')
+                return false;
+
+        p8 address_to equal = memory_first_of(argument + 2, '=', length - 2);
+
+        if (!equal || equal == argument + 2)
+                return false;
+
+        return floodlight_says_length(
+                   name, FLOODLIGHT_FLAG, argument,
+                   (positive)(equal - argument), address_of allowed) &&
+               !allowed;
 }
 
 /* The built-in answer this shell carries, for when the register is silent. */
@@ -14394,6 +14556,10 @@ static bool floodlight_may(string_address name, positive setting,
                    : otherwise;
 }
 
+#define FLOODLIGHT_LAUNCH_ALLOW 0
+#define FLOODLIGHT_LAUNCH_PROCESS 1
+#define FLOODLIGHT_LAUNCH_REFUSE 2
+
 /*
         A filter that refuses one thing, installed on this process for good.
 
@@ -14409,6 +14575,7 @@ static bool floodlight_may(string_address name, positive setting,
 */
 #define BPF_LOAD_WORD 0x20
 #define BPF_JUMP_EQUAL 0x15
+#define BPF_JUMP_BITS 0x45
 #define BPF_RETURN 0x06
 #define SECCOMP_DATA_NR 0
 #define SECCOMP_DATA_ARCH 4
@@ -14444,15 +14611,15 @@ typedef struct
 
 #define FLOODLIGHT_REFUSED 8
 
-static fn floodlight_confine(const p32 address_to numbers, positive count)
+static bool floodlight_confine(const p32 address_to numbers, positive count)
 {
-        floodlight_instruction filter[6 + FLOODLIGHT_REFUSED];
+        floodlight_instruction filter[7 + FLOODLIGHT_REFUSED];
         floodlight_program program;
         positive at = 0;
         positive i;
 
         if (!count)
-                return;
+                return true;
 
         /* Clamped before the jumps are worked out, not while they are being
            written: every jump below is measured from `count`, so a count the
@@ -14469,6 +14636,15 @@ static fn floodlight_confine(const p32 address_to numbers, positive count)
 
         filter[at++] = (floodlight_instruction){BPF_LOAD_WORD, 0, 0, SECCOMP_DATA_NR};
 
+#if defined(__x86_64__)
+        /* x32 shares AUDIT_ARCH_X86_64 and tags its separate syscall table
+           with bit 30. A native-number deny list must refuse that alternate
+           table before comparing calls, or every denied operation has an x32
+           spelling that walks around it on kernels which enable that ABI. */
+        filter[at++] = (floodlight_instruction){
+            BPF_JUMP_BITS, (p8)(count + 1), 0, 0x40000000u};
+#endif
+
         for (i = 0; i < count; i++)
                 filter[at++] = (floodlight_instruction){
                     BPF_JUMP_EQUAL, (p8)(count - i), 0, numbers[i]};
@@ -14482,11 +14658,11 @@ static fn floodlight_confine(const p32 address_to numbers, positive count)
         /* Without this a filter needs privilege to install. With it the
            kernel also refuses to grant any through this process's execs,
            which is the property that makes the filter worth installing. */
-        if (system_call_5(syscall(prctl), PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
-                return;
+        if (system_call_5(syscall(prctl), PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
+                return false;
 
-        system_call_3(syscall(seccomp), SECCOMP_SET_MODE_FILTER, 0,
-                      (positive)address_of program);
+        return system_call_3(syscall(seccomp), SECCOMP_SET_MODE_FILTER, 0,
+                             (positive)address_of program) >= 0;
 }
 
 /*
@@ -14500,31 +14676,124 @@ static fn floodlight_confine(const p32 address_to numbers, positive count)
         EXIT trap was going to run. So an applet that needs confining does not
         take that path.
 */
-static bool floodlight_confines(string_address name)
-{
-        return !floodlight_may(name, FLOODLIGHT_SPAWN, floodlight_built_in(name)) ||
-               !floodlight_may(name, FLOODLIGHT_NETWORK, true);
-}
-
-/* Everything the register refuses this applet, as one filter. */
-static fn floodlight_apply(string_address name)
+/* Everything already decided for this launch, as one filter. */
+static bool floodlight_apply(bool spawn_allowed, bool network_allowed)
 {
         p32 refused[FLOODLIGHT_REFUSED];
         positive count = 0;
 
-        if (!floodlight_may(name, FLOODLIGHT_SPAWN, floodlight_built_in(name)))
+        if (!spawn_allowed)
         {
                 refused[count++] = (p32)syscall(execve);
                 refused[count++] = (p32)syscall(execveat);
         }
 
-        if (!floodlight_may(name, FLOODLIGHT_NETWORK, true))
+        if (!network_allowed)
         {
                 refused[count++] = (p32)syscall(socket);
                 refused[count++] = (p32)syscall(connect);
         }
 
-        floodlight_confine(refused, count);
+        return floodlight_confine(refused, count);
+}
+
+/*
+        One decision for one final executable and argument vector.
+
+        A tool is already mapped in /shell when this runs, so both spawn and
+        network restrictions can be installed before its first instruction.
+        An external image still needs its first execve: a spawn-denying filter
+        would refuse that transition as well as every later one, so such an
+        image is refused rather than started without its promised boundary.
+
+        A check made before a Spark request returns PROCESS when a userspace
+        child has work to do. The caller then takes its fork path and asks
+        again in that final child. This is also how pipelines and coprocesses
+        keep the same decision as ordinary commands.
+*/
+static b32 floodlight_launch_decide(
+    string_address executable, string_address address_to arguments,
+    positive count, bool tool, bool final, bool diagnose)
+{
+        string_address subject = tool && arguments && count
+                                     ? shell_tool_name(arguments[0])
+                                     : executable;
+        bool spawn_allowed;
+        bool network_allowed;
+
+        floodlight_load();
+
+        if (floodlight_report_state == FLOODLIGHT_REPORT_REFUSED || !subject)
+        {
+                if (diagnose)
+                        log_error("floodlight: policy unavailable; refusing launch\n",
+                                  0);
+                return FLOODLIGHT_LAUNCH_REFUSE;
+        }
+
+        if (!floodlight_may(subject, FLOODLIGHT_RUN, true))
+        {
+                if (diagnose)
+                        log_error("floodlight: run refused\n", 0);
+                return FLOODLIGHT_LAUNCH_REFUSE;
+        }
+
+        for (positive at = 1; arguments && at < count; at++)
+        {
+                if (arguments[at] &&
+                    floodlight_flag_refused(subject, arguments[at]))
+                {
+                        if (diagnose)
+                                log_error("floodlight: flag refused\n", 0);
+                        return FLOODLIGHT_LAUNCH_REFUSE;
+                }
+        }
+
+        spawn_allowed = floodlight_may(
+            subject, FLOODLIGHT_SPAWN,
+            tool ? floodlight_built_in(subject) : true);
+        network_allowed = floodlight_may(subject, FLOODLIGHT_NETWORK, true);
+
+        if (spawn_allowed && network_allowed)
+                return FLOODLIGHT_LAUNCH_ALLOW;
+
+        if (!final)
+                return FLOODLIGHT_LAUNCH_PROCESS;
+
+        if (!tool && !spawn_allowed)
+        {
+                if (diagnose)
+                        log_error("floodlight: cannot confine external program spawning; refusing launch\n",
+                                  0);
+                return FLOODLIGHT_LAUNCH_REFUSE;
+        }
+
+        if (!floodlight_apply(spawn_allowed, network_allowed))
+        {
+                if (diagnose)
+                        log_error("floodlight: cannot install confinement; refusing launch\n",
+                                  0);
+                return FLOODLIGHT_LAUNCH_REFUSE;
+        }
+
+        return FLOODLIGHT_LAUNCH_ALLOW;
+}
+
+static bool floodlight_external_final(
+    string_address executable, string_address address_to arguments,
+    positive count)
+{
+        return floodlight_launch_decide(executable, arguments, count, false,
+                                        true, true) ==
+               FLOODLIGHT_LAUNCH_ALLOW;
+}
+
+static bool floodlight_confines(string_address name)
+{
+        (void)name;
+        return floodlight_launch_decide(null, shell_argv, shell_argc, true,
+                                        false, false) !=
+               FLOODLIGHT_LAUNCH_ALLOW;
 }
 
 /*
@@ -14543,18 +14812,17 @@ static fn floodlight_apply(string_address name)
 */
 static b32 shell_tool_call_in(positive which, bool own_process)
 {
-        string_address name = shell_tools[which].name;
+        string_address address_to arguments = program_argument_list();
+        positive count = (positive)program_argument_count();
         b32 answered;
 
-        /* Refused outright, before it runs at all. Safe everywhere: it stops
-           the applet rather than changing what this process may do later. */
-        if (!floodlight_may(name, FLOODLIGHT_RUN, true))
-                return string_report(log_error, 126,
-                                     "%s: refused by floodlight\n", name);
-
-        /* And confined, before it reads the data that would drive it. */
-        if (own_process)
-                floodlight_apply(name);
+        /* Borrowed argument vectors may run an unrestricted applet, but an
+           irreversible filter cannot be attached to a process that continues
+           afterwards. Refuse that case instead of silently omitting policy. */
+        if (floodlight_launch_decide(null, arguments, count, true,
+                                     own_process, true) !=
+            FLOODLIGHT_LAUNCH_ALLOW)
+                return 126;
 
         log_failure_reset();
         answered = shell_tools[which].function() & 0xff;
@@ -14666,6 +14934,13 @@ b32 shell_tool_as_called()
         return shell_tool_named(shell_tool_name(program_argument(0)));
 }
 
+/* A standalone multicall image ends after its selected applet, so it may
+   safely keep every confinement rule the applet installs. */
+b32 shell_tool_as_called_final()
+{
+        return shell_tool_named_in(shell_tool_name(program_argument(0)), true);
+}
+
 fn shell_tool_list(writer write)
 {
         for (positive i = 0; i < SHELL_TOOLS; i++)
@@ -14741,7 +15016,10 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
                 environment = shell_environment();
                 if (environment &&
                     shell_find_in_path_alloc(shell_argv[0], address_of found,
-                                             address_of found_room) == 1)
+                                             address_of found_room) == 1 &&
+                    floodlight_launch_decide(found, shell_argv, shell_argc,
+                                             true, false, false) ==
+                        FLOODLIGHT_LAUNCH_ALLOW)
                         system_execute(found, shell_argv, environment);
 
                 program_arguments_use(shell_argv, (b32)shell_argc);
@@ -15935,6 +16213,26 @@ static bool shell_command_builtin_here(string_address name, positive2 named)
                 exec_control_builtin(name, false));
 }
 
+/* A restricted shell may still inspect a slash-bearing name through
+   command -v/-V, but no execution path may turn that name into a path. The
+   pipeline fast path asks silently and falls back to ordinary dispatch so
+   the diagnostic is emitted once, in the child that owns the stage. */
+static bool shell_command_path_allowed(string_address name, bool diagnose)
+{
+        if (!shell_restricted || !string_first_of(name, '/'))
+                return true;
+
+        if (diagnose)
+        {
+                shell_diagnostic_where();
+                string_format(log_error,
+                              "%s: restricted: cannot specify `/' in command "
+                              "names\n", name);
+        }
+
+        return false;
+}
+
 /*
         Where a name was found last time.
 
@@ -16844,6 +17142,9 @@ fn shell_command_builtin(writer write, string_address input)
 
                 shell_tail_command = tail;
         }
+
+        if (!shell_command_path_allowed(shell_argv[0], true))
+                return shell_answer(1);
 
         {
                 string_address name = shell_argv[0];

@@ -56,6 +56,11 @@ static const p8 tls_oid_sha256_rsa[9] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
 static const p8 tls_oid_rsa[9] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01,
                                   0x01, 0x01};
 static const p8 tls_oid_san[3] = {0x55, 0x1d, 0x11};
+static const p8 tls_oid_basic_constraints[3] = {0x55, 0x1d, 0x13};
+static const p8 tls_oid_key_usage[3] = {0x55, 0x1d, 0x0f};
+static const p8 tls_oid_extended_key_usage[3] = {0x55, 0x1d, 0x25};
+static const p8 tls_oid_server_auth[8] = {0x2b, 0x06, 0x01, 0x05,
+                                          0x05, 0x07, 0x03, 0x01};
 
 typedef struct
 {
@@ -98,7 +103,7 @@ static bipolar tls_read_full(bipolar handle, p8 address_to into, positive want)
                 if (got < 0)
                         return TLS_FAIL;
                 if (!got)
-                        return have ? TLS_FAIL : TLS_EOF;
+                        return TLS_FAIL;
                 have += (positive)got;
         }
 
@@ -279,14 +284,12 @@ static bipolar tls_read_record(tls_conn address_to tls, p8 address_to type,
 
         if (header[0] == TLS_CT_CCS)
         {
+                if (payload_length != 1 || payload[0] != 1 || tls->application)
+                        return TLS_FAIL;
                 address_to type = TLS_CT_CCS;
                 address_to length = 0;
                 return TLS_OK;
         }
-
-        if (header[0] == TLS_CT_ALERT)
-                return (payload_length >= 2 && payload[1] == 0) ? TLS_EOF
-                                                                : TLS_FAIL;
 
         if (!tls->encrypted)
         {
@@ -298,12 +301,15 @@ static bipolar tls_read_record(tls_conn address_to tls, p8 address_to type,
                 return TLS_OK;
         }
 
+        if (header[0] != TLS_CT_APP)
+                return TLS_FAIL;
+
         if (tls_decrypt_record(tls, payload, payload_length, header, inner,
                                address_of inner_length, address_of inner_type))
                 return TLS_FAIL;
 
         if (inner_type == TLS_CT_ALERT)
-                return (inner_length >= 2 && inner[1] == 0) ? TLS_EOF : TLS_FAIL;
+                return (inner_length == 2 && inner[1] == 0) ? TLS_EOF : TLS_FAIL;
 
         if (inner_length > room)
                 return TLS_FAIL;
@@ -560,7 +566,298 @@ typedef struct
         p8 modulus[512];
         positive modulus_length;
         p64 exponent;
+        p64 not_before;
+        p64 not_after;
+        positive path_length;
+        bool basic_constraints;
+        bool ca;
+        bool path_length_present;
+        bool key_usage;
+        bool digital_signature;
+        bool key_cert_sign;
+        bool extended_key_usage;
+        bool server_auth;
+        bool san;
+        bool unsupported_critical;
 } tls_cert;
+
+static bool tls_date_value(p8 tag, p8 address_to text, positive length,
+                           p64 address_to value)
+{
+        static const p8 days_in_month[12] = {31, 28, 31, 30, 31, 30,
+                                              31, 31, 30, 31, 30, 31};
+        positive year_digits;
+        positive year = 0;
+        positive month;
+        positive day;
+        positive hour;
+        positive minute;
+        positive second;
+        positive i;
+        positive limit;
+        p64 answer;
+
+        if (tag == 0x17)
+                year_digits = 2;
+        else if (tag == 0x18)
+                year_digits = 4;
+        else
+                return false;
+        if (length != year_digits + 11 || text[length - 1] != 'Z')
+                return false;
+        for (i = 0; i + 1 < length; i++)
+                if (text[i] < '0' || text[i] > '9')
+                        return false;
+
+        for (i = 0; i < year_digits; i++)
+                year = year * 10 + text[i] - '0';
+        if (year_digits == 2)
+                year += year >= 50 ? 1900 : 2000;
+        if (!year)
+                return false;
+
+        month = (positive)(text[year_digits] - '0') * 10 +
+                text[year_digits + 1] - '0';
+        day = (positive)(text[year_digits + 2] - '0') * 10 +
+              text[year_digits + 3] - '0';
+        hour = (positive)(text[year_digits + 4] - '0') * 10 +
+               text[year_digits + 5] - '0';
+        minute = (positive)(text[year_digits + 6] - '0') * 10 +
+                 text[year_digits + 7] - '0';
+        second = (positive)(text[year_digits + 8] - '0') * 10 +
+                 text[year_digits + 9] - '0';
+        if (!month || month > 12 || !day || hour > 23 || minute > 59 ||
+            second > 59)
+                return false;
+        limit = days_in_month[month - 1];
+        if (month == 2 && (!(year % 4) && (year % 100 || !(year % 400))))
+                limit++;
+        if (day > limit)
+                return false;
+
+        answer = year;
+        answer = answer * 100 + month;
+        answer = answer * 100 + day;
+        answer = answer * 100 + hour;
+        answer = answer * 100 + minute;
+        answer = answer * 100 + second;
+        address_to value = answer;
+        return true;
+}
+
+static bipolar tls_parse_validity(p8 address_to der, positive size,
+                                  positive address_to at, tls_cert address_to cert)
+{
+        positive validity_stop = 0;
+        positive time_stop = 0;
+        p8 tag;
+
+        if (tls_asn1_enter(der, size, 0x30, at, address_of validity_stop) ||
+            address_to at >= validity_stop)
+                return TLS_FAIL;
+        tag = der[address_to at];
+        if (tls_asn1_enter(der, validity_stop, tag, at, address_of time_stop) ||
+            !tls_date_value(tag, der + address_to at, time_stop - address_to at,
+                            address_of cert->not_before))
+                return TLS_FAIL;
+        address_to at = time_stop;
+        if (address_to at >= validity_stop)
+                return TLS_FAIL;
+        tag = der[address_to at];
+        if (tls_asn1_enter(der, validity_stop, tag, at, address_of time_stop) ||
+            !tls_date_value(tag, der + address_to at, time_stop - address_to at,
+                            address_of cert->not_after) ||
+            time_stop != validity_stop || cert->not_after < cert->not_before)
+                return TLS_FAIL;
+        address_to at = validity_stop;
+        return TLS_OK;
+}
+
+static bipolar tls_parse_basic_constraints(p8 address_to value, positive length,
+                                            tls_cert address_to cert)
+{
+        positive at = 0;
+        positive stop = 0;
+
+        if (tls_asn1_enter(value, length, 0x30, address_of at, address_of stop) ||
+            stop != length)
+                return TLS_FAIL;
+        if (at < stop && value[at] == 0x01)
+        {
+                positive boolean_stop = 0;
+
+                if (tls_asn1_enter(value, stop, 0x01, address_of at,
+                                   address_of boolean_stop) ||
+                    at + 1 != boolean_stop ||
+                    (value[at] != 0 && value[at] != 0xff))
+                        return TLS_FAIL;
+                cert->ca = value[at] != 0;
+                at = boolean_stop;
+        }
+        if (at < stop && value[at] == 0x02)
+        {
+                positive integer_stop = 0;
+                positive bytes;
+                positive path = 0;
+
+                if (tls_asn1_enter(value, stop, 0x02, address_of at,
+                                   address_of integer_stop))
+                        return TLS_FAIL;
+                bytes = integer_stop - at;
+                if (!bytes || bytes > sizeof(positive) || (value[at] & 0x80) ||
+                    (bytes > 1 && !value[at] && !(value[at + 1] & 0x80)))
+                        return TLS_FAIL;
+                while (at < integer_stop)
+                        path = (path << 8) | value[at++];
+                cert->path_length = path;
+                cert->path_length_present = true;
+        }
+        if (at != stop || (cert->path_length_present && !cert->ca))
+                return TLS_FAIL;
+        return TLS_OK;
+}
+
+static bipolar tls_parse_key_usage(p8 address_to value, positive length,
+                                   tls_cert address_to cert)
+{
+        positive at = 0;
+        positive stop = 0;
+        p8 unused;
+
+        if (tls_asn1_enter(value, length, 0x03, address_of at, address_of stop) ||
+            stop != length || at >= stop)
+                return TLS_FAIL;
+        unused = value[at++];
+        if (unused > 7 || at >= stop ||
+            (unused && (value[stop - 1] & (((p8)1 << unused) - 1))))
+                return TLS_FAIL;
+        cert->digital_signature = (value[at] & 0x80) != 0;
+        cert->key_cert_sign = (value[at] & 0x04) != 0;
+        return TLS_OK;
+}
+
+static bipolar tls_parse_extended_key_usage(p8 address_to value, positive length,
+                                            tls_cert address_to cert)
+{
+        positive at = 0;
+        positive stop = 0;
+
+        if (tls_asn1_enter(value, length, 0x30, address_of at, address_of stop) ||
+            stop != length || at == stop)
+                return TLS_FAIL;
+        while (at < stop)
+        {
+                positive oid_stop = 0;
+
+                if (tls_asn1_enter(value, stop, 0x06, address_of at,
+                                   address_of oid_stop))
+                        return TLS_FAIL;
+                if (tls_oid_is(value + at, oid_stop - at, tls_oid_server_auth, 8))
+                        cert->server_auth = true;
+                at = oid_stop;
+        }
+        return TLS_OK;
+}
+
+static bipolar tls_parse_extensions(p8 address_to der, positive tbs_stop,
+                                    positive at, tls_cert address_to cert)
+{
+        bool issuer_unique = false;
+        bool subject_unique = false;
+        positive extensions_stop = 0;
+        positive sequence_stop = 0;
+
+        while (at < tbs_stop && (der[at] == 0x81 || der[at] == 0x82))
+        {
+                bool address_to seen = der[at] == 0x81 ? address_of issuer_unique
+                                                       : address_of subject_unique;
+
+                if (address_to seen || tls_asn1_skip(der, tbs_stop, address_of at))
+                        return TLS_FAIL;
+                address_to seen = true;
+        }
+        if (at == tbs_stop)
+                return TLS_OK;
+        if (tls_asn1_enter(der, tbs_stop, 0xa3, address_of at,
+                           address_of extensions_stop) ||
+            extensions_stop != tbs_stop ||
+            tls_asn1_enter(der, extensions_stop, 0x30, address_of at,
+                           address_of sequence_stop) ||
+            sequence_stop != extensions_stop)
+                return TLS_FAIL;
+
+        while (at < sequence_stop)
+        {
+                positive extension_stop = 0;
+                positive oid_at;
+                positive oid_stop = 0;
+                positive value_stop = 0;
+                bool critical = false;
+
+                if (tls_asn1_enter(der, sequence_stop, 0x30, address_of at,
+                                   address_of extension_stop))
+                        return TLS_FAIL;
+                oid_at = at;
+                if (tls_asn1_enter(der, extension_stop, 0x06, address_of oid_at,
+                                   address_of oid_stop))
+                        return TLS_FAIL;
+                at = oid_stop;
+                if (at < extension_stop && der[at] == 0x01)
+                {
+                        positive boolean_stop = 0;
+
+                        if (tls_asn1_enter(der, extension_stop, 0x01, address_of at,
+                                           address_of boolean_stop) ||
+                            at + 1 != boolean_stop ||
+                            (der[at] != 0 && der[at] != 0xff))
+                                return TLS_FAIL;
+                        critical = der[at] != 0;
+                        at = boolean_stop;
+                }
+                if (tls_asn1_enter(der, extension_stop, 0x04, address_of at,
+                                   address_of value_stop) ||
+                    value_stop != extension_stop)
+                        return TLS_FAIL;
+
+                if (tls_oid_is(der + oid_at, oid_stop - oid_at,
+                               tls_oid_basic_constraints, 3))
+                {
+                        if (cert->basic_constraints ||
+                            tls_parse_basic_constraints(der + at, value_stop - at,
+                                                        cert))
+                                return TLS_FAIL;
+                        cert->basic_constraints = true;
+                }
+                else if (tls_oid_is(der + oid_at, oid_stop - oid_at,
+                                    tls_oid_key_usage, 3))
+                {
+                        if (cert->key_usage ||
+                            tls_parse_key_usage(der + at, value_stop - at, cert))
+                                return TLS_FAIL;
+                        cert->key_usage = true;
+                }
+                else if (tls_oid_is(der + oid_at, oid_stop - oid_at,
+                                    tls_oid_extended_key_usage, 3))
+                {
+                        if (cert->extended_key_usage ||
+                            tls_parse_extended_key_usage(der + at, value_stop - at,
+                                                         cert))
+                                return TLS_FAIL;
+                        cert->extended_key_usage = true;
+                }
+                else if (tls_oid_is(der + oid_at, oid_stop - oid_at, tls_oid_san, 3))
+                {
+                        if (cert->san)
+                                return TLS_FAIL;
+                        cert->san = true;
+                }
+                else if (critical)
+                        cert->unsupported_critical = true;
+
+                at = extension_stop;
+        }
+        return TLS_OK;
+}
 
 static bipolar tls_parse_cert(p8 address_to der, positive length, tls_cert address_to cert)
 {
@@ -611,7 +908,7 @@ static bipolar tls_parse_cert(p8 address_to der, positive length, tls_cert addre
         if (tls_asn1_skip(der, tbs_stop, address_of at) ||
             tls_asn1_skip(der, tbs_stop, address_of at) ||
             tls_asn1_skip(der, tbs_stop, address_of at) ||
-            tls_asn1_skip(der, tbs_stop, address_of at) ||
+            tls_parse_validity(der, tbs_stop, address_of at, cert) ||
             tls_asn1_skip(der, tbs_stop, address_of at))
                 return TLS_FAIL;
 
@@ -689,7 +986,7 @@ static bipolar tls_parse_cert(p8 address_to der, positive length, tls_cert addre
         else
                 return TLS_FAIL;
 
-        return TLS_OK;
+        return tls_parse_extensions(der, tbs_stop, spki_stop, cert);
 }
 
 static bool tls_spki_is_x2(tls_cert address_to cert)
@@ -760,6 +1057,46 @@ static fn tls_keep_leaf(tls_conn address_to tls, tls_cert address_to leaf)
         memory_copy(tls->leaf_qy, leaf->qy, 48);
 }
 
+static bool tls_date_now(p64 address_to value)
+{
+        time_t stamp = time(null);
+        tm calendar;
+        p64 answer;
+
+        if (stamp < 0 || !gmtime_r(address_of stamp, address_of calendar))
+                return false;
+        answer = (p64)(calendar.tm_year + 1900);
+        answer = answer * 100 + (p64)(calendar.tm_mon + 1);
+        answer = answer * 100 + (p64)calendar.tm_mday;
+        answer = answer * 100 + (p64)calendar.tm_hour;
+        answer = answer * 100 + (p64)calendar.tm_min;
+        answer = answer * 100 + (p64)calendar.tm_sec;
+        address_to value = answer;
+        return true;
+}
+
+static bool tls_cert_current(tls_cert address_to cert, p64 now)
+{
+        return !cert->unsupported_critical && cert->not_before <= now &&
+               now <= cert->not_after;
+}
+
+static bool tls_leaf_authorized(tls_cert address_to cert, p64 now)
+{
+        return tls_cert_current(cert, now) &&
+               (!cert->key_usage || cert->digital_signature) &&
+               (!cert->extended_key_usage || cert->server_auth);
+}
+
+static bool tls_issuer_authorized(tls_cert address_to cert, positive ca_below,
+                                  p64 now)
+{
+        return tls_cert_current(cert, now) && cert->basic_constraints && cert->ca &&
+               (!cert->key_usage || cert->key_cert_sign) &&
+               (!cert->extended_key_usage || cert->server_auth) &&
+               (!cert->path_length_present || ca_below <= cert->path_length);
+}
+
 static bool tls_verify_chain(p8 address_to body, positive body_length,
                              string_address host, tls_conn address_to tls)
 {
@@ -768,6 +1105,7 @@ static bool tls_verify_chain(p8 address_to body, positive body_length,
         positive at;
         positive list_end;
         positive i;
+        p64 now = 0;
         p8 address_to leaf_der = null;
         positive leaf_length = 0;
 
@@ -819,6 +1157,20 @@ static bool tls_verify_chain(p8 address_to body, positive body_length,
                 return false;
         if (!tls->check_cert)
                 return true;
+
+        if (!tls_date_now(address_of now) || !tls_leaf_authorized(certs, now))
+                return false;
+        for (i = 1; i < count; i++)
+        {
+                if (tls_spki_is_x2(certs + i))
+                {
+                        if (i + 1 != count)
+                                return false;
+                        break;
+                }
+                if (!tls_issuer_authorized(certs + i, i - 1, now))
+                        return false;
+        }
 
         for (i = 0; i < count; i++)
         {
@@ -1344,6 +1696,8 @@ static bipolar tls_read(tls_conn address_to tls, p8 address_to into, positive ro
                         continue;
                 if (type != TLS_CT_APP)
                         return TLS_FAIL;
+                if (!length)
+                        continue;
                 if (length <= room)
                 {
                         memory_copy(into, record, length);

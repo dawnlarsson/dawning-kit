@@ -812,83 +812,18 @@ static p8 build_file_two[BUILD_FILE_ROOM];
 //      kernel configuration and every key came back empty.
 static p8 build_config_buffer[BUILD_FILE_ROOM];
 
-static bipolar build_slurp(string_address path, p8 address_to into,
-                           positive capacity)
-{
-        b32 handle = open(path, O_RDONLY, 0);
-        positive used = 0;
-
-        if (handle < 0)
-                return -1;
-
-        while (used + 1 < capacity)
-        {
-                bipolar got = read(handle, into + used, capacity - used - 1);
-
-                if (got <= 0)
-                        break;
-
-                used += (positive)got;
-        }
-
-        into[used] = end;
-        close(handle);
-
-        return (bipolar)used;
-}
-
 static bool build_write_file(string_address path, string_address data,
                              positive length)
 {
-        b32 handle = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        positive written = 0;
+        bipolar handle = system_open_output_at(AT_FDCWD, path, true, 0644);
+        positive written;
 
         if (handle < 0)
                 return false;
 
-        while (written < length)
-        {
-                bipolar put = write(handle, data + written, length - written);
-
-                if (put <= 0)
-                {
-                        close(handle);
-                        return false;
-                }
-
-                written += (positive)put;
-        }
-
-        close(handle);
-
-        return true;
-}
-
-static bool build_append_file(string_address path, string_address data,
-                              positive length)
-{
-        b32 handle = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
-        positive written = 0;
-
-        if (handle < 0)
-                return false;
-
-        while (written < length)
-        {
-                bipolar put = write(handle, data + written, length - written);
-
-                if (put <= 0)
-                {
-                        close(handle);
-                        return false;
-                }
-
-                written += (positive)put;
-        }
-
-        close(handle);
-
-        return true;
+        written = system_write_all((positive)handle, data, length);
+        system_close(handle);
+        return written == length;
 }
 
 /*
@@ -1008,7 +943,7 @@ static fn build_settings_read()
         build_lines walk;
         p8 address_to store;
 
-        if (build_slurp(BUILD_SETTINGS_FILE, build_file_two,
+        if (file_slurp(BUILD_SETTINGS_FILE, build_file_two,
                         BUILD_FILE_ROOM) < 0)
                 return;
 
@@ -1141,7 +1076,7 @@ static bool build_config_load()
 {
         string_address path = build_in("artifacts", ".config");
 
-        build_config_loaded = build_slurp(path, build_config_buffer,
+        build_config_loaded = file_slurp(path, build_config_buffer,
                                           BUILD_FILE_ROOM) >= 0;
 
         if (!build_config_loaded)
@@ -1414,7 +1349,7 @@ static fn build_config_conflicts(string_address text,
                                 p8 address_to value = build_text_take(BUILD_WORD_ROOM);
                                 bool found = false;
 
-                                if (build_slurp(path, build_file_two,
+                                if (file_slurp(path, build_file_two,
                                                 BUILD_FILE_ROOM) < 0)
                                         continue;
 
@@ -1509,7 +1444,7 @@ static b32 build_config(string_address address_to profiles, positive count)
         }
 
         {
-                bipolar got = build_slurp(information, build_file_two,
+                bipolar got = file_slurp(information, build_file_two,
                                           BUILD_FILE_ROOM);
 
                 if (got > 0)
@@ -1528,7 +1463,7 @@ static b32 build_config(string_address address_to profiles, positive count)
 
                 build_file_one[used++] = '\n';
                 string_format(log, "Adding profile: %s\n", profiles[at]);
-                got = build_slurp(path, build_file_two, BUILD_FILE_ROOM);
+                got = file_slurp(path, build_file_two, BUILD_FILE_ROOM);
 
                 if (got < 0)
                         return build_die(build_join("cannot read profile ",
@@ -1664,7 +1599,7 @@ static b32 build_verify_config(string_address config,
                 return 1;
         }
 
-        if (build_slurp(config, build_file_one, BUILD_FILE_ROOM) < 0)
+        if (file_slurp(config, build_file_one, BUILD_FILE_ROOM) < 0)
         {
                 string_format(log_error, "verify_config: cannot read %s\n",
                               config);
@@ -1703,7 +1638,7 @@ static b32 build_verify_config(string_address config,
                 if (!build_is_file(path))
                         continue;
 
-                if (build_slurp(path, build_file_two, BUILD_FILE_ROOM) < 0)
+                if (file_slurp(path, build_file_two, BUILD_FILE_ROOM) < 0)
                         continue;
 
                 build_lines_open(address_of profile_walk,
@@ -2216,7 +2151,7 @@ static b32 build_asm(string_address arch, string_address input,
                 return 1;
         }
 
-        if (build_slurp(input, build_file_one, BUILD_FILE_ROOM) < 0)
+        if (file_slurp(input, build_file_one, BUILD_FILE_ROOM) < 0)
         {
                 string_format(log_error, "asm: cannot read %s\n", input);
                 log_flush();
@@ -2304,25 +2239,73 @@ static string_address build_hex(positive value)
         return (string_address)into;
 }
 
-//      A working directory nobody else has. mktemp is one of ours, but its
-//      answer arrives on its standard output, and redirecting a tool's output
-//      to read it back costs more than the two syscalls the name needs: the
-//      process id is what makes it unique and it is already here.
+static bool build_random_marks(p8 address_to marks)
+{
+        positive filled = 0;
+
+        while (filled < SPOOL_TEMPLATE_MARKS)
+        {
+                bipolar got = system_call_3(
+                    syscall(getrandom), (positive)(marks + filled),
+                    SPOOL_TEMPLATE_MARKS - filled, 0);
+
+                if (got == -EINTR)
+                        continue;
+
+                if (got <= 0)
+                {
+                        errno = got < 0 ? (b32)-got : EIO;
+                        return false;
+                }
+
+                filled += (positive)got;
+        }
+
+        memory_translate(marks, SPOOL_TEMPLATE_MARKS,
+                         (address_any)spool_name_table);
+        return true;
+}
+
+//      A working directory nobody else has. Privileged execution ignores
+//      environment-selected parents and requires blocking kernel entropy;
+//      ordinary builds retain the standard temporary-family helper.
 static string_address build_temporary_directory(string_address tag)
 {
         string_address root = string_get_environment(environ, "TMPDIR");
         string_address path;
+        positive user = (positive)getuid();
+        positive effective_user = (positive)geteuid();
+        positive group = (positive)getgid();
+        positive effective_group = (positive)getegid();
+        bool privileged = effective_user == 0 || effective_user != user ||
+                          effective_group != group;
 
-        if (!root || !*root)
+        if (privileged || !root || !*root)
                 root = "/tmp";
 
-        path = build_join(root, "/", tag, ".", build_number((positive)getpid()),
-                          null);
+        path = build_join(root, "/", tag, ".XXXXXX", null);
 
-        if (mkdir(path, 0700) < 0 && !build_is_directory(path))
-                return null;
+        if (!privileged)
+                return mkdtemp(path);
 
-        return path;
+        for (positive attempt = 0; attempt < TMP_MAX; attempt++)
+        {
+                p8 address_to marks = (p8 address_to)path +
+                                      string_length(path) -
+                                      SPOOL_TEMPLATE_MARKS;
+
+                if (!build_random_marks(marks))
+                        return null;
+
+                if (mkdir(path, 0700) >= 0)
+                        return path;
+
+                if (errno != EEXIST)
+                        return null;
+        }
+
+        errno = EEXIST;
+        return null;
 }
 
 //      Removing a tree is our rm, called rather than spawned. If ours is
@@ -2792,7 +2775,7 @@ static b32 build_spark(string_address source, string_address output,
                 //      that nothing maps.
                 good = write(handle, address_of head, SPARK_HEADER_SIZE) ==
                        SPARK_HEADER_SIZE;
-                got = build_slurp(text_binary, build_file_one, BUILD_FILE_ROOM);
+                got = file_slurp(text_binary, build_file_one, BUILD_FILE_ROOM);
 
                 if (got > 0)
                         good = good && write(handle, build_file_one,
@@ -2803,7 +2786,7 @@ static b32 build_spark(string_address source, string_address output,
 
                 if (data_size > 0)
                 {
-                        got = build_slurp(data_binary, build_file_one,
+                        got = file_slurp(data_binary, build_file_one,
                                           BUILD_FILE_ROOM);
 
                         if (got > 0)
@@ -3650,14 +3633,14 @@ static positive build_processors()
         place a shell is still the right thing to run. Nothing is passed to
         it but the text.
 */
-static fn build_shell_key(string_address name)
+static b32 build_shell_key(string_address name)
 {
         string_address value = build_key(name);
 
         if (!value || !*value)
-                return;
+                return 0;
 
-        build_run("sh", "-c", value, null);
+        return build_run("sh", "-c", value, null);
 }
 
 /*
@@ -3853,7 +3836,7 @@ static bool build_tools_read()
         if (build_tool_count)
                 return true;
 
-        if (build_slurp(build_setting_get("tool_registry"), build_file_two,
+        if (file_slurp(build_setting_get("tool_registry"), build_file_two,
                         BUILD_FILE_ROOM) < 0)
                 return false;
 
@@ -3926,7 +3909,7 @@ static fn build_components(string_address config)
         build_moon_util_linux = true;
         build_moon_shell_monitor = true;
 
-        if (build_slurp(config, build_file_two, BUILD_FILE_ROOM) < 0)
+        if (file_slurp(config, build_file_two, BUILD_FILE_ROOM) < 0)
                 return;
 
         build_lines_open(address_of walk, (string_address)build_file_two);
@@ -4713,7 +4696,8 @@ static b32 build_local(string_address address_to profiles, positive count)
         }
 
         build_label("", "PRE BUILD");
-        build_shell_key("pre");
+        if (build_shell_key("pre"))
+                return build_die("pre-build hook");
 
         build_label("", "USER SPACE BUILD");
 
@@ -4802,7 +4786,8 @@ static b32 build_local(string_address address_to profiles, positive count)
         }
 
         build_label("", "POST BUILD");
-        build_shell_key("post");
+        if (build_shell_key("post"))
+                return build_die("post-build hook");
         string_format(log, "%sDone Building Kernel%s\n", BUILD_BOLD, BUILD_GREEN);
         log_flush();
         build_size(build_key("kernel_export"));
@@ -4932,12 +4917,205 @@ static string_address build_quote(string_address address_to words, positive coun
 */
 static string_address build_remote_image;
 
+/*
+        Every remote entry point uses this same gate.  It resolves the parent,
+        refuses a final symlink, requires a private directory owned by the SSH
+        identity, pins that directory as the command's working directory and
+        checks a private marker before executing anything from it.  The marker
+        keeps a swapped path to another owner-private directory from becoming
+        a valid build stage by accident.
+*/
+static string_address build_remote_stage_script =
+    "set -eu\n"
+    "fail() { printf \"build: refusing unsafe remote stage: %s\\n\" \"$stage\" >&2; exit 73; }\n"
+    "owner_of() { stat -c %u -- \"$1\" 2>/dev/null || stat -f %u \"$1\"; }\n"
+    "mode_of() { stat -c %a -- \"$1\" 2>/dev/null || stat -f %Lp \"$1\"; }\n"
+    "stage=$1\n"
+    "shift\n"
+    "parent=$(dirname -- \"$stage\") || exit 73\n"
+    "name=$(basename -- \"$stage\") || exit 73\n"
+    "case $name in \"\"|.|..) fail ;; esac\n"
+    "parent=$(CDPATH= cd -P -- \"$parent\" && pwd -P) || fail\n"
+    "uid=$(id -u) || fail\n"
+    "parent_owner=$(owner_of \"$parent\") || fail\n"
+    "case $parent_owner in \"$uid\"|0) ;; *) fail ;; esac\n"
+    "parent_mode=$(mode_of \"$parent\") || fail\n"
+    "case $parent_mode in\n"
+    "[0-7][0145][0145]|[0-7][0-7][0145][0145]|[1357][0-7][0-7][0-7]) ;;\n"
+    "*) fail ;;\n"
+    "esac\n"
+    "stage=$parent/$name\n"
+    "[ ! -L \"$stage\" ] || fail\n"
+    "if [ ! -e \"$stage\" ]; then\n"
+    "        umask 077\n"
+    "        mkdir -m 700 -- \"$stage\" || fail\n"
+    "fi\n"
+    "[ -d \"$stage\" ] && [ ! -L \"$stage\" ] || fail\n"
+    "[ \"$(owner_of \"$stage\")\" = \"$uid\" ] || fail\n"
+    "mode=$(mode_of \"$stage\") || fail\n"
+    "case $mode in [0-7][0145][0145]|[0-7][0-7][0145][0145]) ;; *) fail ;; esac\n"
+    "cd -P -- \"$stage\" || fail\n"
+    "[ \"$(pwd -P)\" = \"$stage\" ] || fail\n"
+    "[ \"$(owner_of .)\" = \"$uid\" ] || fail\n"
+    "chmod 700 . || fail\n"
+    "[ \"$(mode_of .)\" = 700 ] || fail\n"
+    "marker=.moonwater-stage-v1\n"
+    "if [ ! -e \"$marker\" ] && [ ! -L \"$marker\" ]; then\n"
+    "        (umask 077; set -C; printf \"%s\\n\" moonwater-stage-v1 > \"$marker\") || fail\n"
+    "fi\n"
+    "[ -f \"$marker\" ] && [ ! -L \"$marker\" ] || fail\n"
+    "[ \"$(owner_of \"$marker\")\" = \"$uid\" ] || fail\n"
+    "[ \"$(mode_of \"$marker\")\" = 600 ] || fail\n"
+    "[ \"$(cat -- \"$marker\")\" = moonwater-stage-v1 ] || fail\n"
+    "exec \"$@\"\n";
+
+static string_address build_remote_command(
+    string_address remote, string_address address_to words, positive count)
+{
+        string_address command[BUILD_ARGUMENT_ROOM];
+        positive at = 0;
+
+        if (count + 5 >= BUILD_ARGUMENT_ROOM)
+        {
+                build_die("too many remote command arguments");
+                return "";
+        }
+
+        command[at++] = "sh";
+        command[at++] = "-c";
+        command[at++] = build_remote_stage_script;
+        command[at++] = "sh";
+        command[at++] = remote;
+
+        for (positive which = 0; which < count; which++)
+                command[at++] = words[which];
+
+        command[at] = null;
+        return build_quote((string_address address_to)command, at);
+}
+
+static bool build_remote_image_valid(string_address image)
+{
+        string_address output = build_setting_get("output");
+        positive output_length = string_length(output);
+        positive image_length = string_length(image);
+        positive at = 0;
+
+        if (!output_length || output[output_length - 1] == '/' ||
+            image_length <= output_length + 1 ||
+            memory_compare(image, output, output_length) ||
+            image[output_length] != '/')
+                return false;
+
+        if (image[0] == '/')
+                at++;
+
+        while (image[at])
+        {
+                positive start = at;
+
+                while (image[at] && image[at] != '/')
+                {
+                        if (image[at] == '\n' || image[at] == '\r')
+                                return false;
+                        at++;
+                }
+
+                if (at == start ||
+                    (at - start == 1 && image[start] == '.') ||
+                    (at - start == 2 && image[start] == '.' &&
+                     image[start + 1] == '.'))
+                        return false;
+
+                if (image[at] == '/' && !image[++at])
+                        return false;
+        }
+
+        return true;
+}
+
+/* Stream beside the final name, sync and mode the completed bytes, then
+   rename over the name itself.  Parent components are held through no-follow
+   descriptors, so neither an intermediate nor final symlink can redirect the
+   publication outside the configured output tree. */
+static b32 build_remote_fetch(string_address host, string_address remote,
+                              string_address image)
+{
+        p8 leaf[256];
+        p8 temporary[256];
+        bipolar parent = system_open_parent_nofollow(
+            AT_FDCWD, image, true, 0755, leaf, sizeof(leaf));
+        bipolar handle;
+        b32 child;
+        bool failed;
+        string_address request[3] = {"cat", "--", image};
+        string_address words[5];
+
+        if (parent < 0)
+                return build_die("could not prepare the local image path");
+
+        handle = file_temporary_open_at(
+            parent, leaf, temporary, sizeof(temporary), ".fetch-", 7,
+            (positive)system_call_1(syscall(getpid), 0), 128, 0600);
+        if (handle < 0)
+        {
+                system_close(parent);
+                return build_die("could not create a temporary image");
+        }
+
+        words[0] = "ssh";
+        words[1] = "-n";
+        words[2] = host;
+        words[3] = build_remote_command(
+            remote, (string_address address_to)request, 3);
+        words[4] = null;
+
+        log_flush();
+        child = fork();
+
+        if (child == 0)
+        {
+                string_address found = build_resolve(words[0]);
+
+                if (dup2((b32)handle, 1) < 0)
+                        exit(127);
+                system_close(handle);
+
+                if (found)
+                        execve(found, (string_address address_to)words, environ);
+
+                exit(127);
+        }
+
+        failed = child < 0 || build_wait(child);
+        if (!failed && system_call_2(syscall(fchmod), (positive)handle,
+                                     0644) < 0)
+                failed = true;
+        if (!failed &&
+            system_call_1(syscall(fsync), (positive)handle) < 0)
+                failed = true;
+        system_close(handle);
+
+        if (!failed &&
+            system_rename_at(parent, temporary, parent, leaf, 0) < 0)
+                failed = true;
+        if (failed)
+                system_remove_at(parent, temporary, 0);
+        system_close(parent);
+
+        return failed ? build_die("could not fetch the built image") : 0;
+}
+
 static b32 build_remote(string_address host, string_address remote,
                         string_address address_to profiles, positive count)
 {
-        string_address quoted = build_quote(address_of remote, 1);
-        string_address arguments = build_quote(profiles, count);
+        string_address arguments;
         string_address stock = string_get_environment(environ, "MOONWATER_STOCK");
+
+        /* Five fixed build words plus the five-word staging front must fit. */
+        if (count + 10 >= BUILD_ARGUMENT_ROOM)
+                return build_die("too many remote build arguments");
+        arguments = build_quote(profiles, count);
 
         build_say(build_join("Checking ", host, null));
 
@@ -4968,15 +5146,31 @@ static b32 build_remote(string_address host, string_address remote,
                 words[at++] = "rsync";
                 words[at++] = "-az";
                 words[at++] = "--delete";
-                words[at++] = build_join("--rsync-path=mkdir -p -- ", quoted,
-                                         " && cd -- ", quoted, " && rsync", null);
+                words[at++] = "--no-perms";
+
+                {
+                        string_address request[1] = {"rsync"};
+
+                        words[at++] = build_join(
+                            "--rsync-path=",
+                            build_remote_command(
+                                remote, (string_address address_to)request, 1),
+                            null);
+                }
+
+                words[at++] = "--exclude";
+                words[at++] = "/.moonwater-stage-v1";
 
                 for (positive which = 0; which < many; which++)
                 {
+                        if (at + 3 >= BUILD_ARGUMENT_ROOM)
+                                return build_die("too many remote exclusions");
                         words[at++] = "--exclude";
                         words[at++] = names[which];
                 }
 
+                if (at + 2 >= BUILD_ARGUMENT_ROOM)
+                        return build_die("too many remote exclusions");
                 words[at++] = "./";
                 words[at++] = build_join(host, ":./", null);
                 words[at] = null;
@@ -4996,12 +5190,27 @@ static b32 build_remote(string_address host, string_address remote,
                 know is named here. env rather than a VAR=value prefix, which
                 sudo only passes when it has been configured to.
         */
-        if (build_run("ssh", "-n", host,
-                      build_join("cd -- ", quoted, " && sudo env ",
-                                 stock && *stock ? "MOONWATER_STOCK=1" : "",
-                                 " sh build.sh ", arguments, null),
-                      null))
-                return build_die(build_join("the build failed on ", host, null));
+        {
+                string_address request[BUILD_ARGUMENT_ROOM];
+                positive at = 0;
+
+                request[at++] = "sudo";
+                request[at++] = "env";
+                if (stock && *stock)
+                        request[at++] = "MOONWATER_STOCK=1";
+                request[at++] = "sh";
+                request[at++] = "build.sh";
+                for (positive which = 0; which < count; which++)
+                        request[at++] = profiles[which];
+
+                if (build_run(
+                        "ssh", "-n", host,
+                        build_remote_command(
+                            remote, (string_address address_to)request, at),
+                        null))
+                        return build_die(build_join("the build failed on ", host,
+                                                    null));
+        }
 
         /*
                 The host which built the configured profile is authoritative
@@ -5010,14 +5219,16 @@ static b32 build_remote(string_address host, string_address remote,
                 kernel8.img.
         */
         {
-                string_address words[8];
+                string_address request[3] = {
+                    "./build", "key-one", "kernel_export"};
+                string_address words[5];
                 positive at = 0;
 
                 words[at++] = "ssh";
                 words[at++] = "-n";
                 words[at++] = host;
-                words[at++] = build_join("cd -- ", quoted,
-                                         " && ./build key-one kernel_export", null);
+                words[at++] = build_remote_command(
+                    remote, (string_address address_to)request, 3);
                 words[at] = null;
 
                 if (build_capture_words((string_address address_to)words,
@@ -5036,65 +5247,13 @@ static b32 build_remote(string_address host, string_address remote,
                 }
         }
 
-        {
-                string_address expected = build_join(build_setting_get("output"),
-                                                     "/", null);
-                positive length = string_length(expected);
-
-                if (string_length(build_remote_image) <= length ||
-                    memory_compare(build_remote_image, expected, length))
-                        return build_die(build_join(
-                                "remote build reported an invalid image path: ",
-                                build_remote_image, null));
-        }
+        if (!build_remote_image_valid(build_remote_image))
+                return build_die(build_join(
+                    "remote build reported an invalid image path: ",
+                    build_remote_image, null));
 
         build_say(build_join("Fetching ", build_remote_image, null));
-        build_tool("mkdir", "-p", build_directory_of(build_remote_image), null);
-
-        {
-                string_address words[8];
-                positive at = 0;
-                b32 handle;
-                b32 child;
-
-                words[at++] = "ssh";
-                words[at++] = "-n";
-                words[at++] = host;
-                words[at++] = build_join("cd -- ", quoted, " && cat -- ",
-                                         build_quote(address_of build_remote_image, 1),
-                                         null);
-                words[at] = null;
-
-                handle = open(build_remote_image, O_WRONLY | O_CREAT | O_TRUNC,
-                              0644);
-
-                if (handle < 0)
-                        return build_die("could not fetch the built image");
-
-                log_flush();
-                child = fork();
-
-                if (child == 0)
-                {
-                        string_address found = build_resolve(words[0]);
-
-                        dup2(handle, 1);
-                        close(handle);
-
-                        if (found)
-                                execve(found, (string_address address_to)words,
-                                       environ);
-
-                        exit(127);
-                }
-
-                close(handle);
-
-                if (build_wait(child))
-                        return build_die("could not fetch the built image");
-        }
-
-        return 0;
+        return build_remote_fetch(host, remote, build_remote_image);
 }
 
 /*

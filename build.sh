@@ -141,14 +141,67 @@ build_remote() {
         ssh -n -o BatchMode=yes -o ConnectTimeout=20 "$host" true 2>/dev/null ||
                 die "cannot reach $host over ssh"
 
+        # Resolve the parent first, create only the final directory, and pin
+        # the command's working directory before it runs.  The marker prevents
+        # a path swapped to some other private directory from being accepted
+        # merely because that directory happens to have the right owner and
+        # mode. An existing owner-only stage is tightened to 0700 and claimed;
+        # group- or other-writable directories are refused.
+remote_stage='set -eu
+fail() { printf "build: refusing unsafe remote stage: %s\n" "$stage" >&2; exit 73; }
+owner_of() { stat -c %u -- "$1" 2>/dev/null || stat -f %u "$1"; }
+mode_of() { stat -c %a -- "$1" 2>/dev/null || stat -f %Lp "$1"; }
+stage=$1
+shift
+parent=$(dirname -- "$stage") || exit 73
+name=$(basename -- "$stage") || exit 73
+case $name in ""|.|..) fail ;; esac
+parent=$(CDPATH= cd -P -- "$parent" && pwd -P) || fail
+uid=$(id -u) || fail
+parent_owner=$(owner_of "$parent") || fail
+case $parent_owner in "$uid"|0) ;; *) fail ;; esac
+parent_mode=$(mode_of "$parent") || fail
+case $parent_mode in
+[0-7][0145][0145]|[0-7][0-7][0145][0145]|[1357][0-7][0-7][0-7]) ;;
+*) fail ;;
+esac
+stage=$parent/$name
+[ ! -L "$stage" ] || fail
+if [ ! -e "$stage" ]; then
+        umask 077
+        mkdir -m 700 -- "$stage" || fail
+fi
+[ -d "$stage" ] && [ ! -L "$stage" ] || fail
+[ "$(owner_of "$stage")" = "$uid" ] || fail
+mode=$(mode_of "$stage") || fail
+case $mode in [0-7][0145][0145]|[0-7][0-7][0145][0145]) ;; *) fail ;; esac
+cd -P -- "$stage" || fail
+[ "$(pwd -P)" = "$stage" ] || fail
+[ "$(owner_of .)" = "$uid" ] || fail
+chmod 700 . || fail
+[ "$(mode_of .)" = 700 ] || fail
+marker=.moonwater-stage-v1
+if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+        (umask 077; set -C; printf "%s\n" moonwater-stage-v1 > "$marker") || fail
+fi
+[ -f "$marker" ] && [ ! -L "$marker" ] || fail
+[ "$(owner_of "$marker")" = "$uid" ] || fail
+[ "$(mode_of "$marker")" = 600 ] || fail
+[ "$(cat -- "$marker")" = moonwater-stage-v1 ] || fail
+exec "$@"'
+
+        remote_command() {
+                shell_quote sh -c "$remote_stage" sh "$remote" "$@"
+        }
+
         say "Copying the tree to $host:$remote"
-        remote_path=$(shell_quote "$remote")
-        remote_rsync="mkdir -p -- $remote_path && cd -- $remote_path && rsync"
+        remote_rsync=$(remote_command rsync)
 
         # The kernel source, its artifacts and the built filesystem stay on
         # the build host: they are large, and none of them belong to this
         # checkout. linux/ is the upstream tree, not part of this repository.
-        rsync -az --delete --rsync-path="$remote_rsync" \
+        rsync -az --delete --no-perms --rsync-path="$remote_rsync" \
+                --exclude '/.moonwater-stage-v1' \
                 --exclude '.git' \
                 --exclude '.claude' \
                 --exclude 'linux' \
@@ -170,25 +223,129 @@ build_remote() {
         carry=""
         [ -z "${MOONWATER_STOCK:-}" ] || carry="MOONWATER_STOCK=1"
 
-        # shellcheck disable=SC2029,SC2086
-        ssh -n "$host" "cd -- $remote_path && sudo env $carry sh build.sh $(shell_quote "$@")" ||
+        # shellcheck disable=SC2029
+        ssh -n "$host" "$(remote_command sudo env $carry sh build.sh "$@")" ||
                 die "the build failed on $host"
 
         # The host which built the configured profile is authoritative about
         # its export.  A stale local artifacts/.config may describe another
         # architecture entirely (an ARM Mac commonly names kernel8.img).
         image=$(ssh -n "$host" \
-                "cd -- $remote_path && . ./kit/common && key_one kernel_export") ||
+                "$(remote_command ./build key-one kernel_export)") ||
                 die "could not identify the built image"
         case "$image" in
+        *'
+'*|*'
+'*) die "remote build reported an invalid image path" ;;
         dist/*) ;;
         *) die "remote build reported an invalid image path: $image" ;;
         esac
 
+        relative=${image#dist/}
+        case "/$relative/" in
+        *'/../'*|*'/./'*|*'//'*)
+                die "remote build reported an invalid image path: $image" ;;
+        esac
+
         say "Fetching $image"
-        mkdir -p "$(dirname "$image")"
-        ssh -n "$host" "cd -- $remote_path && cat -- $(shell_quote "$image")" > "$image" ||
+
+        artifact_owner_of() {
+                stat -c %u -- "$1" 2>/dev/null || stat -f %u -- "$1"
+        }
+        artifact_mode_of() {
+                stat -c %a -- "$1" 2>/dev/null || stat -f %Lp -- "$1"
+        }
+        artifact_same_file() {
+                if [ "$(uname -s)" = Darwin ]; then
+                        /bin/zsh -c '[[ $1 -ef $2 ]]' same-file "$1" "$2"
+                else
+                        [ "$1" -ef "$2" ]
+                fi
+        }
+        artifact_directory_safe() {
+                [ -d "$1" ] && [ ! -L "$1" ] || return 1
+                [ "$(artifact_owner_of "$1")" = "$(id -u)" ] || return 1
+                artifact_mode=$(artifact_mode_of "$1") || return 1
+                case $artifact_mode in
+                [0-7][0145][0145]|[0-7][0-7][0145][0145]) return 0 ;;
+                *) return 1 ;;
+                esac
+        }
+
+        # A sibling can only be pinned safely when every directory which can
+        # replace it is private to this user.  Check the checkout before
+        # creating dist, then check each component as it is entered.
+        artifact_directory_safe . ||
+                die "the local checkout is writable by another user"
+        [ ! -L dist ] || die "local output directory is a symbolic link"
+        if [ ! -e dist ]; then
+                (umask 077; mkdir -- dist) ||
+                        die "could not create the local output directory"
+        fi
+        artifact_directory_safe dist ||
+                die "local output directory is not private to this user"
+
+        artifact_parent=dist
+        artifact_leaf=${relative##*/}
+        artifact_parts=${relative%/*}
+        [ "$artifact_parts" != "$relative" ] || artifact_parts=
+
+        while [ -n "$artifact_parts" ]; do
+                case "$artifact_parts" in
+                */*) artifact_part=${artifact_parts%%/*}
+                     artifact_parts=${artifact_parts#*/} ;;
+                *) artifact_part=$artifact_parts; artifact_parts= ;;
+                esac
+
+                artifact_next=$artifact_parent/$artifact_part
+                [ ! -L "$artifact_next" ] ||
+                        die "local image parent is a symbolic link: $artifact_next"
+                if [ ! -e "$artifact_next" ]; then
+                        (umask 077; mkdir -- "$artifact_next") ||
+                                die "could not create local image parent: $artifact_next"
+                fi
+                artifact_directory_safe "$artifact_next" ||
+                        die "local image parent is not private: $artifact_next"
+                artifact_parent=$artifact_next
+        done
+
+        # Keep the name hidden in an owner-only directory and give ssh an
+        # already-open descriptor.  ssh never reopens the pathname, which
+        # closes the mktemp-to-redirection replacement window.
+        fetched_stage=$(mktemp -d "$artifact_parent/.moonwater-fetch.XXXXXX") ||
+                die "could not create a private image stage"
+        chmod 0700 "$fetched_stage" || die "could not secure the image stage"
+        artifact_directory_safe "$fetched_stage" ||
+                die "temporary image stage is not private"
+        fetched=$fetched_stage/image
+        fetch_cleanup() {
+                exec 9>&- || :
+                [ -z "${fetched:-}" ] || rm -f -- "$fetched"
+                [ -z "${fetched_stage:-}" ] || rmdir -- "$fetched_stage" 2>/dev/null || :
+        }
+        trap fetch_cleanup 0 HUP INT TERM
+        (umask 077; set -C; : > "$fetched") ||
+                die "could not create a temporary image"
+        exec 9<> "$fetched" || die "could not pin the temporary image"
+        artifact_same_file "$fetched" /dev/fd/9 ||
+                die "temporary image changed while it was opened"
+
+        if ! ssh -n "$host" \
+                "$(remote_command cat -- "$image")" >&9; then
                 die "could not fetch the built image"
+        fi
+
+        [ -f "$fetched" ] && [ ! -L "$fetched" ] &&
+                artifact_same_file "$fetched" /dev/fd/9 ||
+                die "temporary image changed while it was fetched"
+        chmod 0644 /dev/fd/9 || die "could not set image permissions"
+        exec 9>&-
+        mv -f -- "$fetched" "$artifact_parent/$artifact_leaf" ||
+                die "could not publish the built image"
+        fetched=
+        rmdir -- "$fetched_stage" || die "could not remove the image stage"
+        fetched_stage=
+        trap - 0 HUP INT TERM
 }
 build_local() {
         die "building a kernel wants a Linux toolchain and a case

@@ -67,7 +67,8 @@ __asm__(
     "add 16(%rsp), %r13\n   jmp .Llex_x64_loop\n"
 
     "8:  movzbl (%r13), %ecx\n   lea lex_operator(%rip), %rax\n   cmpb $0, (%rax,%rcx)\n"
-    "je .Llex_x64_word\n   movzbl 1(%r13), %edx\n   movzbl 2(%r13), %r9d\n"
+    "je .Llex_x64_word\n   movzbl 1(%r13), %edx\n   xor %r9d, %r9d\n"
+    "test %edx, %edx\n   jz 9f\n   movzbl 2(%r13), %r9d\n"
     "cmp $40, %edx\n   jne 9f\n   cmp $60, %ecx\n   je .Llex_x64_word\n"
     "cmp $62, %ecx\n   je .Llex_x64_word\n"
 
@@ -218,7 +219,8 @@ __asm__(
     "add x20, x20, x3\n   b .Llex_a64_loop\n"
 
     "8:  ldrb w8, [x20]\n   ldrb w9, [x22, x8]\n   cbz w9, .Llex_a64_word\n"
-    "ldrb w10, [x20, #1]\n   ldrb w11, [x20, #2]\n"
+    "ldrb w10, [x20, #1]\n   mov w11, wzr\n   cbz w10, 9f\n"
+    "ldrb w11, [x20, #2]\n"
     "cmp w10, #40\n   b.ne 9f\n   cmp w8, #60\n   b.eq .Llex_a64_word\n"
     "cmp w8, #62\n   b.eq .Llex_a64_word\n"
 
@@ -358,7 +360,8 @@ __asm__(
     "add s1, s1, a3\n   j .Llex_rv_loop\n"
 
     "8:  lbu t0, 0(s1)\n   add t1, s4, t0\n   lbu t1, 0(t1)\n   beqz t1, .Llex_rv_word\n"
-    "lbu t1, 1(s1)\n   lbu t2, 2(s1)\n   li t4, 40\n   bne t1, t4, 9f\n"
+    "lbu t1, 1(s1)\n   li t2, 0\n   beqz t1, 9f\n   lbu t2, 2(s1)\n"
+    "li t4, 40\n   bne t1, t4, 9f\n"
     "li t4, 60\n   beq t0, t4, .Llex_rv_word\n   li t4, 62\n   beq t0, t4, .Llex_rv_word\n"
 
     "9:  li a1, 0\n   li a3, 1\n   li t4, 60\n   beq t0, t4, .Llex_rv_lt\n"

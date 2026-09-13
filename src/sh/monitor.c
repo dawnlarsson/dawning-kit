@@ -426,9 +426,9 @@ static bool monitor_processes(system_snapshot address_to old,
                 writer_field(monitor_row_write, memory_text, memory_length, 9,
                              ' ', false);
                 monitor_row_write("  ", 2);
-                monitor_row_write((address_to top)[i].process->command,
-                                  string_length(
-                                      (address_to top)[i].process->command));
+                terminal_safe_field(
+                    monitor_row_write, (address_to top)[i].process->command,
+                    string_length((address_to top)[i].process->command));
                 monitor_row_end(i + 1 < count);
         }
 

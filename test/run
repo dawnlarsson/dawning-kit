@@ -3494,7 +3494,35 @@ lane_shell()
         differential_domain shell || shell_failed=1
         return "$shell_failed"
 }
-lane_builtins()   { differential_domain builtins; }
+lane_builtins()
+{
+        differential_domain builtins || return $?
+
+        mkdir -p "$work/fc-umask"
+        if fc_masked=$(
+                cd "$work/fc-umask" || exit 1
+                "$farm/bash" -c '
+history -c 2>/dev/null
+printf "echo one\n" > history
+history -r history 2>/dev/null
+fc_editor() { printf "echo edited\n" > "$1"; }
+umask 0777
+fc -e fc_editor 1
+' 2>/dev/null
+        ); then
+                fc_masked_status=0
+        else
+                fc_masked_status=$?
+        fi
+
+        if [ "$fc_masked_status:$fc_masked" = '0:edited' ]; then
+                tally fc-private-umask 1 1
+        else
+                tally fc-private-umask 0 1
+                note "fc under umask 0777 returned $fc_masked_status [$fc_masked]"
+                return 1
+        fi
+}
 lane_awk()        { differential_domain awk; }
 
 #
@@ -6513,6 +6541,308 @@ if [ "$copy_status" -ne 0 ] &&
 else
         lost 'agent worktree excluded' "copy status $copy_status"
 fi
+
+# Exercise the Mac-side remote path without a remote machine. The local rsync
+# stub runs its --rsync-path command as the remote shell would; stat supplies
+# GNU's two queried formats on Darwin as well as Linux.
+mkdir -p "$work/secure-bin" "$work/remote-parent" \
+        "$work/remote-fixture/src" "$work/remote-fixture/kit" \
+        "$work/remote-fixture/dist"
+chmod 700 "$work/remote-parent"
+: > "$work/remote-fixture/build.sh"
+cat > "$work/secure-bin/stat" <<'SCRIPT'
+#!/bin/sh
+format=$2
+shift 2
+[ "$1" != -- ] || shift
+if [ "$(uname -s)" = Darwin ]; then
+        case $format in
+        %u) exec /usr/bin/stat -f %u "$1" ;;
+        %a) exec /usr/bin/stat -f %Lp "$1" ;;
+        esac
+fi
+exec /usr/bin/stat -c "$format" -- "$1"
+SCRIPT
+cat > "$work/secure-bin/rsync" <<'SCRIPT'
+#!/bin/sh
+[ "${MOONWATER_TEST_REMOTE_RSYNC:-}" != 1 ] || exit 0
+remote_command=
+for argument do
+        case $argument in
+        --rsync-path=*) remote_command=${argument#--rsync-path=} ;;
+        esac
+done
+[ -n "$remote_command" ] || exit 1
+MOONWATER_TEST_REMOTE_RSYNC=1 sh -c "$remote_command"
+SCRIPT
+cat > "$work/secure-bin/ssh" <<'SCRIPT'
+#!/bin/sh
+case "$*" in
+*"'./build' 'key-one' 'kernel_export'"*)
+        printf '%s\n' "${MOONWATER_TEST_IMAGE:-dist/image.efi}" ;;
+*"'cat' '--'"*)
+        if [ -n "${MOONWATER_TEST_REPLACE_STAGE:-}" ]; then
+                staged=$(find "$MOONWATER_TEST_REPLACE_STAGE" \
+                        -path '*/.moonwater-fetch.*/image' -type f -print |
+                        head -1)
+                [ -n "$staged" ] || exit 91
+                rm -f -- "$staged" || exit 92
+                ln -s "$MOONWATER_TEST_SWAP_OUTPUT" "$staged" || exit 93
+        fi
+        printf '%s' 'new image bytes'
+        exit "${MOONWATER_TEST_FETCH_STATUS:-0}" ;;
+*) exit 0 ;;
+esac
+SCRIPT
+cat > "$work/secure-bin/mktemp" <<'SCRIPT'
+#!/bin/sh
+if [ "$1" = -d ]; then
+        [ -z "${MOONWATER_TEST_MKTEMP_LOG:-}" ] ||
+                printf '%s\n' directory >> "$MOONWATER_TEST_MKTEMP_LOG"
+        exec /usr/bin/mktemp "$@"
+fi
+temporary=$(/usr/bin/mktemp "$@") || exit 1
+[ -z "${MOONWATER_TEST_MKTEMP_LOG:-}" ] ||
+        printf '%s\n' named-file >> "$MOONWATER_TEST_MKTEMP_LOG"
+if [ -n "${MOONWATER_TEST_SWAP_OUTPUT:-}" ]; then
+        rm -f -- "$temporary" || exit 1
+        ln -s "$MOONWATER_TEST_SWAP_OUTPUT" "$temporary" || exit 1
+fi
+printf '%s\n' "$temporary"
+SCRIPT
+chmod +x "$work/secure-bin/stat" "$work/secure-bin/rsync" \
+        "$work/secure-bin/ssh" "$work/secure-bin/mktemp"
+
+printf '%s' 'outside stays' > "$work/outside-image"
+ln -s "$work/outside-image" "$work/remote-fixture/dist/image.efi"
+(
+        cd "$work/remote-fixture" || exit 1
+        PATH="$work/secure-bin:$PATH" \
+                MOONWATER_TEST_MKTEMP_LOG="$work/build-mktemp-log" \
+                MOONWATER_TEST_SWAP_OUTPUT="$work/outside-image" \
+                MOONWATER_BUILD_DIR="$work/remote-parent/stage" \
+                sh "$root/build.sh" --host build-fixture > "$work/secure-log" 2>&1
+)
+secure_status=$?
+secure_type=regular
+[ ! -L "$work/remote-fixture/dist/image.efi" ] || secure_type=link
+same 'private atomic remote build' \
+        '0:regular:new image bytes:outside stays:directory:700:600' \
+        "$secure_status:$secure_type:$(cat "$work/remote-fixture/dist/image.efi"):$(cat "$work/outside-image"):$(cat "$work/build-mktemp-log"):$($work/secure-bin/stat -c %a -- "$work/remote-parent/stage"):$($work/secure-bin/stat -c %a -- "$work/remote-parent/stage/.moonwater-stage-v1")"
+
+printf '%s' 'old image bytes' > "$work/remote-fixture/dist/image.efi"
+(
+        cd "$work/remote-fixture" || exit 1
+        PATH="$work/secure-bin:$PATH" \
+                MOONWATER_TEST_REPLACE_STAGE="$work/remote-fixture/dist" \
+                MOONWATER_TEST_SWAP_OUTPUT="$work/outside-image" \
+                MOONWATER_BUILD_DIR="$work/remote-parent/stage" \
+                sh "$root/build.sh" --host build-fixture > "$work/fetch-race-log" 2>&1
+)
+fetch_race_status=$?
+fetch_race_temps=$(find "$work/remote-fixture/dist" -name '.moonwater-fetch.*' |
+        wc -l | tr -d ' ')
+same 'fetch replacement refused' '1:old image bytes:outside stays:0' \
+        "$fetch_race_status:$(cat "$work/remote-fixture/dist/image.efi"):$(cat "$work/outside-image"):$fetch_race_temps"
+
+printf '%s' 'old image bytes' > "$work/remote-fixture/dist/image.efi"
+(
+        cd "$work/remote-fixture" || exit 1
+        PATH="$work/secure-bin:$PATH" \
+                MOONWATER_TEST_FETCH_STATUS=9 \
+                MOONWATER_BUILD_DIR="$work/remote-parent/stage" \
+                sh "$root/build.sh" --host build-fixture > "$work/fetch-fail-log" 2>&1
+)
+fetch_status=$?
+fetch_temps=$(find "$work/remote-fixture/dist" -name '.moonwater-fetch.*' |
+        wc -l | tr -d ' ')
+same 'failed fetch preserves image' '1:old image bytes:0' \
+        "$fetch_status:$(cat "$work/remote-fixture/dist/image.efi"):$fetch_temps"
+
+chmod 0777 "$work/remote-fixture/dist"
+(
+        cd "$work/remote-fixture" || exit 1
+        PATH="$work/secure-bin:$PATH" \
+                MOONWATER_BUILD_DIR="$work/remote-parent/stage" \
+                sh "$root/build.sh" --host build-fixture > "$work/local-mode-log" 2>&1
+)
+local_mode_status=$?
+chmod 0755 "$work/remote-fixture/dist"
+same 'writable local output refused' 1 "$local_mode_status"
+
+(
+        cd "$work/remote-fixture" || exit 1
+        PATH="$work/secure-bin:$PATH" \
+                MOONWATER_TEST_IMAGE='dist/../../escaped' \
+                MOONWATER_BUILD_DIR="$work/remote-parent/stage" \
+                sh "$root/build.sh" --host build-fixture > "$work/traversal-log" 2>&1
+)
+traversal_status=$?
+escaped=no
+[ ! -e "$work/escaped" ] || escaped=yes
+same 'remote traversal refused' '1:no' "$traversal_status:$escaped"
+
+mkdir -p "$work/link-target"
+ln -s "$work/link-target" "$work/remote-fixture/dist/nested"
+(
+        cd "$work/remote-fixture" || exit 1
+        PATH="$work/secure-bin:$PATH" \
+                MOONWATER_TEST_IMAGE='dist/nested/image.efi' \
+                MOONWATER_BUILD_DIR="$work/remote-parent/stage" \
+                sh "$root/build.sh" --host build-fixture > "$work/parent-link-log" 2>&1
+)
+parent_link_status=$?
+parent_escape=no
+[ ! -e "$work/link-target/image.efi" ] || parent_escape=yes
+same 'local parent symlink refused' '1:no' \
+        "$parent_link_status:$parent_escape"
+
+mkdir -p "$work/unclaimed-stage" "$work/stage-link-target"
+chmod 777 "$work/unclaimed-stage"
+chmod 700 "$work/stage-link-target"
+ln -s "$work/stage-link-target" "$work/remote-parent/stage-link"
+for unsafe_stage in "$work/unclaimed-stage" "$work/remote-parent/stage-link"; do
+        (
+                cd "$work/remote-fixture" || exit 1
+                PATH="$work/secure-bin:$PATH" \
+                        MOONWATER_BUILD_DIR="$unsafe_stage" \
+                        sh "$root/build.sh" --host build-fixture > \
+                        "$work/unsafe-stage-log" 2>&1
+        )
+        unsafe_status=$?
+        same "unsafe stage $(basename "$unsafe_stage")" 1 "$unsafe_status"
+done
+
+# The Raspberry Pi hook verifies both cached and newly downloaded bytes, and
+# writes private stages through pinned descriptors before publication. Fake
+# downloads make those transitions deterministic and keep this lane offline.
+mkdir -p "$work/rpi/kit" "$work/rpi/artifacts/pi" \
+        "$work/rpi/dist/boot" "$work/rpi-bin"
+cp kit/common "$work/rpi/kit/common"
+cat > "$work/rpi-bin/sha256sum" <<'SCRIPT'
+#!/bin/sh
+read -r digest path || exit 1
+case $path in
+*bootcode.bin*) expected='firmware:bootcode.bin' ;;
+*start.elf*) expected='firmware:start.elf' ;;
+*fixup.dat*) expected='firmware:fixup.dat' ;;
+*) exit 1 ;;
+esac
+[ "$(cat "$path")" = "$expected" ]
+SCRIPT
+cat > "$work/rpi-bin/curl" <<'SCRIPT'
+#!/bin/sh
+output=
+url=
+while [ "$#" -gt 0 ]; do
+        case $1 in
+        --output) output=$2; shift 2 ;;
+        --proto|--proto-redir) shift 2 ;;
+        --fail|--location|--silent|--show-error|--tlsv1.2) shift ;;
+        *) url=$1; shift ;;
+        esac
+done
+[ -n "$output" ] && [ -n "$url" ] || exit 1
+name=${url##*/}
+[ -z "${MOONWATER_TEST_OUTPUT_LOG:-}" ] ||
+        printf '%s\n' "$output" >> "$MOONWATER_TEST_OUTPUT_LOG"
+if [ -n "${MOONWATER_TEST_REPLACE_STAGE:-}" ]; then
+        staged=$(find "$MOONWATER_TEST_REPLACE_STAGE" -name payload \
+                -type f -print | head -1)
+        [ -n "$staged" ] || exit 91
+        rm -f -- "$staged" || exit 92
+        ln -s "$MOONWATER_TEST_SWAP_OUTPUT" "$staged" || exit 93
+fi
+if [ -n "${MOONWATER_TEST_SWAP_OUTPUT:-}" ] && [ "$output" != - ]; then
+        rm -f -- "$output" || exit 1
+        ln -s "$MOONWATER_TEST_SWAP_OUTPUT" "$output" || exit 1
+fi
+if [ "${MOONWATER_TEST_BAD_FIRMWARE:-}" = "$name" ]; then
+        bytes=corrupt
+else
+        bytes=firmware:$name
+fi
+case $output in
+-) printf '%s' "$bytes" ;;
+*) printf '%s' "$bytes" > "$output" ;;
+esac
+SCRIPT
+chmod +x "$work/rpi-bin/sha256sum" \
+        "$work/rpi-bin/curl"
+printf '%s' 'firmware:bootcode.bin' > "$work/rpi/artifacts/pi/bootcode.bin"
+printf '%s' 'outside firmware stays' > "$work/rpi-outside"
+ln -s "$work/rpi-outside" "$work/rpi/artifacts/pi/start.elf"
+printf '%s' stale > "$work/rpi/artifacts/pi/fixup.dat"
+ln -s "$work/rpi-outside" "$work/rpi/dist/boot/bootcode.bin"
+(
+        cd "$work/rpi" || exit 1
+        PATH="$work/rpi-bin:$PATH" \
+                MOONWATER_TEST_OUTPUT_LOG="$work/rpi-output-log" \
+                MOONWATER_TEST_SWAP_OUTPUT="$work/rpi-outside" \
+                sh "$root/kernel/profile/post/rpi.sh" \
+                > "$work/rpi-log" 2>&1
+)
+rpi_status=$?
+rpi_types=regular
+for firmware in bootcode.bin start.elf fixup.dat; do
+        [ ! -L "$work/rpi/artifacts/pi/$firmware" ] || rpi_types=link
+        [ ! -L "$work/rpi/dist/boot/$firmware" ] || rpi_types=link
+done
+same 'verified named firmware' \
+        '0:regular:firmware:bootcode.bin:firmware:start.elf:firmware:fixup.dat:outside firmware stays' \
+        "$rpi_status:$rpi_types:$(cat "$work/rpi/dist/boot/bootcode.bin"):$(cat "$work/rpi/dist/boot/start.elf"):$(cat "$work/rpi/dist/boot/fixup.dat"):$(cat "$work/rpi-outside")"
+same 'firmware writer uses descriptors' '-:-' \
+        "$(paste -sd: "$work/rpi-output-log")"
+
+printf '%s' 'old invalid firmware' > "$work/rpi/artifacts/pi/fixup.dat"
+(
+        cd "$work/rpi" || exit 1
+        PATH="$work/rpi-bin:$PATH" \
+                MOONWATER_TEST_REPLACE_STAGE="$work/rpi/artifacts/pi" \
+                MOONWATER_TEST_SWAP_OUTPUT="$work/rpi-outside" \
+                sh "$root/kernel/profile/post/rpi.sh" > "$work/rpi-race-log" 2>&1
+)
+rpi_race_status=$?
+rpi_race_temps=$(find "$work/rpi" \( -name '*.download.*' -o -name '*.copy.*' \) |
+        wc -l | tr -d ' ')
+same 'firmware replacement refused' \
+        '1:old invalid firmware:outside firmware stays:0' \
+        "$rpi_race_status:$(cat "$work/rpi/artifacts/pi/fixup.dat"):$(cat "$work/rpi-outside"):$rpi_race_temps"
+
+printf '%s' 'old invalid firmware' > "$work/rpi/artifacts/pi/fixup.dat"
+(
+        cd "$work/rpi" || exit 1
+        PATH="$work/rpi-bin:$PATH" MOONWATER_TEST_BAD_FIRMWARE=fixup.dat \
+                sh "$root/kernel/profile/post/rpi.sh" > "$work/rpi-bad-log" 2>&1
+)
+rpi_bad_status=$?
+rpi_temps=$(find "$work/rpi" \( -name '*.download.*' -o -name '*.copy.*' \) |
+        wc -l | tr -d ' ')
+same 'bad firmware not promoted' '1:old invalid firmware:0' \
+        "$rpi_bad_status:$(cat "$work/rpi/artifacts/pi/fixup.dat"):$rpi_temps"
+
+chmod 0777 "$work/rpi/artifacts/pi"
+(
+        cd "$work/rpi" || exit 1
+        PATH="$work/rpi-bin:$PATH" sh "$root/kernel/profile/post/rpi.sh" \
+                > "$work/rpi-mode-log" 2>&1
+)
+rpi_mode_status=$?
+chmod 0755 "$work/rpi/artifacts/pi"
+same 'writable firmware cache refused' 1 "$rpi_mode_status"
+
+rpi_commit=$(sed -n 's/^firmware_commit=//p' kernel/profile/post/rpi.sh)
+rpi_commit_ok=$(printf '%s\n' "$rpi_commit" | grep -E -c '^[0-9a-f]{40}$')
+rpi_hashes=$(grep -E -c '[[:xdigit:]]{64}' kernel/profile/post/rpi.sh)
+rpi_master=$(grep -c 'raw/master' kernel/profile/post/rpi.sh)
+same 'immutable firmware source' '1:3:0' \
+        "$rpi_commit_ok:$rpi_hashes:$rpi_master"
+
+hook_return=$(grep -c 'return build_run("sh", "-c", value, null);' \
+        src/build/build.c)
+hook_gates=$(grep -E -c 'if \(build_shell_key\("(pre|post)"\)\)' \
+        src/build/build.c)
+same 'build hooks gate success' '1:2' "$hook_return:$hook_gates"
 
 group config
 common_path=$(pwd)/kit/common

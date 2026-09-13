@@ -275,6 +275,9 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
         loop limit, a same-host rule and an opinion about relative locations,
         and none of that belongs in the first version.
 */
+static bipolar http_status_code(p8 address_to bytes, positive size,
+                                 b32 address_to code);
+
 static bipolar http_get(p32 host, p16 port, string_address name,
                         string_address path, http_buffer address_to body,
                         b32 address_to code)
@@ -282,6 +285,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         http_buffer whole = {0};
         bipolar handle;
         bipolar header;
+        bipolar parsed;
         bipolar status = HTTP_MALFORMED;
         positive length = 0;
         string_address value;
@@ -351,29 +355,12 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         socket_close((b32)handle);
         handle = -1;
 
-        if (whole.used < 13)
+        parsed = http_status_code(whole.bytes, whole.used, code);
+        if (parsed < 0)
         {
-                status = HTTP_NO_REPLY;
+                status = parsed;
                 goto done;
         }
-
-        //      "HTTP/1.x NNN ".  The fixed fields are checked as bytes rather
-        //      than accepting a numeric prefix: a corrupt version or status
-        //      line is framing, not a successful response with code zero.
-        if (string_compare_max(whole.bytes, (string_address) "HTTP/1.", 7) ||
-            whole.bytes[7] < '0' || whole.bytes[7] > '9' ||
-            whole.bytes[8] != ' ' ||
-            whole.bytes[9] < '0' || whole.bytes[9] > '9' ||
-            whole.bytes[10] < '0' || whole.bytes[10] > '9' ||
-            whole.bytes[11] < '0' || whole.bytes[11] > '9' ||
-            (whole.bytes[12] != ' ' && whole.bytes[12] != '\r' &&
-             whole.bytes[12] != '\n'))
-                goto done;
-
-        if (code)
-                address_to code = (b32)((whole.bytes[9] - '0') * 100 +
-                                        (whole.bytes[10] - '0') * 10 +
-                                        whole.bytes[11] - '0');
 
         header = http_header_end(whole.bytes, whole.used);
 
@@ -663,7 +650,7 @@ static bipolar http_copy_chunked(http_body address_to body, bipolar dest)
                 positive size = 0;
                 string_address number;
                 string_address stop;
-                p8 crlf[2];
+                p8 delimiter;
 
                 if (http_line(body, line, sizeof line, address_of line_length))
                         return HTTP_MALFORMED;
@@ -684,19 +671,14 @@ static bipolar http_copy_chunked(http_body address_to body, bipolar dest)
                         return HTTP_OK;
                 if (http_copy_n(body, dest, size))
                         return HTTP_NO_REPLY;
-                if (http_body_fill(body, crlf, 2))
+                if (http_body_fill(body, address_of delimiter, 1))
                         return HTTP_MALFORMED;
-                if (crlf[0] == '\r' && crlf[1] == '\n')
+                if (delimiter == '\n')
                         continue;
-                if (crlf[0] == '\n')
-                {
-                        if (body->stash_used)
-                                return HTTP_MALFORMED;
-                        body->stash[0] = crlf[1];
-                        body->stash_used = 1;
-                        continue;
-                }
-                return HTTP_MALFORMED;
+                if (delimiter != '\r' ||
+                    http_body_fill(body, address_of delimiter, 1) ||
+                    delimiter != '\n')
+                        return HTTP_MALFORMED;
         }
 }
 
@@ -873,8 +855,10 @@ static bipolar http_status_code(p8 address_to bytes, positive size, b32 address_
             bytes[10] > '9' || bytes[11] < '0' || bytes[11] > '9' ||
             (bytes[12] != ' ' && bytes[12] != '\r' && bytes[12] != '\n'))
                 return HTTP_MALFORMED;
-        address_to code = (b32)((bytes[9] - '0') * 100 + (bytes[10] - '0') * 10 +
-                                bytes[11] - '0');
+        if (code)
+                address_to code = (b32)((bytes[9] - '0') * 100 +
+                                        (bytes[10] - '0') * 10 +
+                                        bytes[11] - '0');
         return HTTP_OK;
 }
 

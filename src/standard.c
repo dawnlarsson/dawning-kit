@@ -965,6 +965,9 @@ typedef struct stat
 #ifndef AT_SYMLINK_NOFOLLOW
 #define AT_SYMLINK_NOFOLLOW 0x100
 #endif
+#ifndef AT_EACCESS
+#define AT_EACCESS 0x200
+#endif
 #ifndef AT_REMOVEDIR
 #define AT_REMOVEDIR 0x200
 #endif
@@ -1249,14 +1252,18 @@ ERROR_ENTRY(readlinkat, bipolar,
         it the wrong call for a security decision. faccessat on asm-generic
         takes three arguments and no flags; the four argument form with
         AT_EACCESS is faccessat2, which is a much newer number and is not
-        used here.
+        used here. Refuse flags the syscall cannot enforce rather than
+        silently making an effective-ID or symlink-sensitive check use the
+        legacy semantics.
 */
 ERROR_ENTRY(access, b32, (string_address path, b32 mode),
             system_access_at(ERROR_AT_HERE, path, mode))
 
 static b32 faccessat(b32 directory, string_address path, b32 mode, b32 flags)
 {
-        (void)flags;
+        if (flags)
+                return error_result(-ENOTSUP);
+
         return error_result(system_access_at(directory, path, mode));
 }
 

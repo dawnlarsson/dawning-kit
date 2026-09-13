@@ -945,10 +945,40 @@ static void pane_close_request(struct pane *pane)
         wake_up_interruptible(&pane->wait);
 }
 
+/*
+        A client can place its pane beyond every output, or collapse either
+        content dimension to zero. Neither shape can be reached by the pointer,
+        so neither may own the keyboard. The frame counts for intersection: a
+        visible titlebar remains a visible, recoverable window.
+*/
+static PURE _Bool pane_visible(struct pane *pane)
+{
+        struct drm_rect frame;
+        struct output *output;
+
+        if (pane->width <= 0 || pane->height <= 0)
+                return false;
+
+        pane_frame(pane, &frame);
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                struct drm_rect screen;
+
+                drm_rect_init(&screen, output->x, output->y,
+                              (int)output->width, (int)output->height);
+                if (drm_rects_overlap(&frame, &screen))
+                        return true;
+        }
+
+        return false;
+}
+
 static PURE _Bool pane_focusable(struct pane *pane, _Bool include_minimized)
 {
         return pane->shared && !(pane->style & WINDOW_PASSTHROUGH) &&
-               (include_minimized || !(pane->style & WINDOW_MINIMIZED));
+               (include_minimized || !(pane->style & WINDOW_MINIMIZED)) &&
+               pane_visible(pane);
 }
 
 /*
@@ -1369,7 +1399,6 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
                 bytes and mapping. Free on x86, a compiler barrier only.
         */
         smp_store_release(&context->pane, pane);
-        pane_focus(pane);
         desktop_redraw();
 
         mutex_unlock(&desktop.lock);

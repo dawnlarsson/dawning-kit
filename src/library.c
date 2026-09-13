@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        288 routines (278 public, 10 local), 287 of them on all three and 1 local to one.
+        290 routines (279 public, 11 local), 289 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -127,6 +127,7 @@
           fast_sin                       public  yes     yes     yes
           file_close                     public  yes     yes     yes
           file_get_status                public  yes     yes     yes
+          file_initialize                local   yes     yes     yes
           file_load                      public  yes     yes     yes
           file_new                       public  yes     yes     yes
           file_new_lazy                  public  yes     yes     yes
@@ -333,6 +334,7 @@
           string_to_whole_wide           public  yes     yes     yes
           string_token                   public  yes     yes     yes
           string_token_next              public  yes     yes     yes
+          strncpy                        public  yes     yes     yes
           system_call                    public  yes     yes     yes
           system_call_1                  public  yes     yes     yes
           system_call_2                  public  yes     yes     yes
@@ -27237,18 +27239,87 @@ __asm__(
     ASM_ALIAS(memset64,  memory_fill_64)
 #endif
 #ifndef KERNEL_MODE
-    ASM_ALIAS(strncpy,   string_copy_max)
-    /*
-            strncpy is the one name here that does not mean what libc means
-            by it: string_copy_max pads nothing and writes no terminator when
-            the source filled the bound. The alias keeps the behaviour the
-            wrapper before it had rather than quietly changing it, and this is
-            the warning that went with it.
-    */
     ASM_ALIAS(memmem,    memory_search)
     ASM_ALIAS(memfrob,   memory_frob)
 #endif
 );
+
+/*
+        strncpy has the padding contract C gives it. string_copy_max keeps its
+        house contract -- stop after the first terminator and leave the tail
+        alone. Normal builds reuse the already padded stpncpy body and restore
+        strncpy's destination return value. STANDARD_NO_PLATFORM spells that
+        body from the core length/copy/fill routines, because the stpncpy
+        symbol deliberately lives in the omitted platform layer.
+*/
+#ifndef KERNEL_MODE
+#if X64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(strncpy)
+#ifdef STANDARD_NO_PLATFORM
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n"
+    "mov %rsi, %rdi\n   mov %rdx, %rsi\n   call string_length_max\n"
+    "mov %rbx, %rdi\n   mov %r12, %rsi\n   mov %rax, %rdx\n"
+    "lea (%rbx,%rax), %r12\n   sub %rax, %r13\n   call memory_copy_apart\n"
+    "test %r13, %r13\n   jz 1f\n   mov %r12, %rdi\n"
+    "xor %esi, %esi\n   mov %r13, %rdx\n   call memory_fill\n"
+    "1:  mov %rbx, %rax\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+#else
+    "push %rbx\n   mov %rdi, %rbx\n   call string_copy_max_endptr\n"
+    "mov %rbx, %rax\n   pop %rbx\n"
+#endif
+    ASM_RET
+    ASM_END(strncpy)
+);
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(strncpy)
+#ifdef STANDARD_NO_PLATFORM
+    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n"
+    "mov x0, x1\n   mov x1, x2\n   bl string_length_max\n"
+    "mov x1, x20\n   mov x2, x0\n   add x20, x19, x0\n"
+    "sub x21, x21, x0\n   mov x0, x19\n   bl memory_copy_apart\n"
+    "cbz x21, 1f\n   mov x0, x20\n   mov x1, #0\n"
+    "mov x2, x21\n   bl memory_fill\n"
+    "1:  mov x0, x19\n   ldr x21, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #48\n"
+#else
+    "stp x19, x30, [sp, #-16]!\n   mov x19, x0\n"
+    "bl string_copy_max_endptr\n   mov x0, x19\n"
+    "ldp x19, x30, [sp], #16\n"
+#endif
+    ASM_RET
+    ASM_END(strncpy)
+);
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(strncpy)
+#ifdef STANDARD_NO_PLATFORM
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
+    "sd s1, 24(sp)\n   sd s2, 16(sp)\n   mv s0, a0\n"
+    "mv s1, a1\n   mv s2, a2\n   mv a0, a1\n   mv a1, a2\n"
+    "call string_length_max\n   mv a1, s1\n   mv a2, a0\n"
+    "add s1, s0, a0\n   sub s2, s2, a0\n   mv a0, s0\n"
+    "call memory_copy_apart\n   beqz s2, 1f\n   mv a0, s1\n"
+    "li a1, 0\n   mv a2, s2\n   call memory_fill\n"
+    "1:  mv a0, s0\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n"
+    "ld s1, 24(sp)\n   ld s2, 16(sp)\n   addi sp, sp, 48\n"
+#else
+    "addi sp, sp, -16\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n"
+    "mv s0, a0\n   call string_copy_max_endptr\n   mv a0, s0\n"
+    "ld ra, 0(sp)\n   ld s0, 8(sp)\n   addi sp, sp, 16\n"
+#endif
+    ASM_RET
+    ASM_END(strncpy)
+);
+#endif
+#endif
 
 // Userspace land
 #ifndef KERNEL_MODE
@@ -27745,6 +27816,7 @@ typedef b64 ptrdiff_t;
 #define AT_FDCWD -100
 #define O_TRUNC 01000
 #define O_CLOEXEC 02000000
+#define O_PATH 010000000
 
 #define FILE_READ 00
 #define FILE_WRITE (01 | 0100 | 01000)
@@ -27827,6 +27899,7 @@ typedef struct
         address_any data;
         bool loaded;
         file_status status;
+        positive mapped_size;
 } file;
 
 #define file_address file address_to
@@ -27884,325 +27957,269 @@ fn file_new_lazy(file_address result, string_address path, positive flags);
 fn file_new(file_address result, string_address path, positive flags);
 address_any file_load(file_address source);
 positive file_read(file_address source, address_any buffer, positive size, positive offset);
+fn file_get_status(file_address source);
+fn file_unload(file_address source);
+fn file_close(file_address source);
+positive file_write(file_address source, address_any buffer, positive size, positive offset);
 
 /*
-        The file routines.
+        The file routines share one lifecycle contract on every architecture.
 
-        No preprocessor runs inside an asm string, so every field offset is a
-        literal: handle 0, path 8, flags 16, data 24, loaded 32, status 40,
-        and status.size at 88. CHECK_verify pins all of them against the struct
-        the compiler laid out, so a field added in the middle fails the test
-        rather than quietly reading the wrong word.
+        struct file's established offsets stay fixed through status.size at 88.
+        mapped_size is appended at 184 and records the page extent passed to
+        mmap. It never follows a later fstat, so unload cannot release pages
+        beyond the mapping it owns.
 
-        The syscall numbers are literal for the same reason. arm64 and riscv64
-        share the asm-generic numbering, which is why those two blocks carry
-        the same ones; x86_64 has its own.
-
-        system_call_3 stays what it is -- inline asm the compiler drops at the
-        call site. These routines do the same thing by holding the trap
-        instruction themselves, so a file open is still one syscall and no
-        call at all.
-
-        openat's mode argument is left untouched here, in the register the ABI
-        puts it in, because system_call_3 leaves it untouched too. Loading the
-        struct pointer into that register would change what a create-mode open
-        does, which is why the pointer goes in x9 on arm64 and t1 on riscv64
-        rather than the arg3 register the obvious spelling would pick.
+        Raw syscall results are signed. Every descriptor and pointer result is
+        rejected when negative, not only when it happens to be -1. Loading
+        retries EINTR and fills across short reads; EOF before the snapshotted
+        size releases the new mapping and reports no load.
 */
 #ifndef WINDOWS
 #if X64
 __asm__(
     ASM_SECTION
-    //
-    //       A handle is the raw openat result. Linux reports failure as any
-    //       negative errno, not only -1, so validity is a signed nonnegative
-    //       test. Treating ENOENT (-2) as a descriptor made a failed open look
-    //       usable to every operation which follows this guard.
-    //
+    ASM_LOCAL_FUNC(file_initialize)
+    "mov %rdi, %r8\n   xor %eax, %eax\n   mov $24, %ecx\n   rep stosq\n"
+    "movq $-1, (%r8)\n   mov %rsi, 8(%r8)\n   mov %rdx, 16(%r8)\n"
+    "mov %r8, %rax\n"
+    ASM_RET
+    ASM_LOCAL_END(file_initialize)
+
     ASM_FUNC(file_valid)
     "cmpq $0, (%rdi)\n   setge %al\n   movzbl %al, %eax\n"
     ASM_RET
     ASM_END(file_valid)
 
     ASM_FUNC(file_new_lazy)
-    "mov %rdi, %r8  # the struct, kept across the trap\n"
-    "mov %rsi, 8(%r8)  # path\n"
-    "mov %rdx, 16(%r8)  # flags\n"
-    "mov $438, %r10d  # 0666, what a create is given\n"
-    "mov $-100, %rdi  # AT_FDCWD\n"
-    "mov $257, %eax  # openat\n"
-    "syscall\n   mov %rax, (%r8)  # handle, errno and all\n"
+    "sub $8, %rsp\n   call file_initialize\n   add $8, %rsp\n"
+    "mov %rax, %r8\n   mov 8(%r8), %rsi\n   mov 16(%r8), %rdx\n"
+    "mov $438, %r10d  # 0666\n   mov $-100, %rdi  # AT_FDCWD\n"
+    "mov $257, %eax  # openat\n   syscall\n   mov %rax, (%r8)\n"
     ASM_RET
     ASM_END(file_new_lazy)
 
-    //
-    //       file_new is file_new_lazy followed by the status call, and the
-    //       status call is one instruction's worth of setup from where the
-    //       open leaves things: the handle is already in the return register.
-    //       Written out rather than calling file_new_lazy so the second trap
-    //       costs nothing but its own two moves.
-    //
     ASM_FUNC(file_new)
-    "mov %rdi, %r8\n   mov %rsi, 8(%r8)\n   mov %rdx, 16(%r8)\n   mov $438, %r10d  # 0666, what a create is given\n"
-    "mov $-100, %rdi\n   mov $257, %eax\n   syscall\n   mov %rax, (%r8)\n"
-    "mov %rax, %rdi  # the handle it just got\n"
-    "lea 40(%r8), %rsi  # where the status goes\n"
-    "mov $5, %eax  # fstat\n"
-    "syscall\n"
+    "push %rbx\n   mov %rdi, %rbx\n   call file_new_lazy\n"
+    "cmpq $0, (%rbx)\n   jl 1f\n   mov %rbx, %rdi\n   call file_get_status\n"
+    "1:  pop %rbx\n"
     ASM_RET
     ASM_END(file_new)
 
-    //
-    //       mmap wants all six argument registers, so the three values that
-    //       have to outlive it -- the struct, the mapped length and the size
-    //       being read -- go in callee saved registers and are put back.
-    //
     ASM_FUNC(file_load)
     "push %rbx\n   push %r12\n   push %r13\n   mov %rdi, %rbx\n"
-    "cmpq $-1, (%rbx)\n   je 8f\n   cmpb $0, 32(%rbx)  # loaded\n"
-    "je 1f\n   mov 24(%rbx), %rax  # data\n"
-    "test %rax, %rax\n   jne 9f\n"
-    "1:  mov 88(%rbx), %r13  # status.size\n"
-    "test %r13, %r13\n   je 8f\n   lea 4095(%r13), %r12\n   and $-4096, %r12  # whole pages, the same wrap the C had\n"
-    "xor %edi, %edi\n   mov %r12, %rsi\n   mov $3, %edx  # FILE_PROTECT_READ | FILE_PROTECT_WRITE\n"
-    "mov $34, %r10d  # FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS\n"
-    "mov $-1, %r8\n   xor %r9d, %r9d\n   mov $9, %eax  # mmap\n"
-    "syscall\n   mov %rax, 24(%rbx)\n   cmpq $-1, %rax\n   je 7f\n"
-    "mov (%rbx), %rdi\n   xor %esi, %esi\n   xor %edx, %edx  # FILE_SEEK_SET\n"
-    "mov $8, %eax  # lseek\n"
-    "syscall\n   mov (%rbx), %rdi\n   mov 24(%rbx), %rsi\n   mov %r13, %rdx\n"
-    "xor %eax, %eax  # read\n"
-    "syscall\n   cmp %r13, %rax\n   je 6f\n   mov 24(%rbx), %rdi\n"
-    "mov %r12, %rsi\n   mov $11, %eax  # munmap\n"
-    "syscall\n   jmp 7f\n"
-    "6:  movb $1, 32(%rbx)\n   mov 24(%rbx), %rax\n   jmp 9f\n"
-    //
-    //       Two ways out with nothing to give back, and they are not the same
-    //       one: the early refusals leave the struct alone, a mapping that
-    //       failed after it was recorded has to be taken back out again.
-    //
-    "7:  movq $0, 24(%rbx)\n"
+    "cmpq $0, (%rbx)\n   jl 8f\n   cmpb $0, 32(%rbx)\n"
+    "je 1f\n   mov 24(%rbx), %rax\n   test %rax, %rax\n   jne 9f\n"
+    "1:  mov 88(%rbx), %r13\n   test %r13, %r13\n   jle 8f\n"
+    "lea 4095(%r13), %r12\n   cmp %r13, %r12\n   jb 8f\n"
+    "and $-4096, %r12\n   jz 8f\n"
+    "xor %edi, %edi\n   mov %r12, %rsi\n   mov $3, %edx\n"
+    "mov $34, %r10d\n   mov $-1, %r8\n   xor %r9d, %r9d\n"
+    "mov $9, %eax  # mmap\n   syscall\n   test %rax, %rax\n   js 8f\n"
+    "mov %rax, 24(%rbx)\n   mov %r12, 184(%rbx)\n"
+    "mov (%rbx), %rdi\n   xor %esi, %esi\n   xor %edx, %edx\n"
+    "mov $8, %eax  # lseek\n   syscall\n   test %rax, %rax\n   js 7f\n"
+    "mov %r13, %r12\n"
+    "6:  mov (%rbx), %rdi\n   mov 24(%rbx), %rsi\n"
+    "mov %r13, %rdx\n   sub %r12, %rdx\n   add %rdx, %rsi\n"
+    "mov %r12, %rdx\n   xor %eax, %eax  # read\n   syscall\n"
+    "cmp $-4, %rax\n   je 6b  # EINTR\n   test %rax, %rax\n   jle 7f\n"
+    "cmp %r12, %rax\n   ja 7f\n   sub %rax, %r12\n   jne 6b\n"
+    "movb $1, 32(%rbx)\n   mov 24(%rbx), %rax\n   jmp 9f\n"
+    "7:  mov %rbx, %rdi\n   call file_unload\n"
     "8:  xor %eax, %eax\n"
     "9:  pop %r13\n   pop %r12\n   pop %rbx\n"
     ASM_RET
     ASM_END(file_load)
 
-    //
-    //       The only arithmetic in any of these: a read served out of the
-    //       mapping is clamped to what is left after the offset, and the
-    //       clamp is a conditional move rather than a branch because which
-    //       side wins is up to the caller and predicts badly.
-    //
     ASM_FUNC(file_read)
-    "cmpq $-1, (%rdi)\n   je 3f\n   cmpb $0, 32(%rdi)  # loaded\n"
-    "je 4f\n   mov 24(%rdi), %r8  # data\n"
-    "test %r8, %r8\n   je 4f\n   mov 88(%rdi), %r9  # status.size\n"
-    "cmp %r9, %rcx  # offset past the end?\n"
-    "jae 2f\n   sub %rcx, %r9  # what is left\n"
-    "cmp %r9, %rdx\n   cmovae %r9, %rdx  # min(size, available)\n"
-    "push %rbx\n   mov %rdx, %rbx  # the answer, across the call\n"
-    "lea (%r8,%rcx), %rax\n   mov %rsi, %rdi\n   mov %rax, %rsi\n   call memory_copy\n"
+    "cmpq $0, (%rdi)\n   jl 3f\n   cmpb $0, 32(%rdi)\n"
+    "je 4f\n   mov 24(%rdi), %r8\n   test %r8, %r8\n   je 4f\n"
+    "mov 88(%rdi), %r9\n   mov 184(%rdi), %rax\n"
+    "cmp %rax, %r9\n   cmova %rax, %r9\n"
+    "cmp %r9, %rcx\n   jae 2f\n   sub %rcx, %r9\n"
+    "cmp %r9, %rdx\n   cmovae %r9, %rdx\n"
+    "push %rbx\n   mov %rdx, %rbx\n   lea (%r8,%rcx), %rax\n"
+    "mov %rsi, %rdi\n   mov %rax, %rsi\n   call memory_copy\n"
     "mov %rbx, %rax\n   pop %rbx\n"
     ASM_RET
     "2:  xor %eax, %eax\n"
     ASM_RET
     "3:  mov $-1, %rax\n"
     ASM_RET
-    //
-    //       Not loaded: seek then read, and the handle is re-read from the
-    //       struct rather than kept, because the seek needs it too and a load
-    //       is cheaper here than another register to preserve.
-    //
-    "4:  mov %rdx, %r8  # size\n"
-    "mov %rsi, %r9  # buffer\n"
-    "mov (%rdi), %r10\n   mov %r10, %rdi\n   mov %rcx, %rsi  # offset\n"
-    "xor %edx, %edx  # FILE_SEEK_SET\n"
-    "mov $8, %eax  # lseek\n"
-    "syscall\n   mov %r10, %rdi\n   mov %r9, %rsi\n   mov %r8, %rdx\n"
-    "xor %eax, %eax  # read\n"
-    "syscall\n"
+    "4:  mov %rdx, %r8\n   mov %rsi, %r9\n   mov (%rdi), %r10\n"
+    "mov %r10, %rdi\n   mov %rcx, %rsi\n   xor %edx, %edx\n"
+    "mov $8, %eax  # lseek\n   syscall\n   test %rax, %rax\n   js 5f\n"
+    "mov %r10, %rdi\n   mov %r9, %rsi\n   mov %r8, %rdx\n"
+    "xor %eax, %eax  # read\n   syscall\n"
+    "5:\n"
     ASM_RET
     ASM_END(file_read)
 );
 #elif ARM64
 __asm__(
     ASM_SECTION
+    ASM_LOCAL_FUNC(file_initialize)
+    "mov x9, x0\n   mov x10, #24\n   mov x11, x0\n"
+    "1:  str xzr, [x11], #8\n   subs x10, x10, #1\n   b.ne 1b\n"
+    "mov x12, #-1\n   str x12, [x9]\n   str x1, [x9, #8]\n"
+    "str x2, [x9, #16]\n   mov x0, x9\n"
+    ASM_RET
+    ASM_LOCAL_END(file_initialize)
+
     ASM_FUNC(file_valid)
-    "ldr x1, [x0]\n   cmp x1, #0  // raw syscalls return negative errno\n"
-    "cset w0, ge\n"
+    "ldr x1, [x0]\n   cmp x1, #0\n   cset w0, ge\n"
     ASM_RET
     ASM_END(file_valid)
 
     ASM_FUNC(file_new_lazy)
-    "mov x9, x0\n   str x1, [x9, #8]\n"
-    "str x2, [x9, #16]\n"
-    "mov x3, #438  // 0666, what a create is given\n"
-    "mov x0,  #-100               // AT_FDCWD\n"
-    "mov x8, #56  // openat\n"
-    "svc #0\n"
-    "str x0, [x9]\n"
+    "stp x29, x30, [sp, #-16]!\n   mov x29, sp\n   bl file_initialize\n"
+    "mov x9, x0\n   ldr x1, [x9, #8]\n   ldr x2, [x9, #16]\n"
+    "mov x3, #438  // 0666\n   mov x0, #-100\n   mov x8, #56\n"
+    "svc #0\n   str x0, [x9]\n   ldp x29, x30, [sp], #16\n"
     ASM_RET
     ASM_END(file_new_lazy)
 
     ASM_FUNC(file_new)
-    "mov x9, x0\n   str x1, [x9, #8]\n"
-    "str x2, [x9, #16]\n"
-    "mov x3, #438  // 0666, what a create is given\n"
-    "mov x0,  #-100\n"
-    "mov x8, #56\n"
-    "svc #0\n"
-    "str x0, [x9]\n   add x1, x9, #40  // where the status goes\n"
-    "mov x8, #80  // fstat, handle already in x0\n"
-    "svc #0\n"
+    "stp x29, x30, [sp, #-32]!\n   mov x29, sp\n   str x19, [sp, #16]\n"
+    "mov x19, x0\n   bl file_new_lazy\n   ldr x1, [x19]\n"
+    "cmp x1, #0\n   b.lt 1f\n   mov x0, x19\n   bl file_get_status\n"
+    "1:  ldr x19, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
     ASM_RET
     ASM_END(file_new)
 
     ASM_FUNC(file_load)
-    "stp x19, x20, [sp,  #-32]!\n"
-    "str x21, [sp, #16]\n"
-    "mov x19, x0\n   ldr x1, [x19]\n   cmn x1, #1\n"
-    "b.eq 8f\n   ldrb w1, [x19, #32]  // loaded\n"
-    "cbz w1, 1f\n   ldr x0, [x19, #24]  // data\n"
-    "cbnz x0, 9f\n"
-    "1:  ldr x21, [x19, #88]  // status.size\n"
-    "cbz x21, 8f\n   add x20, x21, #4095\n"
-    "and x20, x20, #0xfffffffffffff000\n"
-    "mov x0, #0\n"
-    "mov x1, x20\n   mov x2, #3  // FILE_PROTECT_READ | FILE_PROTECT_WRITE\n"
-    "mov x3, #34  // FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS\n"
-    "mov x4,  #-1\n"
-    "mov x5, #0\n"
-    "mov x8, #222  // mmap\n"
-    "svc #0\n"
-    "str x0, [x19, #24]\n"
-    "cmn x0, #1\n"
-    "b.eq 7f\n   ldr x0, [x19]\n   mov x1, #0\n"
-    "mov x2, #0  // FILE_SEEK_SET\n"
-    "mov x8, #62  // lseek\n"
-    "svc #0\n"
-    "ldr x0, [x19]\n   ldr x1, [x19, #24]\n"
-    "mov x2, x21\n   mov x8, #63  // read\n"
-    "svc #0\n"
-    "cmp x0, x21\n   b.eq 6f\n   ldr x0, [x19, #24]\n"
-    "mov x1, x20\n   mov x8, #215  // munmap\n"
-    "svc #0\n"
-    "b 7f\n"
-    "6:  mov w1, #1\n"
-    "strb w1, [x19, #32]\n"
-    "ldr x0, [x19, #24]\n"
+    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n   mov x19, x0\n"
+    "ldr x1, [x19]\n   cmp x1, #0\n   b.lt 8f\n"
+    "ldrb w1, [x19, #32]\n   cbz w1, 1f\n"
+    "ldr x0, [x19, #24]\n   cbnz x0, 9f\n"
+    "1:  ldr x21, [x19, #88]\n   cmp x21, #0\n   b.le 8f\n"
+    "adds x20, x21, #4095\n   b.cs 8f\n"
+    "and x20, x20, #0xfffffffffffff000\n   cbz x20, 8f\n"
+    "mov x0, #0\n   mov x1, x20\n   mov x2, #3\n   mov x3, #34\n"
+    "mov x4, #-1\n   mov x5, #0\n   mov x8, #222\n   svc #0\n"
+    "tbnz x0, #63, 8f\n   str x0, [x19, #24]\n   str x20, [x19, #184]\n"
+    "ldr x0, [x19]\n   mov x1, #0\n   mov x2, #0\n"
+    "mov x8, #62\n   svc #0\n   tbnz x0, #63, 7f\n"
+    "mov x20, x21\n"
+    "6:  ldr x0, [x19]\n   ldr x1, [x19, #24]\n"
+    "sub x2, x21, x20\n   add x1, x1, x2\n   mov x2, x20\n"
+    "mov x8, #63\n   svc #0\n   cmp x0, #-4\n   b.eq 6b\n"
+    "cmp x0, #0\n   b.le 7f\n   cmp x0, x20\n   b.hi 7f\n"
+    "subs x20, x20, x0\n   b.ne 6b\n"
+    "mov w1, #1\n   strb w1, [x19, #32]\n   ldr x0, [x19, #24]\n"
     "b 9f\n"
-    "7:  str xzr, [x19, #24]\n"
+    "7:  mov x0, x19\n   bl file_unload\n"
     "8:  mov x0, #0\n"
-    "9:  ldr x21, [sp, #16]\n"
-    "ldp x19, x20, [sp], #32\n"
+    "9:  ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
     ASM_RET
     ASM_END(file_load)
 
     ASM_FUNC(file_read)
-    "ldr x4, [x0]\n   cmn x4, #1\n"
-    "b.eq 3f\n   ldrb w4, [x0, #32]  // loaded\n"
-    "cbz w4, 4f\n   ldr x5, [x0, #24]  // data\n"
-    "cbz x5, 4f\n   ldr x6, [x0, #88]  // status.size\n"
-    "cmp x3, x6\n   b.hs 2f\n   sub x6, x6, x3  // what is left\n"
-    "cmp x2, x6\n   csel x6, x2, x6, lo  // min(size, available)\n"
+    "ldr x4, [x0]\n   cmp x4, #0\n   b.lt 3f\n"
+    "ldrb w4, [x0, #32]\n   cbz w4, 4f\n"
+    "ldr x5, [x0, #24]\n   cbz x5, 4f\n"
+    "ldr x6, [x0, #88]\n   ldr x7, [x0, #184]\n"
+    "cmp x6, x7\n   csel x6, x6, x7, lo\n"
+    "cmp x3, x6\n   b.hs 2f\n   sub x6, x6, x3\n"
+    "cmp x2, x6\n   csel x6, x2, x6, lo\n"
     "add x5, x5, x3\n   mov x0, x1\n   mov x1, x5\n   mov x2, x6\n"
-    "stp x29, x30, [sp,  #-32]!\n"
-    "mov x29, sp\n   str x6, [sp, #16]  // the answer, across the call\n"
-    "bl memory_copy\n   ldr x0, [sp, #16]\n"
-    "ldp x29, x30, [sp], #32\n"
+    "stp x29, x30, [sp, #-32]!\n   mov x29, sp\n   str x6, [sp, #16]\n"
+    "bl memory_copy\n   ldr x0, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
     ASM_RET
     "2:  mov x0, #0\n"
     ASM_RET
-    "3:  mov x0,  #-1\n"
+    "3:  mov x0, #-1\n"
     ASM_RET
-    "4:  mov x4, x1  // buffer\n"
-    "mov x5, x2  // size\n"
-    "mov x6, x0  // the struct\n"
-    "ldr x0, [x6]\n   mov x1, x3  // offset\n"
-    "mov x2, #0  // FILE_SEEK_SET\n"
-    "mov x8, #62  // lseek\n"
+    "4:  mov x4, x1\n   mov x5, x2\n   mov x6, x0\n"
+    "ldr x0, [x6]\n   mov x1, x3\n   mov x2, #0\n   mov x8, #62\n"
+    "svc #0\n   tbnz x0, #63, 5f\n"
+    "ldr x0, [x6]\n   mov x1, x4\n   mov x2, x5\n   mov x8, #63\n"
     "svc #0\n"
-    "ldr x0, [x6]\n   mov x1, x4\n   mov x2, x5\n   mov x8, #63  // read\n"
-    "svc #0\n"
+    "5:\n"
     ASM_RET
     ASM_END(file_read)
 );
 #elif RISCV64
 __asm__(
     ASM_SECTION
+    ASM_LOCAL_FUNC(file_initialize)
+    "mv t2, a0\n   mv t1, a0\n   li t0, 24\n"
+    "1:  sd zero, 0(t1)\n   addi t1, t1, 8\n   addi t0, t0, -1\n"
+    "bnez t0, 1b\n   li t0, -1\n   sd t0, 0(t2)\n"
+    "sd a1, 8(t2)\n   sd a2, 16(t2)\n   mv a0, t2\n"
+    ASM_RET
+    ASM_LOCAL_END(file_initialize)
+
     ASM_FUNC(file_valid)
-    "ld a1, 0(a0)\n   not a1, a1  # nonnegative iff the inverted sign bit is set\n"
-    "srli a0, a1, 63\n"
+    "ld a1, 0(a0)\n   not a1, a1\n   srli a0, a1, 63\n"
     ASM_RET
     ASM_END(file_valid)
 
     ASM_FUNC(file_new_lazy)
-    "mv t1, a0\n   sd a1, 8(t1)\n   sd a2, 16(t1)\n   li a3, 438  # 0666, what a create is given\n"
-    "li a0, -100  # AT_FDCWD\n"
-    "li a7, 56  # openat\n"
-    "ecall\n   sd a0, 0(t1)\n"
+    "addi sp, sp, -16\n   sd ra, 8(sp)\n   call file_initialize\n"
+    "mv t1, a0\n   ld a1, 8(t1)\n   ld a2, 16(t1)\n"
+    "li a3, 438\n   li a0, -100\n   li a7, 56\n   ecall\n"
+    "sd a0, 0(t1)\n   ld ra, 8(sp)\n   addi sp, sp, 16\n"
     ASM_RET
     ASM_END(file_new_lazy)
 
     ASM_FUNC(file_new)
-    "mv t1, a0\n   sd a1, 8(t1)\n   sd a2, 16(t1)\n   li a3, 438  # 0666, what a create is given\n"
-    "li a0, -100\n   li a7, 56\n   ecall\n   sd a0, 0(t1)\n"
-    "addi a1, t1, 40  # where the status goes\n"
-    "li a7, 80  # fstat, handle already in a0\n"
-    "ecall\n"
+    "addi sp, sp, -16\n   sd ra, 0(sp)\n   sd s0, 8(sp)\n"
+    "mv s0, a0\n   call file_new_lazy\n   ld t0, 0(s0)\n"
+    "bltz t0, 1f\n   mv a0, s0\n   call file_get_status\n"
+    "1:  ld ra, 0(sp)\n   ld s0, 8(sp)\n   addi sp, sp, 16\n"
     ASM_RET
     ASM_END(file_new)
 
     ASM_FUNC(file_load)
-    "addi sp, sp, -32\n   sd s0, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n"
-    "mv s0, a0\n   ld t0, 0(s0)\n   li t1, -1\n   beq t0, t1, 8f\n"
-    "lbu t0, 32(s0)  # loaded\n"
-    "beqz t0, 1f\n   ld a0, 24(s0)  # data\n"
-    "bnez a0, 9f\n"
-    "1:  ld s2, 88(s0)  # status.size\n"
-    "beqz s2, 8f\n   li t0, 4095\n   add s1, s2, t0\n   li t1, -4096\n"
-    "and s1, s1, t1  # whole pages\n"
-    "li a0, 0\n   mv a1, s1\n   li a2, 3  # FILE_PROTECT_READ | FILE_PROTECT_WRITE\n"
-    "li a3, 34  # FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS\n"
-    "li a4, -1\n   li a5, 0\n   li a7, 222  # mmap\n"
-    "ecall\n   sd a0, 24(s0)\n   li t0, -1\n   beq a0, t0, 7f\n"
-    "ld a0, 0(s0)\n   li a1, 0\n   li a2, 0  # FILE_SEEK_SET\n"
-    "li a7, 62  # lseek\n"
-    "ecall\n   ld a0, 0(s0)\n   ld a1, 24(s0)\n   mv a2, s2\n"
-    "li a7, 63  # read\n"
-    "ecall\n   beq a0, s2, 6f\n   ld a0, 24(s0)\n   mv a1, s1\n"
-    "li a7, 215  # munmap\n"
-    "ecall\n   j 7f\n"
-    "6:  li t0, 1\n   sb t0, 32(s0)\n   ld a0, 24(s0)\n   j 9f\n"
-    "7:  sd zero, 24(s0)\n"
+    "addi sp, sp, -32\n   sd ra, 24(sp)\n   sd s0, 16(sp)\n"
+    "sd s1, 8(sp)\n   sd s2, 0(sp)\n   mv s0, a0\n"
+    "ld t0, 0(s0)\n   bltz t0, 8f\n   lbu t0, 32(s0)\n"
+    "beqz t0, 1f\n   ld a0, 24(s0)\n   bnez a0, 9f\n"
+    "1:  ld s2, 88(s0)\n   blez s2, 8f\n"
+    "li t0, 4095\n   add s1, s2, t0\n   bltu s1, s2, 8f\n"
+    "li t1, -4096\n   and s1, s1, t1\n   beqz s1, 8f\n"
+    "li a0, 0\n   mv a1, s1\n   li a2, 3\n   li a3, 34\n"
+    "li a4, -1\n   li a5, 0\n   li a7, 222\n   ecall\n"
+    "bltz a0, 8f\n   sd a0, 24(s0)\n   sd s1, 184(s0)\n"
+    "ld a0, 0(s0)\n   li a1, 0\n   li a2, 0\n   li a7, 62\n"
+    "ecall\n   bltz a0, 7f\n   mv s1, s2\n"
+    "6:  ld a0, 0(s0)\n   ld a1, 24(s0)\n   sub a2, s2, s1\n"
+    "add a1, a1, a2\n   mv a2, s1\n   li a7, 63\n   ecall\n"
+    "li t0, -4\n   beq a0, t0, 6b\n   blez a0, 7f\n"
+    "bgtu a0, s1, 7f\n   sub s1, s1, a0\n   bnez s1, 6b\n"
+    "li t0, 1\n   sb t0, 32(s0)\n   ld a0, 24(s0)\n   j 9f\n"
+    "7:  mv a0, s0\n   call file_unload\n"
     "8:  li a0, 0\n"
-    "9:  ld s0, 0(sp)\n   ld s1, 8(sp)\n   ld s2, 16(sp)\n   addi sp, sp, 32\n"
+    "9:  ld ra, 24(sp)\n   ld s0, 16(sp)\n   ld s1, 8(sp)\n"
+    "ld s2, 0(sp)\n   addi sp, sp, 32\n"
     ASM_RET
     ASM_END(file_load)
 
     ASM_FUNC(file_read)
-    "ld t0, 0(a0)\n   li t1, -1\n   beq t0, t1, 3f\n   lbu t0, 32(a0)  # loaded\n"
-    "beqz t0, 4f\n   ld t2, 24(a0)  # data\n"
-    "beqz t2, 4f\n   ld t3, 88(a0)  # status.size\n"
-    "bgeu a3, t3, 2f\n   sub t3, t3, a3  # what is left\n"
-    "bltu a2, t3, 1f\n   mv a2, t3  # min(size, available)\n"
-    "1:  add t2, t2, a3\n   mv a0, a1\n   mv a1, t2\n   addi sp, sp, -16\n"
-    "sd ra, 0(sp)\n   sd a2, 8(sp)  # the answer, across the call\n"
-    "call memory_copy\n   ld a0, 8(sp)\n   ld ra, 0(sp)\n   addi sp, sp, 16\n"
+    "ld t0, 0(a0)\n   bltz t0, 3f\n   lbu t0, 32(a0)\n"
+    "beqz t0, 4f\n   ld t2, 24(a0)\n   beqz t2, 4f\n"
+    "ld t3, 88(a0)\n   ld t4, 184(a0)\n"
+    "bltu t3, t4, 1f\n   mv t3, t4\n"
+    "1:  bgeu a3, t3, 2f\n   sub t3, t3, a3\n"
+    "bltu a2, t3, 6f\n   mv a2, t3\n"
+    "6:  add t2, t2, a3\n   mv a0, a1\n   mv a1, t2\n"
+    "addi sp, sp, -16\n   sd ra, 0(sp)\n   sd a2, 8(sp)\n"
+    "call memory_copy\n   ld a0, 8(sp)\n   ld ra, 0(sp)\n"
+    "addi sp, sp, 16\n"
     ASM_RET
     "2:  li a0, 0\n"
     ASM_RET
     "3:  li a0, -1\n"
     ASM_RET
-    "4:  mv t0, a1  # buffer\n"
-    "mv t1, a2  # size\n"
-    "mv t2, a0  # the struct\n"
-    "ld a0, 0(t2)\n   mv a1, a3  # offset\n"
-    "li a2, 0  # FILE_SEEK_SET\n"
-    "li a7, 62  # lseek\n"
-    "ecall\n   ld a0, 0(t2)\n   mv a1, t0\n   mv a2, t1\n"
-    "li a7, 63  # read\n"
-    "ecall\n"
+    "4:  mv t0, a1\n   mv t1, a2\n   mv t2, a0\n"
+    "ld a0, 0(t2)\n   mv a1, a3\n   li a2, 0\n   li a7, 62\n"
+    "ecall\n   bltz a0, 5f\n   ld a0, 0(t2)\n   mv a1, t0\n"
+    "mv a2, t1\n   li a7, 63\n   ecall\n"
+    "5:\n"
     ASM_RET
     ASM_END(file_read)
 );
@@ -28212,106 +28229,65 @@ __asm__(
 
 // flags: FILE_WRITE, FILE_READ, FILE_READ_WRITE, FILE_EXECUTE, FILE_TRUNCATE
 /*
-        The four file routines that are only a syscall wearing a struct.
-
-        Nothing here is faster than the C was -- lseek, write, fstat, close and
-        munmap dominate every one of these by orders of magnitude, and the
-        register shuffle around them is noise. They are assembly because the
-        goal is that library.c holds no C logic, not because there was time to
-        win.
-
-        Two things the C did that are easy to lose in the translation and are
-        kept deliberately:
-
-        file_unload's guard is "!loaded && !data", not "!loaded", so a file
-        marked unloaded that still carries a pointer is still unmapped, and one
-        marked loaded with a null pointer still reaches munmap.
-
-        file_write's length is compared unsigned, because "positive" is
-        unsigned: a write that fails returns -1 and that is greater than zero,
-        so the failure path walks on into the arithmetic below. The assembly
-        wraps exactly the way the C wrapped rather than quietly fixing it.
-
-        The refresh path calls status before unload, and unload takes its
-        munmap length from the status it has just refreshed rather than the
-        size the mapping was made with. That is what the C did.
-
-        Field offsets, from the file struct above and identical on all three:
-        handle 0, path 8, flags 16, data 24, loaded 32, status 40, status.size 88.
+        Status, unload, close and write use the mapping extent recorded by
+        file_load. Failed raw syscalls leave their negative result intact and
+        never enter unsigned mapping arithmetic. Closing always releases owned
+        mapping state and returns the whole object to its initialized form.
 */
 #ifndef WINDOWS
 
-// Two levels, because one stringifies the macro's name rather than the number
-// it stands for. This is what keeps fstat at 5 here and 80 on the other two
-// without a second table written out by hand.
 #ifndef MOONWATER_TEXT
 #define MOONWATER_TEXT(value) #value
 #define MOONWATER_NUMBER(value) MOONWATER_TEXT(value)
 #endif
 
-fn file_get_status(file_address source);
-fn file_unload(file_address source);
-fn file_close(file_address source);
-positive file_write(file_address source, address_any buffer, positive size, positive offset);
-
 #if X64
 __asm__(
     ASM_SECTION
-    // Both arguments the syscall wants are fields of the one it was given,
-    // so the handle has to be read before rdi is overwritten with it.
     ASM_FUNC(file_get_status)
-    "lea 40(%rdi), %rsi\n   mov (%rdi), %rdi\n"
-    "        mov     $" MOONWATER_NUMBER(syscall(fstat)) ", %eax\n"
-    "syscall\n"
+    "mov (%rdi), %rax\n   test %rax, %rax\n   js 1f\n"
+    "lea 40(%rdi), %rsi\n   mov %rax, %rdi\n"
+    "mov $" MOONWATER_NUMBER(syscall(fstat)) ", %eax\n   syscall\n"
+    "1:\n"
     ASM_RET
     ASM_END(file_get_status)
 
-    // or sets the zero flag only when both fields are zero, which is the
-    // "!loaded && !data" the C spelled with two branches.
     ASM_FUNC(file_unload)
-    "movzbl 32(%rdi), %eax\n   mov 24(%rdi), %rcx\n   or %rcx, %rax\n   jz 1f\n"
-    "mov %rdi, %r8\n   mov 88(%rdi), %rsi\n   add $4095, %rsi\n   and $-4096, %rsi\n"
-    "mov %rcx, %rdi\n"
-    "        mov     $" MOONWATER_NUMBER(syscall(munmap)) ", %eax\n"
-    "syscall\n   movq $0, 24(%r8)\n   movb $0, 32(%r8)\n"
-    "1:\n"
+    "mov %rdi, %r8\n   mov 184(%r8), %rsi\n   test %rsi, %rsi\n   jz 1f\n"
+    "mov 24(%r8), %rdi\n   mov $" MOONWATER_NUMBER(syscall(munmap)) ", %eax\n"
+    "syscall\n"
+    "1:  movq $0, 24(%r8)\n   movb $0, 32(%r8)\n   movq $0, 184(%r8)\n"
     ASM_RET
     ASM_END(file_unload)
 
-    // One push, which is also what leaves rsp aligned for the call: the entry
-    // to a function is eight past a boundary, not on one.
     ASM_FUNC(file_close)
-    "cmpq $-1, (%rdi)\n   je 1f\n   push %rbx\n   mov %rdi, %rbx\n"
-    "call file_unload\n   mov (%rbx), %rdi\n"
-    "        mov     $" MOONWATER_NUMBER(syscall(close)) ", %eax\n"
-    "syscall\n   movq $-1, (%rbx)\n   movq $0, 8(%rbx)\n   pop %rbx\n"
-    ASM_RET
-    "1:\n"
+    "push %rbx\n   mov %rdi, %rbx\n   call file_unload\n"
+    "mov (%rbx), %rdi\n   test %rdi, %rdi\n   js 1f\n"
+    "mov $" MOONWATER_NUMBER(syscall(close)) ", %eax\n   syscall\n"
+    "1:  mov %rbx, %rdi\n   xor %esi, %esi\n   xor %edx, %edx\n"
+    "call file_initialize\n   pop %rbx\n"
     ASM_RET
     ASM_END(file_close)
 
-    // The C worked out update_memory before the two syscalls and used it
-    // after. Neither lseek nor write touches the struct, so reading the three
-    // fields afterwards is the same answer and costs no register held across
-    // a syscall.
-    //
-    // Five pushes rather than four: forty bytes is what puts rsp on a
-    // boundary for the calls below, where thirty two would leave it eight off.
     ASM_FUNC(file_write)
-    "cmpq $-1, (%rdi)\n   jne 1f\n   mov $-1, %rax\n"
+    "cmpq $0, (%rdi)\n   jge 1f\n   mov $-1, %rax\n"
     ASM_RET
-    "1:  push %rbx\n   push %r12\n   push %r13\n   push %r14\n"
-    "push %r15\n   mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n"
-    "mov %rcx, %r14\n   mov (%rbx), %rdi\n   mov %r14, %rsi\n   xor %edx, %edx\n"
-    "        mov     $" MOONWATER_NUMBER(syscall(lseek)) ", %eax\n"
-    "syscall\n   mov (%rbx), %rdi\n   mov %r12, %rsi\n   mov %r13, %rdx\n"
-    "        mov     $" MOONWATER_NUMBER(syscall(write)) ", %eax\n"
-    "syscall\n   mov %rax, %r15\n   test %rax, %rax\n   jz 2f\n"
-    "cmpb $0, 32(%rbx)\n   je 2f\n   mov 24(%rbx), %rax\n   test %rax, %rax\n"
-    "jz 2f\n   mov 88(%rbx), %rcx\n   cmp %rcx, %r14\n   jae 2f\n"
-    "lea (%r14,%r15), %rdx\n   cmp %rcx, %rdx\n   ja 3f\n   lea (%rax,%r14), %rdi\n"
-    "mov %r12, %rsi\n   mov %r15, %rdx\n   call memory_copy\n   jmp 2f\n"
-    "3:  mov %rbx, %rdi\n   call file_get_status\n   mov %rbx, %rdi\n   call file_unload\n"
+    "1:  push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n   mov %rcx, %r14\n"
+    "mov (%rbx), %rdi\n   mov %r14, %rsi\n   xor %edx, %edx\n"
+    "mov $" MOONWATER_NUMBER(syscall(lseek)) ", %eax\n   syscall\n"
+    "mov %rax, %r15\n   test %r15, %r15\n   js 2f\n"
+    "mov (%rbx), %rdi\n   mov %r12, %rsi\n   mov %r13, %rdx\n"
+    "mov $" MOONWATER_NUMBER(syscall(write)) ", %eax\n   syscall\n"
+    "mov %rax, %r15\n   test %r15, %r15\n   jle 2f\n"
+    "cmpb $0, 32(%rbx)\n   je 2f\n   mov 24(%rbx), %rax\n"
+    "test %rax, %rax\n   jz 3f\n"
+    "mov %r14, %rdx\n   add %r15, %rdx\n   jc 3f\n"
+    "cmp 88(%rbx), %rdx\n   ja 3f\n   cmp 184(%rbx), %rdx\n   ja 3f\n"
+    "lea (%rax,%r14), %rdi\n   mov %r12, %rsi\n   mov %r15, %rdx\n"
+    "call memory_copy\n   jmp 2f\n"
+    "3:  mov %rbx, %rdi\n   call file_unload\n"
+    "mov %rbx, %rdi\n   call file_get_status\n"
     "2:  mov %r15, %rax\n   pop %r15\n   pop %r14\n   pop %r13\n"
     "pop %r12\n   pop %rbx\n"
     ASM_RET
@@ -28319,10 +28295,6 @@ __asm__(
 );
 #elif ARM64
 
-// mov plus movk rather than a single mov: Darwin ORs 0x2000000 into every
-// syscall number and that is not an immediate one instruction can carry. A
-// literal pool load would be, but the pool for a file scope asm block lands at
-// the end of a very long .text and the load cannot always reach it.
 #define MOONWATER_SVC(name)                                                                          \
     "        mov     " SYSCALL_NUMBER_REGISTER ", #((" MOONWATER_NUMBER(syscall(name)) ") & 0xffff)\n"      \
     "        movk    " SYSCALL_NUMBER_REGISTER ", #(((" MOONWATER_NUMBER(syscall(name)) ") >> 16) & 0xffff), lsl #16\n" \
@@ -28331,125 +28303,114 @@ __asm__(
 __asm__(
     ASM_SECTION
     ASM_FUNC(file_get_status)
-    "add x1, x0, #40\n"
-    "ldr x0, [x0]\n"
+    "ldr x2, [x0]\n   cmp x2, #0\n   b.lt 1f\n"
+    "add x1, x0, #40\n   mov x0, x2\n"
     MOONWATER_SVC(fstat)
+    "1:\n"
     ASM_RET
     ASM_END(file_get_status)
 
     ASM_FUNC(file_unload)
-    "ldrb w2, [x0, #32]\n"
-    "ldr x10, [x0, #24]\n"
-    "orr x2, x2, x10\n   cbz x2, 1f\n   mov x9, x0\n   ldr x1, [x9, #88]\n"
-    "add x1, x1, #4095\n"
-    "and x1, x1, #0xfffffffffffff000\n"
-    "mov x0, x10\n"
+    "mov x9, x0\n   ldr x1, [x9, #184]\n   cbz x1, 1f\n"
+    "ldr x0, [x9, #24]\n"
     MOONWATER_SVC(munmap)
-    "str xzr, [x9, #24]\n"
-    "strb wzr, [x9, #32]\n"
-    "1:\n"
+    "1:  str xzr, [x9, #24]\n   strb wzr, [x9, #32]\n"
+    "str xzr, [x9, #184]\n"
     ASM_RET
     ASM_END(file_unload)
 
-    // cmn is the compare against minus one: it adds rather than subtracts, so
-    // the zero flag falls out without materialising the constant.
     ASM_FUNC(file_close)
-    "ldr x1, [x0]\n   cmn x1, #1\n"
-    "b.eq 2f\n   stp x29, x30, [sp,  #-32]!\n"
-    "mov x29, sp\n   str x19, [sp, #16]\n"
+    "stp x29, x30, [sp, #-32]!\n   mov x29, sp\n   str x19, [sp, #16]\n"
     "mov x19, x0\n   bl file_unload\n   ldr x0, [x19]\n"
+    "cmp x0, #0\n   b.lt 1f\n"
     MOONWATER_SVC(close)
-    "mov x1,  #-1\n"
-    "str x1, [x19]\n   str xzr, [x19, #8]\n"
-    "ldr x19, [sp, #16]\n"
-    "ldp x29, x30, [sp], #32\n"
-    ASM_RET
-    "2:\n"
+    "1:  mov x0, x19\n   mov x1, #0\n   mov x2, #0\n   bl file_initialize\n"
+    "ldr x19, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
     ASM_RET
     ASM_END(file_close)
 
     ASM_FUNC(file_write)
-    "ldr x4, [x0]\n   cmn x4, #1\n"
-    "b.ne 1f\n   mov x0,  #-1\n"
+    "ldr x4, [x0]\n   cmp x4, #0\n   b.ge 1f\n   mov x0, #-1\n"
     ASM_RET
-    "1:  stp x29, x30, [sp,  #-64]!\n"
-    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
-    "stp x21, x22, [sp, #32]\n"
-    "str x23, [sp, #48]\n"
-    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   mov x22, x3\n"
-    "ldr x0, [x19]\n   mov x1, x22\n   mov x2, #0\n"
+    "1:  stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "str x23, [sp, #48]\n   mov x19, x0\n   mov x20, x1\n"
+    "mov x21, x2\n   mov x22, x3\n   ldr x0, [x19]\n"
+    "mov x1, x22\n   mov x2, #0\n"
     MOONWATER_SVC(lseek)
+    "mov x23, x0\n   tbnz x23, #63, 2f\n"
     "ldr x0, [x19]\n   mov x1, x20\n   mov x2, x21\n"
     MOONWATER_SVC(write)
-    "mov x23, x0\n   cbz x0, 2f\n   ldrb w4, [x19, #32]\n"
-    "cbz x4, 2f\n   ldr x5, [x19, #24]\n"
-    "cbz x5, 2f\n   ldr x6, [x19, #88]\n"
-    "cmp x22, x6\n   b.hs 2f\n   add x7, x22, x23\n   cmp x7, x6\n"
-    "b.hi 3f\n   add x0, x5, x22\n   mov x1, x20\n   mov x2, x23\n"
+    "mov x23, x0\n   tbnz x23, #63, 2f\n   cbz x23, 2f\n"
+    "ldrb w4, [x19, #32]\n   cbz w4, 2f\n   ldr x5, [x19, #24]\n"
+    "cbz x5, 3f\n"
+    "adds x7, x22, x23\n   b.cs 3f\n"
+    "ldr x6, [x19, #88]\n   cmp x7, x6\n   b.hi 3f\n"
+    "ldr x6, [x19, #184]\n   cmp x7, x6\n   b.hi 3f\n"
+    "add x0, x5, x22\n   mov x1, x20\n   mov x2, x23\n"
     "bl memory_copy\n   b 2f\n"
-    "3:  mov x0, x19\n   bl file_get_status\n   mov x0, x19\n   bl file_unload\n"
+    "3:  mov x0, x19\n   bl file_unload\n"
+    "mov x0, x19\n   bl file_get_status\n"
     "2:  mov x0, x23\n   ldr x23, [sp, #48]\n"
-    "ldp x21, x22, [sp, #32]\n"
-    "ldp x19, x20, [sp, #16]\n"
+    "ldp x21, x22, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
     "ldp x29, x30, [sp], #64\n"
     ASM_RET
     ASM_END(file_write)
 );
 #elif RISCV64
 
-#define MOONWATER_ECALL(name)                                     \
-    "        li      a7, " MOONWATER_NUMBER(syscall(name)) "\n"    \
-    "        ecall\n"
+#define MOONWATER_ECALL(name)                                  \
+    "li a7, " MOONWATER_NUMBER(syscall(name)) "\n   ecall\n"
 
 __asm__(
     ASM_SECTION
     ASM_FUNC(file_get_status)
-    "addi a1, a0, 40\n   ld a0, 0(a0)\n"
+    "ld t0, 0(a0)\n   bltz t0, 1f\n   addi a1, a0, 40\n   mv a0, t0\n"
     MOONWATER_ECALL(fstat)
+    "1:\n"
     ASM_RET
     ASM_END(file_get_status)
 
-    // addi carries twelve signed bits, which 4095 does not fit, so the
-    // rounding constant has to be built in a register first.
     ASM_FUNC(file_unload)
-    "lbu t0, 32(a0)\n   ld t1, 24(a0)\n   or t0, t0, t1\n   beqz t0, 1f\n"
-    "mv t2, a0\n   ld a1, 88(a0)\n   li t3, 4095\n   add a1, a1, t3\n"
-    "li t4, -4096\n   and a1, a1, t4\n   mv a0, t1\n"
+    "mv t2, a0\n   ld a1, 184(t2)\n   beqz a1, 1f\n"
+    "ld a0, 24(t2)\n"
     MOONWATER_ECALL(munmap)
-    "sd zero, 24(t2)\n   sb zero, 32(t2)\n"
-    "1:\n"
+    "1:  sd zero, 24(t2)\n   sb zero, 32(t2)\n   sd zero, 184(t2)\n"
     ASM_RET
     ASM_END(file_unload)
 
     ASM_FUNC(file_close)
-    "ld t0, 0(a0)\n   li t1, -1\n   beq t0, t1, 2f\n   addi sp, sp, -16\n"
-    "sd ra, 0(sp)\n   sd s1, 8(sp)\n   mv s1, a0\n   call file_unload\n"
-    "ld a0, 0(s1)\n"
+    "addi sp, sp, -16\n   sd ra, 0(sp)\n   sd s1, 8(sp)\n"
+    "mv s1, a0\n   call file_unload\n   ld a0, 0(s1)\n"
+    "bltz a0, 1f\n"
     MOONWATER_ECALL(close)
-    "li t0, -1\n   sd t0, 0(s1)\n   sd zero, 8(s1)\n   ld ra, 0(sp)\n"
-    "ld s1, 8(sp)\n   addi sp, sp, 16\n"
-    ASM_RET
-    "2:\n"
+    "1:  mv a0, s1\n   li a1, 0\n   li a2, 0\n   call file_initialize\n"
+    "ld ra, 0(sp)\n   ld s1, 8(sp)\n   addi sp, sp, 16\n"
     ASM_RET
     ASM_END(file_close)
 
     ASM_FUNC(file_write)
-    "ld t0, 0(a0)\n   li t1, -1\n   bne t0, t1, 1f\n   li a0, -1\n"
+    "ld t0, 0(a0)\n   bgez t0, 1f\n   li a0, -1\n"
     ASM_RET
-    "1:  addi sp, sp, -48\n   sd ra, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n"
-    "sd s3, 24(sp)\n   sd s4, 32(sp)\n   sd s5, 40(sp)\n   mv s1, a0\n"
-    "mv s2, a1\n   mv s3, a2\n   mv s4, a3\n   ld a0, 0(s1)\n"
-    "mv a1, s4\n   li a2, 0\n"
+    "1:  addi sp, sp, -48\n   sd ra, 0(sp)\n   sd s1, 8(sp)\n"
+    "sd s2, 16(sp)\n   sd s3, 24(sp)\n   sd s4, 32(sp)\n   sd s5, 40(sp)\n"
+    "mv s1, a0\n   mv s2, a1\n   mv s3, a2\n   mv s4, a3\n"
+    "ld a0, 0(s1)\n   mv a1, s4\n   li a2, 0\n"
     MOONWATER_ECALL(lseek)
-    "ld a0, 0(s1)\n   mv a1, s2\n   mv a2, s3\n"
+    "mv s5, a0\n   bltz s5, 2f\n   ld a0, 0(s1)\n"
+    "mv a1, s2\n   mv a2, s3\n"
     MOONWATER_ECALL(write)
-    "mv s5, a0\n   beqz a0, 2f\n   lbu t0, 32(s1)\n   beqz t0, 2f\n"
-    "ld t1, 24(s1)\n   beqz t1, 2f\n   ld t2, 88(s1)\n   bgeu s4, t2, 2f\n"
-    "add t3, s4, s5\n   bgtu t3, t2, 3f\n   add a0, t1, s4\n   mv a1, s2\n"
-    "mv a2, s5\n   call memory_copy\n   j 2f\n"
-    "3:  mv a0, s1\n   call file_get_status\n   mv a0, s1\n   call file_unload\n"
-    "2:  mv a0, s5\n   ld ra, 0(sp)\n   ld s1, 8(sp)\n   ld s2, 16(sp)\n"
-    "ld s3, 24(sp)\n   ld s4, 32(sp)\n   ld s5, 40(sp)\n   addi sp, sp, 48\n"
+    "mv s5, a0\n   blez s5, 2f\n   lbu t0, 32(s1)\n   beqz t0, 2f\n"
+    "ld t1, 24(s1)\n   beqz t1, 3f\n   add t3, s4, s5\n   bltu t3, s4, 3f\n"
+    "ld t2, 88(s1)\n   bgtu t3, t2, 3f\n"
+    "ld t2, 184(s1)\n   bgtu t3, t2, 3f\n"
+    "add a0, t1, s4\n   mv a1, s2\n   mv a2, s5\n"
+    "call memory_copy\n   j 2f\n"
+    "3:  mv a0, s1\n   call file_unload\n"
+    "mv a0, s1\n   call file_get_status\n"
+    "2:  mv a0, s5\n   ld ra, 0(sp)\n   ld s1, 8(sp)\n"
+    "ld s2, 16(sp)\n   ld s3, 24(sp)\n   ld s4, 32(sp)\n"
+    "ld s5, 40(sp)\n   addi sp, sp, 48\n"
     ASM_RET
     ASM_END(file_write)
 );
@@ -29597,13 +29558,7 @@ __asm__(
 */
 #undef floor
 
-/*
-        <string.h>, the part of it library.c writes in assembly.
-
-        strncpy is the one name in this group that does not mean what C means
-        by it: it pads nothing. The divergence is at the top of the file and
-        both behaviours are written out in CHECK_declare in test/checks.c.
-*/
+/* <string.h>, the part of it library.c writes in assembly. */
 void address_to memcpy(void address_to destination, const void address_to source,
                        sized size);
 void address_to memmove(void address_to destination, const void address_to source,

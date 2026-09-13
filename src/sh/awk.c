@@ -4623,17 +4623,22 @@ static awk_text address_to awk_subscript_key(awk_node address_to list, b32 count
                 return awk_eval_text(list);
 
         awk_builder build;
-        positive length;
-        string_address separator = awk_separator(awk_where_subsep, address_of length);
 
         awk_builder_start(address_of build);
 
         for (awk_node address_to one = list; one; one = one->next)
         {
+                awk_text address_to separator = one == list
+                    ? null
+                    : awk_text_hold(awk_special_text(awk_where_subsep));
                 awk_text address_to piece = awk_eval_text(one);
 
-                if (one != list)
-                        awk_builder_put(address_of build, separator, length);
+                if (separator)
+                {
+                        awk_builder_put(address_of build, separator->text,
+                                        separator->length);
+                        awk_text_drop(separator);
+                }
 
                 awk_builder_put(address_of build, piece->text, piece->length);
                 awk_text_drop(piece);
@@ -5622,9 +5627,7 @@ static awk_writer address_to awk_output_of(awk_node address_to node)
 static fn awk_do_print(awk_node address_to node)
 {
         awk_builder build;
-        positive ofs_length;
         positive ors_length;
-        string_address ofs = awk_separator(awk_where_ofs, address_of ofs_length);
         string_address ors;
         awk_writer address_to where;
 
@@ -5640,14 +5643,21 @@ static fn awk_do_print(awk_node address_to node)
                 for (awk_node address_to one = node->a; one; one = one->next)
                 {
                         awk_value value;
+                        awk_text address_to ofs = one == node->a
+                            ? null
+                            : awk_text_hold(awk_special_text(awk_where_ofs));
 
                         awk_value_start(value);
                         awk_eval(one, address_of value);
 
                         awk_text address_to piece = awk_to_output_text(address_of value);
 
-                        if (one != node->a)
-                                awk_builder_put(address_of build, ofs, ofs_length);
+                        if (ofs)
+                        {
+                                awk_builder_put(address_of build, ofs->text,
+                                                ofs->length);
+                                awk_text_drop(ofs);
+                        }
 
                         awk_builder_put(address_of build, piece->text, piece->length);
                         awk_text_drop(piece);

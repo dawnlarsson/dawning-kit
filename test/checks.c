@@ -219,13 +219,10 @@ static fn test_cases_walk(test_case address_to walk)
             declare_jump_state               jump_state here, jmp_buf there
             DECLARE_FREESTANDING             defined only in the first build
 
-        DECLARE_FREESTANDING appears exactly twice below. Once for the
-        identity checks, which ask whether the standard name and the prose
-        name are one address -- a question glibc has no opinion about. And
-        once for strncpy, which is the single case in four hundred and forty
-        two where the answer here and glibc's answer are not the same byte;
-        both sides of it are written out, so the divergence is recorded in
-        the file rather than in a comment about the file.
+        DECLARE_FREESTANDING appears once for the identity checks, which ask
+        whether a standard name and a house name are one address -- a question
+        glibc has no opinion about -- and once to pin string_copy_max's
+        deliberately unpadded house contract beside strncpy's padded one.
 */
 
 static char declare_left[64];
@@ -480,32 +477,20 @@ static void declare_cases(void)
                       memcmp(declare_left, "abcdX", 5) == 0);
         declare_check("strncpy returns destination", found == declare_left);
 
-        /*
-                THE ONE DIVERGENCE.
-
-                C says strncpy pads the rest of the bound with zeroes. The
-                symbol here is string_copy_max, which stops at the source's
-                terminator and writes nothing after it, and library.c says so
-                where the alias is made. Both answers are written out so that
-                the two builds agree with their own libraries and the
-                difference is visible in the source of the test rather than
-                only in a report about it.
-        */
+        /* strncpy pads; the house copy keeps its intentionally shorter rule. */
         memset(declare_left, 'X', sizeof declare_left);
         strncpy(declare_left, "abc", 8);
-#ifdef DECLARE_FREESTANDING
-        declare_check("strncpy short pads nothing",
-                      memcmp(declare_left, "abc\0XXXX", 8) == 0);
-#else
         declare_check("strncpy short pads with zeroes",
                       memcmp(declare_left, "abc\0\0\0\0\0", 8) == 0);
+#ifdef DECLARE_FREESTANDING
+        memset(declare_left, 'X', sizeof declare_left);
+        string_copy_max((p8 address_to)declare_left,
+                        (string_address)"abc", 8);
+        declare_check("string_copy_max short pads nothing",
+                      memcmp(declare_left, "abc\0XXXX", 8) == 0);
 #endif
 
-        /*
-                stpncpy, which does pad, and is where the difference above is
-                easiest to see: the two routines are a bound apart in the
-                same file and only one of them fills the tail.
-        */
+        /* stpncpy shares the padding body and returns the first zero. */
         memset(declare_left, 'X', sizeof declare_left);
         found = stpncpy(declare_left, "abc", 8);
         declare_check("stpncpy short pads",
@@ -814,7 +799,6 @@ static void declare_cases(void)
         declare_same("strcmp is string_compare", strcmp, string_compare);
         declare_same("strchr is string_first_of", strchr, string_first_of);
         declare_same("strstr is string_search", strstr, string_search);
-        declare_same("strncpy is string_copy_max", strncpy, string_copy_max);
         declare_same("toupper is byte_to_upper", toupper, byte_to_upper);
         declare_same("isdigit is byte_is_digit", isdigit, byte_is_digit);
         declare_same("sqrt is square_root", sqrt, square_root);
@@ -10060,6 +10044,10 @@ fn check_file_load()
         static file subject;
         b8 address_to loaded;
 
+        same("file", "mapping extent stays after established fields",
+             __builtin_offsetof(file, mapped_size), 184);
+        same("file", "mapping extent completes the object", sizeof(file), 192);
+
         for (positive i = 0; i < sizeof(body); i++)
                 body[i] = (b8)(next() & 0xff);
 
@@ -10102,8 +10090,47 @@ fn check_file_load()
         same_bytes("file_load", "contents", loaded, body, sizeof(body));
         same("file_load", "already loaded returns the same",
              (positive)file_load(address_of subject), (positive)loaded);
+        same("file_load", "records its exact page extent",
+             subject.mapped_size, 4096);
+
+        /*
+                A read-only descriptor makes write return raw -EBADF. At offset
+                nine, treating that negative result as an unsigned byte count
+                wraps the computed end to zero and used to enter memory_copy
+                with an enormous length.
+        */
+        p8 refused = 0x5a;
+        positive put = file_write(address_of subject, address_of refused, 1, 9);
+        same("file_write", "preserves a negative raw result",
+             (positive)(bipolar)put, (positive)(bipolar)-9);
+        same("file_write", "failed write keeps mapping loaded",
+             (positive)subject.loaded, 1);
+        same("file_write", "failed write keeps mapping extent",
+             subject.mapped_size, 4096);
 
         file_close(address_of subject);
+        same("file_close", "clears mapping pointer", (positive)subject.data, 0);
+        same("file_close", "clears mapping extent", subject.mapped_size, 0);
+        same("file_close", "clears loaded state", (positive)subject.loaded, 0);
+        same("file_close", "clears status", (positive)subject.status.size, 0);
+
+        /* A short file after fstat must release the exact mapping it made. */
+        file_new(address_of subject,
+                 scratch_path((string_address)"moonwater_verify_load"),
+                 FILE_READ_WRITE);
+        same("file_load", "short-read fixture opened",
+             (positive)file_valid(address_of subject), 1);
+        same("file_load", "short-read fixture truncated",
+             (positive)system_call_2(syscall(ftruncate), subject.handle, 1000),
+             0);
+        same("file_load", "short read is not a complete load",
+             (positive)file_load(address_of subject), 0);
+        same("file_load", "short read releases mapping state",
+             (positive)subject.data | subject.mapped_size |
+                 (positive)subject.loaded,
+             0);
+        file_close(address_of subject);
+
         system_call_3(syscall(unlinkat), AT_FDCWD,
                       (positive)scratch_path((string_address)"moonwater_verify_load"), 0);
 }
@@ -10119,8 +10146,8 @@ fn check_file_load()
 
 fn check_file_round_trip()
 {
-        static p8 written[2048];
-        static p8 read_back[2048];
+        static p8 written[4096];
+        static p8 read_back[4096];
         static file subject;
 
         for (positive i = 0; i < sizeof(written); i++)
@@ -10157,9 +10184,25 @@ fn check_file_round_trip()
         got = file_read(address_of subject, read_back, 100, sizeof(written) + 500);
         same("file_read", "past the end reads nothing", got, 0);
 
+        same("file_load", "maps the round-trip file",
+             (positive)(file_load(address_of subject) != null), 1);
+        same("file_load", "round-trip extent", subject.mapped_size, 4096);
+
+        /* Extending a mapped file invalidates the old snapshot before stat. */
+        p8 tail = 0xa5;
+        put = file_write(address_of subject, address_of tail, 1, sizeof(written));
+        same("file_write", "extends mapped file", put, 1);
+        same("file_write", "extension unloads old mapping",
+             (positive)subject.loaded, 0);
+        same("file_write", "extension clears old extent", subject.mapped_size, 0);
+        same("file_write", "status follows extension",
+             (positive)subject.status.size, sizeof(written) + 1);
+
         file_close(address_of subject);
         same("file_close", "no longer valid",
              (positive)file_valid(address_of subject), 0);
+        same("file_close", "clears path", (positive)subject.path, 0);
+        same("file_close", "clears flags", subject.flags, 0);
 
         system_call_3(syscall(unlinkat), AT_FDCWD, (positive)SCRATCH, 0);
 }
@@ -10184,27 +10227,26 @@ fn check_lazy_file_and_library()
         }
         system_call_1(syscall(close), made);
 
-        subject.handle = (positive)-1;
-        subject.path = null;
-        subject.flags = 0;
-        subject.data = null;
-        subject.loaded = false;
-        subject.status.size = 0x1122334455667788ull;
+        reference_fill((p8 address_to)address_of subject, 0xa5, sizeof subject);
         file_new_lazy(address_of subject, lazy_path, FILE_READ);
         same("file_new_lazy", "opens existing file",
              (positive)((bipolar)subject.handle >= 0), 1);
         same("file_new_lazy", "keeps path", (positive)subject.path,
              (positive)lazy_path);
         same("file_new_lazy", "keeps flags", subject.flags, FILE_READ);
-        same("file_new_lazy", "does not stat",
-             (positive)subject.status.size, 0x1122334455667788ull);
+        same("file_new_lazy", "starts status clean",
+             (positive)subject.status.size, 0);
+        same("file_new_lazy", "starts mapping clean",
+             (positive)subject.data | subject.mapped_size |
+                 (positive)subject.loaded,
+             0);
         file_close(address_of subject);
         system_call_3(syscall(unlinkat), AT_FDCWD, (positive)lazy_path, 0);
 
         string_address missing =
                 scratch_path((string_address)"moonwater_verify_lazy_missing");
         system_call_3(syscall(unlinkat), AT_FDCWD, (positive)missing, 0);
-        subject.handle = (positive)-1;
+        reference_fill((p8 address_to)address_of subject, 0xa5, sizeof subject);
         file_new_lazy(address_of subject, missing, FILE_READ);
         same("file_new_lazy", "preserves open errno",
              (positive)((bipolar)subject.handle < 0), 1);
@@ -10212,7 +10254,19 @@ fn check_lazy_file_and_library()
              (positive)file_valid(address_of subject), 0);
         same("file_new_lazy", "failed path", (positive)subject.path,
              (positive)missing);
-        subject.handle = (positive)-1;
+        same("file_load", "rejects every negative open result",
+             (positive)file_load(address_of subject), 0);
+        same("file_read", "rejects every negative open result",
+             file_read(address_of subject, address_of made, 1, 0),
+             (positive)-1);
+        file_close(address_of subject);
+        same("file_close", "normalizes a negative open result",
+             subject.handle, (positive)-1);
+        same("file_close", "cleans a failed object",
+             (positive)subject.path | subject.flags | (positive)subject.data |
+                 subject.mapped_size | (positive)subject.loaded |
+                 (positive)subject.status.size,
+             0);
 
         // Non-Windows library loading is deliberately only a thin file-open
         // placeholder today.  Pin both sides of that small contract: a slash
@@ -19522,6 +19576,8 @@ static p8 model[GUARD + TOP + 8];
 static p8 taken[GUARD + TOP + 8];
 static p8 spare[GUARD + TOP + 8];
 
+static p8 address_to target(positive allowed);
+
 #define NOT_INLINED __attribute__((noinline, noclone))
 
 //      What each of the six means, spelled out, so the expansion and the
@@ -19705,6 +19761,82 @@ static fn length_guard_edge(void)
         }
 }
 
+/*
+        A literal maximum is not a promise that every byte up to that maximum
+        is mapped.  Put an earlier terminator on the final readable byte and
+        keep the literal at each call site, so this reaches the compiler's
+        bounded-string specializers rather than the outlined page-aware
+        routines exercised above.
+*/
+#define EARLY_LITERAL_GUARD(K)                                                \
+        do {                                                                  \
+                for (positive suffix = 1; suffix < (K); suffix++) {           \
+                        string_address source = source_edge - suffix;         \
+                        string_address twin = twin_edge - suffix;             \
+                        p8 address_to into;                                   \
+                        p8 address_to endp;                                   \
+                        bool padded = true;                                   \
+                                                                                \
+                        for (positive i = 0; i + 1 < suffix; i++)             \
+                                source[i] = twin[i] =                         \
+                                    (p8)('a' + (i * 7 + suffix) % 23);        \
+                        source[suffix - 1] = twin[suffix - 1] = 0;            \
+                                                                                \
+                        judge((string_address)                                \
+                              "string_length_max literal early NUL",        \
+                              (K), suffix, string_length_max(source, (K)),    \
+                              suffix - 1);                                    \
+                        judge((string_address)                                \
+                              "string_compare_max literal early NUL",       \
+                              (K), suffix,                                    \
+                              (positive)string_compare_max(source, twin,      \
+                                                           (K)), 0);          \
+                                                                                \
+                        into = target((K) + 1);                               \
+                        endp = string_copy_max_end(into, source, (K));        \
+                        judge((string_address)                                \
+                              "string_copy_max_end literal early NUL",      \
+                              (K), suffix, (positive)(endp - into),           \
+                              suffix - 1);                                    \
+                        judge((string_address)                                \
+                              "string_copy_max_end literal bytes",          \
+                              (K), suffix,                                    \
+                              (positive)!memory_compare(into, source, suffix),\
+                              1);                                             \
+                                                                                \
+                        into = target((K));                                   \
+                        endp = string_copy_max_endptr(into, source, (K));     \
+                        for (positive i = suffix; i < (K); i++)               \
+                                padded &= into[i] == 0;                       \
+                        judge((string_address)                                \
+                              "string_copy_max_endptr literal early NUL",   \
+                              (K), suffix, (positive)(endp - into),           \
+                              suffix - 1);                                    \
+                        judge((string_address)                                \
+                              "string_copy_max_endptr literal padding",     \
+                              (K), suffix, padded, 1);                        \
+                                                                                \
+                        into = target(PREFIX + (K) + 1);                      \
+                        for (positive i = 0; i < PREFIX; i++)                 \
+                                into[i] = (p8)'z';                            \
+                        into[PREFIX] = 0;                                     \
+                        judge((string_address)                                \
+                              "string_append_max literal early NUL",        \
+                              (K), suffix,                                    \
+                              (positive)(string_append_max(into, source,      \
+                                                           (K)) == into &&   \
+                                  !memory_compare(into + PREFIX, source,      \
+                                                  suffix)),                  \
+                              1);                                             \
+                }                                                             \
+        } while (0)
+
+static fn literal_guard_edge(void)
+{
+        EARLY_LITERAL_GUARD(4);
+        EARLY_LITERAL_GUARD(8);
+}
+
 static string_address mirror(string_address source, positive bound,
                              positive differ, p8 by)
 {
@@ -19799,8 +19931,8 @@ static fn model_room(positive allowed)
 //      string_copy_max is the one of the six with no expansion -- its window
 //      was a bound of four and under, and nothing in the tree passes one that
 //      small -- so this pins the routine against the model instead. Which is
-//      worth doing on its own: strncpy is aliased to it and strncpy pads,
-//      and this routine deliberately does not.
+//      worth doing on its own: strncpy now pads through its own wrapper, while
+//      this routine deliberately does not.
 #define COPY_CASE(K)                                                           \
         do {                                                                   \
                 for (positive t = 0; t <= (K); t++) {                          \
@@ -19959,6 +20091,7 @@ b32 main(void)
         EVERY_BOUND(PTR_CASE);
         EVERY_BOUND(APPEND_CASE);
         length_guard_edge();
+        literal_guard_edge();
 
         return test_report((string_address) "bounded: ");
 }
@@ -21641,10 +21774,9 @@ b32 main(void)
         here and fails there is a genuine disagreement about behaviour rather
         than about what to test.
 
-        Four hundred and forty two lines of raw output were compared between
-        the two while this was written and one of them differed, which is
-        strncpy's padding; it is written out in both directions in the case
-        file.
+        The freestanding and reference builds exercise the same standard
+        semantics. House-only identity and string_copy_max checks stay behind
+        DECLARE_FREESTANDING.
 
         DECLARE_FREESTANDING switches on the identity checks at the end,
         which ask whether memcpy and memory_copy are one address. glibc has
@@ -21714,8 +21846,8 @@ b32 main(void)
         that need a library that new.
 
         DECLARE_FREESTANDING is not defined here, which takes away the
-        identity checks -- glibc's memcpy is not anybody's memory_copy -- and
-        switches strncpy's case over to the padding C describes.
+        identity and house-name checks -- glibc's memcpy is not anybody's
+        memory_copy.
 */
 
 static unsigned long long declare_checks;
@@ -25499,6 +25631,12 @@ static fn error_test_contract(void)
         check("wrapper returned minus one", handle == -1);
         check("wrapper set errno", errno == ENOENT);
 
+        errno = 0;
+        check("faccessat rejects flags it cannot enforce",
+              faccessat(AT_FDCWD, (string_address)"/dev/null", F_OK,
+                        AT_EACCESS) == -1);
+        check("faccessat unsupported flags report ENOTSUP", errno == ENOTSUP);
+
         //      A second failing call overwrites the first, which is the whole
         //      of what is wrong with errno and is worth having pinned.
         errno = 0;
@@ -29168,6 +29306,101 @@ number_case(extended)
 }
 
 /*
+        The public floating wrappers take ordinary terminated strings.  The
+        maximum used while recognizing inf/nan does not make the bytes after
+        that terminator readable, so put the terminator at the final byte of a
+        mapped page and exercise every wrapper that shares numbers_read.
+*/
+number_case(page_edge_names)
+{
+        p8 address_to pages = memory(3 * 4096);
+
+        number_say(!system_failed(pages) && pages != null,
+                   text("floating-name guard allocation"));
+        if (system_failed(pages) || !pages)
+                return false;
+
+        bool guarded =
+            !system_call_3(syscall(mprotect), (positive)pages, 4096, 0) &&
+            !system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0);
+        number_say(guarded, text("floating-name guard protection"));
+        if (guarded)
+        {
+                static string_address names[] = {"inf", "nan"};
+
+                for (positive which = 0; which < array_count(names); which++)
+                {
+                        string_address input = pages + 8192 - 4;
+                        string_address stop = null;
+                        number_wide_shape wide;
+                        number_wide_shape alias;
+                        number_narrow_shape narrow;
+                        number_extended_shape extended;
+
+                        memory_copy(input, names[which], 4);
+                        wide.value = strtod(input,
+                            (char address_to address_to)address_of stop);
+                        number_say(stop == input + 3,
+                                   text("strtod page-edge end pointer"));
+
+                        stop = null;
+                        narrow.value = strtof(input,
+                            (char address_to address_to)address_of stop);
+                        number_say(stop == input + 3,
+                                   text("strtof page-edge end pointer"));
+
+                        stop = null;
+                        extended.value = strtold(input,
+                            (char address_to address_to)address_of stop);
+                        number_say(stop == input + 3,
+                                   text("strtold page-edge end pointer"));
+
+                        alias.value = atof(input);
+                        if (!which)
+                        {
+                                number_say(wide.bits == 0x7ff0000000000000ULL &&
+                                               alias.bits == wide.bits &&
+                                               narrow.bits == 0x7f800000u &&
+                                               number_extended_same(
+                                                   extended.bits,
+                                                   number_widened(wide.bits)),
+                                           text("page-edge infinity values"));
+                        }
+                        else
+                        {
+                                bool extended_nan;
+#if __LDBL_MANT_DIG__ == 64
+                                extended_nan =
+                                    ((p64)(extended.bits >> 64) & 0x7fff) ==
+                                        0x7fff &&
+                                    (p64)extended.bits != 0;
+#else
+                                extended_nan =
+                                    ((p64)(extended.bits >> 112) & 0x7fff) ==
+                                        0x7fff &&
+                                    (extended.bits & (((p128)1 << 112) - 1)) != 0;
+#endif
+                                number_say(
+                                    (wide.bits & 0x7ff0000000000000ULL) ==
+                                            0x7ff0000000000000ULL &&
+                                        (wide.bits & 0xfffffffffffffULL) != 0 &&
+                                        (alias.bits & 0x7ff0000000000000ULL) ==
+                                            0x7ff0000000000000ULL &&
+                                        (alias.bits & 0xfffffffffffffULL) != 0 &&
+                                        (narrow.bits & 0x7f800000u) ==
+                                            0x7f800000u &&
+                                        (narrow.bits & 0x7fffffu) != 0 &&
+                                        extended_nan,
+                                    text("page-edge NaN values"));
+                        }
+                }
+        }
+
+        memory_free(pages, 3 * 4096);
+        return number_failures == 0;
+}
+
+/*
         The shift table, checked against the one entry of it that cannot be
         wrong.
 
@@ -29441,6 +29674,7 @@ static const number_entry number_entries[] = {
         {"integers", number_test_integers},
         {"against glibc", number_test_against_glibc},
         {"extended", number_test_extended},
+        {"page-edge names", number_test_page_edge_names},
         {"shift table", number_test_shift_table},
         {"tiers agree", number_test_tiers_agree},
         {"monotone", number_test_monotone},
@@ -38925,6 +39159,209 @@ static fn fetching(void)
         }
 }
 
+/*
+        A header can finish on the final byte of its stack buffer, leaving an
+        empty body stash whose pointer is exactly one past that buffer.  Bare
+        LF chunk delimiters are accepted for compatibility, but consuming one
+        must never push the following byte back through that empty pointer.
+*/
+static fn streaming_chunk_boundaries(void)
+{
+        static string_address framed[] = {"1\nA\n0\n", "1\r\nA\r\n0\r\n"};
+        p8 address_to pages = memory(3 * 4096);
+
+        check("chunk stash guard allocation",
+              !system_failed(pages) && pages != null);
+        if (system_failed(pages) || !pages)
+                return;
+
+        bool guarded =
+            !system_call_3(syscall(mprotect), (positive)pages, 4096, 0) &&
+            !system_call_3(syscall(mprotect), (positive)(pages + 8192), 4096, 0);
+        check("chunk stash guard protection", guarded);
+        if (guarded)
+                for (positive which = 0; which < array_count(framed); which++)
+                {
+                        b32 input[2];
+                        b32 output[2];
+                        bipolar input_open = system_call_4(
+                            syscall(socketpair), AF_UNIX, SOCK_STREAM, 0,
+                            (positive)input);
+                        bipolar output_open = system_call_4(
+                            syscall(socketpair), AF_UNIX, SOCK_STREAM, 0,
+                            (positive)output);
+
+                        check("chunk boundary socket pairs open",
+                              input_open == 0 && output_open == 0);
+                        if (input_open || output_open)
+                        {
+                                if (!input_open)
+                                {
+                                        socket_close(input[0]);
+                                        socket_close(input[1]);
+                                }
+                                if (!output_open)
+                                {
+                                        socket_close(output[0]);
+                                        socket_close(output[1]);
+                                }
+                                continue;
+                        }
+
+                        positive length = string_length(framed[which]);
+                        check("chunk boundary input queues",
+                              socket_send(input[1], framed[which], length, 0,
+                                          null, 0) == (bipolar)length);
+
+                        http_link link = {.handle = input[0], .tls = false};
+                        http_body body = {
+                            .link = address_of link,
+                            .stash = pages + 8192,
+                            .stash_used = 0,
+                        };
+                        check("chunk delimiter at empty stash boundary",
+                              http_copy_chunked(address_of body, output[0]) ==
+                                  HTTP_OK);
+
+                        p8 byte = 0;
+                        check("chunk boundary preserves body byte",
+                              system_read_retry((positive)output[1],
+                                                address_of byte, 1) == 1 &&
+                                  byte == 'A');
+                        socket_close(input[0]);
+                        socket_close(input[1]);
+                        socket_close(output[0]);
+                        socket_close(output[1]);
+                }
+
+        memory_free(pages, 3 * 4096);
+}
+
+static fn tls_closure_boundaries(void)
+{
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+                check("TLS EOF socket pair opens", opened == 0);
+                if (!opened)
+                {
+                        tls_conn receiver = {0};
+                        p8 byte = 0;
+                        positive got = 99;
+
+                        receiver.handle = pair[0];
+                        receiver.encrypted = true;
+                        receiver.application = true;
+                        socket_close(pair[1]);
+                        check("TLS transport EOF is not authenticated closure",
+                              tls_read(address_of receiver, address_of byte, 1,
+                                       address_of got) == TLS_FAIL);
+                        socket_close(pair[0]);
+                }
+        }
+
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+                check("TLS plaintext-alert socket pair opens", opened == 0);
+                if (!opened)
+                {
+                        static p8 alert[] = {
+                            TLS_CT_ALERT, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00};
+                        tls_conn receiver = {0};
+                        p8 byte = 0;
+                        positive got = 99;
+
+                        receiver.handle = pair[0];
+                        receiver.encrypted = true;
+                        receiver.application = true;
+                        check("TLS plaintext alert queues",
+                              socket_send(pair[1], alert, sizeof(alert), 0,
+                                          null, 0) == (bipolar)sizeof(alert));
+                        check("TLS plaintext close alert is refused after keys",
+                              tls_read(address_of receiver, address_of byte, 1,
+                                       address_of got) == TLS_FAIL);
+                        socket_close(pair[0]);
+                        socket_close(pair[1]);
+                }
+        }
+
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+                check("TLS close-notify socket pair opens", opened == 0);
+                if (!opened)
+                {
+                        tls_conn sender = {0};
+                        tls_conn receiver = {0};
+                        p8 alert[] = {1, 0};
+                        p8 byte = 0;
+                        positive got = 99;
+
+                        sender.handle = pair[1];
+                        receiver.handle = pair[0];
+                        receiver.encrypted = true;
+                        receiver.application = true;
+                        check("TLS authenticated close-notify queues",
+                              tls_send_enc(address_of sender, TLS_CT_ALERT,
+                                           alert, sizeof(alert)) == TLS_OK);
+                        check("TLS authenticated close-notify is clean closure",
+                              tls_read(address_of receiver, address_of byte, 1,
+                                       address_of got) == TLS_OK &&
+                                  got == 0);
+                        socket_close(pair[0]);
+                        socket_close(pair[1]);
+                }
+        }
+
+        {
+                b32 pair[2];
+                bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                                SOCK_STREAM, 0,
+                                                (positive)pair);
+                check("TLS empty-app socket pair opens", opened == 0);
+                if (!opened)
+                {
+                        tls_conn sender = {0};
+                        tls_conn receiver = {0};
+                        p8 data[] = {'o', 'k'};
+                        p8 alert[] = {1, 0};
+                        p8 received[sizeof(data)] = {0};
+                        positive got = 99;
+
+                        sender.handle = pair[1];
+                        receiver.handle = pair[0];
+                        receiver.encrypted = true;
+                        receiver.application = true;
+                        check("TLS empty app, data and close-notify queue",
+                              tls_send_enc(address_of sender, TLS_CT_APP,
+                                           data, 0) == TLS_OK &&
+                                  tls_send_enc(address_of sender, TLS_CT_APP,
+                                               data, sizeof(data)) == TLS_OK &&
+                                  tls_send_enc(address_of sender, TLS_CT_ALERT,
+                                               alert, sizeof(alert)) == TLS_OK);
+                        check("TLS read skips authenticated empty app",
+                              tls_read(address_of receiver, received,
+                                       sizeof(received), address_of got) == TLS_OK &&
+                                  got == sizeof(data) &&
+                                  !memory_compare(received, data, sizeof(data)));
+                        got = 99;
+                        check("TLS closes cleanly after skipped empty app",
+                              tls_read(address_of receiver, received,
+                                       sizeof(received), address_of got) == TLS_OK &&
+                                  got == 0);
+                        socket_close(pair[0]);
+                        socket_close(pair[1]);
+                }
+        }
+}
+
 static bool crypto_bytes_are(p8 address_to got, positive length, string_address hex)
 {
         p8 expect[128];
@@ -39643,6 +40080,8 @@ b32 main(void)
         resolving();
         resolving_edges();
         fetching();
+        streaming_chunk_boundaries();
+        tls_closure_boundaries();
         crypto_floor();
         crypto_floor_aes();
         redirect_urls();
@@ -43316,6 +43755,7 @@ typedef uint64_t u64;
 #define max(a,b) ((a)>(b)?(a):(b))
 #define min_t(t,a,b) min((t)(a),(t)(b))
 #define clamp(a,b,c) min(max(a,b),c)
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 #define WINDOW_CELL_W 8
 #define WINDOW_CELL_H 16
 #define DRM_FORMAT_ARGB8888 0x34325241u
@@ -43324,6 +43764,11 @@ static struct {unsigned scale;int bar_grab,frame_pending;} desktop={1};
 #define canvas_cell_h (WINDOW_CELL_H * (int)desktop.scale)
 static unsigned long canvas_painted,canvas_runs;
 struct drm_rect {int x1,y1,x2,y2;};
+static void drm_rect_init(struct drm_rect *r,int x,int y,int w,int h) {
+    *r=(struct drm_rect){x,y,x+w,y+h};
+}
+static int drm_rect_width(const struct drm_rect *r) {return r->x2-r->x1;}
+static int drm_rect_height(const struct drm_rect *r) {return r->y2-r->y1;}
 struct window_cell {unsigned character; unsigned char ink,paper; unsigned short flags;};
 struct font_desc {unsigned width,height; const unsigned char *data;};
 static const unsigned char *font_data_buf(const unsigned char *p) {return p;}
@@ -43455,9 +43900,47 @@ static void check_pane_layout(void) {
     }
 }
 
+/*
+   Focus policy lives in the kernel-facing pane file and cannot be executed by
+   this DRM-free pixel harness. Pin the security boundary in the source that
+   ships: create publishes a pane without focusing it, and every client-pane
+   selection goes through the geometry-aware eligibility helper.
+*/
+static void check_pane_focus_policy(void) {
+    FILE *source=fopen("src/canvas/pane.c","rb");check(source!=NULL);
+    assert(!fseek(source,0,SEEK_END));long size=ftell(source);assert(size>0);
+    rewind(source);char *text=malloc((size_t)size+1);assert(text);
+    assert(fread(text,1,(size_t)size,source)==(size_t)size);text[size]=0;
+    assert(!fclose(source));
+
+    char *create=strstr(text,"static long window_ioctl_create");
+    char *poll=create?strstr(create,"static __poll_t window_poll"):NULL;
+    check(create&&poll);if(create&&poll){char keep=*poll;*poll=0;
+        check(strstr(create,"pane_focus(")==NULL);*poll=keep;}
+
+    char *focusable=strstr(text,"static PURE _Bool pane_focusable");
+    char *top=focusable?strstr(focusable,"static PURE struct pane *pane_topmost"):NULL;
+    check(focusable&&top);if(focusable&&top){char keep=*top;*top=0;
+        check(strstr(focusable,"pane_visible(pane)")!=NULL);*top=keep;}
+
+    char *visible=strstr(text,"static PURE _Bool pane_visible");
+    check(visible&&focusable);if(visible&&focusable){char keep=*focusable;*focusable=0;
+        check(strstr(visible,"pane->width <= 0 || pane->height <= 0")!=NULL);
+        check(strstr(visible,"drm_rects_overlap(&frame, &screen)")!=NULL);
+        *focusable=keep;}
+
+    char *refresh=strstr(text,"static void desktop_refresh_panes");
+    check(refresh&&create);if(refresh&&create){char keep=*create;*create=0;
+        check(strstr(refresh,"desktop.focused->shared &&")!=NULL);
+        check(strstr(refresh,"!pane_focusable(desktop.focused")!=NULL);
+        *create=keep;}
+    free(text);
+}
+
 int main(void) {
     const u32 palette[]={0x1b2733,0x2f3f52,0x2b3a4c,0x4c6785,
                          0x101820,0xdfe7ef,0xffffff,0x000000};
+    check_pane_focus_policy();
     const u32 formats[]={0,DRM_FORMAT_ARGB8888,0x34325258,0xffffffff};
     for(unsigned f=0;f<4;f++)for(unsigned a=0;a<4;a++) {
         memset(pixels,0xa5,16*sizeof(*pixels));
@@ -45980,6 +46463,29 @@ b32 main(void)
                         line[length] = 0;
                         check("guarded word borrows complete span", lex_line(line) == 1 &&
                               lex_tokens[0].text == line && lex_tokens[0].length == length);
+                }
+
+                static const struct {
+                        string_address text;
+                        b32 op;
+                } operators[] = {
+                    {";", OP_SEMI}, {"|", OP_PIPE}, {"&", OP_AMP},
+                    {"<", OP_LESS}, {">", OP_GREAT}, {"(", OP_LPAREN},
+                    {")", OP_RPAREN}, {"&&", OP_AND_IF}, {"||", OP_OR_IF},
+                    {"<<<", OP_HERESTRING}, {"&>>", OP_ANDDGREAT},
+                    {";;&", OP_DSEMIAND},
+                };
+                for (positive i = 0; i < array_count(operators); i++)
+                {
+                        positive length = string_length(operators[i].text);
+                        p8 address_to line = pages + 8191 - length;
+
+                        memory_copy(line, operators[i].text, length + 1);
+                        b32 count = lex_line(line);
+                        check("guarded final operator stays inside input",
+                              count == 1 && lex_tokens[0].kind == LEX_OPERATOR &&
+                                  lex_tokens[0].op == operators[i].op &&
+                                  lex_tokens[0].length == length);
                 }
         }
         memory_free(pages, 3 * 4096);

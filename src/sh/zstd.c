@@ -3000,51 +3000,8 @@ static fn zstd_refuse(string_address message)
         zstd_status = 1;
 }
 
-static string_address zstd_called(void)
-{
-        string_address path = program_argument(0);
-        string_address slash;
-
-        if (!path)
-                return "zstd";
-        slash = string_last_of(path, '/');
-        return slash && slash[1] ? slash + 1 : path;
-}
-
-static bool zstd_suffix_out(string_address in, p8 address_to into, positive room)
-{
-        positive n = string_length(in);
-
-        if (n >= 5 && !memory_compare(in + n - 5, ".tzst", 5))
-        {
-                if (n - 3 >= room)
-                        return false;
-                memory_copy(into, in, n - 5);
-                memory_copy(into + n - 5, ".tar", 4);
-                into[n - 1] = end;
-                return true;
-        }
-        if (n >= 4 && !memory_compare(in + n - 4, ".zst", 4))
-        {
-                if (n - 3 >= room)
-                        return false;
-                memory_copy(into, in, n - 4);
-                into[n - 4] = end;
-                return true;
-        }
-        return false;
-}
-
-static bool zstd_suffix_add(string_address in, p8 address_to into, positive room)
-{
-        positive n = string_length(in);
-
-        if (n + 5 >= room)
-                return false;
-        memory_copy(into, in, n);
-        memory_copy(into + n, ".zst", 5);
-        return true;
-}
+static const file_codec_suffix zstd_suffixes[] = {
+    {".zst", ""}, {".tzst", ".tar"}};
 
 static b32 zstd_encode_fd(bipolar in, bipolar out)
 {
@@ -3106,262 +3063,29 @@ static b32 zstd_one(bipolar in, bipolar out)
         return 0;
 }
 
+static b32 zstd_cli_stream(bipolar in, bipolar out, bool decompress, p8 level)
+{
+        zstd_cli_level = level;
+        return decompress ? zstd_one(in, out) : zstd_encode_fd(in, out);
+}
+
 static b32 file_zstd(void)
 {
-        string_address name = zstd_called();
-        positive count = (positive)program_argument_count();
-        positive at;
-        bool decompress = string_equals(name, "unzstd") ||
-                          string_equals(name, "zstdcat");
-        bool stdout_out = string_equals(name, "zstdcat");
-        bool force = false;
-        bool test = false;
-        bool remove_src = false;
-        bool quiet = false;
-        p8 level = 3;
-        string_address out_path = null;
-        p8 out_name[4096];
-
-        zstd_status = 0;
-        (void)quiet;
-
-        for (at = 1; at < count; at++)
-        {
-                string_address word = program_argument((b32)at);
-
-                if (string_equals(word, "--"))
-                {
-                        at++;
-                        break;
-                }
-                if (word[0] != '-' || !word[1])
-                        break;
-                if (word[1] == '-')
-                {
-                        if (string_equals(word, "--compress"))
-                        {
-                                decompress = false;
-                                continue;
-                        }
-                        if (string_equals(word, "--decompress") ||
-                            string_equals(word, "--uncompress"))
-                        {
-                                decompress = true;
-                                continue;
-                        }
-                        if (string_equals(word, "--stdout") ||
-                            string_equals(word, "--to-stdout"))
-                        {
-                                stdout_out = true;
-                                continue;
-                        }
-                        if (string_equals(word, "--force"))
-                        {
-                                force = true;
-                                continue;
-                        }
-                        if (string_equals(word, "--test"))
-                        {
-                                test = true;
-                                decompress = true;
-                                continue;
-                        }
-                        if (string_equals(word, "--keep"))
-                                continue;
-                        if (string_equals(word, "--rm"))
-                        {
-                                remove_src = true;
-                                continue;
-                        }
-                        if (string_equals(word, "--quiet"))
-                        {
-                                quiet = true;
-                                continue;
-                        }
-                        if (string_equals(word, "--help"))
-                        {
-                                string_format(log,
-                                              "Usage: zstd [-cdfkqz123456789] [-o FILE] [--rm] [FILE...]\n");
-                                log_flush();
-                                return 0;
-                        }
-                        if (string_equals(word, "--version"))
-                        {
-                                string_format(log, "zstd from dawning-kit\n");
-                                log_flush();
-                                return 0;
-                        }
-                        if (memory_compare(word, "--output=", 9) == 0)
-                        {
-                                out_path = word + 9;
-                                continue;
-                        }
-                        string_format(log_error, "zstd: unrecognized option '%s'\n",
-                                      word);
-                        return 2;
-                }
-                {
-                        string_address letters = word + 1;
-
-                        for (; *letters; letters++)
-                        {
-                                if (*letters == 'd')
-                                        decompress = true;
-                                else if (*letters == 'z')
-                                        decompress = false;
-                                else if (*letters == 'c')
-                                        stdout_out = true;
-                                else if (*letters >= '1' && *letters <= '9')
-                                        level = (p8)(*letters - '0');
-                                else if (*letters == 'f')
-                                        force = true;
-                                else if (*letters == 'k')
-                                        ;
-                                else if (*letters == 'q')
-                                        quiet = true;
-                                else if (*letters == 't')
-                                {
-                                        test = true;
-                                        decompress = true;
-                                }
-                                else if (*letters == 'V')
-                                {
-                                        string_format(log, "zstd from dawning-kit\n");
-                                        log_flush();
-                                        return 0;
-                                }
-                                else if (*letters == 'h')
-                                {
-                                        string_format(log,
-                                                      "Usage: zstd [-cdfkqz123456789] [-o FILE] [--rm] [FILE...]\n");
-                                        log_flush();
-                                        return 0;
-                                }
-                                else if (*letters == 'o')
-                                {
-                                        if (letters[1])
-                                        {
-                                                out_path = letters + 1;
-                                                letters += string_length(letters) - 1;
-                                        }
-                                        else
-                                        {
-                                                if (at + 1 >= count)
-                                                {
-                                                        zstd_refuse("option requires an argument -- 'o'");
-                                                        return 2;
-                                                }
-                                                out_path = program_argument((b32)++at);
-                                        }
-                                }
-                                else
-                                {
-                                        p8 shown[2];
-
-                                        shown[0] = *letters;
-                                        shown[1] = end;
-                                        string_format(log_error,
-                                                      "zstd: invalid option -- '%s'\n", shown);
-                                        return 2;
-                                }
-                        }
-                }
-        }
-
-        zstd_cli_level = level;
-        if (at >= count)
-        {
-                bipolar out = test ? -1 : 1;
-
-                if (decompress)
-                        return zstd_one(0, out);
-                return zstd_encode_fd(0, out);
-        }
-
-        for (; at < count && !zstd_status; at++)
-        {
-                string_address path = program_argument((b32)at);
-                bipolar in;
-                bipolar out;
-                bool close_in = false;
-                bool close_out = false;
-
-                if (string_equals(path, "-"))
-                {
-                        in = 0;
-                        out = test ? -1 : 1;
-                }
-                else
-                {
-                        in = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
-                        if (in < 0)
-                        {
-                                string_format(log_error, "zstd: %s: %s\n", path,
-                                              file_reason(in));
-                                zstd_status = 1;
-                                break;
-                        }
-                        close_in = true;
-                        if (test)
-                                out = -1;
-                        else if (stdout_out)
-                                out = 1;
-                        else if (out_path)
-                        {
-                                out = system_open_output_at(AT_FDCWD, out_path,
-                                                            force, 0666);
-                                if (out < 0)
-                                {
-                                        string_format(log_error, "zstd: %s: %s\n",
-                                                      out_path, file_reason(out));
-                                        system_close(in);
-                                        zstd_status = 1;
-                                        break;
-                                }
-                                close_out = true;
-                        }
-                        else if (decompress
-                                         ? !zstd_suffix_out(path, out_name,
-                                                            sizeof(out_name))
-                                         : !zstd_suffix_add(path, out_name,
-                                                            sizeof(out_name)))
-                        {
-                                zstd_refuse("cannot guess output name; use -c or -o");
-                                system_close(in);
-                                break;
-                        }
-                        else
-                        {
-                                out = system_open_output_at(AT_FDCWD, out_name,
-                                                            force, 0666);
-                                if (out < 0)
-                                {
-                                        string_format(log_error, "zstd: %s: %s\n",
-                                                      out_name, file_reason(out));
-                                        system_close(in);
-                                        zstd_status = 1;
-                                        break;
-                                }
-                                close_out = true;
-                        }
-                }
-
-                if (decompress)
-                        zstd_one(in, out);
-                else
-                        zstd_encode_fd(in, out);
-                if (close_in)
-                        system_close(in);
-                if (close_out)
-                        system_close(out);
-                if (!zstd_status && remove_src && close_in)
-                        system_remove_at(AT_FDCWD, path, 0);
-                if (out_path)
-                        out_path = null;
-        }
-
-        log_flush();
-        return zstd_status;
+        file_codec_cli codec = {
+            .name = "zstd", .decode_name = "unzstd", .cat_name = "zstdcat",
+            .usage =
+                "Usage: zstd [-cdfkqz123456789] [-o FILE] [--rm] [FILE...]",
+            .version = "zstd from dawning-kit",
+            .status = address_of zstd_status, .suffixes = zstd_suffixes,
+            .suffix_count = array_count(zstd_suffixes),
+            .decode_suffix_error = "cannot guess output name; use -c or -o",
+            .encode_suffix_error = "cannot guess output name; use -c or -o",
+            .features = FILE_CODEC_COMPRESS_OPTION |
+                        FILE_CODEC_OUTPUT_OPTION | FILE_CODEC_REMOVE_OPTION |
+                        FILE_CODEC_LONG_QUIET | FILE_CODEC_SHORT_VERSION,
+            .level = 3,
+            .run = zstd_cli_stream};
+        return file_codec_main(address_of codec);
 }
 
 #endif /* ZSTD_CORE_ONLY */

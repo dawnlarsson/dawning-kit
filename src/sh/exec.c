@@ -4755,77 +4755,274 @@ static fn history_run_text(writer write, string_address text)
         lex_nest_leave(address_of frame);
 }
 
-static b32 history_edit(writer write, string_address editor, positive first,
-                        positive last)
+/* A name another user cannot prepare before fc gets there.  Entropy failure
+   is an error: weakening this to a pid or clock restores the /tmp race this
+   directory exists to remove. */
+#define HISTORY_EDIT_RANDOM 16
+#define HISTORY_EDIT_PREFIX "/tmp/mw-fc."
+#define HISTORY_EDIT_FILE "/commands"
+
+static bool history_edit_directory(p8 address_to path)
 {
-        static p8 path[64];
-        static p8 address_to command;
-        static positive command_room;
-        positive length;
-        bipolar handle;
+        p8 random[HISTORY_EDIT_RANDOM];
 
-        string_copy(path, "/tmp/mw-fc.");
-        positive_into_string(path + 11,
-                             (positive)system_call_1(syscall(getpid), 0));
+        string_copy(path, HISTORY_EDIT_PREFIX);
 
-        handle = system_open_at_mode(AT_FDCWD, path, FILE_WRITE, 0600);
-
-        if (handle < 0)
-                return string_report(log_error, 1, "fc: cannot open %s\n", path);
-
-        for (positive at = first; at <= last && at < history_used; at++)
+        for (positive attempt = 0; attempt < 64; attempt++)
         {
-                system_write_all((positive)handle, history_text[at],
-                                 string_length(history_text[at]));
-                system_write_all((positive)handle, "\n", 1);
+                positive filled = 0;
+
+                while (filled < sizeof(random))
+                {
+                        bipolar got = system_call_3(
+                            syscall(getrandom), (positive)(random + filled),
+                            sizeof(random) - filled, 0);
+
+                        if (got == -4) /* EINTR */
+                                continue;
+                        if (got <= 0)
+                                return false;
+
+                        filled += (positive)got;
+                }
+
+                memory_into_hex(path + sizeof(HISTORY_EDIT_PREFIX) - 1,
+                                random, sizeof(random));
+                path[sizeof(HISTORY_EDIT_PREFIX) - 1 +
+                     sizeof(random) * 2] = end;
+
+                bipolar made = system_make_directory_exact_at(
+                    AT_FDCWD, path, 0700);
+
+                if (made >= 0)
+                        return true;
+                if (made != -ERROR_EXISTS)
+                        return false;
         }
 
-        system_close(handle);
+        return false;
+}
 
-        length = string_length(editor) + string_length(path) + 2;
+/* Remove the edited file and ordinary editor side files while the private
+   directory descriptor still names the object we created.  A final pathname
+   rmdir only removes that same empty directory; /tmp's sticky bit and the
+   random name keep another user from substituting one. */
+static fn history_edit_cleanup(bipolar directory, string_address path)
+{
+        if (directory >= 0)
+        {
+                file_walk walk;
 
-        if (!shell_array_room(command, command_room, length))
-                return 1;
+                (void)system_seek(directory, 0, 0);
+                walk.handle = directory;
+                walk.error = 0;
+                walk.have = 0;
+                walk.at = 0;
 
-        string_copy(command, editor);
-        string_copy(command + string_length(editor), " ");
-        string_copy(command + string_length(editor) + 1, path);
+                while (true)
+                {
+                        struct linux_dirent64 address_to entry =
+                            file_walk_next(address_of walk);
 
+                        if (!entry)
+                        {
+                                if (walk.error == -4) /* EINTR */
+                                {
+                                        walk.error = 0;
+                                        walk.have = 0;
+                                        walk.at = 0;
+                                        continue;
+                                }
+                                break;
+                        }
+
+                        if (file_is_dot(entry->d_name))
+                                continue;
+
+                        if (system_remove_at(directory, entry->d_name, 0) < 0)
+                                (void)system_remove_at(directory, entry->d_name,
+                                                       AT_REMOVEDIR);
+                }
+
+                file_walk_close(address_of walk);
+        }
+
+        (void)system_remove_at(AT_FDCWD, path, AT_REMOVEDIR);
+}
+
+/* The editor receives normal shell syntax, as FCEDIT promises, but in a
+   child.  `exit`, traps and assignments in that syntax therefore cannot skip
+   the parent's descriptor-based read and cleanup. */
+static b32 history_edit_run_editor(string_address command)
+{
+        bipolar child;
+        positive raw = 0;
+
+        log_flush();
+        child = shell_clone();
+
+        if (child == 0)
         {
                 lex_frame frame;
 
+                trap_default_all();
+                shell_default(SIGNAL_INTERRUPT);
+                shell_default(SIGNAL_QUIT);
+                exec_child_began();
                 lex_nest_enter(address_of frame);
                 run_lines(command);
                 shell_input_end();
                 lex_nest_leave(address_of frame);
+                exec_child_leave(shell_status);
         }
 
+        if (child < 0 ||
+            system_wait4_retry(child, address_of raw, 0, null) < 0)
+                return 1;
+
+        return wait_status_code(raw);
+}
+
+static b32 history_edit(writer write, string_address editor, positive first,
+                        positive last)
+{
+        static p8 path[sizeof(HISTORY_EDIT_PREFIX) + HISTORY_EDIT_RANDOM * 2];
+        static p8 address_to command;
+        static positive command_room;
+        byte_store edited = {null, 0, 0};
+        file_facts facts;
+        bipolar directory = -1;
+        positive length;
+        bipolar handle = -1;
+        b32 editor_status;
+        bool wrote = true;
+
+        if (!history_edit_directory(path))
+                return string_report(log_error, 1,
+                                     "fc: cannot make private edit directory\n",
+                                     0);
+
+        directory = system_open_at(
+            AT_FDCWD, path,
+            FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+
+        if (directory < 0 ||
+            system_call_2(syscall(fchmod), (positive)directory, 0700) < 0)
+                goto failed;
+
+        handle = system_open_at_mode(
+            directory, "commands",
+            FILE_READ_WRITE | FILE_CREATE | FILE_EXCLUSIVE | O_NOFOLLOW |
+                O_CLOEXEC,
+            0600);
+
+        if (handle < 0)
+                goto failed;
+
+        if (system_call_2(syscall(fchmod), (positive)handle, 0600) < 0)
+                goto failed;
+
+        for (positive at = first; at <= last && at < history_used; at++)
         {
-                positive text_length = 0;
-                p8 address_to text = history_slurp(path, address_of text_length);
+                positive line_length = string_length(history_text[at]);
+
+                if (system_write_all((positive)handle, history_text[at],
+                                     line_length) != (bipolar)line_length ||
+                    system_write_all((positive)handle, "\n", 1) != 1)
+                {
+                        wrote = false;
+                        break;
+                }
+        }
+
+        if (system_close(handle) < 0)
+                wrote = false;
+        handle = -1;
+
+        if (!wrote)
+                goto failed;
+
+        positive editor_length = string_length(editor);
+        positive path_length = string_length(path);
+        positive file_length = sizeof(HISTORY_EDIT_FILE) - 1;
+
+        /* blank, opening quote, closing quote and terminator */
+        if (path_length > positive_max - file_length ||
+            editor_length > positive_max - path_length - file_length - 4)
+                goto failed;
+        length = editor_length + path_length + file_length + 4;
+
+        if (!shell_array_room(command, command_room, length))
+                goto failed;
+
+        memory_copy_apart(command, editor, editor_length);
+        command[editor_length] = ' ';
+        command[editor_length + 1] = '\'';
+        memory_copy_apart(command + editor_length + 2, path, path_length);
+        memory_copy_apart(command + editor_length + 2 + path_length,
+                          HISTORY_EDIT_FILE, file_length);
+        command[editor_length + 2 + path_length + file_length] = '\'';
+        command[editor_length + 3 + path_length + file_length] = end;
+
+        editor_status = history_edit_run_editor((string_address)command);
+
+        if (editor_status)
+        {
+                history_edit_cleanup(directory, (string_address)path);
+                return editor_status;
+        }
+
+        handle = system_open_at(directory, "commands",
+                                FILE_READ | O_NOFOLLOW | O_CLOEXEC);
+
+        if (handle < 0 ||
+            !file_look(handle, "", AT_EMPTY_PATH, address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_FILE ||
+            file_store_read((positive)handle, address_of edited) < 0)
+                goto failed;
+
+        if (system_close(handle) < 0)
+        {
+                handle = -1;
+                goto failed;
+        }
+        handle = -1;
+
+        /* From here on the text is memory-owned.  Remove every temporary
+           object before an edited command can exit, recurse into fc, or
+           otherwise transfer control away from this call. */
+        history_edit_cleanup(directory, (string_address)path);
+        directory = -1;
+        shell_status = 0;
+
+        {
                 positive at = 0;
 
-                system_call_3(syscall(unlinkat), (positive)(bipolar)AT_FDCWD,
-                              (positive)path, 0);
-
-                if (!text)
-                        return 1;
-
-                while (at < text_length)
+                while (at < edited.used)
                 {
                         positive stop = at + memory_span_without_byte(
-                            text + at, '\n', text_length - at);
+                            edited.bytes + at, '\n', edited.used - at);
 
-                        text[stop] = end;
+                        edited.bytes[stop] = end;
 
                         if (stop > at)
-                                history_run_text(write, text + at);
+                                history_run_text(
+                                    write, (string_address)edited.bytes + at);
 
                         at = stop + 1;
                 }
         }
 
+        byte_store_release(address_of edited);
         return shell_status;
+
+failed:
+        if (handle >= 0)
+                system_close(handle);
+        history_edit_cleanup(directory, (string_address)path);
+        byte_store_release(address_of edited);
+        return string_report(log_error, 1, "fc: cannot edit history safely\n",
+                             0);
 }
 
 fn shell_fc(writer write, string_address input)
@@ -8955,17 +9152,11 @@ static b32 exec_dispatch(b32 command_word)
                 shell_tail_command = tail;
         }
 
-        //      rbash: a name with a slash in it names a program directly
-        //      and walks past whatever PATH the restriction left. A builtin
-        //      or a function never carries one, so this is the last moment
-        //      before the name becomes a path.
-        if (shell_restricted && string_first_of(name, '/'))
+        //      A builtin or function never carries a slash, so this is the
+        //      last moment before an external command name becomes a path.
+        if (!shell_command_path_allowed(name, true))
         {
                 shell_status = 1;
-                shell_diagnostic_where();
-                string_format(log_error,
-                              "%s: restricted: cannot specify `/' in command "
-                              "names\n", name);
                 return shell_status;
         }
 
@@ -11417,8 +11608,10 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
         parse_node address_to node = parse_nodes + index;
         string_address words[EXEC_STAGE_WORDS_MAX + 1];
         string_address name;
+        string_address executable;
         positive2 named;
         b32 at;
+        bool tool = false;
 
         if (node->kind != NODE_SIMPLE || node->redirect_count ||
             !node->word_count || node->word_count > EXEC_STAGE_WORDS_MAX)
@@ -11444,6 +11637,12 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
 
         words[node->word_count] = null;
         name = words[0];
+        executable = name;
+
+        /* Let ordinary dispatch own the one user-facing refusal. This path
+           only declines the direct spawn that would otherwise bypass it. */
+        if (!shell_command_path_allowed(name, false))
+                return -1;
 
         // A slash names the program outright; anything else has to prove it
         // is not something this shell would have run itself.
@@ -11456,12 +11655,25 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
                     exec_control_builtin(name, false))
                         return -1;
 
+                tool = shell_tool_find_hashed(name, named) != SHELL_TOOLS;
+
                 if (shell_find_in_path_alloc(name, address_of found,
                                              address_of found_room) != 1)
                         return -1;
 
-                words[0] = found;
+                executable = found;
         }
+
+        /* The literal fast path must make the same name/flag decision as the
+           ordinary dispatcher. A restricted tool falls back to the child that
+           can run the resident applet under its filter. */
+        if (floodlight_launch_decide(executable, words,
+                                     (positive)node->word_count, tool,
+                                     false, false) !=
+            FLOODLIGHT_LAUNCH_ALLOW)
+                return -1;
+
+        words[0] = executable;
 
         bowl_wrap_words(shell_directory, words, (positive)node->word_count,
                         EXEC_STAGE_WORDS_MAX + 1);

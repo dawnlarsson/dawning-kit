@@ -1453,9 +1453,11 @@ SEARCH_KNOWN(search_case_known, memory_first_of_ascii_case)
 #if KNOWN_BOUND_WORDS
 /*
         A word from wherever the pointer is, and which of its bytes is the
-        terminator. Both loads are unaligned and both are inside the bound,
-        which is the same licence the routines take: the caller promising a
-        bound is the caller promising that many bytes are there to read.
+        terminator. Both loads are unaligned and stay inside one 4096-byte
+        page. A bounded string may end before its bound at the last readable
+        byte of a page; the bound limits the search, but does not prove bytes
+        after that terminator are mapped. Near a page edge the byte loop finds
+        the terminator before attempting the next page.
 
         Only x86_64 and arm64 get here, so the count of trailing zeros is one
         instruction and there is no libgcc call hiding in it.
@@ -1468,6 +1470,12 @@ static inline INLINE p64 bound_word_at(string_address where)
 static inline INLINE p32 bound_narrow_at(string_address where)
 {
         return memory_load_unaligned(p32, where);
+}
+
+static inline INLINE bool bound_load_fits_page(string_address where,
+                                                positive width)
+{
+        return ((positive)where & 4095) <= 4096 - width;
 }
 
 #define KNOWN_ENDS(word) (((word) - KNOWN_BOUND_ONES) & ~(word) & KNOWN_BOUND_HIGH)
@@ -1494,6 +1502,9 @@ static inline INLINE positive length_max_known(string_address source, positive b
 #if KNOWN_BOUND_WORDS
         if (bound >= 8) {
                 while (walked + 8 <= bound) {
+                        if (!bound_load_fits_page(source + walked, 8))
+                                goto length_max_bytes;
+
                         p64 word = bound_word_at(source + walked);
 
                         if (KNOWN_ENDS(word))
@@ -1505,7 +1516,12 @@ static inline INLINE positive length_max_known(string_address source, positive b
                 //      The last eight, overlapping. What the overlap covers
                 //      twice cannot be the terminator, so nothing is masked.
                 if (walked < bound) {
-                        p64 word = bound_word_at(source + bound - 8);
+                        string_address tail = source + bound - 8;
+
+                        if (!bound_load_fits_page(tail, 8))
+                                goto length_max_bytes;
+
+                        p64 word = bound_word_at(tail);
 
                         if (KNOWN_ENDS(word))
                                 return bound - 8 +
@@ -1515,14 +1531,21 @@ static inline INLINE positive length_max_known(string_address source, positive b
                 return bound;
         }
 
-        if (bound >= 4) {
+        if (bound >= 4 && bound_load_fits_page(source, 4)) {
                 p32 word = bound_narrow_at(source);
 
                 if (KNOWN_NARROW_ENDS(word))
                         return bound_narrow_byte(KNOWN_NARROW_ENDS(word));
 
                 if (bound > 4) {
-                        word = bound_narrow_at(source + bound - 4);
+                        string_address tail = source + bound - 4;
+
+                        if (!bound_load_fits_page(tail, 4)) {
+                                walked = 4;
+                                goto length_max_bytes;
+                        }
+
+                        word = bound_narrow_at(tail);
 
                         if (KNOWN_NARROW_ENDS(word))
                                 return bound - 4 +
@@ -1531,6 +1554,8 @@ static inline INLINE positive length_max_known(string_address source, positive b
 
                 return bound;
         }
+
+length_max_bytes:
 #endif
 
         for (; walked < bound; walked++)
@@ -1562,6 +1587,10 @@ static inline INLINE b32 compare_max_known(string_address source, string_address
         bool differed = 0;
 
         while (walked + 8 <= bound) {
+                if (!bound_load_fits_page(source + walked, 8) ||
+                    !bound_load_fits_page(input + walked, 8))
+                        goto compare_max_bytes;
+
                 p64 left = bound_word_at(source + walked);
                 p64 right = bound_word_at(input + walked);
 
@@ -1577,12 +1606,21 @@ static inline INLINE b32 compare_max_known(string_address source, string_address
         }
 
         if (!differed && bound >= 8 && walked < bound) {
-                p64 left = bound_word_at(source + bound - 8);
-                p64 right = bound_word_at(input + bound - 8);
+                string_address left_tail = source + bound - 8;
+                string_address right_tail = input + bound - 8;
+
+                if (!bound_load_fits_page(left_tail, 8) ||
+                    !bound_load_fits_page(right_tail, 8))
+                        goto compare_max_bytes;
+
+                p64 left = bound_word_at(left_tail);
+                p64 right = bound_word_at(right_tail);
 
                 if (left == right && !KNOWN_ENDS(left))
                         return 0;
         }
+
+compare_max_bytes:
 #endif
 
         for (; walked < bound; walked++) {

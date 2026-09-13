@@ -1094,6 +1094,22 @@ static bipolar shell_spawn_via_device(b32 flags, string_address path,
                                       b32 input, b32 output, b32 error)
 {
         struct spawn request;
+        positive count = 0;
+        bool tool = (flags & SPARK_SPAWN_TOOL) != 0;
+        b32 policy;
+
+        while (arguments[count])
+                count++;
+
+        policy = floodlight_launch_decide(path, arguments, count, tool,
+                                          false, false);
+
+        /* A tool starts in /shell and installs its own filter before reading
+           input. An external Spark child executes no shell code at all, so a
+           restriction that needs a filter must take the fork path instead. */
+        if (policy == FLOODLIGHT_LAUNCH_REFUSE ||
+            (!tool && policy != FLOODLIGHT_LAUNCH_ALLOW))
+                return -1;
 
         if (!shell_spawn_request(address_of request, path, arguments))
                 return -1;

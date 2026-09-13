@@ -6,7 +6,7 @@
 /* Utility-only multicall entry: never turn an unknown argv[0] into a shell. */
 b32 main()
 {
-        b32 answered = shell_tool_as_called();
+        b32 answered = shell_tool_as_called_final();
 
         if (answered >= 0)
         {

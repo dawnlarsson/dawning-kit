@@ -12292,6 +12292,19 @@ static b32 tools_diff(void)
         return text_out_failed ? 2 : diff_result;
 }
 
+/* Process names come from another process's comm/cmdline bytes.  Render them
+   as one terminal-safe field everywhere they are displayed: controls (ESC
+   included), tabs and non-ASCII bytes get the shared hexadecimal spelling,
+   while ordinary ASCII still crosses the writer in whole spans.  Selection
+   continues to compare the raw snapshot bytes before this display boundary. */
+static fn terminal_safe_field(writer output, address_any value,
+                              positive length)
+{
+        if (value && length)
+                writer_hex_escaped(output, value, length,
+                                   HEX_CONTROL | HEX_TAB | HEX_HIGH);
+}
+
 // ps --------------------------------------------------------
 
 #define PS_FIELD_PID 0
@@ -12590,12 +12603,17 @@ static fn ps_draw(struct snapshot_process address_to process,
                 ps_text(detail->user);
                 break;
         case PS_FIELD_UID: ps_digits(process->uid); break;
-        case PS_FIELD_COMM: ps_text(process->command); break;
+        case PS_FIELD_COMM:
+                terminal_safe_field(ps_bytes, process->command,
+                                    string_length(process->command));
+                break;
         case PS_FIELD_ARGS:
                 if (!detail->args &&
                     !(detail->args = ps_arguments(process)))
                         ps_failed = true;
-                ps_text(detail->args);
+                if (detail->args)
+                        terminal_safe_field(ps_bytes, detail->args,
+                                            string_length(detail->args));
                 break;
         case PS_FIELD_STAT:
                 ps_text(detail->state[0] ? (string_address)detail->state

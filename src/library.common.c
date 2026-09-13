@@ -368,20 +368,44 @@ static bipolar system_open_output_at(bipolar directory, string_address path,
         system_call_3(syscall(mkdirat), (positive)(bipolar)(directory),      \
                       (positive)(path), (positive)(mode))
 
+#define system_remove_at(directory, path, flags)                             \
+        system_call_3(syscall(unlinkat), (positive)(bipolar)(directory),     \
+                      (positive)(path), (positive)(flags))
+
 #if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
+/* Some private workspaces must have an exact owner mode even under a caller's
+   restrictive umask.  The shell is single-threaded while builtins run, and
+   its signal handlers only record state, so the process mask can be restored
+   immediately around the one creation syscall. */
+static COLD bipolar system_make_directory_exact_at(
+    bipolar directory, string_address path, positive mode)
+{
+        bipolar mask = system_call_1(syscall(umask), 0);
+
+        if (mask < 0)
+                return mask;
+
+        bipolar made = system_make_directory_at(directory, path, mode);
+        bipolar restored = system_call_1(syscall(umask), (positive)mask);
+
+        return made < 0 ? made : restored < 0 ? restored : made;
+}
+
 /* Return an owned parent descriptor and a bounded final component. Each
    intermediate directory is opened relative to the descriptor already held,
    so renaming or replacing a pathname cannot redirect the next operation.
-   Absolute paths start at /; relative paths start at directory. Dot-dot and
-   empty final components are refused. Raw errors survive descriptor cleanup. */
-static COLD bipolar system_open_parent_nofollow(
+   Absolute paths start at /; relative paths start at directory. Contained
+   walks refuse dot-dot; callers reject empty final components. Raw errors
+   survive descriptor cleanup. */
+static COLD bipolar system_open_parent_walk(
     bipolar directory, string_address path, bool create, positive mode,
-    p8 address_to leaf, positive room)
+    p8 address_to leaf, positive room, bool contained)
 {
         if (!path || !string_get(path) || !leaf || !room)
                 return -22;
 
-        positive flags = FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+        positive flags = O_PATH | O_DIRECTORY | O_CLOEXEC |
+                         (contained ? O_NOFOLLOW : 0);
         bipolar held = system_open_at(directory, path[0] == '/' ? "/" : ".", flags);
         if (held < 0)
                 return held;
@@ -400,8 +424,9 @@ static COLD bipolar system_open_parent_nofollow(
                         }
                         length++;
                 }
-                if (!length ||
-                    (length == 2 && path[0] == '.' && path[1] == '.'))
+                bool dotdot = length == 2 && path[0] == '.' && path[1] == '.';
+
+                if (!length || (contained && dotdot))
                 {
                         system_close(held);
                         return -22;
@@ -436,6 +461,146 @@ static COLD bipolar system_open_parent_nofollow(
                 }
                 path += length + 1;
         }
+}
+
+static COLD bipolar system_open_parent_nofollow(
+    bipolar directory, string_address path, bool create, positive mode,
+    p8 address_to leaf, positive room)
+{
+        return system_open_parent_walk(directory, path, create, mode, leaf,
+                                       room, true);
+}
+
+/* A command-line pathname may legitimately contain `..`; opening that
+   component relative to the directory already held preserves its meaning
+   without resolving any later operation through the original pathname. */
+static COLD bipolar system_open_parent_pinned(
+    bipolar directory, string_address path, p8 address_to leaf, positive room)
+{
+        return system_open_parent_walk(directory, path, false, 0, leaf, room,
+                                       false);
+}
+
+#define SYSTEM_PATH_LEAF_ROOM 256
+
+typedef struct
+{
+        bipolar directory;
+        bipolar handle;
+        bool owns_directory;
+        p8 leaf[SYSTEM_PATH_LEAF_ROOM];
+} system_path_file;
+
+static fn system_path_file_reset(system_path_file address_to file)
+{
+        file->directory = -1;
+        file->handle = -1;
+        file->owns_directory = false;
+        file->leaf[0] = end;
+}
+
+static COLD bipolar system_path_file_open_in(
+    system_path_file address_to file, bipolar directory, bool owns_directory,
+    string_address leaf, bool output, bool replace, positive mode)
+{
+        positive length = string_length(leaf);
+
+        system_path_file_reset(file);
+        if (!length || length >= sizeof(file->leaf) ||
+            (length == 1 && leaf[0] == '.') ||
+            (length == 2 && leaf[0] == '.' && leaf[1] == '.'))
+        {
+                if (owns_directory)
+                        system_close(directory);
+                return -22;
+        }
+
+        memory_copy_end(file->leaf, leaf, length);
+        file->directory = directory;
+        file->owns_directory = owns_directory;
+        file->handle = output
+                           ? system_open_output_at(directory, file->leaf,
+                                                   replace, mode)
+                           : system_open_at(directory, file->leaf,
+                                            FILE_READ | O_CLOEXEC);
+        if (file->handle < 0)
+        {
+                bipolar failed = file->handle;
+
+                if (owns_directory)
+                        system_close(directory);
+                system_path_file_reset(file);
+                return failed;
+        }
+
+        return file->handle;
+}
+
+static COLD bipolar system_path_file_open(
+    system_path_file address_to file, string_address path, bool output,
+    bool replace, positive mode)
+{
+        p8 leaf[SYSTEM_PATH_LEAF_ROOM];
+        bipolar directory = system_open_parent_pinned(AT_FDCWD, path, leaf,
+                                                       sizeof(leaf));
+
+        if (directory < 0)
+        {
+                system_path_file_reset(file);
+                return directory;
+        }
+        return system_path_file_open_in(file, directory, true, leaf, output,
+                                        replace, mode);
+}
+
+static COLD bipolar system_path_file_open_sibling(
+    system_path_file address_to file, bipolar directory, string_address leaf,
+    bool replace, positive mode)
+{
+        return system_path_file_open_in(file, directory, false, leaf, true,
+                                        replace, mode);
+}
+
+static bipolar system_path_file_close_handle(system_path_file address_to file)
+{
+        bipolar closed = 0;
+
+        if (file->handle >= 0)
+        {
+                closed = system_close(file->handle);
+                file->handle = -1;
+        }
+
+        return closed;
+}
+
+static bipolar system_path_file_remove(system_path_file address_to file)
+{
+        return file->directory < 0 || !file->leaf[0]
+                   ? -22
+                   : system_remove_at(file->directory, file->leaf, 0);
+}
+
+static fn system_path_file_release(system_path_file address_to file)
+{
+        (void)system_path_file_close_handle(file);
+        if (file->owns_directory && file->directory >= 0)
+                system_close(file->directory);
+        system_path_file_reset(file);
+}
+
+static bipolar system_path_file_finish(system_path_file address_to input,
+                                       system_path_file address_to output,
+                                       bool success, bool remove_input)
+{
+        bipolar output_closed = system_path_file_close_handle(output);
+
+        (void)system_path_file_close_handle(input);
+        if (success && output_closed >= 0 && remove_input)
+                system_path_file_remove(input);
+        system_path_file_release(output);
+        system_path_file_release(input);
+        return output_closed;
 }
 #endif
 
@@ -502,10 +667,6 @@ static inline INLINE bool system_signal_install(
                       (positive)(set_bytes))
 
 #define system_fork() system_call_2(syscall(clone), SIGCHLD, 0)
-
-#define system_remove_at(directory, path, flags)                             \
-        system_call_3(syscall(unlinkat), (positive)(bipolar)(directory),     \
-                      (positive)(path), (positive)(flags))
 
 /* The common moving byte store.  Naming the three words once also names the
    only correct reserve/release argument order; subsystems keep semantic

@@ -1588,8 +1588,6 @@ static bool crypto_rsa_pkcs1_sha256(p8 address_to n_bytes, positive n_length,
         crypto_rsa_modexp(out, base, exponent, mod, limbs);
         k = n_length;
         memory_fill(em, 0, sizeof(em));
-        crypto_fe_store_be(em + limbs * 8 - k, out, limbs);
-        /* store wrote limbs*8 bytes at start of dest... fix by copying tail */
         {
                 p8 full[512];
                 crypto_fe_store_be(full, out, limbs);
