@@ -754,31 +754,34 @@ static bool storage_source_matches(storage_mount address_to mount,
                wanted[source_length + root_length + 1] == ']';
 }
 
-static fn storage_findmnt_row(writer output, storage_mount address_to mount,
-                              storage_findmnt_options address_to options,
-                              positive address_to widths)
-{
-        for (positive at = 0; at < options->count; at++)
-        {
-                if (at)
-                        output((address_any)" ", 1);
-                if (options->pairs)
-                {
-                        string_address heading = storage_column_name(options->columns[at]);
-                        if (output && heading)
-                                output((address_any)heading, string_length(heading));
-                        output((address_any)"=\"", 2);
-                }
-                positive length = storage_findmnt_cell(
-                    output, mount, options->columns[at], options);
-                if (options->pairs)
-                        output((address_any)"\"", 1);
-                else if (!options->raw && at + 1 < options->count &&
-                         widths[at] > length)
-                        writer_fill_bulk(output, widths[at] - length, ' ');
-        }
+typedef struct {
+        storage_mount_table address_to table;
+        struct storage_findmnt_line address_to lines;
+        storage_findmnt_options address_to options;
+} storage_findmnt_view;
 
-        output((address_any)"\n", 1);
+static positive storage_findmnt_field(writer output, address_any context,
+                                      positive row, positive column)
+{
+        storage_findmnt_view address_to view = context;
+        view->options->line = row;
+        storage_mount address_to mount = row == TABLE_HEADING ? null
+            : view->table->entry + (view->lines ? view->lines[row].index : row);
+        return storage_findmnt_cell(output, mount, column, view->options);
+}
+
+static inline INLINE table_cell storage_findmnt_get(address_any context, positive row,
+                                      positive column, p8 address_to scratch)
+{
+        (void)scratch;
+        if (row == TABLE_HEADING)
+        {
+                string_address name = storage_column_name(column);
+                return (table_cell){.text = {name, string_length(name)}};
+        }
+        storage_findmnt_view address_to view = context;
+        return (table_cell){.text = {null, view->options->raw || view->options->pairs
+            ? 0 : storage_findmnt_field(null, context, row, column)}};
 }
 
 static PURE bool storage_findmnt_match(storage_mount address_to mount,
@@ -1235,21 +1238,7 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                     --submounts reached and drop the drawing of it. */
                 options.lines = direct || options.list ? null : lines;
                 matched = line_count;
-                for (positive row = 0; row < line_count; row++)
-                {
-                        options.line = row;
-                        for (positive column = 0; column < options.count;
-                             column++)
-                        {
-                                positive length = storage_findmnt_cell(
-                                    null, table.entry + lines[row].index,
-                                    options.columns[column],
-                                    address_of options);
 
-                                if (length > widths[column])
-                                        widths[column] = length;
-                        }
-                }
         }
         else
         for (positive at = 0; at < table.count; at++)
@@ -1261,48 +1250,22 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                         continue;
 
                 table.entry[matched++] = *mount;
-                if (!direct)
-                {
-                        for (positive column = 0; column < options.count;
-                             column++)
-                        {
-                                positive length = storage_findmnt_cell(
-                                    null, mount, options.columns[column],
-                                    address_of options);
-
-                                if (length > widths[column])
-                                        widths[column] = length;
-                        }
-                }
-
                 if (options.first_only)
                         break;
         }
 
         if (matched)
         {
-                if (!options.no_headings)
-                {
-                        for (positive column = 0; column < options.count; column++)
-                        {
-                                positive length = string_length(
-                                    storage_column_name(options.columns[column]));
-
-                                if (length > widths[column])
-                                        widths[column] = length;
-                        }
-
-                        storage_findmnt_row(output, null, address_of options, widths);
-                }
-
+                storage_findmnt_view data = {&table, lines, &options};
+                table_view view = {.output = output, .context = &data,
+                    .cell = storage_findmnt_get, .write = storage_findmnt_field,
+                    .order = options.columns, .order_size = 1, .count = options.count,
+                    .separator = " ", .pairs = options.pairs};
+                if (!direct) table_measure(&view, matched, !options.no_headings,
+                                            false, true, 0, widths, null);
+                if (!options.no_headings) table_row(&view, TABLE_HEADING, direct ? null : widths);
                 for (positive at = 0; at < matched; at++)
-                {
-                        options.line = at;
-                        storage_findmnt_row(output,
-                                            lines ? table.entry + lines[at].index
-                                                  : table.entry + at,
-                                            address_of options, widths);
-                }
+                        table_row(&view, at, direct ? null : widths);
         }
 
         array_store_release(lines, line_room, line_count);

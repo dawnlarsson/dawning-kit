@@ -1190,12 +1190,6 @@ typedef struct
              : string_report(log_error, 1, "%s: unknown column: %s\n", \
                              (program), (string_address)(unknown)))
 
-#define UL_TABLE_STRING 0
-#define UL_TABLE_NUMBER 1
-#define UL_TABLE_BOOLEAN 2
-#define UL_TABLE_NULL_STRING 3
-#define UL_TABLE_NULL_NUMBER 4
-
 // One column list supplies IDs, display policy and typed projections.  Custom
 // columns stay in their row getter; projections use ordinary typed C expressions.
 #define UL_TABLE_ID(id, projection, value, ...) id,
@@ -1225,11 +1219,12 @@ typedef struct
 typedef string_address (*ul_table_field)(address_any row, p8 column,
                                          p8 address_to scratch);
 
-static fn ul_table_out(address_any rows, positive row_size, positive count,
-                       const ul_table_column address_to definitions,
-                       positive definition_count, p8 address_to columns,
-                       positive column_count, bool headings, bool raw,
-                       ul_table_field field_of);
+enum { UL_LAYOUT_FREE = 1, UL_LAYOUT_DECLARED = 2, UL_LAYOUT_PAD = 4, UL_LAYOUT_EXTRA = 8 };
+static fn ul_table_out_mode(address_any rows, positive row_size, positive count,
+    const ul_table_column address_to definitions, positive definition_count,
+    p8 address_to columns, positive column_count, bool headings, bool raw,
+    ul_table_field field_of, p8 layout);
+#define ul_table_out(...) ul_table_out_mode(__VA_ARGS__, 0)
 
 // prlimit ---------------------------------------------------------
 static bipolar ul_prlimit(b32 pid, positive resource,
@@ -3478,23 +3473,23 @@ static bool ul_namespace_same(bipolar handle,
 
 #define UL_LSNS_FIELDS(X) \
     X(UL_LSNS_NS, UNSIGNED, entry->inode, \
-      "ns", "NS", 10, true, UL_TABLE_NUMBER, .decimal = true) \
+      "ns", "NS", 10, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSNS_TYPE, TEXT, ul_namespaces[entry->type].name, \
-      "type", "TYPE", 0, false, UL_TABLE_STRING) \
+      "type", "TYPE", 0, false, TABLE_STRING) \
     X(UL_LSNS_PATH, CUSTOM, 0, \
-      "path", "PATH", 0, false, UL_TABLE_STRING) \
+      "path", "PATH", 0, false, TABLE_STRING) \
     X(UL_LSNS_NPROCS, UNSIGNED, entry->processes, \
-      "nprocs", "NPROCS", 5, true, UL_TABLE_NUMBER, .decimal = true) \
+      "nprocs", "NPROCS", 5, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSNS_PID, UNSIGNED, process->pid, \
-      "pid", "PID", 5, true, UL_TABLE_NUMBER, .decimal = true) \
+      "pid", "PID", 5, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSNS_PPID, UNSIGNED, process->ppid, \
-      "ppid", "PPID", 4, true, UL_TABLE_NUMBER, .decimal = true) \
+      "ppid", "PPID", 4, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSNS_COMMAND, TEXT, entry->command, \
-      "command", "COMMAND", 0, false, UL_TABLE_STRING) \
+      "command", "COMMAND", 0, false, TABLE_STRING) \
     X(UL_LSNS_UID, UNSIGNED, process->uid, \
-      "uid", "UID", 3, true, UL_TABLE_NUMBER, .decimal = true) \
+      "uid", "UID", 3, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSNS_USER, CUSTOM, 0, \
-      "user", "USER", 0, false, UL_TABLE_STRING)
+      "user", "USER", 0, false, TABLE_STRING)
 
 enum
 {
@@ -3626,291 +3621,59 @@ static string_address ul_lsns_table_field(address_any row, p8 column,
         }
 }
 
-static PURE positive ul_table_line_count(string_address text)
-{
-        return memory_count(text, string_length(text), '\n') + 1;
-}
+typedef struct {
+        address_any rows;
+        positive stride;
+        const ul_table_column address_to definitions;
+        ul_table_field field;
+        bool raw;
+} ul_table_data;
 
-static string_address ul_table_line(string_address text, positive wanted,
-                                    positive address_to length)
+static inline INLINE table_cell ul_table_cell(address_any context, positive row,
+                                  positive column, p8 address_to scratch)
 {
-        while (wanted && string_get(text))
-        {
-                text = string_first_of_or_end(text, '\n');
-                if (string_get(text))
-                        text++, wanted--;
-        }
-        if (wanted)
-        {
-                address_to length = 0;
-                return (string_address)"";
-        }
-        string_address stop = string_first_of_or_end(text, '\n');
-        address_to length = (positive)(stop - text);
-        return text;
-}
-
-static PURE positive ul_lsns_safe_span_length(string_address text,
-                                               positive bytes)
-{
-        positive length = 0;
-        for (positive i = 0; i < bytes; i++)
-        {
-                p8 byte = string_get(text + i);
-                length += byte < ' ' || byte == 0x7f ? 4 : 1;
-        }
-        return length;
-}
-
-static PURE positive ul_table_safe_width(string_address text, bool multiline)
-{
-        positive width = 0;
-        // Advance from the previous line instead of repeatedly walking from
-        // the start. Bounded and NUL-terminated fields share one width policy.
-        for (;;)
-        {
-                string_address stop = multiline
-                    ? string_first_of_or_end(text, '\n')
-                    : text + string_length(text);
-                width = max(width, ul_lsns_safe_span_length(
-                                       text, (positive)(stop - text)));
-                if (!*stop)
-                        break;
-                text = stop + 1;
-        }
-        return width;
-}
-
-/* Normal smartcols output preserves spaces/high bytes and escapes controls;
-   raw mode instead reuses storage_write_hex_escaped's stricter field policy. */
-static fn ul_lsns_safe_span(string_address text, positive bytes)
-{
-        writer_hex_escaped(log, text, bytes, HEX_CONTROL | HEX_TAB);
-}
-
-static fn ul_lsns_safe_span_field(string_address text, positive bytes,
-                                  positive width, bool left, bool printable)
-{
-        if (printable)
-                return writer_field_bulk(log, text, bytes, width, ' ', left);
-        positive length = ul_lsns_safe_span_length(text, bytes);
-        positive padding = width > length ? width - length : 0;
-        if (!left)
-                writer_fill_bulk(log, padding, ' ');
-        ul_lsns_safe_span(text, bytes);
-        if (left)
-                writer_fill_bulk(log, padding, ' ');
-}
-
-static fn ul_table_json_value(string_address value, p8 kind)
-{
-        if ((kind == UL_TABLE_NULL_STRING || kind == UL_TABLE_NULL_NUMBER) &&
-            !string_get(value))
-                log("null", 4);
-        else if (kind == UL_TABLE_BOOLEAN)
-        {
-                bool false_value = string_equals(value, "0") ||
-                                   string_equals(value, "no");
-                log(false_value ? "false" : "true", false_value ? 5 : 4);
-        }
-        else if (kind == UL_TABLE_NUMBER || kind == UL_TABLE_NULL_NUMBER)
-                log(value, string_length(value));
-        else
-                writer_json_string(log, value);
+        ul_table_data address_to data = context;
+        const ul_table_column address_to definition = data->definitions + column;
+        bool heading = row == TABLE_HEADING;
+        string_address value = heading ? definition->heading : row == TABLE_NAME ? definition->name
+            : data->field((p8 address_to)data->rows + row * data->stride, (p8)column, scratch);
+        p8 escape = data->raw ? HEX_CONTROL | HEX_TAB | HEX_SLASH | HEX_HIGH | HEX_SPACE
+                             : HEX_CONTROL | HEX_TAB;
+        if ((!heading && definition->decimal) || (!data->raw && definition->printable)) escape = 0;
+        return (table_cell){.text = {value, string_length(value)}, .minimum = definition->width,
+            .escape = escape, .json = definition->json,
+            .flags = (definition->number ? TABLE_RIGHT : 0) |
+                (!heading && !data->raw && definition->multiline ? TABLE_LINES : 0) |
+                (heading || definition->printable || definition->decimal ? TABLE_WIDTH_BYTES : 0)};
 }
 
 static fn ul_table_json(string_address name, address_any rows,
-                        positive row_size, positive count,
-                        const ul_table_column address_to definitions,
-                        p8 address_to columns, positive column_count,
-                        ul_table_field field_of)
+    positive stride, positive count, const ul_table_column address_to definitions,
+    p8 address_to columns, positive column_count, ul_table_field field)
 {
-        string_format(log, "{\n   \"%s\": [", name);
-
-        for (positive row = 0; row < count; row++)
-        {
-                log(row ? ",{\n" : "\n      {\n", row ? 3 : 9);
-
-                for (positive field = 0; field < column_count; field++)
-                {
-                        p8 column = columns[field];
-                        p8 scratch[96];
-                        string_address value = field_of(
-                            (p8 address_to)rows + row * row_size, column,
-                            scratch);
-
-                        if (field)
-                                log(",\n", 2);
-                        string_format(log, "         \"%s\": ",
-                                      definitions[column].name);
-                        ul_table_json_value(value, definitions[column].json);
-                }
-                log("\n      }", 8);
-        }
-
-        if (!count)
-                log("\n", 1);
-        log("\n   ]\n}\n", 8);
+        ul_table_data data = {rows, stride, definitions, field, false};
+        table_view view = {.output = log, .context = &data, .cell = ul_table_cell,
+            .order = columns, .order_size = 1, .count = column_count};
+        table_json(&view, (byte_span){name, string_length(name)}, count, false);
 }
 
-/* The legacy ipcs projection is fixed width to the end of the line; every
-   other table here stops at the last thing it has to say. */
-static bool ul_table_pad_last;
-static positive ul_table_pad_extra;
-/*      ipcs writes the old fixed-width listing: every column is as wide as
-        it is declared whether or not a heading would have been narrower. */
-static bool ul_table_declared_widths;
-/*      lsipc without headings is the other way about: a column is exactly as
-        wide as the widest thing in it, and its declared least width goes
-        with the heading it belonged to. */
-static bool ul_table_free_widths;
-
-static fn ul_table_out(address_any rows, positive row_size, positive count,
-                       const ul_table_column address_to definitions,
-                       positive definition_count, p8 address_to columns,
-                       positive column_count, bool headings, bool raw,
-                       ul_table_field field_of)
+static fn ul_table_out_mode(address_any rows, positive row_size, positive count,
+    const ul_table_column address_to definitions, positive definition_count,
+    p8 address_to columns, positive column_count, bool headings, bool raw,
+    ul_table_field field_of, p8 layout)
 {
         positive widths[64];
-        bool filled[64];
-        bool multiline = false;
-
-        if (!count || definition_count > array_count(widths))
-                return;
-
-        for (positive i = 0; i < column_count; i++)
-        {
-                p8 column = columns[i];
-                widths[column] = ul_table_declared_widths
-                    ? definitions[column].width : 0;
-                filled[column] = false;
-                multiline |= definitions[column].multiline;
-        }
-
-        if (headings)
-                for (positive i = 0; i < column_count; i++)
-                {
-                        p8 column = columns[i];
-                        positive heading = string_length(
-                            definitions[column].heading);
-
-                        if (heading > widths[column])
-                                widths[column] = heading;
-                }
-
-        if (!raw)
-                for (positive row = 0; row < count; row++)
-                        for (positive field = 0; field < column_count; field++)
-                        {
-                                p8 column = columns[field];
-                                p8 scratch[96];
-                                string_address value = field_of(
-                                    (p8 address_to)rows + row * row_size, column, scratch);
-                                positive length = definitions[column].printable ||
-                                                  definitions[column].decimal
-                                    ? string_length(value)
-                                    : ul_table_safe_width(value, definitions[column].multiline);
-
-                                if (length)
-                                        filled[column] = true;
-                                if (length > widths[column])
-                                        widths[column] = length;
-                        }
-
-        /*      A heading sets a column's least width where there is one.
-                Where there is none the column's own declared least width
-                stands in -- except for a column that holds nothing at all in
-                any row, which takes no room, as SIZE does in a listing of
-                whole-file locks. lsipc is the one listing whose columns lose
-                that least width along with their headings, and says so. */
-        if (!headings && !raw && !ul_table_free_widths)
-                for (positive i = 0; i < column_count; i++)
-                {
-                        p8 column = columns[i];
-
-                        if (filled[column] &&
-                            definitions[column].width > widths[column])
-                                widths[column] = definitions[column].width;
-                }
-
-        for (positive row = 0; row < count + (headings ? 1 : 0); row++)
-        {
-                bool heading = headings && !row;
-                address_any entry = (p8 address_to)rows +
-                    (heading ? 0 : row - (headings ? 1 : 0)) * row_size;
-
-                positive lines = 1;
-                if (!heading && !raw && multiline)
-                        for (positive field = 0; field < column_count; field++)
-                        {
-                                p8 column = columns[field];
-                                if (!definitions[column].multiline)
-                                        continue;
-                                p8 scratch[96];
-                                positive have = ul_table_line_count(
-                                    field_of(entry, column, scratch));
-                                lines = max(lines, have);
-                        }
-
-                for (positive line = 0; line < lines; line++)
-                {
-                        for (positive field = 0; field < column_count; field++)
-                        {
-                                p8 column = columns[field];
-                                p8 scratch[96];
-                                string_address value = heading
-                                    ? definitions[column].heading
-                                    : field_of(entry, column, scratch);
-                                positive bytes = string_length(value);
-                                if (!raw && !heading && lines > 1)
-                                {
-                                        if (definitions[column].multiline)
-                                                value = ul_table_line(
-                                                    value, line,
-                                                    address_of bytes);
-                                        else if (line)
-                                                bytes = 0;
-                                }
-
-                                if (field)
-                                        log(" ", 1);
-                                if (__builtin_expect(raw, false))
-                                {
-                                        if (!heading && definitions[column].decimal)
-                                                log(value, 0);
-                                        else
-                                                storage_write_hex_escaped(log, value,
-                                                                          true, false);
-                                }
-                                else
-                                {
-                                        bool number =
-                                            definitions[column].number;
-                                        bool last_text =
-                                            !ul_table_pad_last &&
-                                            field + 1 == column_count &&
-                                            !number;
-                                        bool empty_last =
-                                            !ul_table_pad_last &&
-                                            field + 1 == column_count &&
-                                            !bytes;
-
-                                        positive pad =
-                                            (last_text || empty_last)
-                                                ? 0 : widths[column];
-                                        if (ul_table_pad_last && !heading &&
-                                            field + 1 == column_count)
-                                                pad += ul_table_pad_extra;
-
-                                        ul_lsns_safe_span_field(
-                                            value, bytes, pad,
-                                            !number, definitions[column].printable ||
-                                                (!heading && definitions[column].decimal));
-                                }
-                        }
-                        log("\n", 1);
-                }
-        }
+        if (!count || definition_count > array_count(widths)) return;
+        ul_table_data data = {rows, row_size, definitions, field_of, raw};
+        table_view view = {.output = log, .context = &data, .cell = ul_table_cell,
+            .order = columns, .order_size = 1, .count = column_count, .separator = " ",
+            .pad_last = !raw && (layout & UL_LAYOUT_PAD) != 0, .pad_extra = (layout & UL_LAYOUT_EXTRA) != 0};
+        for (positive col = 0; col < column_count; col++)
+                view.multipart |= definitions[columns[col]].multiline;
+        if (!raw) table_measure(&view, count, headings, (layout & UL_LAYOUT_DECLARED) != 0,
+                                 (layout & UL_LAYOUT_FREE) != 0, 0, widths, null);
+        if (headings) table_row(&view, TABLE_HEADING, raw ? null : widths);
+        for (positive row = 0; row < count; row++) table_row(&view, row, raw ? null : widths);
 }
 
 /* A nullable JSON name selects the existing renderer. Typed callers derive
@@ -3920,21 +3683,22 @@ static fn ul_table_print(string_address json_name, address_any rows,
                          const ul_table_column address_to definitions,
                          positive definition_count, p8 address_to columns,
                          positive column_count, bool headings, bool raw,
-                         ul_table_field field_of)
+                         ul_table_field field_of, p8 layout)
 {
         if (json_name)
                 ul_table_json(json_name, rows, row_size, count, definitions,
                               columns, column_count, field_of);
         else
-                ul_table_out(rows, row_size, count, definitions,
+                ul_table_out_mode(rows, row_size, count, definitions,
                              definition_count, columns, column_count,
-                             headings, raw, field_of);
+                             headings, raw, field_of, layout);
 }
 
-#define ul_table(name, rows, count, definitions, columns, selected, headings, raw, field) \
+#define ul_table_with(layout, name, rows, count, definitions, columns, selected, headings, raw, field) \
         ul_table_print(name, rows, sizeof((rows)[0]), count, definitions,     \
                        array_count(definitions), columns, selected,          \
-                       headings, raw, field)
+                       headings, raw, field, layout)
+#define ul_table(...) ul_table_with(0, __VA_ARGS__)
 
 // lsclocks --------------------------------------------------------
 
@@ -4006,16 +3770,16 @@ static const ul_lsclock_definition ul_lsclock_system[] = {
 };
 
 static const ul_table_column ul_lsclock_columns[] = {
-    {"type", "TYPE", 0, false, UL_TABLE_STRING},
-    {"id", "ID", 1, true, UL_TABLE_NULL_NUMBER},
-    {"clock", "CLOCK", 0, false, UL_TABLE_NULL_STRING},
-    {"name", "NAME", 0, false, UL_TABLE_STRING},
-    {"time", "TIME", 0, true, UL_TABLE_NULL_NUMBER},
-    {"iso_time", "ISO_TIME", 0, true, UL_TABLE_NULL_STRING},
-    {"resol", "RESOL", 0, true, UL_TABLE_NULL_STRING},
-    {"resol_raw", "RESOL_RAW", 0, true, UL_TABLE_NULL_NUMBER},
-    {"rel_time", "REL_TIME", 0, true, UL_TABLE_NULL_STRING},
-    {"ns_offset", "NS_OFFSET", 0, true, UL_TABLE_NULL_NUMBER},
+    {"type", "TYPE", 0, false, TABLE_STRING},
+    {"id", "ID", 1, true, TABLE_NULL_NUMBER},
+    {"clock", "CLOCK", 0, false, TABLE_NULL_STRING},
+    {"name", "NAME", 0, false, TABLE_STRING},
+    {"time", "TIME", 0, true, TABLE_NULL_NUMBER},
+    {"iso_time", "ISO_TIME", 0, true, TABLE_NULL_STRING},
+    {"resol", "RESOL", 0, true, TABLE_NULL_STRING},
+    {"resol_raw", "RESOL_RAW", 0, true, TABLE_NULL_NUMBER},
+    {"rel_time", "REL_TIME", 0, true, TABLE_NULL_STRING},
+    {"ns_offset", "NS_OFFSET", 0, true, TABLE_NULL_NUMBER},
 };
 
 static const argument_option ul_lsclock_options[] = {
@@ -4660,19 +4424,19 @@ enum
 };
 
 static ul_table_column ul_lslocks_columns[] = {
-    {(string_address)"command", (string_address)"COMMAND", 15, false, UL_TABLE_STRING},
-    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER},
-    {(string_address)"type", (string_address)"TYPE", 5, true, UL_TABLE_STRING},
-    {(string_address)"size", (string_address)"SIZE", 4, true, UL_TABLE_NULL_STRING},
-    {(string_address)"inode", (string_address)"INODE", 5, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"maj:min", (string_address)"MAJ:MIN", 7, false, UL_TABLE_STRING},
-    {(string_address)"mode", (string_address)"MODE", 5, false, UL_TABLE_STRING},
-    {(string_address)"m", (string_address)"M", 1, true, UL_TABLE_BOOLEAN, .decimal = true},
-    {(string_address)"start", (string_address)"START", 0, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"end", (string_address)"END", 0, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"path", (string_address)"PATH", 0, false, UL_TABLE_NULL_STRING},
-    {(string_address)"blocker", (string_address)"BLOCKER", 7, true, UL_TABLE_NULL_NUMBER},
-    {(string_address)"holders", (string_address)"HOLDERS", 0, false, UL_TABLE_NULL_STRING},
+    {(string_address)"command", (string_address)"COMMAND", 15, false, TABLE_STRING},
+    {(string_address)"pid", (string_address)"PID", 5, true, TABLE_NUMBER},
+    {(string_address)"type", (string_address)"TYPE", 5, true, TABLE_STRING},
+    {(string_address)"size", (string_address)"SIZE", 4, true, TABLE_NULL_STRING},
+    {(string_address)"inode", (string_address)"INODE", 5, true, TABLE_NUMBER, .decimal = true},
+    {(string_address)"maj:min", (string_address)"MAJ:MIN", 7, false, TABLE_STRING},
+    {(string_address)"mode", (string_address)"MODE", 5, false, TABLE_STRING},
+    {(string_address)"m", (string_address)"M", 1, true, TABLE_BOOLEAN, .decimal = true},
+    {(string_address)"start", (string_address)"START", 0, true, TABLE_NUMBER, .decimal = true},
+    {(string_address)"end", (string_address)"END", 0, true, TABLE_NUMBER, .decimal = true},
+    {(string_address)"path", (string_address)"PATH", 0, false, TABLE_NULL_STRING},
+    {(string_address)"blocker", (string_address)"BLOCKER", 7, true, TABLE_NULL_NUMBER},
+    {(string_address)"holders", (string_address)"HOLDERS", 0, false, TABLE_NULL_STRING},
 };
 
 typedef struct
@@ -5086,7 +4850,7 @@ static b32 util_linux_lslocks()
 
         ul_lslocks_bytes = (taking.flags & FILE_FLAG('b')) != 0;
         ul_lslocks_columns[UL_LOCKS_SIZE].json = ul_lslocks_bytes
-            ? UL_TABLE_NULL_NUMBER : UL_TABLE_NULL_STRING;
+            ? TABLE_NULL_NUMBER : TABLE_NULL_STRING;
 
         ul_table(taking.flags & FILE_FLAG('J') ? "locks" : null,
                  locks, shown, ul_lslocks_columns, columns, column_count,
@@ -5101,37 +4865,37 @@ static b32 util_linux_lslocks()
 
 #define UL_LSFD_FIELDS(X) \
     X(UL_LSFD_COMMAND, TEXT, descriptor->process->command, \
-      "command", "COMMAND", 0, false, UL_TABLE_STRING) \
+      "command", "COMMAND", 0, false, TABLE_STRING) \
     X(UL_LSFD_PID, UNSIGNED, descriptor->process->pid, \
-      "pid", "PID", 5, true, UL_TABLE_NUMBER, .decimal = true) \
+      "pid", "PID", 5, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSFD_USER, TEXT, descriptor->user, \
-      "user", "USER", 0, false, UL_TABLE_STRING) \
+      "user", "USER", 0, false, TABLE_STRING) \
     X(UL_LSFD_FD, UNSIGNED, descriptor->fd, \
-      "fd", "FD", 2, true, UL_TABLE_NUMBER, .decimal = true) \
+      "fd", "FD", 2, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSFD_MODE, CUSTOM, 0, \
-      "mode", "MODE", 4, false, UL_TABLE_STRING) \
+      "mode", "MODE", 4, false, TABLE_STRING) \
     X(UL_LSFD_XMODE, CUSTOM, 0, \
-      "xmode", "XMODE", 6, false, UL_TABLE_STRING) \
+      "xmode", "XMODE", 6, false, TABLE_STRING) \
     X(UL_LSFD_TYPE, TEXT, descriptor->type, \
-      "type", "TYPE", 5, false, UL_TABLE_STRING) \
+      "type", "TYPE", 5, false, TABLE_STRING) \
     X(UL_LSFD_NAME, TEXT, descriptor->name, \
-      "name", "NAME", 0, false, UL_TABLE_STRING) \
+      "name", "NAME", 0, false, TABLE_STRING) \
     X(UL_LSFD_KNAME, TEXT, descriptor->name, \
-      "kname", "KNAME", 0, false, UL_TABLE_STRING) \
+      "kname", "KNAME", 0, false, TABLE_STRING) \
     X(UL_LSFD_INODE, UNSIGNED, descriptor->inode, \
-      "inode", "INODE", 5, true, UL_TABLE_NUMBER, .decimal = true) \
+      "inode", "INODE", 5, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSFD_DEVICE, CUSTOM, 0, \
-      "maj:min", "MAJ:MIN", 7, false, UL_TABLE_STRING) \
+      "maj:min", "MAJ:MIN", 7, false, TABLE_STRING) \
     X(UL_LSFD_MNTID, CUSTOM, 0, \
-      "mntid", "MNTID", 5, true, UL_TABLE_NULL_NUMBER) \
+      "mntid", "MNTID", 5, true, TABLE_NULL_NUMBER) \
     X(UL_LSFD_SIZE, UNSIGNED, descriptor->size, \
-      "size", "SIZE", 4, true, UL_TABLE_NUMBER, .decimal = true) \
+      "size", "SIZE", 4, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSFD_POS, CUSTOM, 0, \
-      "pos", "POS", 3, true, UL_TABLE_NULL_NUMBER) \
+      "pos", "POS", 3, true, TABLE_NULL_NUMBER) \
     X(UL_LSFD_UID, UNSIGNED, descriptor->process->uid, \
-      "uid", "UID", 3, true, UL_TABLE_NUMBER, .decimal = true) \
+      "uid", "UID", 3, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSFD_DELETED, BOOLEAN, descriptor->deleted, \
-      "deleted", "DELETED", 7, false, UL_TABLE_BOOLEAN, .decimal = true)
+      "deleted", "DELETED", 7, false, TABLE_BOOLEAN, .decimal = true)
 
 enum
 {
@@ -8865,13 +8629,13 @@ typedef struct
 } ul_wipefs_work;
 
 static const ul_table_column ul_wipefs_columns[] = {
-    {"device", "DEVICE", 0, false, UL_TABLE_STRING},
-    {"offset", "OFFSET", 0, false, UL_TABLE_STRING},
-    {"type", "TYPE", 0, false, UL_TABLE_STRING},
-    {"uuid", "UUID", 0, false, UL_TABLE_NULL_STRING},
-    {"label", "LABEL", 0, false, UL_TABLE_NULL_STRING},
-    {"length", "LENGTH", 0, false, UL_TABLE_NUMBER},
-    {"usage", "USAGE", 0, false, UL_TABLE_STRING},
+    {"device", "DEVICE", 0, false, TABLE_STRING},
+    {"offset", "OFFSET", 0, false, TABLE_STRING},
+    {"type", "TYPE", 0, false, TABLE_STRING},
+    {"uuid", "UUID", 0, false, TABLE_NULL_STRING},
+    {"label", "LABEL", 0, false, TABLE_NULL_STRING},
+    {"length", "LENGTH", 0, false, TABLE_NUMBER},
+    {"usage", "USAGE", 0, false, TABLE_STRING},
 };
 
 static bool ul_wipefs_type_match(string_address list, string_address type)
@@ -10073,8 +9837,8 @@ static string_address ul_lscpu_summary_field(address_any row, p8 column,
 }
 
 static const ul_table_column ul_lscpu_summary_columns[] = {
-    {"field", "FIELD", 0, false, UL_TABLE_STRING},
-    {"data", "DATA", 0, false, UL_TABLE_STRING},
+    {"field", "FIELD", 0, false, TABLE_STRING},
+    {"data", "DATA", 0, false, TABLE_STRING},
 };
 
 typedef struct
@@ -10363,33 +10127,33 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
 
 #define UL_LSCPU_FIELDS(X) \
     X(UL_LSCPU_CPU, NONNEGATIVE, cpu->id, \
-      "cpu", "CPU", 3, true, UL_TABLE_NUMBER) \
+      "cpu", "CPU", 3, true, TABLE_NUMBER) \
     X(UL_LSCPU_CORE, NONNEGATIVE, cpu->core, \
-      "core", "CORE", 4, true, UL_TABLE_NULL_NUMBER) \
+      "core", "CORE", 4, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_SOCKET, NONNEGATIVE, cpu->socket, \
-      "socket", "SOCKET", 6, true, UL_TABLE_NULL_NUMBER) \
+      "socket", "SOCKET", 6, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_CLUSTER, NONNEGATIVE, cpu->cluster, \
-      "cluster", "CLUSTER", 7, true, UL_TABLE_NULL_NUMBER) \
+      "cluster", "CLUSTER", 7, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_NODE, NONNEGATIVE, cpu->node, \
-      "node", "NODE", 4, true, UL_TABLE_NULL_NUMBER) \
+      "node", "NODE", 4, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_CACHE, CUSTOM, 0, \
-      "cache", "L1d:L1i:L2:L3", 0, false, UL_TABLE_STRING) \
+      "cache", "L1d:L1i:L2:L3", 0, false, TABLE_STRING) \
     X(UL_LSCPU_ONLINE, TEXT, cpu->online ? (string_address)"yes" : (string_address)"no", \
-      "online", "ONLINE", 6, true, UL_TABLE_BOOLEAN) \
+      "online", "ONLINE", 6, true, TABLE_BOOLEAN) \
     X(UL_LSCPU_BOGOMIPS, NULL_TEXT, ul_lscpu.info.bogomips, \
-      "bogomips", "BOGOMIPS", 0, true, UL_TABLE_NULL_NUMBER) \
+      "bogomips", "BOGOMIPS", 0, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_MICROCODE, NULL_TEXT, ul_lscpu.info.microcode, \
-      "microcode", "MICROCODE", 0, false, UL_TABLE_NULL_STRING) \
+      "microcode", "MICROCODE", 0, false, TABLE_NULL_STRING) \
     X(UL_LSCPU_MHZ, TEXT, ul_lscpu_frequency(scratch, cpu->current_khz), \
-      "mhz", "MHZ", 0, true, UL_TABLE_NULL_NUMBER) \
+      "mhz", "MHZ", 0, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_SCALMHZ, CUSTOM, 0, \
-      "scalmhz%", "SCALMHZ%", 0, true, UL_TABLE_NULL_NUMBER) \
+      "scalmhz%", "SCALMHZ%", 0, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_MAXMHZ, TEXT, ul_lscpu_frequency(scratch, cpu->maximum_khz), \
-      "maxmhz", "MAXMHZ", 0, true, UL_TABLE_NULL_NUMBER) \
+      "maxmhz", "MAXMHZ", 0, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_MINMHZ, TEXT, ul_lscpu_frequency(scratch, cpu->minimum_khz), \
-      "minmhz", "MINMHZ", 0, true, UL_TABLE_NULL_NUMBER) \
+      "minmhz", "MINMHZ", 0, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_MODELNAME, CUSTOM, 0, \
-      "modelname", "MODELNAME", 0, false, UL_TABLE_NULL_STRING)
+      "modelname", "MODELNAME", 0, false, TABLE_NULL_STRING)
 
 enum
 {
@@ -10449,23 +10213,23 @@ static string_address ul_lscpu_cpu_field(address_any row, p8 column,
 
 #define UL_LSCPU_CACHE_FIELDS(X) \
     X(UL_LSCPU_C_NAME, TEXT, cache->name, \
-      "name", "NAME", 0, false, UL_TABLE_STRING) \
+      "name", "NAME", 0, false, TABLE_STRING) \
     X(UL_LSCPU_C_ONE, CUSTOM, 0, \
-      "one-size", "ONE-SIZE", 0, true, UL_TABLE_NULL_STRING) \
+      "one-size", "ONE-SIZE", 0, true, TABLE_NULL_STRING) \
     X(UL_LSCPU_C_ALL, CUSTOM, 0, \
-      "all-size", "ALL-SIZE", 0, true, UL_TABLE_NULL_STRING) \
+      "all-size", "ALL-SIZE", 0, true, TABLE_NULL_STRING) \
     X(UL_LSCPU_C_WAYS, NONZERO, cache->ways, \
-      "ways", "WAYS", 0, true, UL_TABLE_NULL_NUMBER) \
+      "ways", "WAYS", 0, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_C_TYPE, TEXT, cache->type, \
-      "type", "TYPE", 11, false, UL_TABLE_STRING) \
+      "type", "TYPE", 11, false, TABLE_STRING) \
     X(UL_LSCPU_C_LEVEL, UNSIGNED, cache->level, \
-      "level", "LEVEL", 0, true, UL_TABLE_NUMBER) \
+      "level", "LEVEL", 0, true, TABLE_NUMBER) \
     X(UL_LSCPU_C_SETS, NONZERO, cache->sets, \
-      "sets", "SETS", 0, true, UL_TABLE_NULL_NUMBER) \
+      "sets", "SETS", 0, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_C_PHY, NONZERO, cache->physical_line, \
-      "phy-line", "PHY-LINE", 0, true, UL_TABLE_NULL_NUMBER) \
+      "phy-line", "PHY-LINE", 0, true, TABLE_NULL_NUMBER) \
     X(UL_LSCPU_C_COHERENCY, CUSTOM, 0, \
-      "coherency-size", "COHERENCY-SIZE", 0, true, UL_TABLE_NULL_NUMBER)
+      "coherency-size", "COHERENCY-SIZE", 0, true, TABLE_NULL_NUMBER)
 
 enum
 {
@@ -10798,18 +10562,18 @@ enum
 };
 
 static const ul_table_column ul_lsmem_columns[] = {
-    {"range", "RANGE", 0, false, UL_TABLE_STRING},
-    {"size", "SIZE", 5, true, UL_TABLE_STRING},
-    {"state", "STATE", 0, true, UL_TABLE_STRING},
-    {"removable", "REMOVABLE", 0, true, UL_TABLE_BOOLEAN},
-    {"block", "BLOCK", 0, true, UL_TABLE_STRING},
-    {"node", "NODE", 0, true, UL_TABLE_NULL_NUMBER},
-    {"zones", "ZONES", 0, true, UL_TABLE_NULL_STRING},
+    {"range", "RANGE", 0, false, TABLE_STRING},
+    {"size", "SIZE", 5, true, TABLE_STRING},
+    {"state", "STATE", 0, true, TABLE_STRING},
+    {"removable", "REMOVABLE", 0, true, TABLE_BOOLEAN},
+    {"block", "BLOCK", 0, true, TABLE_STRING},
+    {"node", "NODE", 0, true, TABLE_NULL_NUMBER},
+    {"zones", "ZONES", 0, true, TABLE_NULL_STRING},
 };
 
 static ul_table_column ul_lsmem_summary_columns[] = {
-    {"field", "FIELD", 32, false, UL_TABLE_STRING},
-    {"data", "DATA", 0, true, UL_TABLE_STRING},
+    {"field", "FIELD", 32, false, TABLE_STRING},
+    {"data", "DATA", 0, true, TABLE_STRING},
 };
 
 static bool ul_lsmem_id(string_address name, positive address_to id)
@@ -11338,79 +11102,79 @@ enum {
 
 #define UL_LSBLK_FIELDS(X) \
     X(UL_LSBLK_NAME, CUSTOM, 0, \
-      "name", "NAME", 0, false, UL_TABLE_STRING) \
+      "name", "NAME", 0, false, TABLE_STRING) \
     X(UL_LSBLK_KNAME, TEXT, device->kname, \
-      "kname", "KNAME", 0, false, UL_TABLE_STRING) \
+      "kname", "KNAME", 0, false, TABLE_STRING) \
     X(UL_LSBLK_PATH, TEXT, device->path, \
-      "path", "PATH", 0, false, UL_TABLE_STRING) \
+      "path", "PATH", 0, false, TABLE_STRING) \
     X(UL_LSBLK_MAJMIN, CUSTOM, 0, \
-      "maj:min", "MAJ:MIN", 7, false, UL_TABLE_STRING) \
+      "maj:min", "MAJ:MIN", 7, false, TABLE_STRING) \
     X(UL_LSBLK_RM, BOOLEAN, device->removable, \
-      "rm", "RM", 0, true, UL_TABLE_BOOLEAN, .decimal = true) \
+      "rm", "RM", 0, true, TABLE_BOOLEAN, .decimal = true) \
     X(UL_LSBLK_SIZE, CUSTOM, 0, \
-      "size", "SIZE", 5, true, UL_TABLE_STRING) \
+      "size", "SIZE", 5, true, TABLE_STRING) \
     X(UL_LSBLK_RO, BOOLEAN, device->read_only, \
-      "ro", "RO", 0, true, UL_TABLE_BOOLEAN, .decimal = true) \
+      "ro", "RO", 0, true, TABLE_BOOLEAN, .decimal = true) \
     X(UL_LSBLK_TYPE, NULL_TEXT, device->type, \
-      "type", "TYPE", 0, false, UL_TABLE_STRING) \
+      "type", "TYPE", 0, false, TABLE_STRING) \
     X(UL_LSBLK_MOUNTPOINT, CUSTOM, 0, \
-      "mountpoint", "MOUNTPOINT", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_MOUNTS) \
+      "mountpoint", "MOUNTPOINT", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_MOUNTS) \
     X(UL_LSBLK_MOUNTPOINTS, NULL_TEXT, device->mount_text, \
-      "mountpoints", "MOUNTPOINTS", 0, false, UL_TABLE_NULL_STRING, true, .requires = UL_LSBLK_NEED_MOUNTS | UL_LSBLK_NEED_MOUNT_TEXT) \
+      "mountpoints", "MOUNTPOINTS", 0, false, TABLE_NULL_STRING, true, .requires = UL_LSBLK_NEED_MOUNTS | UL_LSBLK_NEED_MOUNT_TEXT) \
     X(UL_LSBLK_FSTYPE, NULL_TEXT, device->fstype, \
-      "fstype", "FSTYPE", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
+      "fstype", "FSTYPE", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_FSVER, NULL_TEXT, device->fsver, \
-      "fsver", "FSVER", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
+      "fsver", "FSVER", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_LABEL, NULL_TEXT, device->label, \
-      "label", "LABEL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
+      "label", "LABEL", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_UUID, NULL_TEXT, device->uuid, \
-      "uuid", "UUID", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
+      "uuid", "UUID", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_PARTUUID, NULL_TEXT, device->partuuid, \
-      "partuuid", "PARTUUID", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
+      "partuuid", "PARTUUID", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_PARTLABEL, NULL_TEXT, device->partlabel, \
-      "partlabel", "PARTLABEL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
+      "partlabel", "PARTLABEL", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_IDENTITY) \
     X(UL_LSBLK_FSAVAIL, CUSTOM, 0, \
-      "fsavail", "FSAVAIL", 0, true, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_MOUNTS | UL_LSBLK_NEED_FS_STATS) \
+      "fsavail", "FSAVAIL", 0, true, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_MOUNTS | UL_LSBLK_NEED_FS_STATS) \
     X(UL_LSBLK_FSUSE, CUSTOM, 0, \
-      "fsuse%", "FSUSE%", 0, true, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_MOUNTS | UL_LSBLK_NEED_FS_STATS) \
+      "fsuse%", "FSUSE%", 0, true, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_MOUNTS | UL_LSBLK_NEED_FS_STATS) \
     X(UL_LSBLK_OWNER, NULL_TEXT, device->owner, \
-      "owner", "OWNER", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_PERMISSIONS) \
+      "owner", "OWNER", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_PERMISSIONS) \
     X(UL_LSBLK_GROUP, NULL_TEXT, device->group, \
-      "group", "GROUP", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_PERMISSIONS) \
+      "group", "GROUP", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_PERMISSIONS) \
     X(UL_LSBLK_MODE, NULL_TEXT, device->mode, \
-      "mode", "MODE", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_PERMISSIONS) \
+      "mode", "MODE", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_PERMISSIONS) \
     X(UL_LSBLK_ALIGNMENT, UNSIGNED, device->alignment, \
-      "alignment", "ALIGNMENT", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+      "alignment", "ALIGNMENT", 0, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSBLK_MINIO, UNSIGNED, device->minimum_io, \
-      "min-io", "MIN-IO", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+      "min-io", "MIN-IO", 0, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSBLK_OPTIO, UNSIGNED, device->optimal_io, \
-      "opt-io", "OPT-IO", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+      "opt-io", "OPT-IO", 0, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSBLK_PHYSEC, UNSIGNED, device->physical_sector, \
-      "phy-sec", "PHY-SEC", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+      "phy-sec", "PHY-SEC", 0, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSBLK_LOGSEC, UNSIGNED, device->logical_sector, \
-      "log-sec", "LOG-SEC", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+      "log-sec", "LOG-SEC", 0, true, TABLE_NUMBER, .decimal = true) \
     X(UL_LSBLK_ROTA, UNSIGNED, device->rotational, \
-      "rota", "ROTA", 0, true, UL_TABLE_BOOLEAN, .decimal = true) \
+      "rota", "ROTA", 0, true, TABLE_BOOLEAN, .decimal = true) \
     X(UL_LSBLK_SCHED, NULL_TEXT, device->scheduler, \
-      "sched", "SCHED", 0, false, UL_TABLE_NULL_STRING) \
+      "sched", "SCHED", 0, false, TABLE_NULL_STRING) \
     X(UL_LSBLK_RQSIZE, CUSTOM, 0, \
-      "rq-size", "RQ-SIZE", 0, true, UL_TABLE_NULL_NUMBER) \
+      "rq-size", "RQ-SIZE", 0, true, TABLE_NULL_NUMBER) \
     X(UL_LSBLK_RA, UNSIGNED, device->read_ahead, \
-      "ra", "RA", 0, true, UL_TABLE_NULL_NUMBER, .decimal = true) \
+      "ra", "RA", 0, true, TABLE_NULL_NUMBER, .decimal = true) \
     X(UL_LSBLK_WSAME, CUSTOM, 0, \
-      "wsame", "WSAME", 0, true, UL_TABLE_STRING) \
+      "wsame", "WSAME", 0, true, TABLE_STRING) \
     X(UL_LSBLK_TRAN, NULL_TEXT, device->transport, \
-      "tran", "TRAN", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
+      "tran", "TRAN", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_VENDOR, NULL_TEXT, device->vendor, \
-      "vendor", "VENDOR", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
+      "vendor", "VENDOR", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_MODEL, NULL_TEXT, device->model, \
-      "model", "MODEL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
+      "model", "MODEL", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_REV, NULL_TEXT, device->revision, \
-      "rev", "REV", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
+      "rev", "REV", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_SERIAL, NULL_TEXT, device->serial, \
-      "serial", "SERIAL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
+      "serial", "SERIAL", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA) \
     X(UL_LSBLK_HCTL, NULL_TEXT, device->hctl, \
-      "hctl", "HCTL", 0, false, UL_TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA)
+      "hctl", "HCTL", 0, false, TABLE_NULL_STRING, .requires = UL_LSBLK_NEED_METADATA)
 
 enum
 {
@@ -12271,8 +12035,9 @@ static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                 else
                 {
                         p8 scratch[96];
-                        ul_table_json_value(ul_lsblk_field(view, column, scratch),
-                                            ul_lsblk_columns[column].json);
+                        string_address value = ul_lsblk_field(view, column, scratch);
+                        table_json_value(log, (byte_span){value, string_length(value)},
+                                         ul_lsblk_columns[column].json, false);
                 }
         }
 
@@ -12685,63 +12450,63 @@ static bool ul_ipc_snapshot_load(positive types)
 
 #define UL_IPC_FIELDS(X) \
     X(UL_IPC_KEY, TEXT, ul_ipc_key(scratch, row->key), \
-      "key", "KEY", 10, false, UL_TABLE_STRING) \
+      "key", "KEY", 10, false, TABLE_STRING) \
     X(UL_IPC_ID, UNSIGNED, row->id, \
-      "id", "ID", 0, false, UL_TABLE_STRING, .decimal = true) \
+      "id", "ID", 0, false, TABLE_STRING, .decimal = true) \
     X(UL_IPC_PERMS, TEXT, ul_ipc_permissions(scratch, row->mode), \
-      "perms", "PERMS", 9, true, UL_TABLE_STRING) \
+      "perms", "PERMS", 9, true, TABLE_STRING) \
     X(UL_IPC_OWNER, TEXT, ul_ipc_account(scratch, row->uid, false, true), \
-      "owner", "OWNER", 5, true, UL_TABLE_STRING) \
+      "owner", "OWNER", 5, true, TABLE_STRING) \
     X(UL_IPC_CUID, UNSIGNED, row->cuid, \
-      "cuid", "CUID", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "cuid", "CUID", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_CUSER, TEXT, ul_ipc_account(scratch, row->cuid, false, true), \
-      "cuser", "CUSER", 0, false, UL_TABLE_STRING) \
+      "cuser", "CUSER", 0, false, TABLE_STRING) \
     X(UL_IPC_CGID, UNSIGNED, row->cgid, \
-      "cgid", "CGID", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "cgid", "CGID", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_CGROUP, TEXT, ul_ipc_account(scratch, row->cgid, true, true), \
-      "cgroup", "CGROUP", 0, false, UL_TABLE_STRING) \
+      "cgroup", "CGROUP", 0, false, TABLE_STRING) \
     X(UL_IPC_UID, UNSIGNED, row->uid, \
-      "uid", "UID", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "uid", "UID", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_USER, TEXT, ul_ipc_account(scratch, row->uid, false, true), \
-      "user", "USER", 0, false, UL_TABLE_STRING) \
+      "user", "USER", 0, false, TABLE_STRING) \
     X(UL_IPC_GID, UNSIGNED, row->gid, \
-      "gid", "GID", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "gid", "GID", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_GROUP, TEXT, ul_ipc_account(scratch, row->gid, true, true), \
-      "group", "GROUP", 0, false, UL_TABLE_STRING) \
+      "group", "GROUP", 0, false, TABLE_STRING) \
     X(UL_IPC_CTIME, TEXT, ul_ipc_time(scratch, row->change_time), \
-      "ctime", "CTIME", 5, false, UL_TABLE_STRING) \
+      "ctime", "CTIME", 5, false, TABLE_STRING) \
     X(UL_IPC_SIZE, TEXT, ul_lscpu_cache_size(row->size, ul_ipc_bytes, false), \
-      "size", "SIZE", 0, true, UL_TABLE_STRING) \
+      "size", "SIZE", 0, true, TABLE_STRING) \
     X(UL_IPC_NATTCH, UNSIGNED, row->count, \
-      "nattch", "NATTCH", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "nattch", "NATTCH", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_STATUS, TEXT, (string_address)"", \
-      "status", "STATUS", 0, false, UL_TABLE_NULL_STRING) \
+      "status", "STATUS", 0, false, TABLE_NULL_STRING) \
     X(UL_IPC_ATTACH, TEXT, ul_ipc_time(scratch, row->time_one), \
-      "attach", "ATTACH", 5, false, UL_TABLE_NULL_STRING) \
+      "attach", "ATTACH", 5, false, TABLE_NULL_STRING) \
     X(UL_IPC_DETACH, TEXT, ul_ipc_time(scratch, row->time_two), \
-      "detach", "DETACH", 5, false, UL_TABLE_NULL_STRING) \
+      "detach", "DETACH", 5, false, TABLE_NULL_STRING) \
     X(UL_IPC_COMMAND, TEXT, (string_address)"", \
-      "command", "COMMAND", 0, false, UL_TABLE_NULL_STRING) \
+      "command", "COMMAND", 0, false, TABLE_NULL_STRING) \
     X(UL_IPC_CPID, UNSIGNED, row->pid_one, \
-      "cpid", "CPID", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "cpid", "CPID", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_LPID, UNSIGNED, row->pid_two, \
-      "lpid", "LPID", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "lpid", "LPID", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_USEDBYTES, TEXT, ul_lscpu_cache_size(row->size, ul_ipc_bytes, false), \
-      "usedbytes", "USEDBYTES", 0, true, UL_TABLE_STRING) \
+      "usedbytes", "USEDBYTES", 0, true, TABLE_STRING) \
     X(UL_IPC_MSGS, UNSIGNED, row->count, \
-      "msgs", "MSGS", 0, false, UL_TABLE_STRING, .decimal = true) \
+      "msgs", "MSGS", 0, false, TABLE_STRING, .decimal = true) \
     X(UL_IPC_SEND, TEXT, ul_ipc_time(scratch, row->time_one), \
-      "send", "SEND", 4, false, UL_TABLE_NULL_STRING) \
+      "send", "SEND", 4, false, TABLE_NULL_STRING) \
     X(UL_IPC_RECV, TEXT, ul_ipc_time(scratch, row->time_two), \
-      "recv", "RECV", 4, false, UL_TABLE_NULL_STRING) \
+      "recv", "RECV", 4, false, TABLE_NULL_STRING) \
     X(UL_IPC_LSPID, UNSIGNED, row->pid_one, \
-      "lspid", "LSPID", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "lspid", "LSPID", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_LRPID, UNSIGNED, row->pid_two, \
-      "lrpid", "LRPID", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "lrpid", "LRPID", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_NSEMS, UNSIGNED, row->count, \
-      "nsems", "NSEMS", 0, true, UL_TABLE_STRING, .decimal = true) \
+      "nsems", "NSEMS", 0, true, TABLE_STRING, .decimal = true) \
     X(UL_IPC_OTIME, TEXT, ul_ipc_time(scratch, row->time_one), \
-      "otime", "OTIME", 5, false, UL_TABLE_NULL_STRING)
+      "otime", "OTIME", 5, false, TABLE_NULL_STRING)
 
 enum
 {
@@ -13318,14 +13083,12 @@ static b32 util_linux_lsipc()
                 ul_lsipc_newline(columns, column_count);
         else
         {
-                ul_table_free_widths = true;
-                ul_table(!json ? null : type == UL_IPC_MESSAGE ? "messages"
+                ul_table_with(UL_LAYOUT_FREE, !json ? null : type == UL_IPC_MESSAGE ? "messages"
                                        : type == UL_IPC_SHARED ? "sharedmemory"
                                                                : "semaphores",
                          ul_ipc.rows, ul_ipc.count, ul_ipc_columns,
                          columns, column_count,
                          !(taking.flags & FILE_FLAG('H')), raw, ul_ipc_field);
-                ul_table_free_widths = false;
         }
         log_flush();
         return have_id && !ul_ipc.count ? 1 : 0;
@@ -13404,16 +13167,11 @@ static fn ul_ipcs_table(p8 type)
                 return;
         }
         ul_ipcs_columns[UL_IPC_ID].heading = views[type].id;
-        ul_table_pad_last = true;
-        ul_table_declared_widths = true;
-        ul_table_pad_extra = type == UL_IPC_SHARED ? 1 : 0;
-        ul_table_out(ul_ipc.rows + first, sizeof(ul_ipc.rows[0]), rows,
+        ul_table_out_mode(ul_ipc.rows + first, sizeof(ul_ipc.rows[0]), rows,
                      ul_ipcs_columns, UL_IPC_COLUMNS,
                      (p8 address_to)views[type].columns, views[type].count,
-                     true, false, ul_ipcs_field);
-        ul_table_pad_last = false;
-        ul_table_declared_widths = false;
-        ul_table_pad_extra = 0;
+                     true, false, ul_ipcs_field, UL_LAYOUT_PAD | UL_LAYOUT_DECLARED |
+                         (type == UL_IPC_SHARED ? UL_LAYOUT_EXTRA : 0));
 }
 
 static const argument_option ul_ipcs_options[] = {
@@ -13624,12 +13382,12 @@ static const ul_rfkill_type ul_rfkill_types[] = {
 };
 
 static const ul_table_column ul_rfkill_columns[] = {
-    {"device", "DEVICE", 0, false, UL_TABLE_STRING},
-    {"id", "ID", 2, true, UL_TABLE_NUMBER},
-    {"type", "TYPE", 0, false, UL_TABLE_STRING},
-    {"type-desc", "TYPE-DESC", 0, false, UL_TABLE_STRING},
-    {"soft", "SOFT", 0, true, UL_TABLE_STRING},
-    {"hard", "HARD", 0, true, UL_TABLE_STRING},
+    {"device", "DEVICE", 0, false, TABLE_STRING},
+    {"id", "ID", 2, true, TABLE_NUMBER},
+    {"type", "TYPE", 0, false, TABLE_STRING},
+    {"type-desc", "TYPE-DESC", 0, false, TABLE_STRING},
+    {"soft", "SOFT", 0, true, TABLE_STRING},
+    {"hard", "HARD", 0, true, TABLE_STRING},
 };
 
 static const argument_option ul_rfkill_options[] = {

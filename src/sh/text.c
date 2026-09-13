@@ -7752,13 +7752,7 @@ static b32 text_pr()
 */
 typedef struct
 {
-        p8 address_to bytes;
-        positive length;
-} text_blob;
-
-typedef struct
-{
-        text_blob text;
+        byte_span text;
         string_address name;
         positive lines;
 } ptx_file;
@@ -7801,8 +7795,8 @@ static positive ptx_context_count;
 static ptx_occurrence address_to ptx_occurrences;
 static positive ptx_occurrence_count;
 static positive address_to ptx_order;
-static text_blob ptx_ignore;
-static text_blob ptx_only;
+static byte_span ptx_ignore;
+static byte_span ptx_only;
 static string_address ptx_sentence_pattern;
 static string_address ptx_word_pattern;
 static string_address ptx_truncation;
@@ -7827,7 +7821,7 @@ static bool ptx_failed;
 /* A whole-input view in the shared record arena.  ptx and column both need
    stable offsets after the 64 KiB reader refills; this is their one common
    bridge from the streaming reader, not a second input engine. */
-static bool text_blob_read(string_address path, text_blob address_to blob)
+static bool text_blob_read(string_address path, byte_span address_to blob)
 {
         if (path && !path[0])
                 path = null;
@@ -7841,7 +7835,7 @@ static bool text_blob_read(string_address path, text_blob address_to blob)
         return okay;
 }
 
-static positive ptx_count_lines(text_blob address_to text)
+static positive ptx_count_lines(byte_span address_to text)
 {
         return (text->length != 0) + memory_count(text->bytes, text->length, '\n');
 }
@@ -8021,7 +8015,7 @@ static bool ptx_word_equal(p8 address_to one, positive one_length,
                                    ptx_fold ? 1 : 0);
 }
 
-static bool ptx_list_has(text_blob address_to list, p8 address_to word,
+static bool ptx_list_has(byte_span address_to list, p8 address_to word,
                          positive length)
 {
         positive at = 0;
@@ -8654,8 +8648,8 @@ static b32 text_ptx()
         ptx_width = (flags & FILE_FLAG('t')) ? 100 : 72;
         ptx_gap = 3;
         ptx_failed = false;
-        ptx_ignore = (text_blob){null, 0};
-        ptx_only = (text_blob){null, 0};
+        ptx_ignore = (byte_span){null, 0};
+        ptx_only = (byte_span){null, 0};
         ptx_reference_width = 0;
         ptx_maximum_word = 0;
 
@@ -8725,7 +8719,7 @@ static b32 text_ptx()
         }
         else if (flags & FILE_FLAG('b'))
         {
-                text_blob breaks;
+                byte_span breaks;
 
                 if (!text_blob_read(file_option_value(address_of taking, 'b'),
                                    address_of breaks))
@@ -8877,12 +8871,6 @@ static b32 text_ptx()
 */
 typedef struct
 {
-        p8 address_to bytes;
-        positive length;
-} column_cell;
-
-typedef struct
-{
         positive first;
         positive count;
 } column_row;
@@ -8897,13 +8885,13 @@ enum
         COLUMN_ORDERED = 32,
 };
 
-static text_blob address_to column_files;
+static byte_span address_to column_files;
 static positive column_file_count;
 static column_row address_to column_rows;
 static positive column_row_count;
-static column_cell address_to column_cells;
+static byte_span address_to column_cells;
 static positive column_cell_count;
-static column_cell address_to column_names;
+static byte_span address_to column_names;
 static positive column_name_count;
 static positive column_count;
 static positive column_row_at;
@@ -8930,7 +8918,7 @@ static bool column_is_separator(p8 character)
 static positive column_limit;
 
 static positive column_fields(p8 address_to bytes, positive length,
-                              column_cell address_to into, positive room)
+                              byte_span address_to into, positive room)
 {
         positive made = 0;
         positive at = 0;
@@ -8958,7 +8946,7 @@ static positive column_fields(p8 address_to bytes, positive length,
 
                 if (into && made < room)
                         into[made] =
-                            (column_cell){bytes + start, at - start};
+                            (byte_span){bytes + start, at - start};
 
                 made++;
 
@@ -8998,7 +8986,7 @@ static fn column_accept_record(p8 address_to bytes, positive length,
                         column_rows[column_row_at] =
                             (column_row){column_cell_at, 1};
                         column_cells[column_cell_at] =
-                            (column_cell){bytes, length};
+                            (byte_span){bytes, length};
                 }
 
                 column_row_at++;
@@ -9040,7 +9028,7 @@ static fn column_scan(bool fill)
 
         for (positive file = 0; file < column_file_count; file++)
         {
-                text_blob address_to blob = column_files + file;
+                byte_span address_to blob = column_files + file;
                 positive at = 0;
 
                 while (at < blob->length)
@@ -9076,7 +9064,7 @@ static positive column_names_from_option(string_address names, bool fill,
                         at++;
 
                 if (fill && count < room)
-                        column_names[count] = (column_cell){
+                        column_names[count] = (byte_span){
                             (p8 address_to)names + start, at - start};
 
                 count++;
@@ -9111,7 +9099,7 @@ static bool column_span_unsigned(p8 address_to bytes, positive length,
         return true;
 }
 
-static bool column_name_equal(column_cell name, p8 address_to bytes,
+static bool column_name_equal(byte_span name, p8 address_to bytes,
                               positive length)
 {
         return name.length == length &&
@@ -9271,51 +9259,16 @@ static bool column_make_order(string_address list,
         return true;
 }
 
-static column_cell column_row_cell(column_row address_to row, positive col)
+static byte_span column_row_cell(column_row address_to row, positive col)
 {
         if (col >= row->count)
-                return (column_cell){null, 0};
+                return (byte_span){null, 0};
 
         return column_cells[row->first + col];
 }
 
-/*
-        util-linux writes a byte that is not a character of the C locale as
-        \xHH, and lays the table out by those four columns rather than the
-        one byte, so a cell is measured and written through the same two
-        routines everywhere below.
-*/
-static positive column_cell_width(column_cell cell)
-{
-        positive width = cell.length;
-
-        // A byte past ASCII is written as four characters; every other byte,
-        // a tab included, takes the one column util-linux gives it.
-        for (positive at = 0; at < cell.length; at++)
-                if (cell.bytes[at] >= 0x80)
-                        width += 3;
-
-        return width;
-}
-
-static fn column_put_cell(column_cell cell)
-{
-        positive from = 0;
-
-        for (positive at = 0; at < cell.length; at++)
-        {
-                if (cell.bytes[at] < 0x80)
-                        continue;
-
-                text_put(cell.bytes + from, at - from);
-                text_put_string("\\x");
-                text_put_character("0123456789abcdef"[cell.bytes[at] >> 4]);
-                text_put_character("0123456789abcdef"[cell.bytes[at] & 15]);
-                from = at + 1;
-        }
-
-        text_put(cell.bytes + from, cell.length - from);
-}
+#define column_cell_width(cell) memory_hex_width((cell), HEX_HIGH)
+#define column_put_cell(cell) writer_hex_span(text_put, (cell), HEX_HIGH, positive_max)
 
 static fn column_plain(bool fill_rows, bool spaces, positive spacing,
                        positive width)
@@ -9370,7 +9323,7 @@ static fn column_plain(bool fill_rows, bool spaces, positive spacing,
                         if (entry >= column_row_count)
                                 break;
 
-                        column_cell cell =
+                        byte_span cell =
                             column_cells[column_rows[entry].first];
                         column_put_cell(cell);
                         output_column += column_cell_width(cell);
@@ -9404,47 +9357,19 @@ static fn column_plain(bool fill_rows, bool spaces, positive spacing,
         }
 }
 
-static fn column_json_string(column_cell value, bool lower)
+static inline INLINE table_cell column_table_cell(address_any context, positive row,
+                                     positive col, p8 address_to scratch)
 {
-        static const p8 short_escape[32] = {
-            ['\b'] = 'b', ['\f'] = 'f', ['\n'] = 'n',
-            ['\r'] = 'r', ['\t'] = 't',
-        };
-        text_put_character('"');
-        positive at = 0;
-        while (at < value.length)
-        {
-                positive plain = memory_escape_index(value.bytes + at,
-                    lower ? min(value.length - at, 256) : value.length - at, 64);
-                if (plain)
-                {
-                        if (lower)
-                        {
-                                p8 lowered[256];
-                                plain = min(plain, sizeof(lowered));
-                                memory_copy(lowered, value.bytes + at, plain);
-                                memory_to_lower_ascii(lowered, plain);
-                                text_put(lowered, plain);
-                        }
-                        else
-                                text_put(value.bytes + at, plain);
-                        at += plain;
-                        continue;
-                }
-                p8 character = value.bytes[at++], escaped[6];
-                positive length;
-                if (character < 32 && short_escape[character])
-                {
-                        escaped[0] = '\\';
-                        escaped[1] = short_escape[character];
-                        length = 2;
-                }
-                else
-                        length = memory_into_escaped(escaped, &character, 1,
-                                                      sizeof(escaped), 64).y;
-                text_put(escaped, length);
-        }
-        text_put_character('"');
+        (void)scratch;
+        p8 address_to properties = context;
+        p8 property = properties ? properties[col] : 0;
+        byte_span text = row == TABLE_HEADING || row == TABLE_NAME
+            ? (col < column_name_count ? column_names[col] : (byte_span){null, 0})
+            : column_row_cell(column_rows + row, col);
+        return (table_cell){.text = text, .escape = HEX_HIGH, .json = TABLE_NULL_STRING,
+            .flags = TABLE_OVERFLOW | (property & COLUMN_RIGHT ? TABLE_RIGHT : 0) |
+                (property & COLUMN_WRAP ? TABLE_WRAP : 0) |
+                (property & COLUMN_TRUNCATE ? TABLE_TRUNCATE : 0)};
 }
 
 static bool column_json(string_address name, positive address_to order,
@@ -9458,158 +9383,10 @@ static bool column_json(string_address name, positive address_to order,
                     !column_names[order[at]].length)
                         return false;
 
-        text_put_string("{\n   ");
-        column_json_string((column_cell){(p8 address_to)name,
-                                         string_length(name)}, false);
-        text_put_string(": [\n");
-
-        for (positive row_at = 0; row_at < column_row_count; row_at++)
-        {
-                column_row address_to row = column_rows + row_at;
-
-                if (!row_at)
-                        text_put_string("      {\n");
-
-                for (positive shown = 0; shown < visible; shown++)
-                {
-                        positive col = order[shown];
-                        column_cell cell = column_row_cell(row, col);
-                        text_put_string("         ");
-                        column_json_string(column_names[col], true);
-                        text_put_string(": ");
-
-                        if (!cell.length)
-                                text_put_string("null");
-                        else
-                                column_json_string(cell, false);
-
-                        text_put_string(shown + 1 < visible ? ",\n" : "\n");
-                }
-
-                text_put_string(row_at + 1 < column_row_count
-                                    ? "      },{\n"
-                                    : "      }\n");
-        }
-
-        text_put_string("   ]\n}\n");
+        table_view view = {.output = text_put, .cell = column_table_cell,
+            .order = order, .order_size = sizeof(order[0]), .count = visible};
+        table_json(&view, (byte_span){name, string_length(name)}, column_row_count, true);
         return true;
-}
-
-static positive column_cell_part(column_cell cell, p8 property,
-                                 positive width, positive part,
-                                 column_cell address_to answer)
-{
-        if (property & COLUMN_TRUNCATE)
-        {
-                if (part)
-                        return 0;
-
-                answer->bytes = cell.bytes;
-                answer->length = min(cell.length, width);
-                return answer->length;
-        }
-
-        if (property & COLUMN_WRAP)
-        {
-                positive start = part * width;
-
-                if (start >= cell.length)
-                        return 0;
-
-                answer->bytes = cell.bytes + start;
-                answer->length = min(width, cell.length - start);
-                return answer->length;
-        }
-
-        if (part)
-                return 0;
-
-        address_to answer = cell;
-        return cell.length;
-}
-
-static fn column_table_line(column_row address_to row, bool header,
-                            positive address_to order, positive visible,
-                            p8 address_to properties,
-                            positive address_to widths,
-                            string_address separator)
-{
-        positive parts = 1;
-
-        for (positive shown = 0; shown < visible; shown++)
-        {
-                positive col = order[shown];
-                column_cell cell = header
-                                       ? (col < column_name_count
-                                              ? column_names[col]
-                                              : (column_cell){null, 0})
-                                       : column_row_cell(row, col);
-
-                if ((properties[col] & COLUMN_WRAP) && widths[col] &&
-                    cell.length)
-                {
-                        positive needed =
-                            (cell.length + widths[col] - 1) / widths[col];
-                        if (needed > parts)
-                                parts = needed;
-                }
-        }
-
-        for (positive part = 0; part < parts; part++)
-        {
-                for (positive shown = 0; shown < visible; shown++)
-                {
-                        positive col = order[shown];
-                        column_cell whole = header
-                                                ? (col < column_name_count
-                                                       ? column_names[col]
-                                                       : (column_cell){null, 0})
-                                                : column_row_cell(row, col);
-                        column_cell cell = {null, 0};
-                        positive length = column_cell_part(
-                            whole, properties[col], widths[col], part,
-                            address_of cell);
-
-                        if (length)
-                                length = column_cell_width(cell);
-
-                        positive pad = length < widths[col]
-                                           ? widths[col] - length
-                                           : 0;
-
-                        if ((properties[col] & COLUMN_RIGHT) &&
-                            (length || shown + 1 < visible))
-                                text_tab_repeat_character(' ', pad);
-
-                        column_put_cell(cell);
-
-                        if (!(properties[col] & COLUMN_RIGHT) &&
-                            shown + 1 < visible)
-                                text_tab_repeat_character(' ', pad);
-
-                        if (shown + 1 < visible)
-                        {
-                                // A no-extreme field may remain wider than
-                                // its slot. Continue at the following column
-                                // on a fresh physical line, keeping custom
-                                // separators in the blank prefix as well.
-                                if (length > widths[col] &&
-                                    !(properties[col] & COLUMN_RIGHT))
-                                {
-                                        text_put_character('\n');
-                                        for (positive prior = 0; prior < shown; prior++)
-                                        {
-                                                text_tab_repeat_character(' ', widths[order[prior]]);
-                                                text_put_string(separator);
-                                        }
-                                        text_tab_repeat_character(' ', widths[col]);
-                                }
-                                text_put_string(separator);
-                        }
-                }
-
-                text_put_character('\n');
-        }
 }
 
 static fn column_table_output(bool noheadings, positive width,
@@ -9629,29 +9406,11 @@ static fn column_table_output(bool noheadings, positive width,
         if (column_count && (!widths || !second))
                 return;
 
-        memory_fill(widths, 0, column_count * sizeof(positive));
-        memory_fill(second, 0, column_count * sizeof(positive));
-
-        if (!noheadings)
-                for (positive col = 0; col < column_name_count; col++)
-                        widths[col] = column_cell_width(column_names[col]);
-
-        for (positive row_at = 0; row_at < column_row_count; row_at++)
-                for (positive col = 0;
-                     col < column_rows[row_at].count && col < column_count;
-                     col++)
-                {
-                        positive length = column_cell_width(
-                            column_cells[column_rows[row_at].first + col]);
-
-                        if (length > widths[col])
-                        {
-                                second[col] = widths[col];
-                                widths[col] = length;
-                        }
-                        else if (length > second[col])
-                                second[col] = length;
-                }
+        table_view view = {.output = text_put, .context = properties, .cell = column_table_cell,
+            .order = order, .order_size = sizeof(order[0]), .count = visible,
+            .separator = separator, .multipart = true};
+        table_measure(&view, column_row_count, !noheadings, false, true,
+                      column_count, widths, second);
 
         if (visible && width)
         {
@@ -9703,12 +9462,10 @@ static fn column_table_output(bool noheadings, positive width,
         }
 
         if (column_name_count && !noheadings)
-                column_table_line(null, true, order, visible, properties,
-                                  widths, separator);
+                table_row(&view, TABLE_HEADING, widths);
 
         for (positive row = 0; row < column_row_count; row++)
-                column_table_line(column_rows + row, false, order, visible,
-                                  properties, widths, separator);
+                table_row(&view, row, widths);
 }
 
 static const argument_option column_options[] = {
@@ -9837,8 +9594,8 @@ static b32 text_column()
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "option --table-columns or --table-column required for --json"));
 
         column_file_count = text_input_count();
-        column_files = (text_blob address_to)utility_arena_take(
-            column_file_count * sizeof(text_blob));
+        column_files = (byte_span address_to)utility_arena_take(
+            column_file_count * sizeof(byte_span));
 
         if (!column_files)
                 return text_done(1);
@@ -9852,7 +9609,7 @@ static b32 text_column()
                 if (name && string_equals(name, "-"))
                         return text_done(string_diagnostic(&text_diagnostic, 1, name, "No such file or directory"));
 
-                column_files[file] = (text_blob){null, 0};
+                column_files[file] = (byte_span){null, 0};
                 text_blob_read(name, column_files + file);
         }
 
@@ -9877,17 +9634,17 @@ static b32 text_column()
 
         column_rows = (column_row address_to)utility_arena_take(
             column_row_count * sizeof(column_row));
-        column_cells = (column_cell address_to)utility_arena_take(
-            column_cell_count * sizeof(column_cell));
-        column_names = (column_cell address_to)utility_arena_take(
-            column_count * sizeof(column_cell));
+        column_cells = (byte_span address_to)utility_arena_take(
+            column_cell_count * sizeof(byte_span));
+        column_names = (byte_span address_to)utility_arena_take(
+            column_count * sizeof(byte_span));
 
         if ((column_row_count && !column_rows) ||
             (column_cell_count && !column_cells) ||
             (column_count && !column_names))
                 return text_done(1);
 
-        memory_fill(column_names, 0, column_count * sizeof(column_cell));
+        memory_fill(column_names, 0, column_count * sizeof(byte_span));
 
         if (flags & FILE_FLAG('N'))
                 column_names_from_option(
@@ -10596,7 +10353,7 @@ static fn terminal_colrm_byte(terminal_state address_to state, p8 character)
 
 /* The sole scanner for the family.  ESC consumes its command byte here, so a
    refill boundary cannot make any renderer interpret it twice. */
-static fn terminal_scan(text_blob address_to blob,
+static fn terminal_scan(byte_span address_to blob,
                         terminal_state address_to state, bool fill)
 {
         positive at = 0;
@@ -11081,7 +10838,7 @@ static b32 text_col()
                                                             'l'), "bad -l argument"));
         }
 
-        text_blob input = {null, 0};
+        byte_span input = {null, 0};
         if (!text_blob_read(null, address_of input))
                 return text_done(1);
 
@@ -11155,7 +10912,7 @@ static b32 text_colcrt()
         for (b32 file = 0; file < inputs; file++)
         {
                 utility_arena.used = 0;
-                text_blob input = {null, 0};
+                byte_span input = {null, 0};
 
                 if (!text_blob_read(text_file_name(file), address_of input))
                         return text_done(1);
@@ -11197,7 +10954,7 @@ static b32 text_colrm()
                                   address_of last))
                 return text_done(string_diagnostic(&text_diagnostic, 1, program_argument(2), "invalid second argument"));
 
-        text_blob input = {null, 0};
+        byte_span input = {null, 0};
         if (!text_blob_read(null, address_of input))
                 return text_done(1);
 
@@ -11279,7 +11036,7 @@ static b32 text_ul()
         for (b32 file = 0; file < inputs && !state.ul_failed; file++)
         {
                 utility_arena.used = 0;
-                text_blob input = {null, 0};
+                byte_span input = {null, 0};
 
                 if (text_file_name(file) && string_equals(text_file_name(file), "-"))
                         return text_done(string_diagnostic(&text_diagnostic, 1, "-", "cannot open: No such file or directory"));

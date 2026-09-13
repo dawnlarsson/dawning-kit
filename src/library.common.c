@@ -1746,26 +1746,330 @@ static fn writer_terminal_quoted_name(writer output, string_address value)
         writer_terminal_quoted_name_span(output, value, string_length(value));
 }
 
-/* JSON byte-string policy shared by UUID output and util-linux tables.
-   Controls retain the shared \u00xx spelling; quote/backslash use short
-   escapes. Printable spans cross the writer once, not once per byte. */
-static fn writer_json_string(writer output, string_address value)
+typedef struct { p8 address_to bytes; positive length; } byte_span;
+
+/* JSON keeps bounded byte fields intact; dialects choose short controls and key case. */
+static fn writer_json_span(writer output, byte_span value, bool lower, bool short_escapes)
 {
-        positive length = string_length(value);
-        if (length <= 20)
+        if (!lower && !short_escapes)
         {
-                // A short cell, including both quotes, crosses the writer once.
-                p8 escaped[122];
-                escaped[0] = '"';
-                positive2 chunk = memory_into_escaped(escaped + 1, value, length,
-                                                       sizeof(escaped) - 2, 64);
-                escaped[chunk.y + 1] = '"';
-                output(escaped, chunk.y + 2);
+                if (value.length <= 20)
+                {
+                        p8 escaped[122]; escaped[0] = '"';
+                        positive2 chunk = memory_into_escaped(escaped + 1, value.bytes, value.length,
+                                                              sizeof(escaped) - 2, 64);
+                        escaped[chunk.y + 1] = '"'; output(escaped, chunk.y + 2);
+                }
+                else
+                {
+                        output("\"", 1);
+                        writer_hex_escaped(output, value.bytes, value.length, 64);
+                        output("\"", 1);
+                }
                 return;
         }
+        static const p8 short_escape[32] = {
+            ['\b'] = 'b', ['\f'] = 'f', ['\n'] = 'n',
+            ['\r'] = 'r', ['\t'] = 't',
+        };
         output("\"", 1);
-        writer_hex_escaped(output, value, length, 64);
+        positive at = 0;
+        while (at < value.length)
+        {
+                positive plain = memory_escape_index(value.bytes + at,
+                    lower ? min(value.length - at, 256) : value.length - at, 64);
+                if (plain)
+                {
+                        if (lower)
+                        {
+                                p8 lowered[256];
+                                plain = min(plain, sizeof(lowered));
+                                memory_copy(lowered, value.bytes + at, plain);
+                                memory_to_lower_ascii(lowered, plain);
+                                output(lowered, plain);
+                        }
+                        else
+                                output(value.bytes + at, plain);
+                        at += plain;
+                        continue;
+                }
+                p8 character = value.bytes[at++], escaped[6];
+                positive length;
+                if (short_escapes && character < 32 && short_escape[character])
+                {
+                        escaped[0] = '\\';
+                        escaped[1] = short_escape[character];
+                        length = 2;
+                }
+                else
+                        length = memory_into_escaped(escaped, &character, 1,
+                                                      sizeof(escaped), 64).y;
+                output(escaped, length);
+        }
         output("\"", 1);
+}
+
+static fn writer_json_string(writer output, string_address value)
+{
+        writer_json_span(output, (byte_span){value, string_length(value)}, false, false);
+}
+
+/* Borrowed byte fields keep their bounds through projection and presentation. */
+
+enum {
+        TABLE_RIGHT = 1, TABLE_LINES = 2, TABLE_WRAP = 4,
+        TABLE_TRUNCATE = 8, TABLE_OVERFLOW = 16, TABLE_WIDTH_BYTES = 32,
+        TABLE_CLIP_OUTPUT = 64,
+};
+enum { TABLE_STRING, TABLE_NUMBER, TABLE_BOOLEAN, TABLE_NULL_STRING, TABLE_NULL_NUMBER };
+enum { TABLE_HEADING = positive_max, TABLE_NAME = positive_max - 1 };
+
+typedef struct {
+        byte_span text;
+        positive minimum;
+        p8 flags, escape, json;
+} table_cell;
+
+typedef struct table_view {
+        writer output;
+        address_any context;
+        table_cell (*cell)(address_any context, positive row, positive column,
+                           p8 address_to scratch);
+        /* Composite fields can stream their pieces without a temporary string. */
+        positive (*write)(writer output, address_any context, positive row, positive column);
+        address_any order;
+        positive order_size, count;
+        string_address separator;
+        bool pad_last, pad_empty, pairs, multipart, fixed_widths;
+        positive pad_extra;
+} table_view;
+
+static inline INLINE positive table_index(const table_view address_to view, positive shown)
+{
+        if (!view->order) return shown;
+        return view->order_size == 1 ? ((p8 address_to)view->order)[shown]
+            : ((positive address_to)view->order)[shown];
+}
+
+static inline INLINE positive memory_hex_width(byte_span text, p8 policy)
+{
+        positive width = text.length, at = 0;
+        while (policy && at < text.length)
+        {
+                at += memory_escape_index(text.bytes + at, text.length - at, policy);
+                if (at < text.length) { width += 3; at++; }
+        }
+        return width;
+}
+
+/* The clipping bound is in emitted bytes, including a partial final escape. */
+static inline INLINE fn writer_hex_span(writer output, byte_span text, p8 policy, positive limit)
+{
+        if (!policy)
+        {
+                if (text.length && limit) output(text.bytes, min(text.length, limit));
+                return;
+        }
+        if (limit == positive_max)
+                return writer_hex_escaped(output, text.bytes, text.length, policy);
+        while (text.length && limit)
+        {
+                p8 escaped[256];
+                positive2 made = memory_into_escaped(escaped, text.bytes, text.length,
+                                                      sizeof(escaped), policy);
+                positive kept = min(made.y, limit);
+                if (kept) output(escaped, kept);
+                text.bytes += made.x; text.length -= made.x; limit -= kept;
+        }
+}
+
+static inline INLINE byte_span table_part(table_cell cell, positive width, positive part)
+{
+        byte_span text = cell.text;
+        if (cell.flags & TABLE_TRUNCATE)
+                text.length = part ? 0 : min(text.length, width);
+        else if (cell.flags & TABLE_WRAP)
+        {
+                positive from = part * width;
+                if (from < text.length)
+                {
+                        text.bytes += from;
+                        text.length = min(width, text.length - from);
+                }
+                else text.length = 0;
+        }
+        else if (cell.flags & TABLE_LINES)
+        {
+                while (part && text.length)
+                {
+                        positive length = memory_span_without_byte(text.bytes, '\n', text.length);
+                        positive step = min(length + 1, text.length);
+                        text.bytes += step; text.length -= step; part--;
+                }
+                text.length = part ? 0 : memory_span_without_byte(text.bytes, '\n', text.length);
+        }
+        else if (part) text.length = 0;
+        return text;
+}
+
+static inline INLINE positive table_cell_width(table_cell cell)
+{
+        if (cell.flags & TABLE_WIDTH_BYTES) return cell.text.length;
+        positive width = 0;
+        do {
+                positive length = cell.flags & TABLE_LINES
+                    ? memory_span_without_byte(cell.text.bytes, '\n', cell.text.length)
+                    : cell.text.length;
+                width = max(width, memory_hex_width((byte_span){cell.text.bytes, length}, cell.escape));
+                if (length == cell.text.length) break;
+                cell.text.bytes += length + 1; cell.text.length -= length + 1;
+        } while (true);
+        return width;
+}
+
+/* Widths are indexed by schema column, so repeated projections share a slot.
+   all_columns measures hidden fields too, as column(1)'s extreme policy does. */
+static inline INLINE fn table_measure(const table_view address_to view, positive rows,
+    bool headings, bool declared, bool free_widths, positive all_columns,
+    positive address_to widths, positive address_to second)
+{
+        positive fields = all_columns ? all_columns : view->count;
+        for (positive shown = 0; shown < fields; shown++)
+        {
+                positive col = all_columns ? shown : table_index(view, shown);
+                p8 scratch[96];
+                table_cell heading = view->cell(view->context, TABLE_HEADING, col, scratch);
+                widths[col] = max(declared ? heading.minimum : 0,
+                                  headings ? table_cell_width(heading) : 0);
+                if (second) second[col] = 0;
+        }
+        for (positive row = 0; row < rows; row++)
+                for (positive shown = 0; shown < fields; shown++)
+                {
+                        positive col = all_columns ? shown : table_index(view, shown);
+                        p8 scratch[96];
+                        table_cell cell = view->cell(view->context, row, col, scratch);
+                        positive length = table_cell_width(cell);
+                        if (length > widths[col])
+                        {
+                                if (second) second[col] = widths[col];
+                                widths[col] = length;
+                        }
+                        else if (second) second[col] = max(second[col], length);
+                        if (!headings && !free_widths && length)
+                                widths[col] = max(widths[col], cell.minimum);
+                }
+}
+
+static inline INLINE fn table_row(const table_view address_to view, positive row,
+                     positive address_to widths)
+{
+        positive parts = 1;
+        for (positive shown = 0; widths && view->multipart && shown < view->count; shown++)
+        {
+                positive col = table_index(view, shown);
+                p8 scratch[96];
+                table_cell cell = view->cell(view->context, row, col, scratch);
+                positive have = cell.flags & TABLE_LINES
+                    ? memory_count(cell.text.bytes, cell.text.length, '\n') + 1
+                    : (cell.flags & TABLE_WRAP) && widths[col] && cell.text.length
+                        ? (cell.text.length + widths[col] - 1) / widths[col] : 1;
+                parts = max(parts, have);
+        }
+        for (positive part = 0; part < parts; part++)
+        {
+                for (positive shown = 0; shown < view->count; shown++)
+                {
+                        positive col = table_index(view, shown);
+                        bool last = shown + 1 == view->count;
+                        p8 scratch[96], name_scratch[96];
+                        table_cell cell = view->cell(view->context, row, col, scratch);
+                        positive width = widths ? widths[col] : view->fixed_widths ? cell.minimum : 0;
+                        byte_span text = widths && (parts > 1 ||
+                            (cell.flags & (TABLE_WRAP | TABLE_TRUNCATE)))
+                            ? table_part(cell, width, part) : cell.text;
+                        positive length = widths || view->fixed_widths
+                            ? memory_hex_width(text, cell.escape) : 0;
+                        positive limit = (widths || view->fixed_widths) &&
+                            (cell.flags & TABLE_CLIP_OUTPUT) && !last
+                            ? width : positive_max;
+                        length = min(length, limit);
+                        positive pad = width > length ? width - length : 0;
+                        if (last && !view->pad_last &&
+                            (!(cell.flags & TABLE_RIGHT) || (!length && !view->pad_empty))) pad = 0;
+                        if (last && view->pad_last && row != TABLE_HEADING)
+                                pad = width + view->pad_extra > length ? width + view->pad_extra - length : 0;
+                        if (view->pairs)
+                        {
+                                table_cell name = view->cell(view->context, TABLE_HEADING, col, name_scratch);
+                                if (name.text.length) view->output(name.text.bytes, name.text.length);
+                                view->output("=\"", 2);
+                        }
+                        if (cell.flags & TABLE_RIGHT) writer_fill_bulk(view->output, pad, ' ');
+                        if (view->write) view->write(view->output, view->context, row, col);
+                        else writer_hex_span(view->output, text, cell.escape, limit);
+                        if (!(cell.flags & TABLE_RIGHT)) writer_fill_bulk(view->output, pad, ' ');
+                        if (view->pairs) view->output("\"", 1);
+                        if (!last)
+                        {
+                                if ((cell.flags & TABLE_OVERFLOW) && !(cell.flags & TABLE_RIGHT) && length > width)
+                                {
+                                        view->output("\n", 1);
+                                        for (positive prior = 0; prior <= shown; prior++)
+                                        {
+                                                if (prior) view->output(view->separator, string_length(view->separator));
+                                                writer_fill_bulk(view->output, widths[table_index(view, prior)], ' ');
+                                        }
+                                }
+                                view->output(view->separator, string_length(view->separator));
+                        }
+                }
+                view->output("\n", 1);
+        }
+}
+
+static fn table_json_value(writer output, byte_span value, p8 kind, bool short_escapes)
+{
+        if ((kind == TABLE_NULL_STRING || kind == TABLE_NULL_NUMBER) && !value.length) output("null", 4);
+        else if (kind == TABLE_BOOLEAN)
+        {
+                bool no = (value.length == 1 && value.bytes[0] == '0') ||
+                    (value.length == 2 && memory_is_2(value.bytes, 'n', 'o'));
+                output(no ? "false" : "true", no ? 5 : 4);
+        }
+        else if (kind == TABLE_NUMBER || kind == TABLE_NULL_NUMBER)
+        {
+                if (value.length) output(value.bytes, value.length);
+        }
+        else writer_json_span(output, value, false, short_escapes);
+}
+
+static inline INLINE fn table_json(const table_view address_to view, byte_span name,
+                      positive rows, bool column_style)
+{
+        view->output("{\n   ", 5);
+        writer_json_span(view->output, name, false, column_style);
+        view->output(": [", 3);
+        for (positive row = 0; row < rows; row++)
+        {
+                view->output(row ? ",{\n" : "\n      {\n", row ? 3 : 9);
+                for (positive field = 0; field < view->count; field++)
+                {
+                        positive col = table_index(view, field);
+                        p8 scratch[96];
+                        if (field) view->output(",\n", 2);
+                        view->output("         ", 9);
+                        table_cell key = view->cell(view->context, TABLE_NAME, col, scratch);
+                        writer_json_span(view->output, key.text, column_style, column_style);
+                        view->output(": ", 2);
+                        table_cell cell = view->cell(view->context, row, col, scratch);
+                        table_json_value(view->output, cell.text, cell.json, column_style);
+                }
+                if (view->count || !column_style) view->output("\n", 1);
+                view->output("      }", 7);
+        }
+        if (!rows) view->output("\n", 1);
+        view->output("\n   ]\n}\n", 8);
 }
 
 /* Select byte indexes from a comma-separated list of named records.  Every

@@ -12368,70 +12368,17 @@ static string_address ps_state(ps_detail address_to detail,
         return (string_address)detail->state;
 }
 
-/*
-        A field is drawn into a small buffer first, because a column is padded
-        by how wide what it drew turned out to be and the shared output buffer
-        can empty itself between one byte and the next.
-*/
-static p8 address_to ps_room;
-static positive ps_room_used;
-static positive ps_room_size;
+/* Only numeric/date fields use scratch; process strings remain borrowed. */
+static byte_store ps_field_buffer;
 static bool ps_failed;
-
-static HOT bool ps_room_add(positive extra)
-{
-        if (ps_room_used == positive_max ||
-            extra > positive_max - ps_room_used - 1)
-                goto failed;
-
-        positive wanted = ps_room_used + extra + 1;
-
-        if (wanted > ps_room_size &&
-            !utility_arena_grow(address_of ps_room, address_of ps_room_size,
-                             ps_room_used, wanted, 1, 64))
-                goto failed;
-
-        return true;
-
-failed:
-        ps_failed = true;
-        return false;
-}
-
-static fn ps_byte(p8 value)
-{
-        if (ps_room_add(1))
-                ps_room[ps_room_used++] = value;
-}
 
 static fn ps_bytes(address_any value, positive length)
 {
-        if (!ps_room_add(length))
-                return;
-
-        memory_copy_apart(ps_room + ps_room_used, value, length);
-        ps_room_used += length;
+        if (!byte_store_append_span(&ps_field_buffer, value, length)) ps_failed = true;
 }
-
-static fn ps_text(string_address value)
-{
-        if (value)
-                ps_bytes(value, string_length(value));
-}
-
-static fn ps_digits(positive value)
-{
-        if (ps_room_add(20))
-        {
-                ps_room_used += positive_into(ps_room + ps_room_used, value);
-                return;
-        }
-
-        p8 have[24];
-        positive length = positive_into(have, value);
-
-        ps_bytes(have, length);
-}
+#define ps_byte(value) do { p8 byte = (value); ps_bytes(&byte, 1); } while (0)
+#define ps_text(value) ps_bytes((value), string_length(value))
+#define ps_digits(value) positive_to_string(ps_bytes, (value))
 
 /*
         D-HH:MM:SS, the way procps spells both TIME and ELAPSED: the day
@@ -12503,38 +12450,29 @@ static fn ps_put_tty(positive tty)
         ps_digits(minor);
 }
 
-static fn ps_draw(struct snapshot_process address_to process,
-                  ps_detail address_to detail, positive field)
+static byte_span ps_draw(struct snapshot_process address_to process,
+                         ps_detail address_to detail, positive field,
+                         p8 address_to scratch)
 {
-        ps_room_used = 0;
+        ps_field_buffer = (byte_store){.bytes = scratch, .room = 96};
+        string_address value;
 
         switch (field)
         {
         case PS_FIELD_PID: ps_digits(process->pid); break;
         case PS_FIELD_PPID: ps_digits(process->ppid); break;
         case PS_FIELD_USER:
-                if (!detail->user &&
-                    !(detail->user = ps_name_of(process->uid)))
-                        ps_failed = true;
-                ps_text(detail->user);
-                break;
+        case PS_FIELD_RUSER:
+                if (!detail->user && !(detail->user = ps_name_of(process->uid))) ps_failed = true;
+                value = detail->user; goto borrowed;
         case PS_FIELD_UID: ps_digits(process->uid); break;
-        case PS_FIELD_COMM:
-                terminal_safe_field(ps_bytes, process->command,
-                                    string_length(process->command));
-                break;
+        case PS_FIELD_COMM: value = process->command; goto borrowed;
         case PS_FIELD_ARGS:
-                if (!detail->args &&
-                    !(detail->args = ps_arguments(process)))
-                        ps_failed = true;
-                if (detail->args)
-                        terminal_safe_field(ps_bytes, detail->args,
-                                            string_length(detail->args));
-                break;
+                if (!detail->args && !(detail->args = ps_arguments(process))) ps_failed = true;
+                value = detail->args; goto borrowed;
         case PS_FIELD_STAT:
-                ps_text(detail->state[0] ? (string_address)detail->state
-                                         : ps_state(detail, process));
-                break;
+                value = detail->state[0] ? (string_address)detail->state : ps_state(detail, process);
+                goto borrowed;
         case PS_FIELD_TIME:
                 ps_put_clock(system_saturating_add(process->user_ns,
                     process->system_ns) / SYSTEM_NANOSECONDS, true);
@@ -12634,12 +12572,6 @@ static fn ps_draw(struct snapshot_process address_to process,
                 ps_digits(tenths % 10);
                 break;
         }
-        case PS_FIELD_RUSER:
-                if (!detail->user &&
-                    !(detail->user = ps_name_of(process->uid)))
-                        ps_failed = true;
-                ps_text(detail->user);
-                break;
         case PS_FIELD_LSTART:
         case PS_FIELD_START:
         {
@@ -12696,28 +12628,13 @@ static fn ps_draw(struct snapshot_process address_to process,
         default: break;
         }
 
-        if (ps_room_add(0))
-                ps_room[ps_room_used] = end;
+        return (byte_span){scratch, ps_field_buffer.used};
+borrowed:
+        return (byte_span){value, value ? string_length(value) : 0};
 }
-
-static fn ps_column_out(struct snapshot_process address_to process,
-                        ps_detail address_to detail, positive field,
-                        positive width, bool last)
-{
-        ps_draw(process, detail, field);
-
-        // A column that something follows is exactly as wide as it says,
-        // which is where the reference cuts a long command line off.
-        if (!last && ps_room_used > width)
-                ps_room_used = width;
-
-        writer_field_bulk(text_put, ps_room, ps_room_used,
-                     !ps_columns[field].right && last ? ps_room_used : width,
-                     ' ', !ps_columns[field].right);
-
-        if (!last)
-                text_put_character(' ');
-}
+#undef ps_byte
+#undef ps_text
+#undef ps_digits
 
 typedef struct
 {
@@ -12726,24 +12643,27 @@ typedef struct
         bool custom_header;
 } ps_selected;
 
-/*
-        A column is as wide as its table entry or its heading, whichever is
-        longer, and the heading is the -o one when the caller wrote one. The
-        header line and every row under it have to agree on both, so both
-        ask here; a caller that wants only the width passes no header.
-*/
-static positive ps_column_width(ps_selected address_to selected,
-                                string_address address_to header)
+typedef struct {
+        struct snapshot_process address_to process;
+        ps_detail address_to detail;
+        ps_selected address_to fields;
+} ps_table_data;
+
+static inline INLINE table_cell ps_table_cell(address_any context, positive row,
+                                positive column, p8 address_to scratch)
 {
-        ps_column address_to column = ps_columns + selected->field;
-        string_address heading = selected->custom_header ? selected->header
-                                                         : column->header;
-        positive length = heading ? string_length(heading) : 0;
-
-        if (header)
-                address_to header = heading;
-
-        return length > column->width ? length : column->width;
+        ps_table_data address_to data = context;
+        ps_selected address_to selected = data->fields + column;
+        positive field = selected->field;
+        ps_column address_to definition = ps_columns + field;
+        string_address header = selected->custom_header ? selected->header : definition->header;
+        byte_span heading = {header, header ? string_length(header) : 0};
+        bool title = row == TABLE_HEADING;
+        return (table_cell){.text = title ? heading : ps_draw(data->process, data->detail, field, scratch),
+            .minimum = max(definition->width, heading.length),
+            .flags = (definition->right ? TABLE_RIGHT : 0) | (title ? 0 : TABLE_CLIP_OUTPUT),
+            .escape = !title && (field == PS_FIELD_COMM || field == PS_FIELD_ARGS)
+                ? HEX_CONTROL | HEX_TAB | HEX_HIGH : 0};
 }
 
 static bool ps_field_add(ps_selected address_to address_to fields,
@@ -13114,9 +13034,6 @@ static b32 tools_ps(void)
 
         text_begin("ps");
         utility_arena.used = 0;
-        ps_room = null;
-        ps_room_used = 0;
-        ps_room_size = 0;
         ps_failed = false;
 
         // Default formats change these three entries for display. Restore
@@ -13341,43 +13258,23 @@ static b32 tools_ps(void)
                 ps_own_uid = (positive)system_call(syscall(geteuid));
         }
 
+        ps_table_data table_data = {.fields = fields};
+        table_view table = {.output = text_put, .context = &table_data, .cell = ps_table_cell,
+            .count = field_count, .separator = " ", .pad_empty = true, .fixed_widths = true};
         bool show_headers = force_headers;
 
         if (!force_headers && !no_headers)
                 for (positive f = 0; f < field_count; f++)
                 {
-                        string_address header;
-
-                        ps_column_width(fields + f, address_of header);
-
-                        if (header && string_get(header))
+                        p8 scratch[96];
+                        if (ps_table_cell(&table_data, TABLE_HEADING, f, scratch).text.length)
                         {
                                 show_headers = true;
                                 break;
                         }
                 }
 
-        if (show_headers)
-        {
-                for (positive f = 0; f < field_count; f++)
-                {
-                        positive field = fields[f].field;
-                        bool last = f + 1 == field_count;
-                        string_address header;
-                        positive width = ps_column_width(fields + f,
-                                                         address_of header);
-
-                        string_to_field_bulk(text_put,
-                                        header ? header : (string_address)"",
-                                        !ps_columns[field].right && last ? 0 : width,
-                                        ' ', !ps_columns[field].right);
-
-                        if (!last)
-                                text_put_character(' ');
-                }
-
-                text_put_character('\n');
-        }
+        if (show_headers) table_row(&table, TABLE_HEADING, null);
 
         bool matched = false;
 
@@ -13398,13 +13295,8 @@ static b32 tools_ps(void)
                                 matched = true;
                                 ps_detail detail = {0};
 
-                                for (positive f = 0; f < field_count; f++)
-                                        ps_column_out(process, address_of detail,
-                                                      fields[f].field,
-                                                      ps_column_width(fields + f, null),
-                                                      f + 1 == field_count);
-
-                                text_put_character('\n');
+                                table_data.process = process; table_data.detail = &detail;
+                                table_row(&table, 0, null);
                                 break;
                         }
 
@@ -13450,16 +13342,9 @@ static b32 tools_ps(void)
                 if (sorted)
                         repeats = 1;
 
+                table_data.process = process; table_data.detail = &detail;
                 for (positive repeat = 0; repeat < repeats; repeat++)
-                {
-                        for (positive f = 0; f < field_count; f++)
-                                ps_column_out(process, address_of detail,
-                                              fields[f].field,
-                                              ps_column_width(fields + f, null),
-                                              f + 1 == field_count);
-
-                        text_put_character('\n');
-                }
+                        table_row(&table, 0, null);
         }
 
         // procps fails when no process was listed, whatever selected them.
@@ -13883,9 +13768,9 @@ static fn tools_dmesg_emit(tools_dmesg_state address_to state,
                                    (positive)(record->microseconds % 1000000),
                                    6, '0', 0);
                 text_put_string(",\n         \"msg\": ");
-                column_json_string((column_cell){record->message,
+                writer_json_span(text_put, (byte_span){record->message,
                                                   record->message_length},
-                                   false);
+                                   false, true);
                 text_put_string("\n      }");
                 state->rows++;
                 return;
@@ -14361,10 +14246,10 @@ typedef struct
 static bool tools_fincore_bytes;
 
 static ul_table_column tools_fincore_columns[] = {
-    {(string_address)"res", (string_address)"RES", 0, true, UL_TABLE_STRING},
-    {(string_address)"pages", (string_address)"PAGES", 0, true, UL_TABLE_NUMBER},
-    {(string_address)"size", (string_address)"SIZE", 0, true, UL_TABLE_STRING},
-    {(string_address)"file", (string_address)"FILE", 0, false, UL_TABLE_STRING},
+    {(string_address)"res", (string_address)"RES", 0, true, TABLE_STRING},
+    {(string_address)"pages", (string_address)"PAGES", 0, true, TABLE_NUMBER},
+    {(string_address)"size", (string_address)"SIZE", 0, true, TABLE_STRING},
+    {(string_address)"file", (string_address)"FILE", 0, false, TABLE_STRING},
 };
 
 static const argument_option tools_fincore_options[] = {
@@ -14628,9 +14513,9 @@ static b32 tools_fincore_main()
         tools_fincore_columns[TOOLS_FINCORE_RES].width =
             tools_fincore_bytes ? 5 : 0;
         tools_fincore_columns[TOOLS_FINCORE_RES].json = tools_fincore_bytes
-            ? UL_TABLE_NUMBER : UL_TABLE_STRING;
+            ? TABLE_NUMBER : TABLE_STRING;
         tools_fincore_columns[TOOLS_FINCORE_SIZE].json = tools_fincore_bytes
-            ? UL_TABLE_NUMBER : UL_TABLE_STRING;
+            ? TABLE_NUMBER : TABLE_STRING;
 
         ul_table(taking.flags & FILE_FLAG('J') ? "fincore" : null,
                  rows, count, tools_fincore_columns, columns, column_count,

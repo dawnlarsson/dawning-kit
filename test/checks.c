@@ -23796,9 +23796,9 @@ static string_address table_field(address_any row, p8 column,
 }
 
 static const ul_table_column table_columns[] = {
-    {"value", "VALUE", 0, false, UL_TABLE_STRING, true},
-    {"other", "OTHER", 0, false, UL_TABLE_STRING, true},
-    {"third", "THIRD", 0, false, UL_TABLE_STRING, true}
+    {"value", "VALUE", 0, false, TABLE_STRING, true},
+    {"other", "OTHER", 0, false, TABLE_STRING, true},
+    {"third", "THIRD", 0, false, TABLE_STRING, true}
 };
 static p8 table_selected[] = {0};
 
@@ -23996,6 +23996,36 @@ static fn name_list_checks(void)
               !storage_line_next(address_of record_at, record_limit));
 }
 
+static table_cell table_scratch_field(address_any context, positive row,
+                                       positive column, p8 address_to scratch)
+{
+        (void)context;
+        string_address text = row == TABLE_HEADING ? "KEY" : column ? "Z" : "a\t";
+        positive length = string_length(text);
+        memory_copy(scratch, text, length);
+        return (table_cell){.text = {scratch, length}, .minimum = column ? 2 : 3,
+            .flags = TABLE_CLIP_OUTPUT | (column ? TABLE_RIGHT : 0),
+            .escape = HEX_CONTROL | HEX_TAB};
+}
+
+static fn table_layout_checks(void)
+{
+        table_view view = {.output = table_capture, .cell = table_scratch_field,
+            .count = 2, .separator = " ", .fixed_widths = true, .pad_empty = true};
+        table_reset();
+        table_row(&view, 0, null);
+        check("borrowed fields clip escaped output before the next column",
+              table_used == 7 && !memory_compare(table_output, "a\\x  Z\n", 7));
+        view.fixed_widths = false;
+        view.pairs = true;
+        table_reset();
+        table_row(&view, 0, null);
+        string_address expected = "KEY=\"a\\x09\" KEY=\"Z\"\n";
+        check("pair headings do not overwrite scratch-backed values",
+              table_used == string_length(expected) &&
+              !memory_compare(table_output, expected, table_used));
+}
+
 static fn table_checks(void)
 {
         p8 bytes[1030], expected[8192];
@@ -24018,24 +24048,19 @@ static fn table_checks(void)
                 }
                 bytes[size] = 0;
                 longest = max(longest, width);
-                check("table multiline width", ul_table_safe_width(bytes, true) == longest);
-                check("table single-line width", ul_table_safe_width(bytes, false) == single_width);
-#ifdef TABLE_LEGACY_LINE_COUNT
-                // For the paired harness built against the pre-fold snapshot.
-                check("table newline count", ul_table_line_count(bytes, true) == lines);
-#else
-                check("table newline count", ul_table_line_count(bytes) == lines);
-#endif
+                check("table multiline width", (table_cell_width((table_cell){.text = {bytes, size}, .escape = HEX_CONTROL | HEX_TAB, .flags = TABLE_LINES})) == longest);
+                check("table single-line width", (memory_hex_width((byte_span){bytes, size}, HEX_CONTROL | HEX_TAB)) == single_width);
+                check("table newline count", memory_count(bytes, size, '\n') + 1 == lines);
                 positive start = 0;
                 for (positive line = 0; line <= lines; line++)
                 {
-                        positive stop = start, got_length;
+                        positive stop = start;
                         while (stop < size && bytes[stop] != '\n')
                                 stop++;
-                        string_address got = ul_table_line(bytes, line, address_of got_length);
+                        byte_span got = table_part((table_cell){.text = {bytes, size}, .flags = TABLE_LINES}, 0, line);
                         positive wanted = line < lines ? stop - start : 0;
-                        check("table indexed line", got_length == wanted &&
-                              !memory_compare(got, bytes + start, wanted));
+                        check("table indexed line", got.length == wanted &&
+                              !memory_compare(got.bytes, bytes + start, wanted));
                         start = stop < size ? stop + 1 : size;
                 }
         }
@@ -24055,10 +24080,20 @@ static fn table_checks(void)
                         expected[used++] = byte;
         }
         table_reset();
-        ul_lsns_safe_span(bytes, 256);
+        writer_hex_span(table_capture, (byte_span){bytes, 256}, HEX_CONTROL | HEX_TAB, positive_max);
         check("safe byte policy", !table_overflow && table_used == used &&
               !memory_compare(table_output, expected, used));
-        check("safe width agrees with output", ul_lsns_safe_span_length(bytes, 256) == used);
+        check("safe width agrees with output", (memory_hex_width((byte_span){bytes, 256}, HEX_CONTROL | HEX_TAB)) == used);
+
+        for (positive limit = 0; limit <= used + 1; limit++)
+        {
+                table_reset();
+                writer_hex_span(table_capture, (byte_span){bytes, 256},
+                                HEX_CONTROL | HEX_TAB, limit);
+                check("clipped escapes retain every output-byte boundary",
+                      table_used == min(used, limit) &&
+                      !memory_compare(table_output, expected, table_used));
+        }
 
         for (positive byte = 1; byte < 256; byte++)
                 bytes[byte - 1] = byte;
@@ -24222,10 +24257,10 @@ static fn table_projection_checks(void)
         };
         p8 selected[] = {0, 0};
         ul_table_column column = {"number", "N\tUM", 0, false,
-                                   UL_TABLE_STRING, .decimal = true};
+                                   TABLE_STRING, .decimal = true};
         for (positive i = 0; i < array_count(numbers); i++)
                 for (positive shape = 0; shape < 8; shape++)
-                        for (p8 json = UL_TABLE_STRING; json <= UL_TABLE_NULL_NUMBER; json++)
+                        for (p8 json = TABLE_STRING; json <= TABLE_NULL_NUMBER; json++)
                         {
                                 string_address value = numbers[i];
                                 column.width = (shape >> 1) * 10;
@@ -24488,8 +24523,8 @@ static fn table_printable_checks(void)
         p8 value[97], expected[8192], selected[] = {0, 1, 0};
         string_address row[] = {value, "one\ntwo\n"};
         ul_table_column columns[] = {
-            {"value", "VALUE", 0, false, UL_TABLE_STRING},
-            {"lines", "LINES", 0, false, UL_TABLE_STRING, .multiline=true},
+            {"value", "VALUE", 0, false, TABLE_STRING},
+            {"lines", "LINES", 0, false, TABLE_STRING, .multiline=true},
         };
         for (positive length = 0; length <= 95; length++)
         {
@@ -24738,6 +24773,7 @@ static fn table_tree_checks(void)
 
 b32 main(void)
 {
+        table_layout_checks();
         table_fixed_callers();
         table_tree_checks();
         name_list_checks();
@@ -43016,7 +43052,7 @@ static fn reuse_json(void)
                                 }
                                 wanted[used++] = '"';
                                 text_out_used = 0;
-                                column_json_string((column_cell){input, length}, lower);
+                                writer_json_span(text_put, (byte_span){input, length}, lower, true);
                                 check("column JSON exact short controls and lowercase chunks",
                                       text_out_used == used &&
                                       !memory_compare(text_out_buffer, wanted, used));
@@ -43024,7 +43060,7 @@ static fn reuse_json(void)
         static p8 long_name[32768];
         memory_fill(long_name, 'Q', sizeof(long_name));
         text_out_used = 0;
-        column_json_string((column_cell){long_name, sizeof(long_name)}, true);
+        writer_json_span(text_put, (byte_span){long_name, sizeof(long_name)}, true, true);
         check("long literal JSON key bounded lowercase chunks",
               text_out_used == sizeof(long_name) + 2 && text_out_buffer[0] == '"' &&
               text_out_buffer[text_out_used - 1] == '"' &&
@@ -43083,7 +43119,7 @@ static fn reuse_percent_b(void)
 }
 
 #ifdef REUSE_BENCHMARK
-static fn reuse_json_scalar(column_cell value, bool lower)
+static fn reuse_json_scalar(byte_span value, bool lower)
 {
         text_put_character('"');
         for (positive i = 0; i < value.length; i++)
@@ -43128,8 +43164,8 @@ static fn reuse_benchmark(void)
                                         for (positive i = 0; i < 8388608 / lengths[n]; i++)
                                         {
                                                 text_out_used = 0;
-                                                if (engine) column_json_string((column_cell){bytes, lengths[n]}, lower);
-                                                else reuse_json_scalar((column_cell){bytes, lengths[n]}, lower);
+                                                if (engine) writer_json_span(text_put, (byte_span){bytes, lengths[n]}, lower, true);
+                                                else reuse_json_scalar((byte_span){bytes, lengths[n]}, lower);
                                         }
                                         elapsed[engine] = get_cpu_time() - start;
                                 }
@@ -45047,7 +45083,7 @@ static fn storage_test_findmnt(void)
                                 if (byte & 1) selected = i % 2; // Duplicate computed cells.
                                 options.columns[i] = columns[selected];
                                 positive length = string_length(values[selected]);
-                                widths[i] = length + i % 4;
+                                widths[options.columns[i]] = length + options.columns[i] % 4;
                                 check("findmnt count/write projection agreement",
                                       storage_findmnt_cell(null, address_of mount,
                                           options.columns[i], address_of options) == length);
@@ -45064,13 +45100,18 @@ static fn storage_test_findmnt(void)
                                 if (options.pairs)
                                         wanted[used++] = '"';
                                 else if (!options.raw && i + 1 < options.count)
-                                        for (positive pad = length; pad < widths[i]; pad++)
+                                        for (positive pad = length; pad < widths[options.columns[i]]; pad++)
                                                 wanted[used++] = ' ';
                         }
                         wanted[used++] = '\n';
                         storage_test_output_used = 0;
-                        storage_findmnt_row(storage_test_capture, address_of mount,
-                                             address_of options, widths);
+                        storage_mount_table mounts = {.entry = &mount, .count = 1};
+                        storage_findmnt_view data = {&mounts, null, &options};
+                        table_view view = {.output = storage_test_capture, .context = &data,
+                            .cell = storage_findmnt_get, .write = storage_findmnt_field,
+                            .order = options.columns, .order_size = 1, .count = options.count,
+                            .separator = " ", .pairs = options.pairs};
+                        table_row(&view, 0, options.raw || options.pairs ? null : widths);
                         check("findmnt all byte policies and column ordering",
                               storage_test_output_used == used &&
                               !memory_compare(storage_test_output, wanted, used));
