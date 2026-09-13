@@ -92,6 +92,56 @@ static fn exec_pipe_status_publish(bipolar address_to values, positive count);
 static fn exec_coproc_child();
 static fn exec_coproc_reaped(bipolar pid);
 static fn exec_coproc_drop_finished();
+static bipolar address_to exec_here_children;
+static positive exec_here_children_room;
+static positive exec_here_children_count;
+static fn exec_here_children_reap(positive first, positive stop, bool wait);
+
+/* A wait builtin in a parent-run lastpipe stage may hear that an upstream
+   foreground stage exited.  That pid is not a background job, but its status
+   must survive until exec_pipe reaches the stage's ordinary waiter. Frames
+   nest because the lastpipe stage may itself run another pipeline. */
+typedef struct exec_foreground_frame
+{
+        struct exec_foreground_frame address_to previous;
+        bipolar address_to children;
+        positive address_to statuses;
+        positive count;
+} exec_foreground_frame;
+
+static exec_foreground_frame address_to exec_foreground_frames;
+
+static bool exec_foreground_child_changed(bipolar pid, positive status)
+{
+        exec_foreground_frame address_to frame = exec_foreground_frames;
+
+        while (frame)
+        {
+                for (positive at = 0; at < frame->count; at++)
+                        if (frame->children[at] == pid)
+                        {
+                                /* A stopped/continued notification is not the
+                                   final answer the ordinary pipeline wait
+                                   asks for. Consume that notification but
+                                   keep waiting for the eventual exit. */
+                                if ((status & 0xff) != 0x7f &&
+                                    (status & 0xffff) != 0xffff)
+                                        frame->statuses[at] = status;
+                                return true;
+                        }
+
+                frame = frame->previous;
+        }
+
+        return false;
+}
+
+/* A fork inherits the parent's bookkeeping but none of the children named by
+   it.  Keep the allocation for the short-lived child and forget every row. */
+static fn exec_here_children_forget()
+{
+        exec_here_children_count = 0;
+}
 
 fn exec_child_began()
 {
@@ -106,6 +156,7 @@ fn exec_child_began()
         //      it, so it would ask about processes that are not its own and
         //      close descriptors somebody else is still handing out.
         shell_substitutions_forget();
+        exec_here_children_forget();
         shell_background_child();
         exec_coproc_child();
 }
@@ -123,6 +174,7 @@ static fn exec_helper_began()
         exec_forked = true;
         trap_child_began();
         shell_substitutions_forget();
+        exec_here_children_forget();
         shell_background_child();
         exec_coproc_child();
 }
@@ -1119,6 +1171,9 @@ static fn job_child_changed(bipolar pid, positive status)
         bool continued = (status & 0xffff) == 0xffff;
         positive at;
 
+        if (exec_foreground_child_changed(pid, status))
+                return;
+
         for (at = 0; at < job_count; at++)
                 if (job_table[at].last == pid ||
                     (job_table[at].group > 0 &&
@@ -1186,7 +1241,13 @@ static fn job_child_changed(bipolar pid, positive status)
 }
 
 /*
-        Everything the kernel has to say, taken without waiting.
+        Everything the retained children have to say, taken without waiting.
+
+        Waiting for "any child" here can consume a foreground pipeline stage
+        whose pid still lives only in exec_pipe's local vector.  Its explicit
+        waiter then sees ECHILD and reports status 1 instead of the stage's
+        real answer.  The wait table is the complete set this asynchronous
+        sweep owns, so ask for those pids one by one.
 
         WUNTRACED and WCONTINUED are what make a stopped job visible to a
         shell that is not waiting for it: without them a control-Z in a
@@ -1194,17 +1255,29 @@ static fn job_child_changed(bipolar pid, positive status)
 */
 fn job_reap()
 {
-        positive status;
-        bipolar pid;
-
         job_child_news = false;
 
-        while ((pid = system_call_4(syscall(wait4), (positive)-1,
-                                    (positive)address_of status,
-                                    JOB_NO_HANG | JOB_UNTRACED |
-                                        JOB_CONTINUED,
-                                    0)) > 0)
-                job_child_changed(pid, status);
+        for (positive at = 0; at < shell_wait_count; at++)
+        {
+                shell_wait_entry address_to entry = shell_wait_table + at;
+                bipolar pid;
+
+                if (entry->flags & SHELL_WAIT_DONE)
+                        continue;
+
+                do
+                {
+                        positive status = 0;
+
+                        pid = system_wait4_retry(
+                            entry->pid, address_of status,
+                            JOB_NO_HANG | JOB_UNTRACED | JOB_CONTINUED, null);
+                        if (pid > 0)
+                                job_child_changed(pid, status);
+                }
+                while (pid > 0 &&
+                       !(entry->flags & SHELL_WAIT_DONE));
+        }
 }
 
 /*
@@ -1245,6 +1318,43 @@ fn job_notice()
                 return;
 
         job_reap();
+}
+
+/* Reap only the here-document writers owned by one redirect scope.  A broad
+   wait for any child can steal a foreground pipeline stage before its local
+   waiter records PIPESTATUS.  Stable removal also leaves writers created by
+   a nested function after `stop` outside the enclosing redirect's range. */
+static fn exec_here_children_reap(positive first, positive stop, bool wait)
+{
+        positive at = first;
+
+        if (stop > exec_here_children_count)
+                stop = exec_here_children_count;
+
+        while (at < stop)
+        {
+                positive raw = 0;
+                bipolar child = exec_here_children[at];
+                bipolar reaped = system_wait4_retry(
+                    child, address_of raw, wait ? 0 : JOB_NO_HANG, null);
+
+                if (!reaped)
+                {
+                        at++;
+                        continue;
+                }
+
+                /* A targeted wait can only answer this pid or an error such
+                   as ECHILD when the job-control sweep got there first. In
+                   either case this process has no further claim on the row. */
+                for (positive move = at + 1;
+                     move < exec_here_children_count; move++)
+                        exec_here_children[move - 1] =
+                            exec_here_children[move];
+
+                exec_here_children_count--;
+                stop--;
+        }
 }
 
 /* Whether any job is stopped, which is what an interactive shell asks before
@@ -5260,9 +5370,9 @@ static positive exec_fields_room;
 // The longest name a coprocess pair may be called, which is what the NAME_PID
 // buffer beside it is sized from.
 #define EXEC_COPROC_NAME 128
-// A save may not occupy a descriptor this command is going to redirect. An
-// open duplication source is occupied already; a closed one is detected later
-// by exec_saved_fd_is, so neither kind needs to force every save above it.
+// A save may not occupy a descriptor this command is going to redirect. A
+// shell-owned descriptor additionally excludes numeric duplication sources:
+// it may have been relocated onto one that was closed to the script.
 static PURE bool exec_redirect_target_is(parse_node address_to node, b32 fd)
 {
         for (b32 at = 0; at < node->redirect_count; at++)
@@ -5271,6 +5381,27 @@ static PURE bool exec_redirect_target_is(parse_node address_to node, b32 fd)
 
                 if (want->fd == fd ||
                     ((want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT) && fd == 2))
+                        return true;
+        }
+
+        return false;
+}
+
+/* A shell-owned descriptor must not make a later user duplication source
+   spring into existence. Literal numeric sources are visible before the
+   redirect walk; expanded sources are handled when their value is known. */
+static PURE bool exec_redirect_source_is(parse_node address_to node, b32 fd)
+{
+        for (b32 at = 0; at < node->redirect_count; at++)
+        {
+                parse_redirect address_to want =
+                    parse_redirects + node->redirect + at;
+                positive source;
+
+                if ((want->op == OP_GREATAND || want->op == OP_LESSAND) &&
+                    string_digits_checked_exact(want->text, 10,
+                                                address_of source) &&
+                    source == (positive)fd)
                         return true;
         }
 
@@ -5308,11 +5439,15 @@ static bipolar exec_save_duplicate(b32 fd, parse_node address_to node, b32 floor
         }
 }
 
-static COLD bipolar exec_script_duplicate(parse_node address_to node, b32 floor)
+/* Relocate a shell-owned descriptor beyond every target in this redirect and
+   every target an enclosing redirect will restore later. */
+static COLD bipolar exec_internal_duplicate(b32 internal,
+                                            parse_node address_to node,
+                                            b32 floor, b32 avoid)
 {
         for (;;)
         {
-                bipolar saved = exec_save_duplicate(exec_script_fd, node, floor);
+                bipolar saved = exec_save_duplicate(internal, node, floor);
                 if (saved < 0)
                         return saved;
 
@@ -5322,7 +5457,8 @@ static COLD bipolar exec_script_duplicate(parse_node address_to node, b32 floor)
                 b32 at = 0;
                 while (at < exec_save_count && exec_saves[at].fd != saved)
                         at++;
-                if (at == exec_save_count)
+                if (at == exec_save_count && saved != avoid &&
+                    (!node || !exec_redirect_source_is(node, (b32)saved)))
                         return saved;
 
                 system_close(saved);
@@ -5341,11 +5477,11 @@ static COLD bool exec_script_preserve(parse_node address_to node)
         if (ul_prlimit(0, 7, null, address_of limits) >= 0 && limits.soft <= 255)
                 floor = limits.soft > 3 ? (b32)limits.soft - 1 : 3;
 
-        moved = exec_script_duplicate(node, floor);
+        moved = exec_internal_duplicate(exec_script_fd, node, floor, -1);
         if (moved < 0 && floor > 10)
-                moved = exec_script_duplicate(node, 10);
+                moved = exec_internal_duplicate(exec_script_fd, node, 10, -1);
         if (moved < 0 && floor > 3)
-                moved = exec_script_duplicate(node, 3);
+                moved = exec_internal_duplicate(exec_script_fd, node, 3, -1);
         if (moved < 0)
                 return false;
 
@@ -5354,10 +5490,66 @@ static COLD bool exec_script_preserve(parse_node address_to node)
         return true;
 }
 
+/* Keep the Spark cache outside a user redirection.  If descriptor pressure
+   prevents relocation, relinquish the internal handle and let the cache open
+   it again later; a valid redirect must not fail because an optimization fd
+   could not move. */
+static COLD fn exec_spawn_device_preserve(parse_node address_to node)
+{
+        bipolar moved;
+
+        if (!shell_spawn_device_valid())
+        {
+                spawn_device = -1;
+                spawn_device_opened = false;
+                return;
+        }
+
+        moved = exec_internal_duplicate(spawn_device, node, 10, -1);
+        if (moved < 0)
+                moved = exec_internal_duplicate(spawn_device, node, 3, -1);
+
+        system_close(spawn_device);
+        spawn_device = moved < 0 ? -1 : (b32)moved;
+        spawn_device_opened = moved >= 0;
+}
+
+/* Relocation uses a descriptor that was closed from the script's point of
+   view. If a later expanded `>&N` names it, remove the cache or move the
+   indispensable script reader once more, leaving N closed as it began. */
+static COLD bool exec_internal_source_release(
+    b32 source, parse_node address_to node)
+{
+        if (source == spawn_device)
+        {
+                if (shell_spawn_device_valid())
+                        system_close(spawn_device);
+                spawn_device = -1;
+                spawn_device_opened = false;
+        }
+
+        if (source == exec_script_fd)
+        {
+                bipolar moved = exec_internal_duplicate(
+                    exec_script_fd, node, 3, source);
+
+                if (moved < 0)
+                        return false;
+
+                system_close(exec_script_fd);
+                exec_script_fd = (b32)moved;
+        }
+
+        return true;
+}
+
 static bool exec_save_fd(b32 fd, parse_node address_to node)
 {
         bipolar saved;
         bool closed = false;
+
+        if (fd == spawn_device)
+                exec_spawn_device_preserve(node);
 
         // Reuse the save allocator's complete target exclusion, so a command
         // claiming several descriptors cannot overwrite the relocated one
@@ -5647,6 +5839,17 @@ static bipolar exec_here_pipe(string_address body, positive length)
                 return ends[0];
         }
 
+        /* Reserve before forking.  Once the child exists, losing its pid
+           would leave no safe way to distinguish it from jobs and pipeline
+           stages in a later wait. */
+        if (!shell_array_room(exec_here_children, exec_here_children_room,
+                              exec_here_children_count + 1))
+        {
+                system_close(ends[0]);
+                system_close(ends[1]);
+                return -1;
+        }
+
         log_flush();
         child = shell_clone();
 
@@ -5665,6 +5868,8 @@ static bipolar exec_here_pipe(string_address body, positive length)
                 system_close(ends[0]);
                 return -1;
         }
+
+        exec_here_children[exec_here_children_count++] = child;
 
         return ends[0];
 }
@@ -6062,6 +6267,7 @@ static bool exec_redirect_apply(b32 index)
 
                         if (!string_digits_checked_exact(target, 10, address_of source) ||
                             source >= 0x7fffffff ||
+                            !exec_internal_source_release((b32)source, node) ||
                             exec_saved_fd_is((b32)source))
                         {
                                 exec_redirect_diagnostic_restore(redirect_mark);
@@ -9442,6 +9648,8 @@ static b32 exec_simple(b32 index)
         b32 kept_count = 0;
         b32 expanded_count = 0;
         b32 mark = exec_save_count;
+        positive here_first = exec_here_children_count;
+        positive here_stop = here_first;
         b32 count = 0;
         b32 first = 0;
         b32 declaration_from = -1;
@@ -9642,6 +9850,7 @@ static b32 exec_simple(b32 index)
         {
                 if (!exec_redirect_apply(index))
                 {
+                        here_stop = exec_here_children_count;
                         exec_redirect_restore(mark);
                         status = (exec_line_aborted() ? shell_status :
                                   exec_redirect_status ? exec_redirect_status
@@ -9656,6 +9865,7 @@ static b32 exec_simple(b32 index)
                         goto fail;
                 }
                 redirects_applied = true;
+                here_stop = exec_here_children_count;
         }
         for (at = 0; at < leading && !exec_line_aborted(); at++)
         {
@@ -9812,27 +10022,34 @@ static b32 exec_simple(b32 index)
         if (exec_trace_on())
                 exec_trace(count, first);
 
-        if (node->redirect_count && !redirects_applied &&
-            !exec_redirect_apply(index))
+        if (node->redirect_count && !redirects_applied)
         {
-                exec_redirect_restore(mark);
-                status = (exec_line_aborted() ? shell_status : exec_redirect_status ? exec_redirect_status : 1);
-                // An expansion error already selected its reader boundary.
-                // Do not turn a recoverable Bash substring failure into a
-                // POSIX special-builtin redirection failure that exits.
-                if (!exec_line_aborted())
+                if (!exec_redirect_apply(index))
                 {
-                        if (!special)
-                                special = exec_special_builtin(command);
-                        fatal = special;
+                        here_stop = exec_here_children_count;
+                        exec_redirect_restore(mark);
+                        status = (exec_line_aborted() ? shell_status : exec_redirect_status ? exec_redirect_status : 1);
+                        // An expansion error already selected its reader boundary.
+                        // Do not turn a recoverable Bash substring failure into a
+                        // POSIX special-builtin redirection failure that exits.
+                        if (!exec_line_aborted())
+                        {
+                                if (!special)
+                                        special = exec_special_builtin(command);
+                                fatal = special;
+                        }
+                        goto fail;
                 }
-                goto fail;
+
+                redirects_applied = true;
+                here_stop = exec_here_children_count;
         }
 
         if (first == count)
         {
                 if (node->redirect_count)
                         exec_redirect_restore(mark);
+                exec_here_children_reap(here_first, here_stop, true);
                 shell_status = shell_substitution_status;
                 shell_store_rewind(address_of exec_store, arena_mark);
                 return shell_status;
@@ -9896,6 +10113,7 @@ static b32 exec_simple(b32 index)
                 else
                         exec_redirect_restore(mark);
         }
+        exec_here_children_reap(here_first, here_stop, !bare_exec);
 
         /* lima bash waitchld's leftover children when a simple command
            finishes, which is when a coproc that died during `sleep` is
@@ -9918,6 +10136,7 @@ static b32 exec_simple(b32 index)
 fail:
         if (redirects_applied)
                 exec_redirect_restore(mark);
+        exec_here_children_reap(here_first, here_stop, true);
         if (kept && !exec_finish_prefixes(kept, kept_count) && !status)
                 status = shell_status = 2;
         exec_put_back(expanded_kept, expanded_count, true);
@@ -11920,10 +12139,27 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         b32 lastpipe_status = 0;
         b32 lastpipe_mark = exec_save_count;
         bipolar group = 0;
+        positive address_to early_status = null;
+        positive wanted = count;
 
-        if (count > positive_max / sizeof(children[0]) ||
-            !shell_array_room(children, children_room, count))
+        if (lastpipe)
+        {
+                if (count > positive_max / 2)
+                        return string_report(log_error, 2,
+                                             "No room for pipeline\n");
+                wanted += count;
+        }
+
+        if (wanted > positive_max / sizeof(children[0]) ||
+            !shell_array_room(children, children_room, wanted))
                 return string_report(log_error, 2, "No room for pipeline\n");
+
+        if (lastpipe)
+        {
+                early_status = (positive address_to)(children + count);
+                for (at = 0; at < count; at++)
+                        early_status[at] = positive_max;
+        }
 
         /* Save before making a pipe: when the shell arrived with fd 0 closed,
            pipe may legitimately allocate that number. Saving at the final
@@ -12010,7 +12246,15 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         upstream = -1;
                         shell_tail_command = false;
                         exec_lastpipe_live = true;
-                        lastpipe_status = exec_node(child);
+                        {
+                                exec_foreground_frame frame = {
+                                    exec_foreground_frames, children,
+                                    early_status, started};
+
+                                exec_foreground_frames = &frame;
+                                lastpipe_status = exec_node(child);
+                                exec_foreground_frames = frame.previous;
+                        }
                         exec_lastpipe_live = false;
                         shell_tail_command = tail;
                         lastpipe_ran = true;
@@ -12182,6 +12426,11 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         }
                         else
                                 got = wait_status_code(raw);
+                }
+                else if (early_status && early_status[at] != positive_max)
+                {
+                        raw = early_status[at];
+                        got = wait_status_code(raw);
                 }
                 else
                         got = exec_wait_status(children[at], 0, address_of raw);
@@ -12827,6 +13076,8 @@ static b32 exec_node_kind(b32 index)
         shell_mark expanded;
         b32 mark;
         b32 status;
+        positive here_first;
+        positive here_stop;
 
         if (!index)
                 return shell_status;
@@ -12927,16 +13178,21 @@ static b32 exec_node_kind(b32 index)
         // while a redirect target dies as soon as its descriptor is open.
         expanded = shell_store_mark(address_of expand_store);
         mark = exec_save_count;
+        here_first = exec_here_children_count;
+        here_stop = here_first;
         token_used = 0;
 
         if (node->redirect_count && !exec_redirect_apply(index))
         {
+                here_stop = exec_here_children_count;
                 exec_redirect_restore(mark);
+                exec_here_children_reap(here_first, here_stop, true);
                 exec_expansion_done(expanded, substitutions);
 
                 shell_status = (exec_line_aborted() ? shell_status : exec_redirect_status ? exec_redirect_status : 1);
                 return shell_status;
         }
+        here_stop = exec_here_children_count;
 
         exec_compound_depth++;
 
@@ -12973,6 +13229,7 @@ static b32 exec_node_kind(b32 index)
         exec_compound_depth--;
 
         exec_redirect_restore(mark);
+        exec_here_children_reap(here_first, here_stop, true);
 
         if (shell_bash_compat && exec_compound_depth == 0)
                 shell_child_death_flush();
@@ -13021,6 +13278,13 @@ fn exec_program(b32 root)
 
         // Reap without forgetting: wait still owes the status to the script.
         //
+        /* A bare `exec` can deliberately leave a here-document descriptor in
+           the shell. Its writer is the only kind that outlives the redirect
+           scope, and targeted polling keeps it bounded without consuming a
+           foreground pipeline's status. */
+        if (!exec_depth && exec_here_children_count)
+                exec_here_children_reap(0, exec_here_children_count, false);
+
         // Only when something was started in the background. This runs at the
         // top of every complete command, so a script that never forked one
         // was paying a wait4 per line to be told it has no children.
@@ -13042,6 +13306,9 @@ fn exec_program(b32 root)
                 exec_node(root);
 
         exec_depth--;
+
+        if (!exec_depth && exec_here_children_count)
+                exec_here_children_reap(0, exec_here_children_count, false);
 
         shell_store_rewind(address_of exec_store, kept_arena);
         exec_save_count = kept_saves;

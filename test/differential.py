@@ -18255,6 +18255,33 @@ def harness_edit_driver(argv):
         replace(shell, unusual, b"eight", original=True)
         passed += 2
 
+        # The destination identity is the one the editor read, held for the
+        # complete session.  Replacing it before save must not let a stale
+        # pathname overwrite somebody else's file.
+        raced = os.path.join(directory, "raced")
+        with open(raced, "wb") as handle:
+            handle.write(b"original\n")
+        master, slave, process, before = start(shell, raced)
+        replacement = os.path.join(directory, "replacement")
+        with open(replacement, "wb") as handle:
+            handle.write(b"other\n")
+        os.replace(replacement, raced)
+        finish(master, slave, process, b"\x01changed\x13\x11n", before)
+        if open(raced, "rb").read() != b"other\n":
+            fail("save overwrote a destination replaced during editing")
+        passed += 1
+
+        # A name that was absent at open remains a no-clobber save.  This is
+        # the complementary race: somebody creates it before Ctrl+S.
+        claimed = os.path.join(directory, "claimed")
+        master, slave, process, before = start(shell, claimed)
+        with open(claimed, "wb") as handle:
+            handle.write(b"claimed\n")
+        finish(master, slave, process, b"new\x13\x11n", before)
+        if open(claimed, "rb").read() != b"claimed\n":
+            fail("new-file save clobbered a concurrently claimed name")
+        passed += 1
+
         master, slave, process, before = start(shell, target)
         # No input follows this resize. SIGWINCH alone must wake ppoll and
         # cause a redraw, including the new 50-column status line.
@@ -19998,8 +20025,8 @@ def harness_floodlight(argv):
             (calls('system_open_at', '(', 'AT_FDCWD', ',', 'executable', ',',
                    'O_PATH', '|', 'O_CLOEXEC', ')'),
              'external policy opens the command spelling before naming it'),
-            (calls('system_read_link_at', '(', 'AT_FDCWD', ',',
-                   'descriptor_path', ',', 'image', '-', '>', 'identity', ',',
+            (calls('floodlight_descriptor_read_link', '(', 'image', '-', '>',
+                   'handle', ',', 'image', '-', '>', 'identity', ',',
                    'FILE_PATH_MAX', '-', '1', ')'),
              'the held descriptor supplies the physical absolute policy '
              'identity'),
@@ -20037,11 +20064,17 @@ def harness_floodlight(argv):
             (calls('got', '=', 'system_read_retry', '(', '(', 'positive', ')',
                    'handle', ',', 'report', '+', 'used'),
              'the reader retries interrupted reads and accumulates short reads'),
-            (calls('program_entry_identity', '?',
+            (calls('program_entry_identity', '|', '|',
+                   'floodlight_report_promised', '?',
                    'FLOODLIGHT_REPORT_REFUSED', ':',
                    'FLOODLIGHT_REPORT_BUILTIN'),
-             'a Spark-started shell fails closed when its promised policy '
-             'device is unavailable'),
+             'a Spark-started shell and a process that has seen the register '
+             'fail closed when the promised policy device is unavailable'),
+            (calls('floodlight_row_count', '=', '0', ';',
+                   'floodlight_report_state', '=',
+                   'FLOODLIGHT_REPORT_UNREAD', ';',
+                   'floodlight_load', '(', ')', ';'),
+             'each launch reloads one coherent policy snapshot'),
             (calls('floodlight_report_state', '=', 'state', ';'),
              'the reader publishes one explicit final report state'),
             (calls('if', '(', '!', 'floodlight_external_final', '(', 'path',
@@ -20068,7 +20101,8 @@ def harness_floodlight(argv):
             (calls('BPF_JUMP_EQUAL', ',', '1', ',', '0', ',', 'FLOODLIGHT_AUDIT_ARCH'),
              'the filter checks which architecture the call arrived on'),
             (calls('BPF_JUMP_BITS', ',', '(', 'p8', ')', '(', 'count', '+',
-                   '4', ')', ',', '0', ',', '0x40000000u'),
+                   'ioctl_count', '+', '3', ')', ',', '0', ',',
+                   '0x40000000u'),
              'the x86 filter refuses the x32 syscall table before comparing '
              'native syscall numbers'),
             (source_calls(utilities_tokens, 'shell_tool_as_called_final', '(', ')'),
@@ -20203,18 +20237,28 @@ def harness_floodlight(argv):
     #   it is meant to refuse and one it is not, and says what happened.
     #
     #   Linux only, because seccomp is. Skipped elsewhere rather than faked.
+    descriptor_source = shell[
+        shell.index('#define FLOODLIGHT_DESCRIPTOR_PATH_ROOM'):
+        shell.index('/* execveat with an empty path')]
     if platform.system() == 'Linux':
         builder = shell[shell.index('#define BPF_LOAD_WORD'):]
         builder = builder[:builder.index(
             '\nstatic b32 floodlight_launch_decide(')]
 
         confine = r"""
+#define _GNU_SOURCE
 #include <errno.h>
 #include <stdbool.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/vfs.h>
 #include <sys/syscall.h>
+#include <sys/sysmacros.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -20222,22 +20266,211 @@ typedef void fn;
 typedef unsigned char p8;
 typedef unsigned short p16;
 typedef unsigned int p32;
+typedef int b32;
 typedef unsigned long positive;
+typedef long bipolar;
+typedef char *string_address;
 #define address_to *
 #define address_of &
+#define null NULL
+#define end '\0'
+#define AT_FDCWD -100
+#ifndef AT_EMPTY_PATH
+#define AT_EMPTY_PATH 0x1000
+#endif
+#define FILE_READ O_RDONLY
+#define FILE_READ_WRITE O_RDWR
+#define MODE_FORMAT S_IFMT
+#define MODE_SOCKET S_IFSOCK
+#define MODE_CHARACTER S_IFCHR
+#define bipolar_max LONG_MAX
+#define ERROR_BAD_DESCRIPTOR EBADF
+#define ERROR_NO_ENTRY ENOENT
+#define ERROR_ACCESS EACCES
+#define STATX_MOUNT_ID STATX_MNT_ID
+#define syscall_name_capget SYS_capget
+#define syscall_name_capset SYS_capset
+#define syscall_name_ptrace SYS_ptrace
+#define syscall_name_process_vm_readv SYS_process_vm_readv
+#define syscall_name_process_vm_writev SYS_process_vm_writev
 #define syscall_name_prctl SYS_prctl
 #define syscall_name_seccomp SYS_seccomp
 #define syscall_name_execve SYS_execve
 #define syscall_name_execveat SYS_execveat
 #define syscall_name_socket SYS_socket
+#define syscall_name_socketpair SYS_socketpair
 #define syscall_name_connect SYS_connect
+#define syscall_name_bind SYS_bind
+#define syscall_name_listen SYS_listen
+#define syscall_name_accept SYS_accept
+#define syscall_name_accept4 SYS_accept4
+#define syscall_name_sendto SYS_sendto
+#define syscall_name_sendmsg SYS_sendmsg
+#define syscall_name_sendmmsg SYS_sendmmsg
+#define syscall_name_recvfrom SYS_recvfrom
+#define syscall_name_recvmsg SYS_recvmsg
+#define syscall_name_recvmmsg SYS_recvmmsg
+#define syscall_name_setsockopt SYS_setsockopt
+#define syscall_name_shutdown SYS_shutdown
 #define syscall_name_io_uring_setup SYS_io_uring_setup
 #define syscall_name_io_uring_enter SYS_io_uring_enter
 #define syscall_name_io_uring_register SYS_io_uring_register
 #define syscall_name_pidfd_getfd SYS_pidfd_getfd
+#define syscall_name_bpf SYS_bpf
 #define syscall_name_ioctl SYS_ioctl
+#define syscall_name_dup3 SYS_dup3
+#define syscall_name_fcntl SYS_fcntl
+#define syscall_name_fstatfs SYS_fstatfs
 #define SPARK_IOCTL_SPAWN 0x40407301u
 static void shell_spawn_device_disable(void) { }
+
+typedef struct {
+        unsigned short mode;
+        unsigned int rdev_major;
+        unsigned int rdev_minor;
+        unsigned int device_major;
+        unsigned int device_minor;
+        unsigned long inode;
+        unsigned int mask;
+        unsigned long mount_id;
+} file_facts;
+
+typedef struct {
+        long type;
+        long spare[14];
+} file_mount_facts;
+
+struct linux_dirent64 { char d_name[256]; };
+typedef struct {
+        DIR *directory;
+        bipolar handle;
+        bipolar error;
+        positive have, at;
+        struct linux_dirent64 current;
+} file_walk;
+
+static int fail_walk;
+static int fake_walk;
+static char fake_walk_path[PATH_MAX];
+static bool file_walk_open(file_walk *walk, bipolar parent, string_address path)
+{
+        int fd;
+        if (fail_walk)
+                return false;
+        if (fake_walk)
+                path = fake_walk_path;
+        fd = openat((int)parent, path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (fd < 0)
+                return false;
+        walk->directory = fdopendir(fd);
+        if (!walk->directory) {
+                close(fd);
+                return false;
+        }
+        walk->handle = dirfd(walk->directory);
+        walk->error = 0;
+        return true;
+}
+
+static struct linux_dirent64 *file_walk_next(file_walk *walk)
+{
+        struct dirent *entry;
+        errno = 0;
+        entry = readdir(walk->directory);
+        if (!entry) {
+                if (errno)
+                        walk->error = -errno;
+                return NULL;
+        }
+        snprintf(walk->current.d_name, sizeof(walk->current.d_name), "%s",
+                 entry->d_name);
+        return &walk->current;
+}
+
+static void file_walk_close(file_walk *walk)
+{
+        closedir(walk->directory);
+        walk->handle = -1;
+}
+
+static bool file_is_dot(string_address name)
+{
+        return !strcmp(name, ".") || !strcmp(name, "..");
+}
+
+static bool string_digits_checked_exact(string_address name, positive base,
+                                        positive *value)
+{
+        unsigned long made = 0;
+        char *at = name;
+        if (base != 10 || !*at)
+                return false;
+        for (; *at; at++) {
+                unsigned int digit = (unsigned int)(unsigned char)*at - '0';
+                if (digit > 9 || made > (ULONG_MAX - digit) / 10)
+                        return false;
+                made = made * 10 + digit;
+        }
+        *value = made;
+        return true;
+}
+
+static bool file_look(bipolar fd, string_address path, positive flags,
+                      file_facts *facts)
+{
+        struct statx st;
+        if (statx((int)fd, path, (int)flags, STATX_BASIC_STATS | STATX_MNT_ID, &st) < 0)
+                return false;
+        facts->mode = st.stx_mode;
+        facts->rdev_major = st.stx_rdev_major;
+        facts->rdev_minor = st.stx_rdev_minor;
+        facts->device_major = st.stx_dev_major;
+        facts->device_minor = st.stx_dev_minor;
+        facts->inode = st.stx_ino;
+        facts->mask = st.stx_mask;
+        facts->mount_id = st.stx_mnt_id;
+        return true;
+}
+
+static bool file_same_identity(file_facts *one, file_facts *two)
+{
+        return one->inode == two->inode &&
+               one->device_major == two->device_major &&
+               one->device_minor == two->device_minor;
+}
+
+static bipolar file_look_code(bipolar fd, string_address path, positive flags,
+                              file_facts *facts)
+{
+        return file_look(fd, path, flags, facts) ? 0 : -errno;
+}
+
+static bipolar system_open_at(bipolar parent, string_address path,
+                              positive flags)
+{
+        int fd = openat((int)parent, path, (int)flags);
+        return fd < 0 ? -errno : fd;
+}
+
+static bipolar system_read_link_at(bipolar parent, string_address path,
+                                   p8 *target, positive room)
+{
+        ssize_t got = readlinkat((int)parent, path, (char *)target, room);
+        return got < 0 ? -errno : (bipolar)got;
+}
+
+static bipolar system_close(bipolar fd)
+{
+        return close((int)fd) < 0 ? -errno : 0;
+}
+
+static positive positive_into_string(p8 *into, positive value)
+{
+        return (positive)sprintf((char *)into, "%lu", value);
+}
+#define string_length(value) strlen((const char *)(value))
+#define memory_compare(one, two, length) memcmp((one), (two), (length))
+#define memory_copy_apart(into, from, length) memcpy((into), (from), (length))
 /* Taken before the name is redefined below, or the macro eats the call. */
 static long raw_call(long n, long a, long b, long c, long d, long e)
 {
@@ -20259,10 +20492,49 @@ static long checked_call_3(long n, long a, long b, long c)
         return raw_call(n, a, b, c, 0, 0);
 }
 
+static int fail_cap_call;
+static int capget_seen;
+static int capset_seen;
+static int capset_bad_mask;
+static long checked_call_2(long n, long a, long b)
+{
+        if (n == SYS_capget) {
+                capget_seen++;
+                if (fail_cap_call == 1)
+                        return -EIO;
+        } else if (n == SYS_capset) {
+                unsigned int *bits = (unsigned int *)b;
+                unsigned int bit = 1u << 19;
+                capset_seen++;
+                if ((bits[0] | bits[1] | bits[2]) & bit)
+                        capset_bad_mask = 1;
+                if (fail_cap_call == 2)
+                        return -EPERM;
+        }
+        return raw_call(n, a, b, 0, 0, 0);
+}
+
 #define syscall(name) syscall_name_##name
 #define system_call_5(n, a, b, c, d, e) checked_call_5((long)(n), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e))
 #define system_call_3(n, a, b, c) checked_call_3((long)(n), (long)(a), (long)(b), (long)(c))
-""" + builder + r"""
+#define system_call_2(n, a, b) checked_call_2((long)(n), (long)(a), (long)(b))
+#define system_descriptor_install(from, to) \
+        ((from) == (to) \
+             ? system_call_3(SYS_fcntl, (from), 2, 0) \
+             : system_call_3(SYS_dup3, (from), (to), 0))
+""" + descriptor_source + builder + r"""
+static int ptrace_capability_present(void)
+{
+        floodlight_cap_header header = {FLOODLIGHT_CAP_VERSION_3, 0};
+        floodlight_cap_data data[2] = {{0}};
+        unsigned bit = 1u << FLOODLIGHT_CAP_SYS_PTRACE;
+
+        if (raw_call(SYS_capget, (long)&header, (long)&data, 0, 0, 0) < 0)
+                return -1;
+        return !!((data[0].effective | data[0].permitted |
+                    data[0].inheritable) & bit);
+}
+
 int main(void)
 {
         p32 refused[2] = {(p32)SYS_execve, (p32)SYS_execveat};
@@ -20270,22 +20542,185 @@ int main(void)
         int status = 0;
 
         fail_call = 1;
-        if (floodlight_confine(refused, 2))
+        if (floodlight_confine(refused, 2, false))
                 return 8;
         fail_call = 2;
-        if (floodlight_confine(refused, 2))
+        if (floodlight_confine(refused, 2, false))
                 return 9;
         fail_call = 0;
-        if (!floodlight_confine(NULL, 0))
+        if (!floodlight_confine(NULL, 0, false))
                 return 10;
+        fail_cap_call = 1;
+        if (floodlight_apply(false, true, false))
+                return 43;
+        fail_cap_call = 2;
+        if (floodlight_apply(false, true, false))
+                return 44;
+        fail_cap_call = 0;
+
+        /* A spawn-only policy still blocks terminal/Spark escapes, while an
+           explicitly network-allowed program retains its TUN control API. */
+        child = fork();
+        if (child == 0) {
+                long takeover_calls[] = {
+                        SYS_execve, SYS_execveat,
+                        SYS_ptrace, SYS_process_vm_readv,
+                        SYS_process_vm_writev,
+                };
+                capget_seen = capset_seen = capset_bad_mask = 0;
+                if (!floodlight_apply(false, true, false))
+                        _exit(33);
+                if (ptrace_capability_present() != 0 || capget_seen != 1 ||
+                    capset_seen != 1 || capset_bad_mask)
+                        _exit(40);
+                for (size_t i = 0;
+                     i < sizeof(takeover_calls) / sizeof(takeover_calls[0]); i++) {
+                        errno = 0;
+                        raw_call(takeover_calls[i], -1, 0, 0, 0, 0);
+                        if (errno != EPERM)
+                                _exit(41);
+                }
+                errno = 0;
+                raw_call(SYS_ioctl, -1, SPARK_IOCTL_SPAWN, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(34);
+                errno = 0;
+                raw_call(SYS_ioctl, -1, 0x5412, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(45);
+                errno = 0;
+                raw_call(SYS_ioctl, -1, 0x541c, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(46);
+                errno = 0;
+                raw_call(SYS_ioctl, -1, 0x400454ca, 0, 0, 0);
+                if (errno == EPERM)
+                        _exit(35);
+                errno = 0;
+                raw_call(SYS_socket, -1, 0, 0, 0, 0);
+                if (errno == EPERM)
+                        _exit(47);
+                _exit(0);
+        }
+        if (child < 0 || waitpid(child, &status, 0) != child ||
+            !WIFEXITED(status) || WEXITSTATUS(status))
+                return 36;
+
+        /* Even when procfs cannot be opened, socket-backed diagnostics were
+           neutralized before the attempted walk and cannot carry a refusal
+           back across the network. */
+        child = fork();
+        if (child == 0) {
+                struct stat st;
+                int diagnostic = (int)raw_call(SYS_socket, 2, 2, 0, 0, 0);
+                if (diagnostic < 0 || dup2(diagnostic, 2) != 2)
+                        _exit(28);
+                if (diagnostic != 2)
+                        close(diagnostic);
+                fail_walk = 1;
+                if (floodlight_network_descriptors_drop())
+                        _exit(29);
+                if (fstat(2, &st) < 0 || !S_ISCHR(st.st_mode) ||
+                    major(st.st_rdev) != 1 || minor(st.st_rdev) != 3)
+                        _exit(30);
+                _exit(0);
+        }
+        if (child < 0 || waitpid(child, &status, 0) != child ||
+            !WIFEXITED(status) || WEXITSTATUS(status))
+                return 31;
+
+        /* An empty directory wearing the pathname is not an fd inventory.
+           The production procfs and self-entry authentication must refuse it
+           even though the directory open and walk both succeed. */
+        child = fork();
+        if (child == 0) {
+                int inherited;
+                strcpy(fake_walk_path, "/tmp/floodlight-fake-XXXXXX");
+                if (!mkdtemp(fake_walk_path))
+                        _exit(37);
+                fake_walk = 1;
+                inherited = (int)raw_call(SYS_socket, 2, 2, 0, 0, 0);
+                if (inherited < 0 || floodlight_network_descriptors_drop())
+                        _exit(38);
+                close(inherited);
+                rmdir(fake_walk_path);
+                _exit(0);
+        }
+        if (child < 0 || waitpid(child, &status, 0) != child ||
+            !WIFEXITED(status) || WEXITSTATUS(status))
+                return 39;
+
+        /* Network-only policy leaves program transitions available while it
+           independently closes acquisition, TUN and parent-takeover paths. */
+        child = fork();
+        if (child == 0) {
+                capget_seen = capset_seen = capset_bad_mask = 0;
+                if (!floodlight_apply(true, false, false))
+                        _exit(48);
+                if (capget_seen != 1 || capset_seen != 1 || capset_bad_mask)
+                        _exit(49);
+                errno = 0;
+                raw_call(SYS_socket, -1, 0, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(50);
+                errno = 0;
+                raw_call(SYS_ptrace, -1, 0, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(51);
+                errno = 0;
+                raw_call(SYS_ioctl, -1, 0x400454ca, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(52);
+                errno = 0;
+                raw_call(SYS_execve, 0, 0, 0, 0, 0);
+                if (errno == EPERM)
+                        _exit(53);
+                _exit(0);
+        }
+        if (child < 0 || waitpid(child, &status, 0) != child ||
+            !WIFEXITED(status) || WEXITSTATUS(status))
+                return 54;
 
         child = fork();
         if (child == 0) {
+                long network_calls[] = {
+                        SYS_socket, SYS_socketpair, SYS_connect, SYS_bind,
+                        SYS_listen, SYS_accept, SYS_accept4, SYS_sendto,
+                        SYS_sendmsg, SYS_sendmmsg, SYS_recvfrom, SYS_recvmsg,
+                        SYS_recvmmsg, SYS_setsockopt, SYS_shutdown,
+                        SYS_io_uring_setup, SYS_io_uring_enter,
+                        SYS_io_uring_register, SYS_pidfd_getfd, SYS_bpf,
+                        SYS_ptrace, SYS_process_vm_readv,
+                        SYS_process_vm_writev,
+                };
+                int inherited = (int)raw_call(SYS_socket, 2, 2, 0, 0, 0);
+                int diagnostic = (int)raw_call(SYS_socket, 2, 2, 0, 0, 0);
                 char *argv[] = {(char *)"/bin/sh", (char *)"-c",
                                 (char *)"exit 7", NULL};
 
-                if (!floodlight_apply(false, false))
+                if (inherited < 0 || diagnostic < 0 ||
+                    dup2(diagnostic, 2) != 2)
+                        _exit(22);
+                if (diagnostic != 2)
+                        close(diagnostic);
+
+                capget_seen = capset_seen = capset_bad_mask = 0;
+                if (!floodlight_apply(false, false, false))
                         _exit(11);
+
+                if (ptrace_capability_present() != 0 || capget_seen != 1 ||
+                    capset_seen != 1 || capset_bad_mask)
+                        _exit(42);
+
+                errno = 0;
+                if (fcntl(inherited, F_GETFD) != -1 || errno != EBADF)
+                        _exit(23);
+                {
+                        struct stat st;
+                        if (fstat(2, &st) < 0 || !S_ISCHR(st.st_mode) ||
+                            major(st.st_rdev) != 1 || minor(st.st_rdev) != 3)
+                                _exit(32);
+                }
 
                 /* A call the filter says nothing about still works, or the
                    filter has refused the program rather than the exec. */
@@ -20311,34 +20746,16 @@ int main(void)
                                 _exit(18);
                 }
 
-                errno = 0;
-                raw_call(SYS_socket, 2, 1, 0, 0, 0);
-                if (errno != EPERM)
-                        _exit(16);
-                errno = 0;
-                raw_call(SYS_connect, -1, 0, 0, 0, 0);
-                if (errno != EPERM)
-                        _exit(17);
-
-                /* These argument shapes ordinarily fail with EFAULT and
-                   EBADF. EPERM proves the production network list caught the
-                   io_uring and cross-process descriptor acquisition paths. */
-                errno = 0;
-                raw_call(SYS_io_uring_setup, 1, 0, 0, 0, 0);
-                if (errno != EPERM)
-                        _exit(12);
-                errno = 0;
-                raw_call(SYS_io_uring_enter, -1, 0, 0, 0, 0);
-                if (errno != EPERM)
-                        _exit(14);
-                errno = 0;
-                raw_call(SYS_io_uring_register, -1, 0, 0, 0, 0);
-                if (errno != EPERM)
-                        _exit(15);
-                errno = 0;
-                raw_call(SYS_pidfd_getfd, -1, 0, 0, 0, 0);
-                if (errno != EPERM)
-                        _exit(13);
+                /* Invalid arguments reach ordinary kernel errors without the
+                   filter. EPERM for every row proves the complete production
+                   acquisition and socket-operation list was emitted. */
+                for (size_t i = 0;
+                     i < sizeof(network_calls) / sizeof(network_calls[0]); i++) {
+                        errno = 0;
+                        raw_call(network_calls[i], -1, 0, 0, 0, 0);
+                        if (errno != EPERM)
+                                _exit(24);
+                }
 
                 /* Only Spark's privileged launch request is refused. Other
                    ioctls still reach their descriptor and fail normally. */
@@ -20346,6 +20763,18 @@ int main(void)
                 raw_call(SYS_ioctl, -1, SPARK_IOCTL_SPAWN, 0, 0, 0);
                 if (errno != EPERM)
                         _exit(20);
+                errno = 0;
+                raw_call(SYS_ioctl, -1, 0x5412, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(25);
+                errno = 0;
+                raw_call(SYS_ioctl, -1, 0x541c, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(26);
+                errno = 0;
+                raw_call(SYS_ioctl, -1, 0x400454ca, 0, 0, 0);
+                if (errno != EPERM)
+                        _exit(27);
                 errno = 0;
                 raw_call(SYS_ioctl, -1, 0, 0, 0, 0);
                 if (errno == EPERM)
@@ -20404,13 +20833,14 @@ int main(void)
     #   name ever compared equal and not one deviation was ever read. Both
     #   halves were correct on their own and did not meet.
     reader = shell[shell.index('static string_address const floodlight_denied[]'):
-                   shell.index('/*\n        A filter that refuses one thing')]
+                   shell.index('/*\n        A filter that refuses selected operations')]
 
     #   Everything but the device read, which is stubbed: this test hands the
     #   reader the report the module just produced, so there is no device in
     #   it and nothing for the open, the statx and the read to talk to.
     reader = (reader[:reader.index('static fn floodlight_load()')] +
-              'static fn floodlight_load(void) { }\n\n' +
+              'static fn floodlight_load(void) { }\n'
+              'static fn floodlight_reload(void) { }\n\n' +
               reader[reader.index('static bool floodlight_says'):])
 
     #   Exercise the same final executable/argv decision as every launch
@@ -20420,9 +20850,17 @@ int main(void)
     decision = shell[shell.index('static b32 floodlight_launch_decide('):
                      shell.index('\nstatic bool floodlight_external_final(',
                                  shell.index('static b32 floodlight_launch_decide('))]
-    descriptor = shell[
-        shell.index('#define FLOODLIGHT_DESCRIPTOR_PATH_ROOM'):
-        shell.index('/* execveat with an empty path')]
+    # Descriptor-table authentication is exercised above with real procfs.
+    # The portable report/decision test uses only a host path lookup here.
+    descriptor = descriptor_source[:descriptor_source.index('/* Hold the proc root')]
+    descriptor += r"""
+static bipolar floodlight_descriptor_read_link(bipolar handle, p8 *into, positive room)
+{
+        p8 path[FLOODLIGHT_DESCRIPTOR_PATH_ROOM];
+        floodlight_descriptor_path(path, handle);
+        return system_read_link_at(AT_FDCWD, path, into, room);
+}
+"""
 
     #   The reader is shell code, so it wants the shell's spellings.
     reader_mock = r"""
@@ -20455,6 +20893,7 @@ typedef struct
 static positive string_length(string_address s) { return strlen(s); }
 static int memory_compare(const void *a, const void *b, positive n) { return memcmp(a, b, n); }
 static p8 *memory_first_of(const void *a, p8 byte, positive n) { return memchr(a, byte, n); }
+static p8 *string_first_of(string_address a, p8 byte) { return (p8 *)strchr((char *)a, byte); }
 static void memory_copy_apart(void *d, const void *s, positive n) { memcpy(d, s, n); }
 static bool word_is(string_address a, string_address b) { return !strcmp(a, b); }
 static positive positive_into_string(p8 *into, positive value)
@@ -20488,10 +20927,14 @@ static bipolar test_read_link_at(bipolar directory, string_address path,
 #define system_read_link_at(directory, path, into, room) \
         test_read_link_at((directory), (path), (into), (room))
 static string_address shell_tool_name(string_address name) { return name; }
-static bool floodlight_apply(bool spawn_allowed, bool network_allowed)
+static bool floodlight_network_stdio_drop(void) { return true; }
+static bool floodlight_network_descriptors_drop(void) { return true; }
+static bool floodlight_apply(bool spawn_allowed, bool network_allowed,
+                             bool network_prepared)
 {
         (void)spawn_allowed;
         (void)network_allowed;
+        (void)network_prepared;
         return true;
 }
 #define log_error(...) ((void)0)
@@ -21036,10 +21479,11 @@ int main(void)
                         check(reader_flag_refused("tar", "--output") &&
                               reader_flag_refused("tar", "--output=file"),
                               "a denied long flag covers its separate and =value spellings");
-                        check(!reader_flag_refused("tar", "--outputx") &&
-                              !reader_flag_refused("tar", "--out") &&
+                        check(reader_flag_refused("tar", "--out") &&
+                              !reader_flag_refused("tar", "--outputx") &&
                               !reader_flag_refused("tar", "-o=value"),
-                              "flag lookalikes and short options remain distinct");
+                              "GNU long-option abbreviations are covered while "
+                              "lookalikes and short options remain distinct");
                 }
         }
 
@@ -22097,7 +22541,6 @@ REASONS = {
  "r13": "sub() on a value that cannot be assigned to: POSIX leaves it undefined, ours refuses it (exit 2), gawk computes and discards the result",
  "r130": "-t is a second layout, %C is a security context this kernel does not carry, %D is the device in hexadecimal, and --cached takes a word.",
  "r131": "-t is a second layout and --printf a second escape policy over -c; --cached names a coherency this statx call does not ask for.",
- "r132": "a name with a control byte in it is written into the diagnostic as it stands.",
  "r133": "a division by zero is refused as a bad number rather than named.",
  "r134": "the operating system name is not in struct utsname and is not ours to claim on another system behalf. This one answers Moonwater, and -a stops at the machine for the same reason.",
  "r135": "deliberate: the operating system name is not in struct utsname and is not ours to claim on another system's behalf. This one answers Moonwater, and -a stops at the machine for the same reason.",
@@ -25960,7 +26403,6 @@ PINNED = r"""
 {"domain":"files","kind":"bug","list":"ledger","option":"--printf","reason_id":"r131","utility":"stat"},
 {"domain":"files","kind":"bug","list":"ledger","option":"--terse","reason_id":"r131","utility":"stat"},
 {"domain":"files","kind":"bug","list":"ledger","option":"-t","reason_id":"r131","utility":"stat"},
-{"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":1,"stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"case":{"argv":["--time=","a.txt"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","utility":"touch"},"domain":"files","id":"2d1e26c436a34051","kind":"bug","list":"ledger","reason_id":"r132","utility":"touch"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"b8f8a73df80f8d3a89a0d19ac0e0911fe14446353de97f2981e0a06c9db95b6e"},"case":{"argv":["-s","-v","-i","-p","-o","--nodename"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","tier":"random","utility":"uname"},"domain":"files","id":"018c076f69ea87ac","kind":"bug","list":"ledger","reason_id":"r321","reference":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"674bfbeecc9466066f0ee6ba70cc445424a3a67a4db007106abad4b1987778ad"},"utility":"uname"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"},"case":{"argv":["--operating-system","--processor","--nodename","-s","-v","-a"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","tier":"random","utility":"uname"},"domain":"files","id":"02174911a3f4f181","kind":"bug","list":"ledger","reason_id":"r321","reference":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"},"utility":"uname"},
 {"candidate":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"75eb204934be5cdfe89963168fe614625adb440ec9d6ed71a44f5ad7783d127e"},"case":{"argv":["--kernel-name","-a","-s","--machine","-o","-n"],"domain":"files","family":null,"fixture":"files","input_kind":"command","mode":null,"stdin":"empty","tier":"random","utility":"uname"},"domain":"files","id":"03ed28fe59bee294","kind":"bug","list":"ledger","reason_id":"r321","reference":{"effects":"0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5","status":0,"stdout":"7c826e528e1bf5dc55c9addeb970517f7ff90ca07407971a447848fc5843bfde"},"utility":"uname"},

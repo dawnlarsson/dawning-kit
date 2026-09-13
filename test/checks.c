@@ -41787,38 +41787,40 @@ static fn pax_records(void)
                 bool well = !size_key ||
                     (values[value].numeric && values[value].n);
 
-                tar_clear_pax();
+                tar_pax_clear(address_of tar_pax_local);
                 check("a pax record encodes its own length",
                       tar_pax_record(body, sizeof(body), address_of used,
                                      keys[key], values[value].bytes,
                                      values[value].n) &&
                           used && body[used - 1] == '\n');
                 check("well-formed pax records apply, including NULs in values",
-                      tar_pax_apply(body, used) == well);
+                      tar_pax_apply(address_of tar_pax_local, body, used) == well);
                 if (well && string_equals(keys[key], "path"))
                         check("pax path values are kept",
-                              tar_pax_has_path &&
-                                  !memory_compare(tar_pax_path,
+                              tar_pax_local.has_path &&
+                                  !memory_compare(tar_pax_local.path,
                                                   values[value].bytes,
                                                   values[value].n) &&
-                                  tar_pax_path[values[value].n] == 0);
+                                  tar_pax_local.path[values[value].n] == 0);
                 if (well && string_equals(keys[key], "linkpath"))
                         check("pax linkpath values are kept",
-                              tar_pax_has_link &&
-                                  !memory_compare(tar_pax_link,
+                              tar_pax_local.has_link &&
+                                  !memory_compare(tar_pax_local.link,
                                                   values[value].bytes,
                                                   values[value].n));
                 if (well && size_key && values[value].n)
-                        check("pax size values are kept", tar_pax_has_size);
+                        check("pax size values are kept",
+                              tar_pax_local.has_size);
 
                 extra_used = 0;
                 check("a following pax record still encodes",
                       tar_pax_record(extra, sizeof(extra), address_of extra_used,
                                      "comment", (const p8 address_to) "z", 1));
                 memory_copy(body + used, extra, extra_used);
-                tar_clear_pax();
+                tar_pax_clear(address_of tar_pax_local);
                 check("pax bodies are a sequence of records",
-                      tar_pax_apply(body, used + extra_used) == well);
+                      tar_pax_apply(address_of tar_pax_local, body,
+                                    used + extra_used) == well);
         }
 
         for (key = 0; key < array_count(keys); key++)
@@ -41849,9 +41851,10 @@ static fn pax_records(void)
                                 bad[0] = '0';
                         else
                                 bad[0] = 'x';
-                        tar_clear_pax();
+                        tar_pax_clear(address_of tar_pax_local);
                         check("a mutated pax record is refused",
-                              !tar_pax_apply(bad, length));
+                              !tar_pax_apply(address_of tar_pax_local,
+                                             bad, length));
                 }
         }
 }

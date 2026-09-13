@@ -692,9 +692,21 @@ static bipolar system_path_remove_opened_at(
         p8 temporary[256];
         bipolar detached = system_path_detach_opened_at(
             directory, name, handle, temporary, sizeof(temporary));
+        if (detached < 0)
+                return detached;
 
-        return detached < 0 ? detached
-                            : system_remove_at(directory, temporary, flags);
+        bipolar removed = system_remove_at(directory, temporary, flags);
+        if (removed < 0 &&
+            system_path_same_opened_at(handle, directory, temporary) >= 0)
+                /* A failed rmdir/unlink must not silently rename the object.
+                   Restore only into the still-empty public name; a concurrent
+                   claimant is preserved and the detached inode remains under
+                   its private diagnostic name. */
+                (void)system_call_5(
+                    syscall(renameat2), (positive)directory,
+                    (positive)temporary, (positive)directory,
+                    (positive)name, 1);
+        return removed;
 }
 
 #if !defined(KERNEL_MODE)

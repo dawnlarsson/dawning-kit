@@ -197,7 +197,8 @@ static DEAD_END b32 system_init()
         mount_devpts();
 
         b32 device = system_open_at(AT_FDCWD,
-                                   SPARK_DEVICE, FILE_READ_WRITE);
+                                   SPARK_DEVICE,
+                                   FILE_READ_WRITE | O_CLOEXEC);
 
         positive quick_exits = 0;
         positive backoff = 0;

@@ -964,6 +964,21 @@ DEAD_END fn shell_thread_instance()
 b32 spawn_device = -1;
 static bool spawn_device_opened;
 
+/* A shell redirection can claim any numeric descriptor.  Never trust the
+   cached number after user-controlled descriptor work: it is usable only
+   while it still names the authenticated Spark character device. */
+static bool shell_spawn_device_valid()
+{
+        file_facts facts;
+
+        return spawn_device >= 0 &&
+               file_look(spawn_device, (string_address)"", AT_EMPTY_PATH,
+                         address_of facts) &&
+               (facts.mode & MODE_FORMAT) == MODE_CHARACTER &&
+               facts.rdev_major == SPARK_DEVICE_MAJOR &&
+               facts.rdev_minor == SPARK_DEVICE_MINOR;
+}
+
 /*
         argv and envp go across as flat blocks of NUL terminated strings.
 
@@ -1149,12 +1164,26 @@ bipolar shell_spawn_stage(string_address address_to arguments,
 
 static bool shell_spawn_device_open()
 {
+        if (spawn_device >= 0 && !shell_spawn_device_valid())
+        {
+                /* The number belongs to somebody else now.  Its owner, not
+                   the stale cache, decides when it closes. */
+                spawn_device = -1;
+                spawn_device_opened = false;
+        }
+
         if (!spawn_device_opened)
         {
                 spawn_device = system_open_at(AT_FDCWD,
                                              SPARK_DEVICE,
                                              FILE_READ_WRITE | O_CLOEXEC);
                 spawn_device_opened = true;
+
+                if (spawn_device >= 0 && !shell_spawn_device_valid())
+                {
+                        system_close(spawn_device);
+                        spawn_device = -1;
+                }
         }
 
         return spawn_device >= 0;
@@ -1165,7 +1194,7 @@ static bool shell_spawn_device_open()
    cache also protects applets which run directly in their forked shell image. */
 static fn shell_spawn_device_disable()
 {
-        if (spawn_device >= 0)
+        if (shell_spawn_device_valid())
                 system_close(spawn_device);
 
         spawn_device = -1;
@@ -1176,12 +1205,13 @@ static fn shell_spawn_device_disable()
 bipolar shell_spawn_tool(string_address address_to arguments,
                          b32 output, bool quiet)
 {
-        static b32 null_output = -1;
+        b32 null_output = -1;
+        bipolar child;
 
         if (!shell_spawn_device_open())
                 return -1;
 
-        if (quiet && null_output < 0)
+        if (quiet)
                 null_output = system_open_at(AT_FDCWD,
                                              "/dev/null",
                                              FILE_READ_WRITE | O_CLOEXEC);
@@ -1189,8 +1219,11 @@ bipolar shell_spawn_tool(string_address address_to arguments,
         if (quiet && null_output < 0)
                 return -1;
 
-        return shell_spawn_via_device(SPARK_SPAWN_TOOL, null, arguments, -1,
-                                      output, quiet ? null_output : -1);
+        child = shell_spawn_via_device(SPARK_SPAWN_TOOL, null, arguments, -1,
+                                       output, quiet ? null_output : -1);
+        if (null_output >= 0)
+                system_close(null_output);
+        return child;
 }
 
 fn shell_execute_command()

@@ -4126,42 +4126,92 @@ static bool edit_flush()
 #define EDIT_ENOENT 2
 #define EDIT_PATH_MAX 4096
 
+/* Hold the destination namespace and, when it existed, its inode for the
+   complete editing session.  A save can then prove it is replacing the file
+   that was read, while a new-file save remains no-clobber even if somebody
+   creates the name before Ctrl+S. */
+static bipolar edit_file_directory = -1;
+static bipolar edit_file_original = -1;
+static bool edit_file_existed;
+static file_facts edit_file_facts;
+static p8 edit_file_leaf[EDIT_PATH_MAX];
+
+static fn edit_file_release()
+{
+        if (edit_file_original >= 0)
+                system_close(edit_file_original);
+        if (edit_file_directory >= 0)
+                system_close(edit_file_directory);
+
+        edit_file_original = -1;
+        edit_file_directory = -1;
+        edit_file_existed = false;
+        edit_file_leaf[0] = end;
+}
+
 static bipolar edit_read_file(string_address path,
                                 byte_store address_to store)
 {
-        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ);
-        if (handle < 0)
-                return handle;
-        bipolar result = file_store_read((positive)handle, store);
-        system_close(handle);
+        bipolar looked;
+        bipolar result;
+
+        edit_file_directory = file_parent_open(path, edit_file_leaf);
+        if (edit_file_directory < 0)
+                return edit_file_directory;
+
+        looked = file_look_code(edit_file_directory, edit_file_leaf,
+                                AT_SYMLINK_NOFOLLOW,
+                                address_of edit_file_facts);
+        if (looked == -EDIT_ENOENT)
+                return looked;
+        if (looked < 0)
+        {
+                edit_file_release();
+                return looked;
+        }
+
+        edit_file_original = file_open_same(
+            edit_file_directory, edit_file_leaf,
+            address_of edit_file_facts, FILE_READ | O_NOFOLLOW);
+        if (edit_file_original < 0)
+        {
+                result = edit_file_original;
+                edit_file_release();
+                return result;
+        }
+
+        edit_file_existed = true;
+        result = file_store_read((positive)edit_file_original, store);
+        if (result < 0)
+                edit_file_release();
         return result;
 }
 
 static bool edit_write_file()
 {
-        b32 handle = -1;
-        file_facts facts;
+        bipolar handle;
+        file_facts staged;
         p8 address_to block;
         p8 temporary[EDIT_PATH_MAX];
         positive length = 0;
         positive wrote;
-        bipolar synced;
-        bipolar closed;
-        bipolar named;
-        bipolar chmodded;
-        bool existed = file_look_at(edit_path, address_of facts);
-        positive mode = existed ? facts.mode & 07777 : 0666;
-        positive temporary_nonce = system_nonce();
+        bipolar changed;
+        bipolar result;
+
+        if (edit_file_directory < 0 ||
+            (edit_file_existed &&
+             (edit_file_facts.mode & MODE_FORMAT) != MODE_FILE))
+                return false;
 
         block = edit_bytes_take(address_of length);
 
         if (!block)
                 return false;
 
-        handle = (b32)file_temporary_open(
-            edit_path, temporary, EDIT_PATH_MAX,
-            (string_address)".moonwater-edit-", 16, temporary_nonce, 64,
-            mode);
+        handle = file_temporary_open_at(
+            edit_file_directory, edit_file_leaf, temporary,
+            sizeof(temporary), (string_address)".moonwater-edit-", 16,
+            system_nonce(), 64, 0600);
 
         if (handle < 0)
         {
@@ -4170,29 +4220,40 @@ static bool edit_write_file()
         }
 
         wrote = system_write_all((positive)handle, block, length);
-        chmodded = wrote == length && existed
-            ? system_call_2(syscall(fchmod), (positive)handle, mode)
-            : 0;
-        synced = wrote == length && chmodded >= 0
-                     ? system_call_1(syscall(fsync), (positive)handle)
-                     : -1;
-        closed = system_close(handle);
         memory_give(block);
 
-        if (wrote != length || chmodded < 0 || synced < 0 || closed < 0)
+        changed = wrote != length
+                      ? -1
+                      : edit_file_existed
+                            ? file_preserve_owner_mode(
+                                  handle, address_of edit_file_facts)
+                            : system_call_2(syscall(fchmod),
+                                  (positive)handle, 0666 & ~file_umask());
+        result = changed >= 0
+                     ? file_look_code(handle, (string_address)"",
+                                      AT_EMPTY_PATH, address_of staged)
+                     : -1;
+        if (result >= 0)
+                result = system_call_1(syscall(fsync), (positive)handle);
+        if (result >= 0)
+                result = file_temporary_publish_decided_at(
+                    edit_file_directory, temporary, edit_file_leaf,
+                    handle, !edit_file_existed,
+                    edit_file_existed ? address_of edit_file_facts : null);
+
+        if (result < 0)
         {
-                system_remove_at(AT_FDCWD,
-                              temporary, 0);
+                (void)file_stage_close_at(edit_file_directory, temporary,
+                                          handle, result, 0);
                 return false;
         }
 
-        named = system_rename_at(AT_FDCWD, temporary, AT_FDCWD, edit_path, 0);
-
-        if (named < 0)
-                system_remove_at(AT_FDCWD,
-                              temporary, 0);
-
-        return named == 0;
+        if (edit_file_original >= 0)
+                system_close(edit_file_original);
+        edit_file_original = handle;
+        edit_file_facts = staged;
+        edit_file_existed = true;
+        return true;
 }
 
 /*
@@ -4285,6 +4346,7 @@ static b32 system_edit()
         positive window_mask = 0;
         b32 result = 0;
 
+        edit_file_release();
         edit_path = program_argument_count() > 1 ? program_argument(1) : null;
 
         // Saving is an atomic rename. Resolve an existing symbolic link first
@@ -4313,6 +4375,7 @@ static b32 system_edit()
                         if (!loaded_all)
                         {
                                 log_direct(str("edit: file did not fit\n"));
+                                edit_file_release();
                                 edit_document_release();
                                 return 1;
                         }
@@ -4324,6 +4387,7 @@ static b32 system_edit()
                 else
                 {
                         log_direct(str("edit: could not read file\n"));
+                        edit_file_release();
                         edit_document_release();
                         return 1;
                 }
@@ -4332,6 +4396,7 @@ static b32 system_edit()
         if (!edit_terminal_raw())
         {
                 log_direct(str("edit: not a terminal\n"));
+                edit_file_release();
                 edit_document_release();
                 return 1;
         }
@@ -4340,6 +4405,7 @@ static b32 system_edit()
         {
                 edit_terminal_restore();
                 log_direct(str("edit: could not watch terminal size\n"));
+                edit_file_release();
                 edit_document_release();
                 return 1;
         }
@@ -4349,6 +4415,7 @@ static b32 system_edit()
                 system_signal_mask(EDIT_SIGNAL_SET_MASK, address_of window_mask, 0, 8);
                 edit_terminal_restore();
                 log_direct(str("edit: could not watch terminal size\n"));
+                edit_file_release();
                 edit_document_release();
                 return 1;
         }
@@ -4415,6 +4482,7 @@ static b32 system_edit()
         system_signal_mask(EDIT_SIGNAL_SET_MASK, address_of window_mask, 0, 8);
         edit_terminal_restore();
         shell_styles = styles;
+        edit_file_release();
         edit_document_release();
         return result;
 }

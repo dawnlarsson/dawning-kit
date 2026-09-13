@@ -62,6 +62,7 @@
 #define DNS_CODE_MASK 0x000f
 
 #define DNS_MAX_MESSAGE 4096
+#define DNS_NANOSECONDS 1000000000
 
 //      Everything the caller may want to tell apart.
 #define DNS_OK 0
@@ -442,6 +443,10 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         positive at;
         positive answers;
         positive question_length;
+        positive budget;
+        positive began;
+        bool first_wait = true;
+        bool clocked;
 
         if (!network_transaction_secure(address_of id, sizeof id))
                 return DNS_NO_RANDOM;
@@ -485,41 +490,79 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
                 return DNS_NO_REPLY;
         }
 
-        //      A resolver that blocks forever on a server that is not there
-        //      looks like a hung machine rather than a network that is down.
-        got = network_wait_readable(handle, seconds, 0);
+        budget = seconds > positive_max / DNS_NANOSECONDS
+                     ? positive_max
+                     : seconds * DNS_NANOSECONDS;
+        began = clock_monotonic_nanoseconds();
+        clocked = began != 0;
 
-        if (got <= 0)
+        /* A connected UDP socket authenticates the source address, not the
+           transaction. An off-path sender can still spoof that address and
+           race junk without guessing the random id. Discard replies that do
+           not match both id and question, while charging every one to the
+           original total deadline. */
+        for (;;)
         {
-                socket_close((b32)handle);
-                return DNS_NO_REPLY;
+                positive left = budget;
+
+                if (!first_wait)
+                {
+                        positive now;
+                        positive elapsed;
+
+                        if (!clocked || !(now = clock_monotonic_nanoseconds()) ||
+                            now < began)
+                        {
+                                socket_close((b32)handle);
+                                return DNS_NO_REPLY;
+                        }
+
+                        elapsed = now - began;
+                        if (elapsed >= budget)
+                        {
+                                socket_close((b32)handle);
+                                return DNS_NO_REPLY;
+                        }
+                        left = budget - elapsed;
+                }
+                first_wait = false;
+
+                got = network_wait_readable(
+                    handle, left / DNS_NANOSECONDS,
+                    left % DNS_NANOSECONDS);
+
+                if (got == NETWORK_INTERRUPTED)
+                        continue;
+
+                if (got <= 0)
+                {
+                        socket_close((b32)handle);
+                        return DNS_NO_REPLY;
+                }
+
+                got = socket_receive((b32)handle, reply, sizeof reply,
+                                     MSG_TRUNC, 0, 0);
+
+                if (got < DNS_HEADER || network_load_16(reply) != id ||
+                    network_load_16(reply + 4) != 1 ||
+                    (positive)got < DNS_HEADER + question_length ||
+                    memory_compare(reply + DNS_HEADER,
+                                   request + DNS_HEADER, question_length))
+                        continue;
+
+                break;
         }
 
-        got = socket_receive((b32)handle, reply, sizeof reply, MSG_TRUNC, 0, 0);
         socket_close((b32)handle);
-
-        if (got < DNS_HEADER)
-                return DNS_NO_REPLY;
 
         //      MSG_TRUNC answers with the true length, so a reply that did
         //      not fit is refused rather than parsed as far as it got.
         if ((positive)got > sizeof(reply))
                 return DNS_MALFORMED;
 
-        if (network_load_16(reply) != id)
-                return DNS_MALFORMED;
-
         flags = network_load_16(reply + 2);
 
         if (!(flags & DNS_FLAG_RESPONSE) || (flags & DNS_FLAG_TRUNCATED))
-                return DNS_MALFORMED;
-
-        if (network_load_16(reply + 4) != 1)
-                return DNS_MALFORMED;
-
-        //      The question, byte for byte as it was asked.
-        if ((positive)got < DNS_HEADER + question_length ||
-            memory_compare(reply + DNS_HEADER, request + DNS_HEADER, question_length))
                 return DNS_MALFORMED;
 
         switch (flags & DNS_CODE_MASK)

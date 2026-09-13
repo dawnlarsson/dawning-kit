@@ -428,6 +428,14 @@ static bool shell_pipe_status_wanted(const_string name, positive length)
 #define ERROR_EXEC_FORMAT 8
 #define FLOODLIGHT_DESCRIPTOR_PATH_ROOM 64
 #define FLOODLIGHT_DESCRIPTOR_PREFIX "/proc/self/fd/"
+#define FLOODLIGHT_PROC_MAGIC 0x9fa0
+
+static fn floodlight_descriptor_name(p8 address_to into, bipolar handle)
+{
+        positive used = positive_into_string(into, (positive)handle);
+
+        into[used] = end;
+}
 
 static fn floodlight_descriptor_path(p8 address_to into, bipolar handle)
 {
@@ -436,6 +444,81 @@ static fn floodlight_descriptor_path(p8 address_to into, bipolar handle)
         memory_copy_apart(into, FLOODLIGHT_DESCRIPTOR_PREFIX, used);
         used += positive_into_string(into + used, (positive)handle);
         into[used] = end;
+}
+
+/* Hold the proc root while resolving self/fd, and require the resulting
+   directory to remain on that exact proc mount.  A bind-mounted fd directory
+   from another process has procfs's magic too, but necessarily crosses to a
+   different mount id.  Finally prove the table's own descriptor row follows
+   back to the directory inode, which distinguishes self from another genuine
+   /proc/<pid>/fd directory on the same mount. */
+static bool floodlight_descriptor_table_open(file_walk address_to table)
+{
+        bipolar proc = system_open_at(
+            AT_FDCWD, (string_address)"/proc",
+            FILE_READ | O_DIRECTORY | O_CLOEXEC);
+        file_mount_facts proc_mount;
+        file_mount_facts table_mount;
+        file_facts proc_facts;
+        file_facts table_facts;
+        file_facts through;
+        p8 own_name[24];
+        bool safe = false;
+
+        table->handle = -1;
+        table->error = -ERROR_NO_ENTRY;
+        table->have = 0;
+        table->at = 0;
+
+        if (proc < 0)
+                return false;
+
+        if (system_call_2(syscall(fstatfs), (positive)proc,
+                          (positive)address_of proc_mount) < 0 ||
+            proc_mount.type != FLOODLIGHT_PROC_MAGIC ||
+            !file_look(proc, (string_address)"", AT_EMPTY_PATH,
+                       address_of proc_facts) ||
+            !(proc_facts.mask & STATX_MOUNT_ID) ||
+            !file_walk_open(table, proc, (string_address)"self/fd"))
+                goto finished;
+
+        if (system_call_2(syscall(fstatfs), (positive)table->handle,
+                          (positive)address_of table_mount) < 0 ||
+            table_mount.type != FLOODLIGHT_PROC_MAGIC ||
+            !file_look(table->handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of table_facts) ||
+            !(table_facts.mask & STATX_MOUNT_ID) ||
+            table_facts.mount_id != proc_facts.mount_id)
+                goto finished;
+
+        floodlight_descriptor_name(own_name, table->handle);
+        if (!file_look(table->handle, own_name, 0, address_of through) ||
+            !file_same_identity(address_of table_facts, address_of through))
+                goto finished;
+
+        safe = true;
+
+finished:
+        system_close(proc);
+        if (!safe && table->handle >= 0)
+                file_walk_close(table);
+        return safe;
+}
+
+static bipolar floodlight_descriptor_read_link(
+    bipolar handle, p8 address_to into, positive room)
+{
+        file_walk table;
+        p8 name[24];
+        bipolar length;
+
+        if (!floodlight_descriptor_table_open(address_of table))
+                return -ERROR_ACCESS;
+
+        floodlight_descriptor_name(name, handle);
+        length = system_read_link_at(table.handle, name, into, room);
+        file_walk_close(address_of table);
+        return length;
 }
 
 /* execveat with an empty path makes the opened file, rather than a pathname
@@ -468,11 +551,38 @@ typedef struct
 
 static bipolar floodlight_pinned_reader(bipolar handle)
 {
-        p8 descriptor_path[FLOODLIGHT_DESCRIPTOR_PATH_ROOM];
+        file_walk table;
+        p8 name[24];
+        file_facts expected;
+        file_facts opened;
+        bipolar reader;
 
-        floodlight_descriptor_path(descriptor_path, handle);
-        return system_open_at(AT_FDCWD, descriptor_path,
-                              FILE_READ | O_CLOEXEC);
+        if (!floodlight_descriptor_table_open(address_of table))
+                return -ERROR_ACCESS;
+
+        if (!file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of expected))
+        {
+                file_walk_close(address_of table);
+                return -ERROR_ACCESS;
+        }
+
+        floodlight_descriptor_name(name, handle);
+        reader = system_open_at(table.handle, name, FILE_READ | O_CLOEXEC);
+        file_walk_close(address_of table);
+
+        if (reader < 0)
+                return reader;
+
+        if (!file_look(reader, (string_address)"", AT_EMPTY_PATH,
+                       address_of opened) ||
+            !file_same_identity(address_of expected, address_of opened))
+        {
+                system_close(reader);
+                return -ERROR_ACCESS;
+        }
+
+        return reader;
 }
 
 /* Open the exact script inode already held for policy, then parse the one
@@ -14546,6 +14656,9 @@ static positive floodlight_row_count;
 #define FLOODLIGHT_REPORT_REFUSED 3
 
 static p8 floodlight_report_state;
+static bool floodlight_report_promised;
+
+#define FLOODLIGHT_PR_SET_DUMPABLE 4
 
 /*
         One word of a report line.
@@ -14733,8 +14846,9 @@ static fn floodlight_load()
         bipolar got;
         positive used = 0;
         positive parsed_count = 0;
-        p8 state = program_entry_identity ? FLOODLIGHT_REPORT_REFUSED
-                                          : FLOODLIGHT_REPORT_BUILTIN;
+        p8 state = program_entry_identity || floodlight_report_promised
+                       ? FLOODLIGHT_REPORT_REFUSED
+                       : FLOODLIGHT_REPORT_BUILTIN;
 
         if (floodlight_report_state != FLOODLIGHT_REPORT_UNREAD)
                 return;
@@ -14759,6 +14873,23 @@ static fn floodlight_load()
             (facts.mode & MODE_FORMAT) != MODE_CHARACTER ||
             facts.rdev_major != FLOODLIGHT_DEVICE_MAJOR ||
             facts.rdev_minor != FLOODLIGHT_DEVICE_MINOR)
+        {
+                system_close(handle);
+                state = FLOODLIGHT_REPORT_REFUSED;
+                goto publish;
+        }
+
+        /* An authenticated device means this process is running where a
+           policy register exists.  A malformed first report must not let a
+           later disappearance downgrade the process to stock defaults. */
+        floodlight_report_promised = true;
+
+        /* A confined child shares credentials with this shell. Make the
+           policy-owning parent an invalid ptrace and /proc/<pid>/mem target
+           before any such child exists; the final child also drops its
+           ptrace capability before entering user code. */
+        if (system_call_5(syscall(prctl), FLOODLIGHT_PR_SET_DUMPABLE,
+                          0, 0, 0, 0) < 0)
         {
                 system_close(handle);
                 state = FLOODLIGHT_REPORT_REFUSED;
@@ -14810,6 +14941,18 @@ static fn floodlight_load()
 
 publish:
         floodlight_report_state = state;
+}
+
+/* Read one coherent policy snapshot for every launch decision.  Keeping the
+   loaded state through floodlight_may makes every setting for that launch
+   agree; clearing it only here means a later command sees changes and
+   revocations.  Once a real register has answered, losing it is a refusal
+   rather than a return to the stock-kernel defaults. */
+static fn floodlight_reload()
+{
+        floodlight_row_count = 0;
+        floodlight_report_state = FLOODLIGHT_REPORT_UNREAD;
+        floodlight_load();
 }
 
 /*
@@ -14870,30 +15013,55 @@ static bool floodlight_says(string_address name, positive setting,
 
 /* A long option's value may share its argv word (`--output=file`).  Ask for
    the complete word first, so an explicitly more-specific rule wins, then
-   ask for the bounded name before '='.  Short-option clusters and lookalike
-   prefixes remain distinct. */
+   ask for the bounded name before '='. GNU-style applet parsing also accepts
+   unique long-option prefixes; a denied canonical spelling therefore covers
+   its abbreviations, while an explicit row for the abbreviation still wins.
+   Short-option aliases and clusters remain distinct policy spellings. */
 static bool floodlight_flag_refused(string_address name,
                                     string_address argument)
 {
         positive length = string_length(argument);
+        positive option_length;
         bool allowed;
 
         if (floodlight_says_length(name, FLOODLIGHT_FLAG, argument, length,
                                    address_of allowed))
                 return !allowed;
 
-        if (length < 4 || argument[0] != '-' || argument[1] != '-')
+        if (length < 3 || argument[0] != '-' || argument[1] != '-')
                 return false;
 
         p8 address_to equal = memory_first_of(argument + 2, '=', length - 2);
+        option_length = equal ? (positive)(equal - argument) : length;
 
-        if (!equal || equal == argument + 2)
+        if (option_length <= 2)
                 return false;
 
-        return floodlight_says_length(
-                   name, FLOODLIGHT_FLAG, argument,
-                   (positive)(equal - argument), address_of allowed) &&
-               !allowed;
+        if (equal &&
+            floodlight_says_length(name, FLOODLIGHT_FLAG, argument,
+                                   option_length, address_of allowed))
+                return !allowed;
+
+        floodlight_load();
+        for (positive at = 0; at < floodlight_row_count; at++)
+        {
+                floodlight_row address_to row = floodlight_rows + at;
+                string_address denied = (string_address)row->detail;
+                positive denied_length;
+
+                if (row->setting != FLOODLIGHT_FLAG || row->allowed ||
+                    !word_is((string_address)row->subject, name) ||
+                    denied[0] != '-' || denied[1] != '-' ||
+                    string_first_of(denied, '='))
+                        continue;
+
+                denied_length = string_length(denied);
+                if (option_length < denied_length &&
+                    !memory_compare(argument, denied, option_length))
+                        return true;
+        }
+
+        return false;
 }
 
 /* The built-in answer this shell carries, for when the register is silent. */
@@ -14928,7 +15096,6 @@ static bool floodlight_executable_prepare(
     floodlight_executable address_to image)
 {
         static string_address deleted = (string_address)" (deleted)";
-        p8 descriptor_path[FLOODLIGHT_DESCRIPTOR_PATH_ROOM];
         bipolar length;
         positive deleted_length = string_length(deleted);
 
@@ -14944,9 +15111,8 @@ static bool floodlight_executable_prepare(
         if (image->handle < 0)
                 return false;
 
-        floodlight_descriptor_path(descriptor_path, image->handle);
-        length = system_read_link_at(
-            AT_FDCWD, descriptor_path, image->identity, FILE_PATH_MAX - 1);
+        length = floodlight_descriptor_read_link(
+            image->handle, image->identity, FILE_PATH_MAX - 1);
 
         if (length <= 0 || image->identity[0] != '/' ||
             ((positive)length >= deleted_length &&
@@ -14979,7 +15145,8 @@ static fn floodlight_executable_drop(
 #define FLOODLIGHT_LAUNCH_REFUSE 2
 
 /*
-        A filter that refuses one thing, installed on this process for good.
+        A filter that refuses selected operations, installed on this process
+        for good.
 
         Classic BPF, which is what seccomp takes: check the architecture the
         call arrived on, then the call number, and answer. The architecture
@@ -15028,14 +15195,220 @@ typedef struct
         floodlight_instruction address_to filter;
 } floodlight_program;
 
-#define FLOODLIGHT_REFUSED 8
+#define FLOODLIGHT_TUN_MAJOR 10
+#define FLOODLIGHT_TUN_MINOR 200
+#define FLOODLIGHT_NULL_MAJOR 1
+#define FLOODLIGHT_NULL_MINOR 3
 
-static bool floodlight_confine(const p32 address_to numbers, positive count)
+/* Refusal diagnostics are data too.  Close socket/TUN standard streams before
+   any final-child error can use them, then fill every missing slot with an
+   authenticated /dev/null so later logging cannot claim a newly opened fd. */
+static bool floodlight_network_stdio_drop()
 {
-        floodlight_instruction filter[10 + FLOODLIGHT_REFUSED];
+        bool safe = true;
+        bool missing[3] = {false, false, false};
+
+        for (bipolar descriptor = 0; descriptor <= 2; descriptor++)
+        {
+                file_facts facts;
+                bipolar looked = file_look_code(
+                    descriptor, (string_address)"", AT_EMPTY_PATH,
+                    address_of facts);
+
+                if (looked == -ERROR_BAD_DESCRIPTOR)
+                        missing[descriptor] = true;
+                else if (looked < 0 ||
+                         (facts.mode & MODE_FORMAT) == MODE_SOCKET ||
+                         ((facts.mode & MODE_FORMAT) == MODE_CHARACTER &&
+                          facts.rdev_major == FLOODLIGHT_TUN_MAJOR &&
+                          facts.rdev_minor == FLOODLIGHT_TUN_MINOR))
+                {
+                        if (system_close(descriptor) < 0 &&
+                            looked != -ERROR_BAD_DESCRIPTOR)
+                                safe = false;
+                        missing[descriptor] = true;
+                        if (looked < 0)
+                                safe = false;
+                }
+        }
+
+        for (bipolar descriptor = 0; descriptor <= 2; descriptor++)
+        {
+                file_facts facts;
+                bipolar opened;
+
+                if (!missing[descriptor])
+                        continue;
+
+                opened = system_open_at(
+                    AT_FDCWD, (string_address)"/dev/null",
+                    FILE_READ_WRITE | O_CLOEXEC);
+
+                if (opened != descriptor ||
+                    !file_look(opened, (string_address)"", AT_EMPTY_PATH,
+                               address_of facts) ||
+                    (facts.mode & MODE_FORMAT) != MODE_CHARACTER ||
+                    facts.rdev_major != FLOODLIGHT_NULL_MAJOR ||
+                    facts.rdev_minor != FLOODLIGHT_NULL_MINOR ||
+                    system_descriptor_install(opened, opened) < 0)
+                {
+                        if (opened >= 0)
+                                system_close(opened);
+                        safe = false;
+                }
+        }
+
+        return safe;
+}
+
+/* A syscall filter cannot distinguish read(2) on a file from read(2) on a
+   socket.  Remove network-bearing descriptors before installing it, while
+   /proc still gives us an exact view of this single-threaded final process.
+
+   An inherited SQPOLL io_uring is stronger than its descriptor: a mapping can
+   keep submitting after the descriptor is closed and without io_uring_enter.
+   Close every copy we can see and refuse the launch, since closing it cannot
+   prove that no live mapping remains. */
+static bool floodlight_network_descriptors_drop()
+{
+        static string_address ring = (string_address)"anon_inode:[io_uring]";
+        file_walk walk;
+        struct linux_dirent64 address_to entry;
+        bool safe = floodlight_network_stdio_drop();
+
+        if (!floodlight_descriptor_table_open(address_of walk))
+                return false;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                string_address name = (string_address)entry->d_name;
+                positive descriptor;
+                file_facts facts;
+                p8 target[32];
+                bipolar length;
+                bool close_descriptor = false;
+
+                if (!string_digits_checked_exact(name, 10,
+                                                  address_of descriptor))
+                {
+                        if (!file_is_dot(name))
+                                safe = false;
+                        continue;
+                }
+
+                if (descriptor > (positive)bipolar_max)
+                {
+                        safe = false;
+                        continue;
+                }
+
+                if ((bipolar)descriptor == walk.handle)
+                        continue;
+
+                if (!file_look((bipolar)descriptor, (string_address)"",
+                               AT_EMPTY_PATH, address_of facts))
+                {
+                        system_close((bipolar)descriptor);
+                        safe = false;
+                        continue;
+                }
+
+                if ((facts.mode & MODE_FORMAT) == MODE_SOCKET ||
+                    ((facts.mode & MODE_FORMAT) == MODE_CHARACTER &&
+                     facts.rdev_major == FLOODLIGHT_TUN_MAJOR &&
+                     facts.rdev_minor == FLOODLIGHT_TUN_MINOR))
+                        close_descriptor = true;
+
+                length = system_read_link_at(
+                    walk.handle, name, target, sizeof(target));
+
+                if (length < 0)
+                {
+                        system_close((bipolar)descriptor);
+                        safe = false;
+                        continue;
+                }
+                else if ((positive)length == string_length(ring) &&
+                         !memory_compare(target, ring, (positive)length))
+                {
+                        close_descriptor = true;
+                        safe = false;
+                }
+
+                if (close_descriptor)
+                {
+                        if (system_close((bipolar)descriptor) < 0)
+                        {
+                                safe = false;
+                        }
+                }
+        }
+
+        if (walk.error < 0)
+                safe = false;
+
+        file_walk_close(address_of walk);
+
+        return safe;
+}
+
+#define FLOODLIGHT_REFUSED 25
+#define FLOODLIGHT_IOCTL_REFUSED 4
+
+static p32 const floodlight_ioctl_refused[FLOODLIGHT_IOCTL_REFUSED] = {
+    SPARK_IOCTL_SPAWN,
+    0x5412u,       /* TIOCSTI: inject input into another tty reader. */
+    0x541cu,       /* TIOCLINUX: console selection/paste injection. */
+    0x400454cau,   /* TUNSETIFF: attach /dev/net/tun to an interface. */
+};
+
+#define FLOODLIGHT_CAP_VERSION_3 0x20080522u
+#define FLOODLIGHT_CAP_SYS_PTRACE 19
+
+typedef struct
+{
+        p32 version;
+        b32 process;
+} floodlight_cap_header;
+
+typedef struct
+{
+        p32 effective;
+        p32 permitted;
+        p32 inheritable;
+} floodlight_cap_data;
+
+/* PR_SET_DUMPABLE protects this shell from an ordinary same-credential child;
+   remove CAP_SYS_PTRACE as well so a privileged child cannot override that
+   boundary. no_new_privs below prevents the bit returning across exec. */
+static bool floodlight_ptrace_capability_drop()
+{
+        floodlight_cap_header header = {FLOODLIGHT_CAP_VERSION_3, 0};
+        floodlight_cap_data data[2];
+        p32 keep = ~(1u << FLOODLIGHT_CAP_SYS_PTRACE);
+
+        if (system_call_2(syscall(capget), (positive)address_of header,
+                          (positive)address_of data) < 0)
+                return false;
+
+        data[0].effective &= keep;
+        data[0].permitted &= keep;
+        data[0].inheritable &= keep;
+
+        return system_call_2(syscall(capset), (positive)address_of header,
+                             (positive)address_of data) >= 0;
+}
+
+static bool floodlight_confine(const p32 address_to numbers, positive count,
+                               bool network_denied)
+{
+        floodlight_instruction
+            filter[9 + FLOODLIGHT_REFUSED + FLOODLIGHT_IOCTL_REFUSED];
         floodlight_program program;
         positive at = 0;
         positive i;
+        positive ioctl_count = network_denied ? FLOODLIGHT_IOCTL_REFUSED
+                                              : FLOODLIGHT_IOCTL_REFUSED - 1;
 
         if (!count)
                 return true;
@@ -15061,24 +15434,32 @@ static bool floodlight_confine(const p32 address_to numbers, positive count)
            table before comparing calls, or every denied operation has an x32
            spelling that walks around it on kernels which enable that ABI. */
         filter[at++] = (floodlight_instruction){
-            BPF_JUMP_BITS, (p8)(count + 4), 0, 0x40000000u};
+            BPF_JUMP_BITS,
+            (p8)(count + ioctl_count + 3), 0, 0x40000000u};
 #endif
 
         for (i = 0; i < count; i++)
                 filter[at++] = (floodlight_instruction){
-                    BPF_JUMP_EQUAL, (p8)(count - i + 3), 0, numbers[i]};
+                    BPF_JUMP_EQUAL,
+                    (p8)(count - i + ioctl_count + 2),
+                    0, numbers[i]};
 
         /* A denied-network child could otherwise open /dev/spark and ask the
-           kernel to spawn an unfiltered process, even when the shell's cached
-           descriptor was CLOEXEC.  Inspect ioctl's request word and refuse the
-           launch operation while leaving ordinary terminal/device ioctls to
-           the applet.  All supported ABIs place the low request word here. */
+           kernel to spawn an unfiltered process, attach a TUN interface, or
+           inject a command into another terminal reader. Inspect ioctl's
+           request word while leaving unrelated terminal/device operations to
+           the applet. All supported ABIs place the low request word here. */
         filter[at++] = (floodlight_instruction){
-            BPF_JUMP_EQUAL, 0, 2, (p32)syscall(ioctl)};
+            BPF_JUMP_EQUAL, 0, (p8)(ioctl_count + 1),
+            (p32)syscall(ioctl)};
         filter[at++] = (floodlight_instruction){
             BPF_LOAD_WORD, 0, 0, SECCOMP_DATA_ARGUMENT_1};
-        filter[at++] = (floodlight_instruction){
-            BPF_JUMP_EQUAL, 1, 0, SPARK_IOCTL_SPAWN};
+
+        for (i = 0; i < ioctl_count; i++)
+                filter[at++] = (floodlight_instruction){
+                    BPF_JUMP_EQUAL,
+                    (p8)(ioctl_count - i), 0,
+                    floodlight_ioctl_refused[i]};
 
         filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ALLOW};
         filter[at++] = (floodlight_instruction){BPF_RETURN, 0, 0, SECCOMP_RET_ERRNO_EPERM};
@@ -15113,10 +15494,17 @@ static bool floodlight_confine(const p32 address_to numbers, positive count)
         take that path.
 */
 /* Everything already decided for this launch, as one filter. */
-static bool floodlight_apply(bool spawn_allowed, bool network_allowed)
+static bool floodlight_apply(bool spawn_allowed, bool network_allowed,
+                             bool network_prepared)
 {
         p32 refused[FLOODLIGHT_REFUSED];
         positive count = 0;
+
+        if (!network_allowed && !network_prepared)
+        {
+                if (!floodlight_network_descriptors_drop())
+                        return false;
+        }
 
         if (!spawn_allowed)
         {
@@ -15130,7 +15518,20 @@ static bool floodlight_apply(bool spawn_allowed, bool network_allowed)
         if (!network_allowed)
         {
                 refused[count++] = (p32)syscall(socket);
+                refused[count++] = (p32)syscall(socketpair);
                 refused[count++] = (p32)syscall(connect);
+                refused[count++] = (p32)syscall(bind);
+                refused[count++] = (p32)syscall(listen);
+                refused[count++] = (p32)syscall(accept);
+                refused[count++] = (p32)syscall(accept4);
+                refused[count++] = (p32)syscall(sendto);
+                refused[count++] = (p32)syscall(sendmsg);
+                refused[count++] = (p32)syscall(sendmmsg);
+                refused[count++] = (p32)syscall(recvfrom);
+                refused[count++] = (p32)syscall(recvmsg);
+                refused[count++] = (p32)syscall(recvmmsg);
+                refused[count++] = (p32)syscall(setsockopt);
+                refused[count++] = (p32)syscall(shutdown);
 
                 /* io_uring performs SOCKET and CONNECT as queue operations,
                    beyond a syscall-number filter's view. Refuse creation,
@@ -15141,9 +15542,20 @@ static bool floodlight_apply(bool spawn_allowed, bool network_allowed)
                 refused[count++] = (p32)syscall(io_uring_enter);
                 refused[count++] = (p32)syscall(io_uring_register);
                 refused[count++] = (p32)syscall(pidfd_getfd);
+                refused[count++] = (p32)syscall(bpf);
         }
 
-        return floodlight_confine(refused, count);
+        /* Either restriction can be escaped by taking over the unfiltered
+           parent and asking it to perform the refused operation. Protect the
+           parent for spawn-only policy as well as for network confinement. */
+        refused[count++] = (p32)syscall(ptrace);
+        refused[count++] = (p32)syscall(process_vm_readv);
+        refused[count++] = (p32)syscall(process_vm_writev);
+
+        if (!floodlight_ptrace_capability_drop())
+                return false;
+
+        return floodlight_confine(refused, count, !network_allowed);
 }
 
 /*
@@ -15170,14 +15582,17 @@ static b32 floodlight_launch_decide(
         string_address subject = null;
         bool spawn_allowed;
         bool network_allowed;
+        bool network_prepared = false;
 
         image->handle = -1;
         image->identity[0] = end;
 
-        floodlight_load();
+        floodlight_reload();
 
         if (floodlight_report_state == FLOODLIGHT_REPORT_REFUSED)
         {
+                if (final)
+                        floodlight_network_stdio_drop();
                 if (diagnose)
                         log_error("floodlight: policy unavailable; refusing launch\n",
                                   0);
@@ -15190,6 +15605,7 @@ static b32 floodlight_launch_decide(
                  floodlight_report_state == FLOODLIGHT_REPORT_VALID &&
                  final && !pinned)
         {
+                floodlight_network_stdio_drop();
                 if (diagnose)
                         log_error("floodlight: cannot pin executable; refusing launch\n",
                                   0);
@@ -15210,10 +15626,29 @@ static b32 floodlight_launch_decide(
 
         if (!subject)
         {
+                if (final)
+                        floodlight_network_stdio_drop();
                 if (diagnose)
                         log_error("floodlight: cannot identify executable; refusing launch\n",
                                   0);
                 goto refuse;
+        }
+
+        network_allowed = floodlight_may(subject, FLOODLIGHT_NETWORK, true);
+
+        /* A freshly reloaded final-child policy may differ from the parent's
+           pre-fork snapshot. Enforce its network boundary before reporting
+           any run or flag refusal through inherited descriptors. */
+        if (final && !network_allowed)
+        {
+                if (!floodlight_network_descriptors_drop())
+                {
+                        if (diagnose)
+                                log_error("floodlight: cannot sanitize network descriptors; refusing launch\n",
+                                          0);
+                        goto refuse;
+                }
+                network_prepared = true;
         }
 
         if (!floodlight_may(subject, FLOODLIGHT_RUN, true))
@@ -15237,7 +15672,6 @@ static b32 floodlight_launch_decide(
         spawn_allowed = floodlight_may(
             subject, FLOODLIGHT_SPAWN,
             tool ? floodlight_built_in(subject) : true);
-        network_allowed = floodlight_may(subject, FLOODLIGHT_NETWORK, true);
 
         /* Spark accepts a pathname rather than an executable descriptor.
            Once the register is active, every external launch therefore takes
@@ -15263,7 +15697,8 @@ static b32 floodlight_launch_decide(
                 goto refuse;
         }
 
-        if (!floodlight_apply(spawn_allowed, network_allowed))
+        if (!floodlight_apply(spawn_allowed, network_allowed,
+                              network_prepared))
         {
                 if (diagnose)
                         log_error("floodlight: cannot install confinement; refusing launch\n",

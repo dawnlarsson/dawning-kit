@@ -724,20 +724,25 @@ b32 main()
                 {
                         bool observable = false;
 
-                        // An imported function can override even :, true or
-                        // false. Fold its transport check into the startup
-                        // environment walk; ordinary sh/dash and nonliteral
-                        // commands do not pay for that walk.
+                        // Imported functions can override even :, true or
+                        // false, and Bash imports SHELLOPTS/BASHOPTS before it
+                        // executes the literal: xtrace alone makes the command
+                        // observable. Fold all three transport checks into one
+                        // startup environment walk.
                         if (shell_bash_compat)
                                 for (positive at = 0; environ && environ[at]; at++)
                                 {
                                         string_address entry = environ[at];
 
-                                        if (*entry != 'B')
+                                        if (*entry != 'B' && *entry != 'S')
                                                 continue;
                                         if (env_function_assignment(entry) ||
                                             (!string_compare_max(entry, "BASH_ENV=", 9) &&
-                                             entry[9]))
+                                             entry[9]) ||
+                                            (!string_compare_max(entry, "BASHOPTS=", 9) &&
+                                             entry[9]) ||
+                                            (!string_compare_max(entry, "SHELLOPTS=", 10) &&
+                                             entry[10]))
                                         {
                                                 observable = true;
                                                 break;

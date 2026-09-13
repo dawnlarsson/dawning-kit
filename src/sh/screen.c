@@ -390,6 +390,12 @@ static b32 screen_window()
 
         if (!back || !front || !bare)
         {
+                if (bare)
+                        window_close(bare);
+                if (front)
+                        window_close(front);
+                if (back)
+                        window_close(back);
                 log_direct(str("no window\n"));
                 return 1;
         }
@@ -607,9 +613,11 @@ static b32 screen_text()
 */
 static b32 screen_spawn()
 {
-        b32 device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ_WRITE);
+        b32 device = system_open_at(AT_FDCWD, SPARK_DEVICE,
+                                    FILE_READ_WRITE | O_CLOEXEC);
         struct stats stats;
         positive spawns;
+        b32 result = 0;
 
         if (device < 0)
         {
@@ -621,8 +629,8 @@ static b32 screen_spawn()
         if (system_control(device, SPARK_IOCTL_STATS, address_of stats) != 0)
         {
                 string_format(log, "could not read spawn stats\n");
-                log_flush();
-                return 1;
+                result = 1;
+                goto finished;
         }
 
         spawns = stats.spawns ? stats.spawns : 1;
@@ -646,8 +654,10 @@ static b32 screen_spawn()
 
         string_format(log, "totals           %p ns task, %p ns exec\n",
                       stats.task_ns, stats.exec_ns);
+finished:
+        system_close(device);
         log_flush();
-        return 0;
+        return result;
 }
 
 // pointer ---------------------------------------------------------
@@ -656,7 +666,9 @@ static b32 screen_spawn()
 static b32 screen_pointer()
 {
         b32 device = system_open_at(AT_FDCWD,
-                                   SPARK_DEVICE, FILE_READ_WRITE);
+                                   SPARK_DEVICE,
+                                   FILE_READ_WRITE | O_CLOEXEC);
+        b32 result = 0;
 
         if (device < 0)
         {
@@ -672,16 +684,16 @@ static b32 screen_pointer()
                           address_of stats) != 0)
         {
                 string_format(log, "could not read input stats\n");
-                log_flush();
-                return 1;
+                result = 1;
+                goto finished;
         }
 
         if (system_control(device, SPARK_IOCTL_CURSOR_STATS,
                           address_of cursor) != 0)
         {
                 string_format(log, "could not read cursor stats\n");
-                log_flush();
-                return 1;
+                result = 1;
+                goto finished;
         }
 
         // Drawing happens whether or not anything has touched the mouse.
@@ -731,8 +743,7 @@ static b32 screen_pointer()
         if (!stats.events)
         {
                 string_format(log, "no pointer movement seen yet\n");
-                log_flush();
-                return 0;
+                goto finished;
         }
 
         string_format(log, "pointer events   %p\n", stats.events);
@@ -743,6 +754,8 @@ static b32 screen_pointer()
         string_format(log, "  flush          %p ns\n", stats.flush_ns);
         string_format(log, "counts reported  %p\n", stats.counts);
         string_format(log, "pixels moved     %p\n", stats.moved);
+finished:
+        system_close(device);
         log_flush();
-        return 0;
+        return result;
 }

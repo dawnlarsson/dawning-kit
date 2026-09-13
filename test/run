@@ -3459,6 +3459,13 @@ lane_shell()
         shell_failed=0
         freestanding_checks_lane lexer_spans lexer_spans || shell_failed=1
         python3 test/differential.py --harness shell_functions --shell "$shell_binary" || shell_failed=1
+        if [ "$(env PS4='+ ' SHELLOPTS=xtrace "$farm/bash" -c : 2>&1)" = '+ :' ]; then
+                tally shell-literal-inherited-options 1 1
+        else
+                tally shell-literal-inherited-options 0 1
+                note "bash literal fast path ignored inherited SHELLOPTS"
+                shell_failed=1
+        fi
         differential_domain shell || shell_failed=1
         return "$shell_failed"
 }

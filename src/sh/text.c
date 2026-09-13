@@ -17063,6 +17063,15 @@ static bool sed_commit(bipolar directory, string_address leaf,
                 memory_copy_apart_end(kept_leaf + leaf_length,
                                       sed_in_place, extra);
 
+                bipolar same = system_path_same_opened_at(
+                    original, directory, leaf);
+                if (same < 0)
+                {
+                        string_diagnostic(&text_diagnostic, 0, name,
+                                          file_reason(same));
+                        return false;
+                }
+
                 /* Make the backup from the opened directory entry rather
                    than from its reusable pathname.  The alias directory is
                    private and contains a hard link to that exact object. */
@@ -17615,9 +17624,10 @@ cycle_done:
                         bool incomplete = text_out_failed || text_input.failed ||
                                           sed_space_full || sed_failed ||
                                           sed_io_failed;
-                        bipolar chmodded = incomplete ? -1 : system_call_2(
-                            syscall(fchmod), (positive)written,
-                            input_facts.mode & 07777);
+                        bipolar chmodded = incomplete
+                            ? -1
+                            : file_preserve_owner_mode(
+                                  written, address_of input_facts);
                         bipolar synced = incomplete || chmodded < 0 ? -1
                             : system_call_1(syscall(fsync),
                                             (positive)written);

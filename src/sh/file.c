@@ -3693,6 +3693,18 @@ static bipolar file_remove_same(bipolar directory, string_address name,
         return removed;
 }
 
+static bipolar file_remove_path_same(string_address path, positive flags,
+                                     file_facts address_to expected)
+{
+        p8 leaf[FILE_PATH_MAX];
+        bipolar directory = file_parent_open(path, leaf);
+        if (directory < 0)
+                return directory;
+        bipolar removed = file_remove_same(directory, leaf, flags, expected);
+        system_close(directory);
+        return removed;
+}
+
 static bipolar file_exchange_decided_at(
     bipolar from_directory, string_address from,
     bipolar to_directory, string_address to,
@@ -3815,6 +3827,75 @@ static bipolar file_stage_close_at(bipolar directory,
                     directory, temporary, handle, remove_flags);
         bipolar closed = system_close(handle);
         return result < 0 ? result : closed;
+}
+
+/* One regular-file output transaction shared by utilities that must never
+   truncate a public name before their complete output is ready. */
+typedef struct
+{
+        bipolar directory;
+        bipolar handle;
+        positive mode;
+        p8 leaf[FILE_PATH_MAX];
+        p8 temporary[FILE_PATH_MAX];
+} file_staged_name;
+
+static bipolar file_staged_name_open(file_staged_name address_to stage,
+                                     string_address path, positive mode,
+                                     string_address marker,
+                                     positive marker_length)
+{
+        stage->directory = file_parent_open(path, stage->leaf);
+        stage->handle = -1;
+        stage->mode = mode & 0777;
+        stage->temporary[0] = end;
+        if (stage->directory < 0)
+                return stage->directory;
+
+        file_facts existing;
+        if (file_look(stage->directory, stage->leaf, AT_SYMLINK_NOFOLLOW,
+                      address_of existing) &&
+            (existing.mode & MODE_FORMAT) == MODE_FILE)
+                stage->mode = existing.mode & 0777;
+
+        stage->handle = file_temporary_open_at(
+            stage->directory, stage->leaf, stage->temporary,
+            sizeof(stage->temporary), marker, marker_length,
+            system_nonce(), 128, 0600);
+        if (stage->handle < 0)
+        {
+                bipolar reason = stage->handle;
+                system_close(stage->directory);
+                stage->directory = -1;
+                return reason;
+        }
+        return stage->handle;
+}
+
+static bipolar file_staged_name_finish(file_staged_name address_to stage,
+                                       bool publish, positive flags)
+{
+        bipolar result = publish
+                             ? system_call_2(
+                                   syscall(fchmod), (positive)stage->handle,
+                                   stage->mode)
+                             : -ERROR_INPUT_OUTPUT;
+        if (result >= 0)
+                result = file_temporary_publish_at(
+                    stage->directory, stage->temporary, stage->leaf,
+                    stage->handle, flags);
+        result = file_stage_close_at(
+            stage->directory, stage->temporary, stage->handle, result, 0);
+        bipolar closed = system_close(stage->directory);
+        stage->directory = -1;
+        stage->handle = -1;
+        stage->temporary[0] = end;
+        return result < 0 ? result : closed;
+}
+
+static fn file_staged_name_abort(file_staged_name address_to stage)
+{
+        (void)file_staged_name_finish(stage, false, 0);
 }
 
 static bipolar file_directory_empty_same(bipolar directory,
@@ -12597,11 +12678,21 @@ static bool file_simple_operands(string_address program, positive wanted)
                 return true;
 
         if (file_simple_operand_count > wanted)
-                string_format(log_error, "%s: extra operand '%s'\n", program,
-                              file_simple_operand_list[wanted]);
+        {
+                string_format(log_error, "%s: extra operand '", program);
+                writer_terminal_quoted_name(
+                    log_error, file_simple_operand_list[wanted]);
+                log_error("'\n", 2);
+        }
         else if (file_simple_operand_count)
-                string_format(log_error, "%s: missing operand after '%s'\n", program,
-                              file_simple_operand_list[file_simple_operand_count - 1]);
+        {
+                string_format(log_error, "%s: missing operand after '",
+                              program);
+                writer_terminal_quoted_name(
+                    log_error,
+                    file_simple_operand_list[file_simple_operand_count - 1]);
+                log_error("'\n", 2);
+        }
         else
                 string_format(log_error, "%s: missing operand\n", program);
 
@@ -13787,8 +13878,11 @@ static b32 file_basename()
 
         if (!many && index + 2 < count)
         {
-                string_format(log_error, "basename: extra operand '%s'\n",
-                              program_argument((b32)(index + 2)));
+                file_name_message(
+                    log_error,
+                    (string_address)"basename: extra operand '",
+                    program_argument((b32)(index + 2)),
+                    (string_address)"'\n");
                 return 1;
         }
 
@@ -14762,8 +14856,13 @@ static b32 file_mknod()
                 return string_report(log_error, 1, "%s: missing operand\n", (string_address) "mknod");
 
         if (file_operand_count == 1)
-                return string_report(log_error, 1, "mknod: missing operand after '%s'\n",
-                                     file_operand_at(0));
+        {
+                file_name_message(
+                    log_error,
+                    (string_address)"mknod: missing operand after '",
+                    file_operand_at(0), (string_address)"'\n");
+                return 1;
+        }
 
         //      Only the first letter of the type is read, so that the
         //      mnemonic spellings the reference allows -- character, block,
@@ -14995,8 +15094,9 @@ typedef struct
         bool need_advance;
         bool verbose;
         bool protect_input;
+        positive mode;
         file_facts input;
-        bipolar handle;
+        file_staged_name stage;
         p8 suffix[SPLIT_SUFFIX_MAX];
         p8 name[FILE_PATH_MAX];
 } split_output;
@@ -15193,7 +15293,7 @@ static bool file_same_as_input(bool protect, string_address name,
 
 static bool split_output_open(split_output address_to output)
 {
-        if (output->handle >= 0)
+        if (output->stage.handle >= 0)
                 return true;
         if (!split_output_name(output))
                 return false;
@@ -15207,14 +15307,15 @@ static bool split_output_open(split_output address_to output)
                 return false;
         }
 
-        output->handle = system_open_at_mode(AT_FDCWD, output->name,
-                                             FILE_WRITE, 0666);
+        bipolar opened = file_staged_name_open(
+            address_of output->stage, output->name, output->mode,
+            (string_address)".moonwater-split-", 17);
 
-        if (output->handle < 0)
+        if (opened < 0)
         {
                 file_name_reason(
                     log_error, (string_address)"split: cannot open '",
-                    output->name, (string_address)"': ", output->handle);
+                    output->name, (string_address)"': ", opened);
                 return false;
         }
 
@@ -15232,7 +15333,8 @@ static bool split_output_write(split_output address_to output,
                 return true;
         if (!split_output_open(output))
                 return false;
-        if (system_write_all((positive)output->handle, bytes, length) != length)
+        if (system_write_all((positive)output->stage.handle, bytes, length) !=
+            length)
         {
                 file_name_message(log_error,
                                   (string_address)"split: write error on '",
@@ -15244,21 +15346,27 @@ static bool split_output_write(split_output address_to output,
 
 static bool split_output_close(split_output address_to output)
 {
-        if (output->handle < 0)
+        if (output->stage.handle < 0)
                 return true;
 
-        bipolar closed = system_close(output->handle);
-        output->handle = -1;
+        bipolar closed = file_staged_name_finish(
+            address_of output->stage, true, 0);
         output->need_advance = true;
 
         if (closed < 0)
         {
                 file_name_reason(log_error,
-                                 (string_address)"split: closing '",
+                                 (string_address)"split: cannot publish '",
                                  output->name, (string_address)"': ", closed);
                 return false;
         }
         return true;
+}
+
+static fn split_output_abort(split_output address_to output)
+{
+        if (output->stage.handle >= 0)
+                file_staged_name_abort(address_of output->stage);
 }
 
 static bool split_fixed(bipolar in, p64 length, positive measure,
@@ -15278,7 +15386,8 @@ static bool split_fixed(bipolar in, p64 length, positive measure,
 
                 if (!split_output_open(output) ||
                     (here && !(bytes ? split_output_write(output, bytes, here)
-                                : file_copy_stream(in, output->handle, here, true,
+                                : file_copy_stream(in, output->stage.handle,
+                                                   here, true,
                                                    address_of range_copy,
                                                    address_of send_copy, null))) ||
                     !split_output_close(output))
@@ -15586,7 +15695,8 @@ static b32 file_split()
             .radix = suffix_kind == 'd' ? 10 : suffix_kind == 'x' ? 16 : 0,
             .suffix_fixed = width != null,
             .verbose = (taking.flags & FILE_FLAG('v')) != 0,
-            .handle = -1,
+            .mode = 0666 & ~file_umask(),
+            .stage = {.directory = -1, .handle = -1},
         };
         memory_fill(output.suffix, output.radix ? '0' : 'a', suffix_length);
 
@@ -15639,8 +15749,8 @@ static b32 file_split()
                 complete = split_stream(in, piece, separator, mode == 'l',
                                          address_of output);
 
-        if (output.handle >= 0)
-                split_output_close(address_of output);
+        if (output.stage.handle >= 0)
+                split_output_abort(address_of output);
         if (in != 0)
                 system_close(in);
         log_flush();
@@ -15701,9 +15811,13 @@ typedef struct
         bool suppress_matched;
         bool suppress_final;
         bool protect_input;
+        positive output_mode;
         file_facts input_facts;
         p8 name[FILE_PATH_MAX];
 } csplit_state;
+
+static file_facts address_to csplit_outputs;
+static positive csplit_output_room;
 
 static const file_long csplit_longs[] = {
     {(string_address)"digits", 'n'},
@@ -15757,9 +15871,17 @@ static bool csplit_section(csplit_state address_to state, positive from,
                 return false;
         }
 
-        bipolar out = system_open_at_mode(AT_FDCWD, state->name,
-                                          FILE_WRITE, 0666);
+        if (!array_store_reserve(csplit_outputs, csplit_output_room,
+                                 state->made, state->made + 1, 8))
+        {
+                log_error("csplit: out of memory while tracking outputs\n", 0);
+                return false;
+        }
 
+        file_staged_name stage;
+        bipolar out = file_staged_name_open(
+            address_of stage, state->name, state->output_mode,
+            (string_address)".moonwater-csplit-", 18);
         if (out < 0)
         {
                 file_name_reason(
@@ -15768,19 +15890,32 @@ static bool csplit_section(csplit_state address_to state, positive from,
                 return false;
         }
 
-        state->made++;
+        file_facts made;
+        bool identified = file_look(
+            stage.handle, (string_address)"", AT_EMPTY_PATH,
+            address_of made);
         bool written = !length ||
-                       system_write_all((positive)out, state->input + from,
+                       system_write_all((positive)stage.handle,
+                                        state->input + from,
                                         length) == length;
-        bipolar closed = system_close(out);
+        bipolar closed;
+        if (identified && written)
+                closed = file_staged_name_finish(
+                    address_of stage, true, 0);
+        else
+        {
+                file_staged_name_abort(address_of stage);
+                closed = -ERROR_INPUT_OUTPUT;
+        }
 
-        if (!written || closed < 0)
+        if (!identified || !written || closed < 0)
         {
                 file_name_message(log_error,
                                   (string_address)"csplit: write error on '",
                                   state->name, (string_address)"'\n");
                 return false;
         }
+        csplit_outputs[state->made++] = made;
 
         if (!state->quiet)
         {
@@ -15798,7 +15933,8 @@ static fn csplit_cleanup(csplit_state address_to state)
 
         for (positive i = 0; i < state->made; i++)
                 if (csplit_name(state, i))
-                        system_remove_at(AT_FDCWD, state->name, 0);
+                        (void)file_remove_path_same(
+                            state->name, 0, csplit_outputs + i);
 }
 
 static bool csplit_line_offset(csplit_state address_to state,
@@ -16133,6 +16269,7 @@ static b32 file_csplit()
             .quiet = (taking.flags & FILE_FLAG('s')) != 0,
             .elide = (taking.flags & FILE_FLAG('z')) != 0,
             .suppress_matched = (taking.flags & FILE_FLAG('M')) != 0,
+            .output_mode = 0666 & ~file_umask(),
         };
 
         if (!state.prefix)
@@ -16175,8 +16312,12 @@ static b32 file_csplit()
                         {
                                 if (!csplit_parse_regex(word, address_of pattern))
                                 {
-                                        string_format(log_error,
-                                                      "csplit: '%s': invalid pattern\n", word);
+                                        file_name_message(
+                                            log_error,
+                                            (string_address)"csplit: '",
+                                            word,
+                                            (string_address)
+                                                "': invalid pattern\n");
                                         failed = true;
                                         break;
                                 }
@@ -16190,9 +16331,12 @@ static b32 file_csplit()
                                 if (!regex_compile(pattern.expression, false, false,
                                                    false, CSPLIT_REGEX_POLICY))
                                 {
-                                        string_format(log_error,
-                                                      "csplit: invalid regular expression: '%s'\n",
-                                                      pattern.expression);
+                                        file_name_message(
+                                            log_error,
+                                            (string_address)
+                                                "csplit: invalid regular expression: '",
+                                            pattern.expression,
+                                            (string_address)"'\n");
                                         failed = true;
                                         break;
                                 }
@@ -16203,8 +16347,10 @@ static b32 file_csplit()
                         }
                         else if (!csplit_parse_line(word, address_of pattern))
                         {
-                                string_format(log_error, "csplit: '%s': invalid pattern\n",
-                                              word);
+                                file_name_message(
+                                    log_error, (string_address)"csplit: '",
+                                    word,
+                                    (string_address)"': invalid pattern\n");
                                 failed = true;
                                 break;
                         }
@@ -16236,10 +16382,20 @@ static b32 file_csplit()
                                         failed = true;
                                         break;
                                 }
-                                string_format(log_error,
-                                              repeated ? "csplit: '%s': match not found on repetition %p\n"
-                                                       : "csplit: '%s': match not found\n",
-                                              word, repetition + 1);
+                                file_name_message(
+                                    log_error, (string_address)"csplit: '",
+                                    word,
+                                    repeated
+                                        ? (string_address)
+                                              "': match not found on repetition "
+                                        : (string_address)
+                                              "': match not found\n");
+                                if (repeated)
+                                {
+                                        positive_to_string(
+                                            log_error, repetition + 1);
+                                        log_error("\n", 1);
+                                }
                         }
                         failed = true;
                         break;
@@ -16871,8 +17027,9 @@ static fn hardlink_visit(bipolar directory, string_address name,
 
         if (looked < 0)
         {
-                string_format(log_error, "hardlink: cannot stat '%s': %s\n",
-                              shown, file_reason(looked));
+                file_name_reason(
+                    log_error, (string_address)"hardlink: cannot stat '",
+                    shown, (string_address)"': ", looked);
                 hardlink_status = 1;
                 return;
         }
@@ -16998,8 +17155,9 @@ static bool hardlink_hash_one(hardlink_file address_to file)
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
         {
-                string_format(log_error, "hardlink: cannot read '%s': %s\n",
-                              path, file_reason(handle));
+                file_name_reason(
+                    log_error, (string_address)"hardlink: cannot read '",
+                    path, (string_address)"': ", handle);
                 hardlink_status = 1;
                 file->valid = false;
                 return false;
@@ -17048,13 +17206,15 @@ static bool hardlink_hash_one(hardlink_file address_to file)
         else
         {
                 if (read_error)
-                        string_format(log_error,
-                                      "hardlink: short or failed read of '%s': %s\n",
-                                      path, file_reason(read_error));
+                        file_name_reason(
+                            log_error,
+                            (string_address)
+                                "hardlink: short or failed read of '",
+                            path, (string_address)"': ", read_error);
                 else
-                        string_format(log_error,
-                                      "hardlink: '%s' changed while reading\n",
-                                      path);
+                        file_name_message(
+                            log_error, (string_address)"hardlink: '", path,
+                            (string_address)"' changed while reading\n");
                 hardlink_status = 1;
         }
         return stable;
@@ -17072,9 +17232,12 @@ static bool hardlink_equal(hardlink_file address_to one,
 
         if (one_handle < 0 || two_handle < 0)
         {
-                string_format(log_error,
-                              "hardlink: cannot compare '%s' and '%s': %s\n",
-                              one_path, two_path,
+                file_name_pair_message(
+                    log_error,
+                    (string_address)"hardlink: cannot compare '", one_path,
+                    (string_address)"' and '", two_path,
+                    (string_address)"': ");
+                string_format(log_error, "%s\n",
                               file_reason(one_handle < 0 ? one_handle
                                                          : two_handle));
                 hardlink_status = 1;
@@ -17148,13 +17311,19 @@ static bool hardlink_equal(hardlink_file address_to one,
                 two->valid = false;
         if (!stable)
         {
-                string_format(log_error,
+                file_name_pair_message(
+                    log_error,
+                    read_error
+                        ? (string_address)
+                              "hardlink: short or failed read while comparing '"
+                        : (string_address)
+                              "hardlink: file changed while comparing '",
+                    one_path, (string_address)"' and '", two_path,
+                    (string_address)"': ");
+                string_format(log_error, "%s\n",
                               read_error
-                                  ? (string_address)"hardlink: short or failed read while comparing '%s' and '%s': %s\n"
-                                  : (string_address)"hardlink: file changed while comparing '%s' and '%s': %s\n",
-                              one_path, two_path,
-                              read_error ? file_reason(read_error)
-                                         : (string_address)"comparison abandoned");
+                                  ? file_reason(read_error)
+                                  : (string_address)"comparison abandoned");
                 hardlink_status = 1;
         }
         return same && stable;
@@ -17206,32 +17375,42 @@ static bool hardlink_cleanup(string_address temporary,
         for (positive tries = 0; tries < 128 && moved == -ERROR_EXISTS; tries++)
         {
                 if (!hardlink_temporary(destination, cleanup))
-                        return string_report(log_error, false,
-                                      "hardlink: displaced object retained as '%s'; cleanup path is too long\n",
-                                      temporary);
+                {
+                        file_name_message(
+                            log_error,
+                            (string_address)
+                                "hardlink: displaced object retained as '",
+                            temporary,
+                            (string_address)
+                                "'; cleanup path is too long\n");
+                        return false;
+                }
                 moved = system_rename_at(AT_FDCWD, temporary, AT_FDCWD,
                                          cleanup, FILE_RENAME_NOREPLACE);
         }
         if (moved < 0)
-                return string_report(log_error, false,
-                              "hardlink: displaced object retained as '%s': %s\n",
-                              temporary, file_reason(moved));
+        {
+                file_name_reason(
+                    log_error,
+                    (string_address)
+                        "hardlink: displaced object retained as '",
+                    temporary, (string_address)"': ", moved);
+                return false;
+        }
 
-        file_facts first;
-        file_facts final;
-        if (!file_look_link(cleanup, address_of first) ||
-            !hardlink_link_same(expected, address_of first) ||
-            !file_look_link(cleanup, address_of final) ||
-            !hardlink_snapshot_same(address_of first, address_of final))
-                return string_report(log_error, false,
-                              "hardlink: cleanup race; displaced object retained as '%s'\n",
-                              cleanup);
-
-        bipolar removed = system_remove_at(AT_FDCWD, cleanup, 0);
+        bipolar removed = file_remove_path_same(cleanup, 0, expected);
         if (removed < 0)
-                return string_report(log_error, false,
-                              "hardlink: displaced object retained as '%s': %s\n",
-                              cleanup, file_reason(removed));
+        {
+                file_name_reason(
+                    log_error,
+                    removed == -ERROR_AGAIN
+                        ? (string_address)
+                              "hardlink: cleanup race; displaced object retained as '"
+                        : (string_address)
+                              "hardlink: displaced object retained as '",
+                    cleanup, (string_address)"': ", removed);
+                return false;
+        }
         return true;
 }
 
@@ -17261,9 +17440,13 @@ static bool hardlink_replace(hardlink_file address_to keep,
             !file_look_link(duplicate_path, address_of duplicate_current) ||
             !hardlink_snapshot_same(address_of duplicate->facts,
                                     address_of duplicate_current))
-                return string_report(log_error, false,
-                              "hardlink: '%s' or '%s' changed before replacement\n",
-                              keep_path, duplicate_path);
+        {
+                file_name_pair_message(
+                    log_error, (string_address)"hardlink: '", keep_path,
+                    (string_address)"' or '", duplicate_path,
+                    (string_address)"' changed before replacement\n");
+                return false;
+        }
 
         bipolar linked = -ERROR_EXISTS;
 
@@ -17275,16 +17458,26 @@ static bool hardlink_replace(hardlink_file address_to keep,
                                         temporary, 0);
         }
         if (linked < 0)
-                return string_report(log_error, false, "hardlink: cannot link '%s': %s\n",
-                              duplicate_path, file_reason(linked));
+        {
+                file_name_reason(
+                    log_error, (string_address)"hardlink: cannot link '",
+                    duplicate_path, (string_address)"': ", linked);
+                return false;
+        }
 
         file_facts made;
-        if (!file_look_link(temporary, address_of made) ||
+        bool made_known = file_look_link(temporary, address_of made);
+        if (!made_known ||
             !hardlink_link_same(address_of keep_current, address_of made))
         {
-                string_format(log_error,
-                              "hardlink: temporary link for '%s' could not be proved\n",
-                              duplicate_path);
+                file_name_message(
+                    log_error,
+                    (string_address)"hardlink: temporary link for '",
+                    duplicate_path,
+                    (string_address)"' could not be proved\n");
+                if (made_known)
+                        (void)file_remove_path_same(
+                            temporary, 0, address_of made);
                 keep->valid = false;
                 return false;
         }
@@ -17300,9 +17493,11 @@ static bool hardlink_replace(hardlink_file address_to keep,
         {
                 hardlink_cleanup(temporary, duplicate_path, address_of made);
                 hardlink_refresh(keep, address_of made);
-                return string_report(log_error, false,
-                              "hardlink: '%s' changed before exchange\n",
-                              duplicate_path);
+                file_name_message(
+                    log_error, (string_address)"hardlink: '",
+                    duplicate_path,
+                    (string_address)"' changed before exchange\n");
+                return false;
         }
 
         bipolar exchanged = system_rename_at(
@@ -17312,17 +17507,24 @@ static bool hardlink_replace(hardlink_file address_to keep,
         {
                 hardlink_cleanup(temporary, duplicate_path, address_of made);
                 hardlink_refresh(keep, address_of made);
-                return string_report(log_error, false, "hardlink: cannot replace '%s': %s\n",
-                              duplicate_path, file_reason(exchanged));
+                file_name_reason(
+                    log_error,
+                    (string_address)"hardlink: cannot replace '",
+                    duplicate_path, (string_address)"': ", exchanged);
+                return false;
         }
 
         file_facts linked_current;
         if (!file_look_link(duplicate_path, address_of linked_current) ||
             !hardlink_link_same(address_of made, address_of linked_current))
         {
-                string_format(log_error,
-                              "hardlink: destination race at '%s'; displaced object retained as '%s'\n",
-                              duplicate_path, temporary);
+                file_name_pair_message(
+                    log_error,
+                    (string_address)"hardlink: destination race at '",
+                    duplicate_path,
+                    (string_address)
+                        "'; displaced object retained as '",
+                    temporary, (string_address)"'\n");
                 keep->valid = false;
                 return false;
         }
@@ -17333,9 +17535,16 @@ static bool hardlink_replace(hardlink_file address_to keep,
         if (!file_look_link(temporary, address_of displaced) ||
             !hardlink_link_same(address_of duplicate_current,
                                 address_of displaced))
-                return string_report(log_error, false,
-                              "hardlink: race while replacing '%s'; unexpected displaced object retained as '%s'\n",
-                              duplicate_path, temporary);
+        {
+                file_name_pair_message(
+                    log_error,
+                    (string_address)"hardlink: race while replacing '",
+                    duplicate_path,
+                    (string_address)
+                        "'; unexpected displaced object retained as '",
+                    temporary, (string_address)"'\n");
+                return false;
+        }
 
         return hardlink_cleanup(temporary, duplicate_path,
                                 address_of displaced);
@@ -17345,7 +17554,10 @@ static fn hardlink_list_one(hardlink_file address_to file, p8 delimiter)
 {
         positive_to_padded(log, file->hash, 20, '0', 0);
         log("\t", 1);
-        log(hardlink_path(file), 0);
+        if (delimiter)
+                writer_terminal_name(log, hardlink_path(file));
+        else
+                log(hardlink_path(file), 0);
         log(address_of delimiter, 1);
 }
 
@@ -17589,11 +17801,19 @@ static b32 file_hardlink()
                                 hardlink_linked++;
                                 hardlink_saved += duplicate->facts.size;
                                 if (verbose && !quiet)
-                                        string_format(log,
-                                                      "Linking %s to %s (-%b B)\n",
-                                                      hardlink_path(keep),
-                                                      hardlink_path(duplicate),
-                                                      duplicate->facts.size);
+                                {
+                                        file_unquoted_name_message(
+                                            log, (string_address)"Linking ",
+                                            hardlink_path(keep),
+                                            (string_address)" to ");
+                                        file_unquoted_name_message(
+                                            log, (string_address)"",
+                                            hardlink_path(duplicate),
+                                            (string_address)" (");
+                                        string_format(
+                                            log, "-%b B)\n",
+                                            duplicate->facts.size);
+                                }
                         }
                         first = after;
                 }
@@ -17787,6 +18007,11 @@ static bool shred_one(string_address path, positive iterations,
                       bool size_given, positive requested, bool exact,
                       bool zero, bool remove, bool force, bool verbose)
 {
+        /* shred follows a symlink while writing, but -u removes the directory
+           entry the caller named. Keep both identities distinct. */
+        file_facts named;
+        bool named_known = file_look_code(
+            AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, address_of named) >= 0;
         bipolar handle = shred_open(path, force);
 
         if (handle < 0)
@@ -17937,8 +18162,9 @@ static bool shred_one(string_address path, positive iterations,
                             log_error, (string_address)"shred: ", path,
                             (string_address)": removing\n");
 
-                bipolar gone =
-                    file_remove_same(AT_FDCWD, path, 0, address_of facts);
+                bipolar gone = named_known
+                    ? file_remove_path_same(path, 0, address_of named)
+                    : -ERROR_AGAIN;
 
                 if (gone < 0)
                 {
@@ -18076,6 +18302,7 @@ typedef struct
         positive used;
         string_address name;
         bool opened;
+        file_staged_name stage;
 } shuf_output;
 
 static const file_long shuf_longs[] = {
@@ -18088,6 +18315,17 @@ static const file_long shuf_longs[] = {
     {(string_address) "zero-terminated", 'z'},
     {null, 0},
 };
+
+static bool shuf_write_failed(shuf_output address_to output)
+{
+        if (output->name)
+                file_unquoted_name_message(
+                    log_error, (string_address)"shuf: write error on ",
+                    output->name, (string_address)"\n");
+        else
+                log_error("shuf: write error\n", 0);
+        return false;
+}
 
 static bool shuf_range(string_address text, positive address_to low,
                        positive address_to high)
@@ -18131,7 +18369,8 @@ static positive shuf_uniform(file_random_state address_to random,
 static bool shuf_output_flush(shuf_output address_to output)
 {
         return buffered_flush((positive)output->handle, file_transfer,
-                               address_of output->used) || string_report(log_error, false, "shuf: write error%s%s\n", output->name ? (string_address)" on " : (string_address)"", output->name ? output->name : (string_address)"");
+                               address_of output->used) ||
+               shuf_write_failed(output);
 }
 
 static bool shuf_output_send(shuf_output address_to output,
@@ -18139,7 +18378,8 @@ static bool shuf_output_send(shuf_output address_to output,
 {
         return buffered_write((positive)output->handle, file_transfer,
                                sizeof(file_transfer), address_of output->used,
-                               bytes, length) || string_report(log_error, false, "shuf: write error%s%s\n", output->name ? (string_address)" on " : (string_address)"", output->name ? output->name : (string_address)"");
+                               bytes, length) ||
+               shuf_write_failed(output);
 }
 
 static bool shuf_output_record(shuf_output address_to output,
@@ -18151,7 +18391,7 @@ static bool shuf_output_record(shuf_output address_to output,
                     (positive)output->handle, file_transfer, sizeof(file_transfer),
                     address_of output->used, record->length + 1);
                 if (!bytes)
-                        return string_report(log_error, false, "shuf: write error%s%s\n", output->name ? (string_address)" on " : (string_address)"", output->name ? output->name : (string_address)"");
+                        return shuf_write_failed(output);
                 memory_copy_apart(bytes, record->text, record->length);
                 bytes[record->length] = delimiter;
                 return true;
@@ -18159,7 +18399,8 @@ static bool shuf_output_record(shuf_output address_to output,
         return shuf_output_send(output, record->text, record->length) &&
                (buffered_write_byte((positive)output->handle, file_transfer,
                                      sizeof(file_transfer), address_of output->used,
-                                     delimiter) || string_report(log_error, false, "shuf: write error%s%s\n", output->name ? (string_address)" on " : (string_address)"", output->name ? output->name : (string_address)""));
+                                     delimiter) ||
+                shuf_write_failed(output));
 }
 
 static bool shuf_output_number(shuf_output address_to output, positive number,
@@ -18181,8 +18422,9 @@ static shuf_record address_to shuf_file_records(string_address name,
 
         if (handle < 0)
         {
-                string_format(log_error, "shuf: %s: %s\n", name,
-                              file_reason(handle));
+                file_unquoted_name_reason(
+                    log_error, (string_address)"shuf: ", name,
+                    (string_address)": ", handle);
                 return null;
         }
 
@@ -18508,12 +18750,17 @@ static b32 file_shuf()
         if (echo && range_text)
                 return string_report(log_error, 1, "shuf: cannot combine -e and -i options\n");
         if (range_text && file_operand_count)
-                return string_report(log_error, 1, "shuf: extra operand '%s'\n",
-                                     file_operand_at(0));
+        {
+                file_name_message(
+                    log_error, (string_address)"shuf: extra operand '",
+                    file_operand_at(0), (string_address)"'\n");
+                return 1;
+        }
         if (!echo && !range_text && file_operand_count > 1)
         {
-                string_format(log_error, "shuf: extra operand '%s'\n",
-                              file_operand_at(1));
+                file_name_message(
+                    log_error, (string_address)"shuf: extra operand '",
+                    file_operand_at(1), (string_address)"'\n");
                 return 1;
         }
 
@@ -18580,18 +18827,25 @@ static b32 file_shuf()
         }
 
         string_address output_name = file_option_value(address_of taking, 'o');
-        shuf_output output = {.handle = 1, .name = output_name};
+        shuf_output output = {
+            .handle = 1,
+            .name = output_name,
+            .stage = {.directory = -1, .handle = -1},
+        };
 
         if (output_name)
         {
-                output.handle = system_open_at_mode(AT_FDCWD, output_name,
-                                                    FILE_WRITE, 0666);
+                output.handle = file_staged_name_open(
+                    address_of output.stage, output_name,
+                    0666 & ~file_umask(),
+                    (string_address)".moonwater-shuf-", 16);
                 output.opened = output.handle >= 0;
 
                 if (!output.opened)
                 {
-                        string_format(log_error, "shuf: %s: %s\n",
-                                      output_name, file_reason(output.handle));
+                        file_unquoted_name_reason(
+                            log_error, (string_address)"shuf: ", output_name,
+                            (string_address)": ", output.handle);
                         utility_arena.used = 0;
                         return 1;
                 }
@@ -18609,11 +18863,23 @@ static b32 file_shuf()
         if (good)
                 good = shuf_output_flush(address_of output);
 
-        if (output.opened && system_close(output.handle) < 0)
+        if (output.opened)
         {
-                string_format(log_error, "shuf: close failed on '%s'\n",
-                              output_name);
-                good = false;
+                bipolar finished = 0;
+                if (good)
+                        finished = file_staged_name_finish(
+                            address_of output.stage, true, 0);
+                else
+                        file_staged_name_abort(address_of output.stage);
+                if (good && finished < 0)
+                {
+                        file_name_reason(
+                            log_error,
+                            (string_address)
+                                "shuf: failed to publish output '",
+                            output_name, (string_address)"': ", finished);
+                        good = false;
+                }
         }
 
         log_flush();
@@ -18822,6 +19088,16 @@ static bool dircolors_add_entry(dircolors_builder address_to builder,
                dircolors_add(builder, (string_address) ":", 1);
 }
 
+static fn dircolors_line_message(string_address name, positive line,
+                                  string_address after)
+{
+        file_unquoted_name_message(
+            log_error, (string_address)"dircolors: ", name,
+            (string_address)":");
+        positive_to_string(log_error, line);
+        log_error(after, 0);
+}
+
 /* Translate once, then immediately pass the result through file_color_next
    and ls_color_parse.  This is only the line-oriented front end to the one
    colour-table engine, not a parallel lookup structure. */
@@ -18830,8 +19106,9 @@ static string_address dircolors_parse(string_address input, positive length,
 {
         if (memory_first_of(input, 0, length))
         {
-                string_format(log_error, "dircolors: %s: embedded NUL byte\n",
-                              name);
+                file_unquoted_name_message(
+                    log_error, (string_address)"dircolors: ", name,
+                    (string_address)": embedded NUL byte\n");
                 return null;
         }
 
@@ -18910,9 +19187,10 @@ static string_address dircolors_parse(string_address input, positive length,
                 //      leaves: every such line is named, not just the first.
                 if (value == finish)
                 {
-                        string_format(log_error,
-                                      "dircolors: %s:%p: invalid line;  missing second token\n",
-                                      name, line_number);
+                        dircolors_line_message(
+                            name, line_number,
+                            (string_address)
+                                ": invalid line;  missing second token\n");
                         invalid = true;
                         continue;
                 }
@@ -18928,9 +19206,10 @@ static string_address dircolors_parse(string_address input, positive length,
                 {
                         if (value_length >= FILE_PATH_MAX)
                         {
-                                string_format(log_error,
-                                              "dircolors: %s:%p: terminal pattern is too long\n",
-                                              name, line_number);
+                                dircolors_line_message(
+                                    name, line_number,
+                                    (string_address)
+                                        ": terminal pattern is too long\n");
                                 return null;
                         }
 
@@ -19069,8 +19348,10 @@ static b32 file_dircolors()
         //      the extra one.
         if (print_database && file_operand_count)
         {
-                string_format(log_error, "dircolors: extra operand '%s'\n",
-                              file_operand_at(0));
+                file_name_message(
+                    log_error,
+                    (string_address)"dircolors: extra operand '",
+                    file_operand_at(0), (string_address)"'\n");
                 log_error("file operands cannot be combined with "
                           "--print-database (-p)\n", 0);
                 log_error("Try 'dircolors --help' for more information.\n", 0);
@@ -19079,8 +19360,10 @@ static b32 file_dircolors()
 
         if (file_operand_count > 1)
         {
-                string_format(log_error, "dircolors: extra operand '%s'\n",
-                              file_operand_at(1));
+                file_name_message(
+                    log_error,
+                    (string_address)"dircolors: extra operand '",
+                    file_operand_at(1), (string_address)"'\n");
                 log_error("Try 'dircolors --help' for more information.\n", 0);
                 return 1;
         }
@@ -19105,8 +19388,9 @@ static b32 file_dircolors()
 
                 if (handle < 0)
                 {
-                        string_format(log_error, "dircolors: %s: %s\n", name,
-                                      file_reason(handle));
+                        file_unquoted_name_reason(
+                            log_error, (string_address)"dircolors: ", name,
+                            (string_address)": ", handle);
                         return 1;
                 }
 
@@ -19140,15 +19424,20 @@ static b32 file_dircolors()
                 if (!input)
                 {
                         if (!read_failed)
-                                string_format(log_error,
-                                              "dircolors: '%s' is too large\n", name);
+                                file_name_message(
+                                    log_error,
+                                    (string_address)"dircolors: '", name,
+                                    (string_address)"' is too large\n");
                         else if (reason < 0)
-                                string_format(log_error,
-                                              "dircolors: %s: read error: %s\n",
-                                              name, file_reason(reason));
+                                file_unquoted_name_reason(
+                                    log_error,
+                                    (string_address)"dircolors: ", name,
+                                    (string_address)": read error: ", reason);
                         else
-                                string_format(log_error,
-                                              "dircolors: %s: read error\n", name);
+                                file_unquoted_name_message(
+                                    log_error,
+                                    (string_address)"dircolors: ", name,
+                                    (string_address)": read error\n");
 
                         utility_arena.used = 0;
                         return 1;
@@ -19579,35 +19868,104 @@ static bool file_backup_taken(file_taking address_to taking, string_address prog
         return true;
 }
 
+/* Ownership and set-ID preservation are one invariant.  If fchown cannot
+   establish the requested owner, never make the caller-owned copy set-ID.
+   O_PATH special files use the descriptor-only fchmodat2 form. */
+static bipolar file_preserve_owner_mode(
+    bipolar destination, file_facts address_to facts)
+{
+        bipolar owned = system_change_owner_at(
+            destination, (string_address)"", facts->owner, facts->group,
+            AT_EMPTY_PATH);
+        if ((facts->mode & MODE_FORMAT) == MODE_LINK)
+                return 0;
+
+        positive mode = facts->mode & 07777;
+        if (owned < 0)
+                mode &= ~(MODE_SET_USER | MODE_SET_GROUP);
+
+        bipolar changed = system_call_2(
+            syscall(fchmod), (positive)destination, mode);
+        if (changed == -ERROR_BAD_DESCRIPTOR)
+                changed = system_call_4(
+                    syscall(fchmodat2), (positive)destination,
+                    (positive)(string_address)"", mode, AT_EMPTY_PATH);
+        return changed;
+}
+
 static fn file_keep_handle(bipolar destination, file_facts address_to facts)
 {
         p64 times[4];
 
         file_times_of(facts, times);
+        (void)file_preserve_owner_mode(destination, facts);
+        system_update_times_at(
+            destination, (string_address)"", times, AT_EMPTY_PATH);
+}
 
-        system_change_owner_at(destination, (string_address)"", facts->owner,
-                               facts->group, AT_EMPTY_PATH);
+typedef struct
+{
+        positive kind;
+        string_address link;
+        file_facts address_to identity;
+        p32 device_major;
+        p32 device_minor;
+} file_stage_expectation;
 
-        system_update_times_at(destination, (string_address)"", times,
-                               AT_EMPTY_PATH);
+/* Creation and open are separate syscalls even for an exclusive staging
+   name.  A writer in the parent can exchange that name between them, so bind
+   publication to the opened inode and verify every property that determines
+   the object we meant to create. */
+static bipolar file_stage_open_verified_at(
+    bipolar directory, string_address temporary,
+    file_stage_expectation address_to expected)
+{
+        bipolar handle = system_open_at(
+            directory, temporary, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+        if (handle < 0)
+                return handle;
 
-        // A symbolic link has no mode of its own, and fchmodat has no way to
-        // stop at one: the chmod would land on whatever it points at.
-        if ((facts->mode & MODE_FORMAT) == MODE_LINK)
-                return;
+        file_facts created;
+        bipolar result = file_look_code(
+            handle, (string_address)"", AT_EMPTY_PATH, address_of created);
+        if (result >= 0)
+                result = system_path_same_opened_at(
+                    handle, directory, temporary);
+        if (result >= 0 &&
+            (created.mode & MODE_FORMAT) != expected->kind)
+                result = -ERROR_AGAIN;
+        if (result >= 0 && expected->identity &&
+            !file_same_identity(expected->identity, address_of created))
+                result = -ERROR_AGAIN;
 
-        bipolar changed = system_call_2(syscall(fchmod),
-                                        (positive)destination,
-                                        facts->mode & 07777);
+        if (result >= 0 && expected->link)
+        {
+                p8 target[FILE_PATH_MAX];
+                positive wanted = string_length(expected->link);
+                bipolar length = system_read_link_at(
+                    handle, (string_address)"", target, sizeof(target));
 
-        /* O_PATH is the only side-effect-free way to pin a fifo, device or
-           socket.  New kernels let fchmodat2 operate on that descriptor;
-           older ones leave the mode mknod supplied rather than falling back
-           to a racy pathname chmod. */
-        if (changed == -ERROR_BAD_DESCRIPTOR)
-                system_call_4(syscall(fchmodat2), (positive)destination,
-                              (positive)(string_address)"",
-                              facts->mode & 07777, AT_EMPTY_PATH);
+                if (length < 0)
+                        result = length;
+                else if ((positive)length != wanted ||
+                         memory_compare(target, expected->link, wanted))
+                        result = -ERROR_AGAIN;
+        }
+
+        if (result >= 0 &&
+            (expected->kind == MODE_CHARACTER ||
+             expected->kind == MODE_BLOCK) &&
+            (created.rdev_major != expected->device_major ||
+             created.rdev_minor != expected->device_minor))
+                result = -ERROR_AGAIN;
+
+        if (result < 0)
+        {
+                (void)file_stage_close_at(
+                    directory, temporary, handle, result, 0);
+                return result;
+        }
+        return handle;
 }
 
 // A pipe, a socket or a device node is made again with the source's kind
@@ -19642,25 +20000,15 @@ static bipolar file_copy_stage(bipolar directory, string_address destination,
         if (made < 0)
                 return made;
 
-        bipolar handle = system_open_at(
-            directory, temporary, O_PATH | O_NOFOLLOW | O_CLOEXEC);
-        if (handle < 0)
-                return handle;
-
-        file_facts created;
-        bipolar looked = file_look_code(handle, (string_address)"",
-                                        AT_EMPTY_PATH, address_of created);
-        bipolar same = looked < 0 ? looked : system_path_same_opened_at(
-            handle, directory, temporary);
-        if (same < 0 ||
-            (created.mode & MODE_FORMAT) != (facts->mode & MODE_FORMAT))
-        {
-                bipolar failed = same < 0 ? same : -ERROR_AGAIN;
-                (void)file_stage_close_at(
-                    directory, temporary, handle, failed, 0);
-                return failed;
-        }
-        return handle;
+        file_stage_expectation expected = {
+            .kind = facts->mode & MODE_FORMAT,
+            .link = target,
+            .identity = null,
+            .device_major = facts->rdev_major,
+            .device_minor = facts->rdev_minor,
+        };
+        return file_stage_open_verified_at(
+            directory, temporary, address_of expected);
 }
 
 // -n, -i and -u are three ways of asking the same question about a
@@ -19775,30 +20123,20 @@ static bool cp_linked(bipolar source_directory, string_address source,
                 return false;
         }
 
-        bipolar made_handle = system_open_at(
-            destination_directory, temporary,
-            O_PATH | O_NOFOLLOW | O_CLOEXEC);
-        file_facts made_facts;
-        bipolar made = made_handle < 0 ? made_handle : file_look_code(
-            made_handle, (string_address)"", AT_EMPTY_PATH,
-            address_of made_facts);
-        bipolar same = made < 0 ? made : system_path_same_opened_at(
-            made_handle, destination_directory, temporary);
-        if (same < 0 ||
-            (!cp_symbolic &&
-             !file_same_identity(facts, address_of made_facts)))
-        {
-                if (made_handle >= 0)
-                        (void)file_stage_close_at(
-                            destination_directory, temporary, made_handle,
-                            same < 0 ? same : -ERROR_AGAIN, 0);
+        file_stage_expectation expected = {
+            .kind = cp_symbolic ? MODE_LINK : facts->mode & MODE_FORMAT,
+            .link = cp_symbolic ? source_shown : null,
+            .identity = cp_symbolic ? null : facts,
+        };
+        bipolar made_handle = file_stage_open_verified_at(
+            destination_directory, temporary, address_of expected);
+        if (made_handle < 0)
                 return false;
-        }
 
         file_facts address_to approved =
             cp_ask && destination_exists ? destination_facts : null;
         bool no_clobber = cp_never_clobber ||
-                          (!cp_force && !approved);
+                          (!cp_force && !cp_replace && !approved);
         done = file_temporary_publish_decided_at(
             destination_directory, temporary, destination, made_handle,
             no_clobber, approved);
@@ -19935,16 +20273,30 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                           string_address destination,
                           string_address destination_shown,
                           positive depth, bool named, bool moving,
-                          bool remove_source)
+                          bool remove_source,
+                          file_facts address_to known_source)
 {
         file_facts facts;
         file_facts there;
         string_address program = moving ? (string_address)"mv" : (string_address)"cp";
         bool follow = !moving &&
                       (cp_dereference == 1 || (cp_dereference == 2 && named));
-        bipolar looked = file_look_code(source_directory, source,
-                                        follow ? 0 : AT_SYMLINK_NOFOLLOW,
-                                        address_of facts);
+        bipolar looked = 0;
+        if (known_source)
+        {
+                facts = *known_source;
+                bipolar pinned = file_open_same(
+                    source_directory, source, address_of facts,
+                    O_PATH | (follow ? 0 : O_NOFOLLOW));
+                if (pinned < 0)
+                        looked = pinned;
+                else
+                        system_close(pinned);
+        }
+        else
+                looked = file_look_code(
+                    source_directory, source,
+                    follow ? 0 : AT_SYMLINK_NOFOLLOW, address_of facts);
 
         if (looked < 0)
         {
@@ -20159,8 +20511,8 @@ static bool file_copy_one(bipolar source_directory, string_address source,
                 }
 
                 p8 temporary[FILE_PATH_MAX];
-                bool staged = moving;
-                bipolar out = moving
+                bool staged = moving || cp_replace;
+                bipolar out = staged
                     ? file_temporary_open_at(
                           destination_directory, destination, temporary,
                           sizeof(temporary),
@@ -20320,7 +20672,7 @@ static bool file_copy_one(bipolar source_directory, string_address source,
 
                 if (!file_copy_one(walk.handle, child->d_name, from,
                                    destination_handle, child->d_name, to,
-                                   depth - 1, false, moving, false))
+                                   depth - 1, false, moving, false, null))
                         complete = false;
         }
 
@@ -20416,9 +20768,64 @@ static fn cp_pair(string_address source, string_address destination)
                 return;
         }
 
+        /* A missing source and a destination which is the same inode are
+           errors before --backup or --remove-destination may alter a name.
+           Carry these facts into the copy so a source exchanged after this
+           decision fails closed against the inode the caller selected. */
+        file_facts source_facts;
+        file_facts destination_facts;
+        file_facts destination_entry;
+        bool follow = cp_dereference == 1 || cp_dereference == 2;
+        bipolar source_looked = file_look_code(
+            source_directory, source_leaf,
+            follow ? 0 : AT_SYMLINK_NOFOLLOW, address_of source_facts);
+        bipolar source_pinned = source_looked < 0
+                                    ? source_looked
+                                    : file_open_same(
+                                          source_directory, source_leaf,
+                                          address_of source_facts,
+                                          O_PATH |
+                                              (follow ? 0 : O_NOFOLLOW));
+        if (source_pinned < 0)
+        {
+                file_name_reason(log_error,
+                                 (string_address)"cp: cannot stat '", source,
+                                 (string_address)"': ", source_pinned);
+                system_close(source_directory);
+                system_close(destination_directory);
+                cp_status = 1;
+                return;
+        }
+        system_close(source_pinned);
+
+        positive kind = source_facts.mode & MODE_FORMAT;
+        positive destination_flags = kind == MODE_LINK && !follow
+                                         ? AT_SYMLINK_NOFOLLOW : 0;
+        bool destination_exists = file_look(
+            destination_directory, destination_leaf, destination_flags,
+            address_of destination_facts);
+        bool entry_exists = file_look(
+            destination_directory, destination_leaf, AT_SYMLINK_NOFOLLOW,
+            address_of destination_entry);
+        if (destination_exists &&
+            file_same_identity(address_of source_facts,
+                               address_of destination_facts))
+        {
+                file_name_pair_message(
+                    log_error, (string_address)"cp: '", source,
+                    (string_address)"' and '", destination,
+                    (string_address)"' are the same file\n");
+                system_close(source_directory);
+                system_close(destination_directory);
+                cp_status = 1;
+                return;
+        }
+
         if (!file_backup_made_at((string_address)"cp",
                                  destination_directory, destination_leaf,
-                                 destination, null))
+                                 destination,
+                                 entry_exists ? address_of destination_entry
+                                              : null))
         {
                 system_close(source_directory);
                 system_close(destination_directory);
@@ -20426,19 +20833,10 @@ static fn cp_pair(string_address source, string_address destination)
                 return;
         }
 
-        if (cp_replace)
-        {
-                file_facts old;
-                if (file_look(destination_directory, destination_leaf,
-                              AT_SYMLINK_NOFOLLOW, address_of old))
-                        file_remove_same(destination_directory,
-                                         destination_leaf, 0,
-                                         address_of old);
-        }
-
         if (!file_copy_one(source_directory, source_leaf, source,
                            destination_directory, destination_leaf,
-                           destination, FILE_MAX_DEPTH, true, false, false))
+                           destination, FILE_MAX_DEPTH, true, false, false,
+                           address_of source_facts))
                 cp_status = 1;
         system_close(source_directory);
         system_close(destination_directory);
@@ -21211,7 +21609,7 @@ static fn mv_one(string_address source, string_address destination)
                 bool copied = file_copy_one(
                     source_directory, source_leaf, source,
                     destination_directory, destination_leaf, destination,
-                    FILE_MAX_DEPTH, true, true, true);
+                    FILE_MAX_DEPTH, true, true, true, null);
 
                 if (copied)
                 {
@@ -23449,7 +23847,13 @@ static b32 file_env()
         }
 
         if (where && system_change_directory(where) < 0)
-                return string_report(log_error, 125, "env: cannot change directory to %s\n", where);
+        {
+                file_unquoted_name_message(
+                    log_error,
+                    (string_address)"env: cannot change directory to ",
+                    where, (string_address)"\n");
+                return 125;
+        }
 
         string_address address_to arguments = env_words + at;
         string_address name = env_words[at];
@@ -23471,9 +23875,11 @@ static b32 file_env()
         bipolar answer =
             file_exec_path_try_in(name, arguments, env_list, path);
 
-        string_format(log_error, "env: '%s': %s\n", name,
-                      answer == -ERROR_ACCESS ? "Permission denied"
-                                              : "No such file or directory");
+        file_name_message(
+            log_error, (string_address)"env: '", name,
+            answer == -ERROR_ACCESS
+                ? (string_address)"': Permission denied\n"
+                : (string_address)"': No such file or directory\n");
 
         return answer == -ERROR_ACCESS ? 126 : 127;
 }
@@ -24748,6 +25154,19 @@ static fn mktemp_operand(b32 index)
                 mktemp_template = program_argument(index);
 }
 
+static fn mktemp_failed(bool directory, string_address shown,
+                         bipolar reason)
+{
+        log_error(directory
+                      ? (string_address)
+                            "mktemp: failed to create directory via template '"
+                      : (string_address)
+                            "mktemp: failed to create file via template '",
+                  0);
+        writer_terminal_quoted_name(log_error, shown);
+        string_format(log_error, "': %s\n", file_reason(reason));
+}
+
 // The kernel's randomness, and the clock when there is none to be had.
 static fn mktemp_letters_into(p8 address_to at, positive count)
 {
@@ -24985,10 +25404,7 @@ static b32 file_mktemp()
                                 break;
 
                         if (!quiet)
-                                string_format(log_error,
-                                              "mktemp: failed to create %s via template '%s': %s\n",
-                                              directory ? "directory" : "file",
-                                              shown, file_reason(looked));
+                                mktemp_failed(directory, shown, looked);
 
                         return 1;
                 }
@@ -25016,10 +25432,7 @@ static b32 file_mktemp()
                 if (answer != -ERROR_EXISTS)
                 {
                         if (!quiet)
-                                string_format(log_error,
-                                              "mktemp: failed to create %s via template '%s': %s\n",
-                                              directory ? "directory" : "file",
-                                              shown, file_reason(answer));
+                                mktemp_failed(directory, shown, answer);
 
                         return 1;
                 }
@@ -25033,9 +25446,7 @@ static b32 file_mktemp()
         }
 
         if (!quiet)
-                string_format(log_error,
-                              "mktemp: failed to create %s via template '%s': File exists\n",
-                              directory ? "directory" : "file", shown);
+                mktemp_failed(directory, shown, -ERROR_EXISTS);
 
         return 1;
 }
@@ -25983,6 +26394,56 @@ static bool rename_ask(string_address destination)
         return yes;
 }
 
+/* Replace one symlink without first removing its public name.  Both the
+   original and its staged replacement stay descriptor-bound, so a source
+   rename race either restores the object seen by the caller or fails without
+   publishing an attacker's inode. */
+static bipolar rename_symlink_publish(
+    bipolar directory, string_address source, string_address destination,
+    bipolar original, file_facts address_to expected)
+{
+        p8 temporary[FILE_PATH_MAX];
+        positive nonce = system_nonce();
+        bipolar made = -ERROR_EXISTS;
+
+        if (system_path_same_opened_at(original, directory, source) < 0)
+                return -ERROR_AGAIN;
+
+        for (positive attempt = 0;
+             attempt < 128 && made == -ERROR_EXISTS; attempt++)
+        {
+                if (!system_temporary_name(
+                        source, temporary, sizeof(temporary),
+                        (string_address)".moonwater-rename-", 18,
+                        nonce + attempt))
+                        return -ERROR_NAME_TOO_LONG;
+                made = system_symbolic_link_at(destination, directory,
+                                               temporary);
+        }
+        if (made < 0)
+                return made;
+
+        file_stage_expectation wanted = {
+            .kind = MODE_LINK,
+            .link = destination,
+        };
+        bipolar staged = file_stage_open_verified_at(
+            directory, temporary, address_of wanted);
+        /* If the descriptor table is exhausted, the new name cannot be
+           proved before cleanup.  Retaining an unpredictable sibling is
+           safer than removing a replacement planted by a directory writer. */
+        if (staged < 0)
+                return staged;
+
+        bipolar result = system_path_same_opened_at(
+            original, directory, source);
+        if (result >= 0)
+                result = file_temporary_publish_decided_at(
+                    directory, temporary, source, staged, false, expected);
+        return file_stage_close_at(
+            directory, temporary, staged, result, 0);
+}
+
 /*
         Two pairs that cannot both be asked for, refused where the second of
         a pair is read.
@@ -26090,16 +26551,39 @@ static b32 file_rename()
                 // link is made again to say the new target.
                 if (symlinks)
                 {
-                        if ((facts.mode & MODE_FORMAT) != MODE_LINK ||
-                            file_link_text(source, target, FILE_PATH_MAX) < 0)
+                        p8 source_leaf[FILE_PATH_MAX];
+                        bipolar source_directory =
+                            file_parent_open(source, source_leaf);
+                        bipolar source_handle =
+                            source_directory < 0
+                                ? source_directory
+                                : file_open_same(
+                                      source_directory, source_leaf,
+                                      address_of facts,
+                                      O_PATH | O_NOFOLLOW);
+                        bipolar target_length =
+                            source_handle < 0 ||
+                                    (facts.mode & MODE_FORMAT) != MODE_LINK
+                                ? -ERROR_INVALID
+                                : system_read_link_at(
+                                      source_handle, (string_address)"",
+                                      target, FILE_PATH_MAX - 1);
+
+                        if (target_length < 0 ||
+                            target_length >= FILE_PATH_MAX - 1)
                         {
                                 file_unquoted_name_message(
                                     log_error, (string_address)"rename: ",
                                     source,
                                     (string_address)": not a symbolic link\n");
+                                if (source_handle >= 0)
+                                        system_close(source_handle);
+                                if (source_directory >= 0)
+                                        system_close(source_directory);
                                 failed = true;
                                 continue;
                         }
+                        target[target_length] = end;
 
                         p8 made = rename_name(
                             (string_address)target, before, after,
@@ -26107,7 +26591,11 @@ static b32 file_rename()
                             (taking.flags & FILE_FLAG('l')) != 0, true, destination);
 
                         if (!made)
+                        {
+                                system_close(source_handle);
+                                system_close(source_directory);
                                 continue;
+                        }
                         if (made == 2)
                         {
                                 file_name_message(
@@ -26115,6 +26603,8 @@ static b32 file_rename()
                                     (string_address)"rename: new name for '",
                                     source,
                                     (string_address)"' is too long\n");
+                                system_close(source_handle);
+                                system_close(source_directory);
                                 failed = true;
                                 continue;
                         }
@@ -26125,15 +26615,19 @@ static b32 file_rename()
 
                                 if (file_look_link((string_address)destination, address_of there) &&
                                     (no_overwrite || !rename_ask((string_address)destination)))
+                                {
+                                        system_close(source_handle);
+                                        system_close(source_directory);
                                         continue;
+                                }
                         }
 
                         if (!no_act)
                         {
-                                system_remove_at(AT_FDCWD, source, 0);
-
-                                bipolar linked = system_symbolic_link_at(
-                                    (string_address)destination, AT_FDCWD, source);
+                                bipolar linked = rename_symlink_publish(
+                                    source_directory, source_leaf,
+                                    (string_address)destination,
+                                    source_handle, address_of facts);
 
                                 if (linked < 0)
                                 {
@@ -26147,6 +26641,8 @@ static b32 file_rename()
                                             (string_address)" failed: ");
                                         string_format(log_error, "%s\n",
                                                       file_reason(linked));
+                                        system_close(source_handle);
+                                        system_close(source_directory);
                                         failed = true;
                                         continue;
                                 }
@@ -26164,6 +26660,8 @@ static b32 file_rename()
                                                   destination,
                                                   (string_address)"'\n");
                         }
+                        system_close(source_handle);
+                        system_close(source_directory);
                         renamed++;
                         continue;
                 }
@@ -27140,8 +27638,10 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code == XARGS_EXEC_SIGNAL)
         {
-                string_format(log_error, "xargs: %s: terminated by signal %b\n",
-                              command, xargs_signal);
+                file_unquoted_name_message(
+                    log_error, (string_address)"xargs: ", command,
+                    (string_address)": terminated by signal ");
+                string_format(log_error, "%b\n", xargs_signal);
                 xargs_answer = 125;
                 xargs_done = true;
                 return false;
@@ -27152,8 +27652,10 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code < 0)
         {
-                string_format(log_error, "xargs: failed to run command '%s': %s\n",
-                              command, file_reason(code));
+                file_name_reason(
+                    log_error,
+                    (string_address)"xargs: failed to run command '",
+                    command, (string_address)"': ", code);
                 xargs_answer = code == -ERROR_ACCESS ? 126 : 127;
                 xargs_done = true;
                 return false;
@@ -27161,8 +27663,10 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code == 255)
         {
-                string_format(log_error, "xargs: %s: exited with status 255; aborting\n",
-                              command);
+                file_unquoted_name_message(
+                    log_error, (string_address)"xargs: ", command,
+                    (string_address)
+                        ": exited with status 255; aborting\n");
                 xargs_answer = 124;
                 xargs_done = true;
                 return false;
