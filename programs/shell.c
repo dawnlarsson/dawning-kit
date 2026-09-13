@@ -101,8 +101,25 @@ static positive shell_run_complete_lines(p8 address_to text, positive length,
 
                         if (history_action == HISTORY_EXPAND_RUN)
                         {
+                                positive next = (positive)(newline - text) + 1;
+                                p8 address_to rest = text + next;
+                                positive left = length - next;
+
+                                shell_line_has_more = false;
+                                while (left)
+                                {
+                                        if (*rest != '\n')
+                                        {
+                                                shell_line_has_more = true;
+                                                break;
+                                        }
+                                        rest++;
+                                        left--;
+                                }
+
                                 shell_verbose_line(ready);
                                 run_line(ready);
+                                shell_line_has_more = false;
                         }
                 }
                 at = (positive)(newline - text) + 1;
@@ -760,6 +777,10 @@ b32 main()
            deliberately replace it without forging another initial stack. */
         shell_env_init(environ);
 
+        /* Frozen identity numbers bash lists as readonly integers. */
+        if (shell_bash_compat)
+                shell_bash_ids_publish();
+
         /*      getopts already reads OPTERR and already treats an unset one
                 as asking to complain, which is what a 1 means. Bash
                 publishes the 1 as well, under --posix too, so a script that
@@ -939,6 +960,7 @@ b32 main()
                 {
                         shell_verbose_from_string = true;
                         shell_verbose_line(command);
+                        lex_physical_newline(false);
                         run_line(command);
                 }
                 else
@@ -961,6 +983,7 @@ b32 main()
                                 if (at < length)
                                 {
                                         shell_verbose_line(held_command + at);
+                                        lex_physical_newline(false);
                                         run_line(held_command + at);
                                 }
                         }
@@ -1094,6 +1117,11 @@ b32 main()
                 {
                         shell_verbose_from_string = false;
                         shell_verbose_line(ready);
+                        // Bash treats EOF on a script or stdin as a newline,
+                        // so a trailing backslash is still a continuation.
+                        // dash leaves the backslash as a byte of the word.
+                        if (!shell_bash_compat)
+                                lex_physical_newline(false);
                         run_line(ready);
                 }
         }

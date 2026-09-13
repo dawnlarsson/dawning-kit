@@ -11265,7 +11265,18 @@ def shell_lang_traps(rng):
     elif shape == "ignore":
         script = "trap '' " + signal + "; kill -" + number + " $$; echo \"ignored=$?\"; sh -c 'kill -" + number + " $$; echo child-alive'"
     elif shape == "ignore-inherited":
-        script = "sh -c 'trap \"\" USR1; exec \"$0\" -c \"trap - USR1; trap \\\"echo caught\\\" USR1; kill -USR1 \\$\\$; echo alive; trap -p USR1\"' \"$(readlink /proc/$$/exe)\""
+        # Re-exec under bash or dash by name. readlink of the farm binary is
+        # .../shell, which would switch a bash case into dash and make trap -p
+        # a usage error; a link called bash next to the fixture keeps the
+        # outer personality the way /usr/bin/bash does on the host. Take the
+        # link away afterwards: its target is the host path on one side and
+        # the farm binary on the other, and that is not the trap.
+        script = (
+            'if [ -n "${BASH_VERSION+x}" ]; then shell_me=bash; else shell_me=dash; fi\n'
+            'ln -sfn "$(readlink /proc/$$/exe)" "./$shell_me"\n'
+            "sh -c 'trap \"\" USR1; exec \"$0\" -c \"trap - USR1; trap \\\"echo caught\\\" USR1; kill -USR1 \\$\\$; echo alive; trap -p USR1\"' \"./$shell_me\" 2>/dev/null\n"
+            'st=$?; rm -f "./$shell_me"; (exit $st)'
+        )
     elif shape == "exit-status":
         script = "trap 'echo \"exit:$?\"' EXIT; " + rng.choice(("exit 3", "false", "true", "(exit 5)", "exit", "false; exit", "kill -TERM $$"))
     elif shape == "exit-in-trap":

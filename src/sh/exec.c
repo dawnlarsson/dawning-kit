@@ -77,14 +77,21 @@ static bool exec_child_process()
         written on rather than the line that called it.
 */
 static b32 exec_line;
+static b32 exec_wait_node;
+static bool exec_lastpipe_live;
+static positive exec_compound_depth;
 
 fn shell_trap_exit();
 fn exec_traps();
 fn job_forget();
 fn trap_child_began();
+fn trap_omit_exit_set();
 static b32 exec_child_status(bipolar child);
 static b32 job_wait_foreground(positive number);
 static fn exec_pipe_status_publish(bipolar address_to values, positive count);
+static fn exec_coproc_child();
+static fn exec_coproc_reaped(bipolar pid);
+static fn exec_coproc_drop_finished();
 
 fn exec_child_began()
 {
@@ -100,6 +107,24 @@ fn exec_child_began()
         //      close descriptors somebody else is still handing out.
         shell_substitutions_forget();
         shell_background_child();
+        exec_coproc_child();
+}
+
+/*
+        A here-document or here-string expander is a helper, not a subshell.
+
+        Host bash keeps $BASH_SUBSHELL at 0 in the body, and ${x?} at the top
+        of -c still leaves 127 rather than a nested-shell 1. The helper still
+        marks itself forked so an interactive expansion error leaves this
+        process instead of aborting the parent's input line.
+*/
+static fn exec_helper_began()
+{
+        exec_forked = true;
+        trap_child_began();
+        shell_substitutions_forget();
+        shell_background_child();
+        exec_coproc_child();
 }
 
 static DEAD_END fn exec_child_leave(b32 status)
@@ -147,6 +172,11 @@ static fn exec_input_finish()
 {
         if (exec_input_error())
                 exec_signal = EXEC_SIGNAL_NONE;
+
+        // eval and a sourced file catch a recoverable expansion error.
+        // Leaving expand_failed set re-raised the line abort after eval
+        // returned, so `eval '...'; echo eval:$?` never ran the echo.
+        expand_failed = false;
 }
 
 static fn exec_line_begin()
@@ -211,6 +241,27 @@ static bool exec_source_stop(b32 address_to startup_status)
 }
 
 /*
+        Dash applies errexit to every command in a sourced file, even when
+        the `.` itself is tested: bang, if, &&. `! . ./fails` with `false`
+        in the file still ends the script. Bash carries the tested flag in,
+        so the same line continues and inverts.
+*/
+static bool exec_source_tested_hold()
+{
+        bool kept = exec_tested;
+
+        if (!shell_bash_compat)
+                exec_tested = false;
+
+        return kept;
+}
+
+static fn exec_source_tested_restore(bool kept)
+{
+        exec_tested = kept;
+}
+
+/*
         One of the three conditions the executor raises itself.
 
         Run the way a caught signal's action is run and with the same care:
@@ -262,6 +313,66 @@ static PURE bool exec_condition_reaches(positive option)
 {
         return (!exec_function_depth && !exec_forked) ||
                shell_extra_on(option);
+}
+
+/*
+        DEBUG without functrace also stays out of a sourced file: the trap
+        belongs to the script that set it, not to every library `.` pulls
+        in. RETURN after `.` still uses the looser test above, because a
+        sourced file is itself a return boundary even when functrace is off.
+*/
+static PURE bool exec_debug_reaches()
+{
+        return (!exec_function_depth && !exec_forked && !shell_dot_depth) ||
+               shell_extra_on(SHELL_EXTRA_FUNCTRACE);
+}
+
+/*
+        What $BASH_COMMAND answers: the simple command about to run, in the
+        words it was written in. DEBUG reads it before those words expand,
+        and the trap action itself must not replace it.
+*/
+static p8 exec_bash_command[256];
+
+static COLD string_address exec_bash_command_value(positive address_to value_length)
+{
+        if (value_length)
+                *value_length = string_length(exec_bash_command);
+
+        return exec_bash_command;
+}
+
+static COLD fn exec_bash_command_from(parse_node address_to node)
+{
+        positive used = 0;
+        b32 at;
+
+        for (at = 0; at < node->word_count; at++)
+        {
+                b32 word = node->word + at;
+                string_address text = parse_words[word];
+                positive length = parse_word_lengths[word];
+
+                if (used && used + 1 < sizeof(exec_bash_command))
+                        exec_bash_command[used++] = ' ';
+
+                if (length > sizeof(exec_bash_command) - 1 - used)
+                        length = sizeof(exec_bash_command) - 1 - used;
+
+                if (length)
+                {
+                        memory_copy(exec_bash_command + used, text, length);
+                        used += length;
+                }
+        }
+
+        exec_bash_command[used] = end;
+}
+
+static COLD fn exec_source_return_trap()
+{
+        if (trap_return_here && exec_condition_reaches(SHELL_EXTRA_FUNCTRACE))
+                exec_trap_condition(TRAP_RETURN);
 }
 
 static fn exec_errexit(b32 status)
@@ -334,7 +445,8 @@ static p8 exec_nothing[1];
 
 // Where the status word sits in a listing, which is bash's column and not a
 // number of this shell's choosing: a person reads the two side by side.
-#define JOB_STATUS_WIDTH 27
+#define JOB_STATUS_WIDTH 24
+#define JOB_SIGNAL_DESC_WIDTH 24
 
 typedef struct
 {
@@ -493,10 +605,40 @@ static fn job_monitor_stop()
         job_terminal = -1;
 }
 
+/* Dash will not turn the monitor on without a controlling terminal.
+   /dev/tty is that question: stdin being a pipe is not enough, and
+   neither is stderr. lima 0.5.x says so and leaves `m` off, status 0. */
+static bool job_tty_reachable()
+{
+        bipolar handle = system_open_at(AT_FDCWD, "/dev/tty", FILE_READ_WRITE);
+
+        if (handle < 0)
+                return false;
+
+        system_close(handle);
+        return true;
+}
+
 fn job_monitor_told(bool on)
 {
         if (on)
+        {
+                if (!shell_bash_compat && !job_tty_reachable())
+                {
+                        shell_diagnostic_where();
+                        if (shell_argv && shell_argv[0] &&
+                            string_equals(shell_argv[0], "set"))
+                                string_format(log_error,
+                                    "set: can't access tty; job control turned off\n");
+                        else
+                                string_format(log_error,
+                                    "can't access tty; job control turned off\n");
+                        shell_options &= ~SHELL_FLAG('m');
+                        return;
+                }
+
                 job_monitor_start();
+        }
         else
                 job_monitor_stop();
 }
@@ -795,7 +937,10 @@ static positive job_started(bipolar address_to children, positive count,
         entry->state = JOB_RUNNING;
         entry->status = 0;
         entry->stopped_by = 0;
-        entry->reported = true;
+        /* New jobs are news for `jobs -n`. Interactive job_report still
+           stays quiet about a running one: that was already announced by
+           the `&` line. */
+        entry->reported = false;
         entry->background = background;
         entry->nohup = false;
         entry->text = null;
@@ -989,6 +1134,7 @@ static fn job_child_changed(bipolar pid, positive status)
         }
 
         shell_background_reaped(pid, status);
+        exec_coproc_reaped(pid);
 
         // A here-document writer is a child too, and belongs to no job.
         at = job_find(pid, true);
@@ -996,16 +1142,33 @@ static fn job_child_changed(bipolar pid, positive status)
         if (at < job_count)
                 job_table[at].status = status;
 
-        for (at = 0; at < job_count; at++)
+        for (at = 0; at < job_count;)
         {
                 job_entry address_to entry = job_table + at;
 
                 if (entry->state == JOB_FINISHED || !job_rows(entry->last) ||
                     job_running_children(entry->last))
+                {
+                        at++;
                         continue;
+                }
 
                 entry->state = JOB_FINISHED;
                 entry->reported = false;
+
+                /* Bash with a monitor writes a SIGKILL death on stderr
+                   and forgets the row, so `jobs` after `kill -KILL %1`
+                   is empty. Terminated jobs stay in the table for the
+                   next `jobs`. The wait table stays either way. */
+                if (shell_bash_compat && !shell_posix_on() && job_monitor() &&
+                    (entry->status & 0x7f) == 9)
+                {
+                        shell_child_death(entry->last, entry->status, false);
+                        job_drop_at(at);
+                        continue;
+                }
+
+                at++;
         }
 }
 
@@ -1133,6 +1296,172 @@ static positive job_signal_named(positive number, p8 address_to into)
 }
 
 /*
+        When a child dies of a signal, the line a person reads on stderr.
+
+        Dash writes the C library's word and a newline, except interrupt and
+        a broken pipe, which stay silent. A wait, a pipeline, a substitution
+        and a foreground command all share that one sentence.
+
+        Bash writes the same word for a foreground SIGTERM. A script's other
+        reported deaths are `name: line N: PID word` padded to the jobs
+        column, then the command. Interrupt and a broken pipe stay silent,
+        a substitution stays silent, and a background SIGTERM stays silent.
+        A posix `-c` command string is silent too: lima 5.2.32 prints the
+        same deaths from a posix script file, and stays quiet once posix
+        is on for a `-c` invocation.
+
+        lastpipe freezes bash's jobs list while the last stage runs, so a
+        death inside `if` / `{ }` / a loop is not written until that
+        compound has restored its redirections. The line then lands after
+        `else` rather than in `2>/dev/null`.
+*/
+static string_address job_death_command(bipolar child)
+{
+        positive at = job_find((positive)child, true);
+
+        if (at < job_count && job_table[at].text)
+                return (string_address)job_table[at].text;
+
+        if (exec_wait_node)
+        {
+                static p8 address_to text;
+                static positive room;
+
+                job_text_node(address_of text, address_of room, 0, exec_wait_node,
+                              0);
+                return text ? (string_address)text : (string_address) "";
+        }
+
+        return (string_address) "";
+}
+
+static fn job_death_short(positive number, bool dumped)
+{
+        p8 name[64];
+        positive length = job_signal_named(number, name);
+
+        log_error(name, length);
+
+        if (dumped)
+                log_error(str(" (core dumped)"));
+
+        log_error(str("\n"));
+}
+
+static fn job_death_long(bipolar child, positive number, bool dumped,
+                         string_address command)
+{
+        p8 name[64];
+        p8 digits[32];
+        positive length = job_signal_named(number, name);
+        positive width = positive_into_string(digits, (positive)child);
+
+        name[length] = end;
+        digits[width] = end;
+        shell_diagnostic_where();
+        string_to_field(log_error, digits, width < 5 ? 5 : width, ' ', false);
+        log_error(str(" "));
+        string_to_field(log_error, name, JOB_SIGNAL_DESC_WIDTH, ' ', true);
+
+        if (dumped)
+                log_error(str("(core dumped) "));
+
+        if (command)
+                log_error(command, string_length(command));
+
+        log_error(str("\n"));
+}
+
+#define CHILD_DEATH_QUEUE 4
+
+static struct
+{
+        bipolar child;
+        positive raw;
+        bool foreground;
+} child_death_queue[CHILD_DEATH_QUEUE];
+static positive child_death_queued;
+
+static fn job_death_write(bipolar child, positive raw, bool foreground)
+{
+        positive number = raw & 0x7f;
+        bool dumped = (raw & 0x80) != 0;
+
+        if (shell_bash_compat)
+        {
+                bool listed = !shell_is_interactive &&
+                              trap_action(number) == null && number != SIGTERM;
+
+                if (!listed && !foreground)
+                        return;
+
+                if (listed)
+                        job_death_long(child, number, dumped,
+                                       job_death_command(child));
+                else
+                        job_death_short(number, dumped);
+        }
+        else
+                job_death_short(number, dumped);
+
+        log_flush();
+}
+
+static fn shell_child_death_flush()
+{
+        positive at;
+
+        for (at = 0; at < child_death_queued; at++)
+                job_death_write(child_death_queue[at].child,
+                                child_death_queue[at].raw,
+                                child_death_queue[at].foreground);
+
+        child_death_queued = 0;
+}
+
+fn shell_child_death(bipolar child, positive raw, bool foreground)
+{
+        positive number;
+
+        if (child <= 0 || !(raw & 0x7f) || (raw & 0xff) == 0x7f)
+                return;
+
+        number = raw & 0x7f;
+
+        if (number == SIGNAL_INTERRUPT || number == SIGNAL_PIPE)
+                return;
+
+        if (shell_bash_compat)
+        {
+                if (shell_posix_on() && string_is(shell_option_flags, 'c'))
+                        return;
+
+                if (expand_in_substitution)
+                        return;
+
+                if (!foreground && shell_is_interactive)
+                        return;
+
+                if (exec_lastpipe_live && exec_compound_depth)
+                {
+                        if (child_death_queued < CHILD_DEATH_QUEUE)
+                        {
+                                child_death_queue[child_death_queued].child =
+                                    child;
+                                child_death_queue[child_death_queued].raw = raw;
+                                child_death_queue[child_death_queued]
+                                    .foreground = foreground;
+                                child_death_queued++;
+                        }
+
+                        return;
+                }
+        }
+
+        job_death_write(child, raw, foreground);
+}
+
+/*
         The status column of a listing.
 
         A stopped job is spelled twice over: the job's own summary says
@@ -1202,6 +1531,20 @@ static fn job_status_text(job_entry address_to entry, bool detailed,
                 return;
         }
 
+        /* Dash and bash --posix write Done(7) against bash's Exit 7.
+           The parentheses are the whole of the difference. */
+        if (shell_dash_columns() || shell_posix_on())
+        {
+                positive at;
+
+                string_copy(into, "Done(");
+                positive_into_string(into + 5, code);
+                at = string_length(into);
+                into[at] = ')';
+                into[at + 1] = 0;
+                return;
+        }
+
         string_copy(into, "Exit ");
         positive_into_string(into + 5, code);
 }
@@ -1256,6 +1599,12 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
                                           : (string_address) "";
         bool ampersand = !shell_dash_columns() &&
                          entry->state == JOB_RUNNING && entry->background;
+
+        /* Without job control dash still numbers background children, but
+           the listing is the status column only: lima 0.5.x writes no
+           command text until `set -m` has actually taken a terminal. */
+        if (shell_dash_columns() && !shell_option_on(SHELL_OPTION_MONITOR))
+                text = (string_address) "";
 
         if (shell_dash_columns())
         {
@@ -1383,7 +1732,7 @@ fn job_report()
         {
                 job_entry address_to entry = job_table + at;
 
-                if (entry->reported)
+                if (entry->reported || entry->state == JOB_RUNNING)
                 {
                         at++;
                         continue;
@@ -1449,8 +1798,12 @@ static positive job_specified(string_address word, positive address_to found)
 
         if (string_get(text) == '-' && !string_get(text + 1))
         {
-                address_to found = job_find(job_previous, false);
-                return job_previous && address_to found < job_count
+                /* One job is both current and previous: lima bash `fg %-`
+                   with only `%1` still finds it. */
+                positive number = job_previous ? job_previous : job_current;
+
+                address_to found = job_find(number, false);
+                return number && address_to found < job_count
                            ? JOB_SPEC_FOUND
                            : JOB_SPEC_UNKNOWN;
         }
@@ -1718,7 +2071,28 @@ fn shell_fg(writer write, string_address input)
         (void)input;
 
         if (!job_monitor())
-                return shell_answer(string_report(log_error, 1, "%s: no job control\n", "fg"));
+        {
+                string_address word = shell_argc > 1 ? shell_argv[1] : null;
+
+                if (!shell_bash_compat)
+                {
+                        shell_diagnostic_where();
+                        if (word && string_get(word) == '%' &&
+                            string_get(word + 1) == '-' &&
+                            !string_get(word + 2) && !job_previous &&
+                            job_count != 1)
+                                return shell_answer(string_report(
+                                    log_error, 2, "fg: No previous job\n"));
+
+                        return shell_answer(string_report(
+                            log_error, 2,
+                            "fg: job %s not created under job control\n",
+                            word ? word : (string_address) "(null)"));
+                }
+
+                return shell_answer(string_report(log_error, 1,
+                                                 "%s: no job control\n", "fg"));
+        }
 
         job_reap();
 
@@ -1800,6 +2174,10 @@ fn shell_bg(writer write, string_address input)
                 //      the command and nothing else.
                 if (shell_dash_columns())
                         string_format(write, "[%p] %s\n", entry->number,
+                                      entry->text ? (string_address)entry->text
+                                                  : (string_address) "");
+                else if (shell_posix_on())
+                        string_format(write, "[%p] %s &\n", entry->number,
                                       entry->text ? (string_address)entry->text
                                                   : (string_address) "");
                 else
@@ -2054,7 +2432,8 @@ static b32 job_wait_foreground(positive number)
         {
                 bool interrupted;
 
-                status = shell_wait_one(last, address_of interrupted);
+                status = shell_wait_one(last, address_of interrupted, true,
+                                        true);
                 at = job_find(number, false);
 
                 if (at < job_count)
@@ -2117,7 +2496,13 @@ static b32 job_foreground_wait(bipolar child, bipolar group, b32 node)
         job_terminal_give(job_shell_group);
 
         if ((raw & 0xff) != 0x7f)
+        {
+                if (node > 0)
+                        exec_wait_node = node;
+
+                shell_child_death(child, raw, true);
                 return wait_status_code(raw);
+        }
 
         stopped_by = (raw >> 8) & 0xff;
         answer = 128 + (b32)stopped_by;
@@ -2319,12 +2704,55 @@ fn shell_kill(writer write, string_address input)
 
                 told = job_specified(word, address_of found);
 
+                if (!shell_bash_compat && !job_monitor())
+                {
+                        positive numeric = 0;
+                        string_address spec = word + 1;
+                        bool numbered =
+                            !string_get(spec) || string_get(spec) == '%' ||
+                            string_get(spec) == '+' ||
+                            (string_get(spec) == '-' && !string_get(spec + 1)) ||
+                            string_digits_exact(spec, address_of numeric);
+
+                        /* `%sleep` is not a job without a monitor.
+                           `%%` / `%1` still name the table, and then
+                           lima says "No such process" rather than killing. */
+                        if (!numbered)
+                        {
+                                shell_diagnostic_where();
+                                answer = string_report(log_error, 2,
+                                    "kill: No such job: %s\n", word);
+                                continue;
+                        }
+                }
+
                 if (told != JOB_SPEC_FOUND)
                 {
+                        shell_diagnostic_where();
+                        if (!shell_bash_compat)
+                        {
+                                answer = string_report(log_error, 2,
+                                    "kill: No such job: %s\n",
+                                    word ? word : (string_address) "current");
+                                continue;
+                        }
+
                         answer = string_report(log_error, 1,
                             told == JOB_SPEC_AMBIGUOUS
                                 ? "%s: %s: ambiguous job spec\n" : "%s: %s: no such job\n",
                             (string_address) "kill", told == JOB_SPEC_AMBIGUOUS || word ? word : (string_address)"current");
+                        continue;
+                }
+
+                /* Dash kill only follows a job spec under job control.
+                   With the monitor off, a live `%1` is still "No such
+                   process" and the child is left running, matching lima
+                   0.5.x. A spec nobody has stays "No such job" above. */
+                if (!shell_bash_compat && !job_monitor())
+                {
+                        shell_diagnostic_where();
+                        answer = string_report(log_error, 1,
+                                               "kill: No such process\n");
                         continue;
                 }
 
@@ -2364,7 +2792,7 @@ static fn job_prune()
         not a wait for anybody in particular but for whoever ends first.
 */
 static b32 job_wait_job(positive found, string_address into,
-                        bool address_to interrupted)
+                        bool address_to interrupted, bool forget)
 {
         bipolar last = job_table[found].last;
         b32 answer;
@@ -2372,7 +2800,7 @@ static b32 job_wait_job(positive found, string_address into,
         if (into)
                 env_set_number(into, (positive)last);
 
-        answer = shell_wait_one(last, interrupted);
+        answer = shell_wait_one(last, interrupted, forget, false);
         found = job_find(last, true);
 
         if (found < job_count)
@@ -2400,7 +2828,8 @@ static b32 job_wait_next(bool force, string_address into)
                 for (positive at = 0; at < job_count; at++)
                         if (job_table[at].state == JOB_FINISHED)
                                 return job_wait_job(at, into,
-                                                    address_of interrupted);
+                                                    address_of interrupted,
+                                                    true);
 
                 if (!force)
                         for (positive at = 0; at < job_count; at++)
@@ -2534,7 +2963,7 @@ fn job_wait(writer write, string_address input)
                                 break;
 
                         answer = job_wait_job(at, into,
-                                              address_of interrupted);
+                                              address_of interrupted, true);
 
                         if (interrupted)
                                 return shell_answer(answer);
@@ -2568,6 +2997,11 @@ fn job_wait(writer write, string_address input)
                             JOB_SPEC_FOUND)
                         {
                                 shell_diagnostic_where();
+
+                                if (!shell_bash_compat)
+                                        return shell_answer(string_report(
+                                            log_error, 2,
+                                            "wait: No such job: %s\n", word));
 
                                 return shell_answer(string_report(log_error,
                                     127, "wait: %s: no such job\n", word));
@@ -2607,7 +3041,9 @@ fn job_wait(writer write, string_address input)
                                         env_set_number(into, pid);
 
                                 answer = shell_wait_one((bipolar)pid,
-                                                        address_of interrupted);
+                                                        address_of interrupted,
+                                                        shell_posix_on(),
+                                                        false);
                                 job_prune();
 
                                 if (interrupted)
@@ -2626,7 +3062,8 @@ fn job_wait(writer write, string_address input)
                         continue;
                 }
 
-                answer = job_wait_job(found, into, address_of interrupted);
+                answer = job_wait_job(found, into, address_of interrupted,
+                                      shell_posix_on());
 
                 if (interrupted)
                         break;
@@ -4484,7 +4921,9 @@ static b32 exec_script_fd = -1;
 static string_address address_to exec_fields;
 static positive exec_fields_room;
 
+#define F_DUPFD 0
 #define F_DUPFD_CLOEXEC 1030
+#define REDIR_VAR_FLOOR 10
 
 // The longest name a coprocess pair may be called, which is what the NAME_PID
 // buffer beside it is sized from.
@@ -4698,22 +5137,70 @@ static positive exec_here_expand(string_address body, positive length,
 }
 
 /*
+        Bytes a here-document or here-string helper wrote, and the status it
+        left. A non-zero status is the command's, not the script's: ${x?} in
+        the body ends the helper with the nounset status and the script
+        continues, the same way host bash and dash treat that expansion.
+*/
+static bool exec_helper_collect(bipolar child, b32 reading, positive start,
+                                string_address address_to out,
+                                positive address_to out_length)
+{
+        positive filled = 0;
+        positive raw_status = 0;
+
+        //      A here-document is as long as it is. Take another page of
+        //      room whenever the last one filled, rather than deciding in
+        //      advance how much of it is allowed to arrive.
+        for (;;)
+        {
+                bipolar got;
+
+                if (!token_room(start + filled + 4096))
+                {
+                        token_overflow = true;
+                        break;
+                }
+
+                got = system_read_retry(reading, token_storage + start + filled,
+                                        token_storage_room - start - filled - 1);
+
+                if (got <= 0)
+                        break;
+
+                filled += (positive)got;
+        }
+
+        system_close(reading);
+
+        system_wait4_retry(child, address_of raw_status, 0, null);
+
+        exec_redirect_status = wait_status_code(raw_status);
+
+        if (exec_redirect_status)
+                return false;
+
+        token_used = start + filled;
+        address_to out = token_storage + start;
+        address_to out_length = filled;
+
+        return true;
+}
+
+/*
         Expand a here-document outside the shell process.
 
-        Parameter assignment in a here body belongs to the context executing
-        the redirected command, not to the parent shell. More importantly, an
-        expansion error ends that context with status two and does not become
-        the interactive shell's recoverable line signal. The child writes the
-        bounded result back; the parent collects it before making the pipe the
-        command will read.
+        Parameter assignment in a here body belongs to the helper, not to the
+        parent: bash leaves ${x:=made} unset after the redirect, and that is
+        the personality this isolation matches. An expansion error ends the
+        helper rather than the script, and because the helper is not a
+        subshell the status is still 127 at the top of bash -c.
 */
 static bool exec_here_expand_isolated(string_address body, positive length,
                                       string_address address_to out,
                                       positive address_to out_length)
 {
         positive start = token_used;
-        positive filled = 0;
-        positive raw_status = 0;
         b32 ends[2];
         bipolar child;
 
@@ -4729,7 +5216,7 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 positive made;
 
                 system_close(ends[0]);
-                exec_child_began();
+                exec_helper_began();
                 trap_default_all();
                 token_overflow = false;
 
@@ -4756,42 +5243,58 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 return false;
         }
 
-        //      A here-document is as long as it is. Take another page of
-        //      room whenever the last one filled, rather than deciding in
-        //      advance how much of it is allowed to arrive.
-        for (;;)
-        {
-                bipolar got;
+        return exec_helper_collect(child, ends[0], start, out, out_length);
+}
 
-                if (!token_room(start + filled + 4096))
-                {
-                        token_overflow = true;
-                        break;
-                }
+/*
+        Expand a here-string the same way: in a helper that is not a subshell.
 
-                got = system_read_retry(ends[0], token_storage + start + filled,
-                                        token_storage_room - start - filled - 1);
+        Host bash treats ${x?} here as a command status, not a process exit,
+        and ${x:=} does not stick. Expanding in the parent did both of those
+        the other way round.
+*/
+static bool exec_here_string_expand_isolated(string_address word,
+                                             string_address address_to out,
+                                             positive address_to out_length)
+{
+        positive start = token_used;
+        b32 ends[2];
+        bipolar child;
 
-                if (got <= 0)
-                        break;
-
-                filled += (positive)got;
-        }
-
-        system_close(ends[0]);
-
-        system_wait4_retry(child, address_of raw_status, 0, null);
-
-        exec_redirect_status = wait_status_code(raw_status);
-
-        if (exec_redirect_status)
+        if (system_pipe(ends, 0) < 0)
                 return false;
 
-        token_used = start + filled;
-        address_to out = token_storage + start;
-        address_to out_length = filled;
+        log_flush();
+        child = shell_clone();
 
-        return true;
+        if (child == 0)
+        {
+                string_address expanded;
+                positive made;
+
+                system_close(ends[0]);
+                exec_helper_began();
+                trap_default_all();
+
+                expanded = shell_expand_word(word);
+                made = string_length(expanded);
+
+                if (system_write_all(ends[1], expanded, made) != made ||
+                    system_write_all(ends[1], "\n", 1) != 1)
+                        system_call_1(syscall(exit_group), 1);
+
+                system_call_1(syscall(exit_group), 0);
+        }
+
+        system_close(ends[1]);
+
+        if (child < 0)
+        {
+                system_close(ends[0]);
+                return false;
+        }
+
+        return exec_helper_collect(child, ends[0], start, out, out_length);
 }
 
 /*
@@ -4931,6 +5434,79 @@ static COLD b32 exec_redirect_refused(p8 op, string_address target,
                              target, why);
 }
 
+/* `{name}` / `{name[index]}` names the descriptor stored in that variable. */
+static bipolar exec_redirect_var_fd(string_address name, positive length)
+{
+        string_address value = null;
+        positive fd;
+        positive base;
+        const_string subscript;
+        positive subscript_length;
+
+        if (env_reference_element_span(name, length, address_of base,
+                                       address_of subscript,
+                                       address_of subscript_length) &&
+            subscript_length)
+        {
+                positive key_length;
+                string_address key = shell_expand_subscript(
+                    name, base, (string_address)subscript, subscript_length,
+                    address_of key_length);
+
+                if (key)
+                        value = shell_array_get(name, base, key, key_length,
+                                                null);
+        }
+        else
+                value = env_get_hashed_span(name, length,
+                                            env_name_hash(name, length),
+                                            null);
+
+        if (!value || !string_digits_exact(value, address_of fd) ||
+            fd > 0x7fffffff)
+                return -1;
+
+        return (bipolar)fd;
+}
+
+static bipolar exec_redirect_dup_min(bipolar from, b32 floor)
+{
+        if (from < 0)
+                return from;
+
+        return system_call_3(syscall(fcntl), (positive)from, F_DUPFD, floor);
+}
+
+/* `{name}>file` allocates a descriptor at or above 10 into that variable.
+   `{name[index]}` stores the same way the coproc close looks one up. */
+static bool exec_redirect_var_store(string_address name, positive length,
+                                    b32 fd)
+{
+        p8 digits[24];
+        positive base;
+        const_string subscript;
+        positive subscript_length;
+
+        digits[positive_into_string(digits, (positive)fd)] = end;
+
+        if (env_reference_element_span(name, length, address_of base,
+                                       address_of subscript,
+                                       address_of subscript_length) &&
+            subscript_length)
+        {
+                positive key_length;
+                string_address key = shell_expand_subscript(
+                    name, base, (string_address)subscript, subscript_length,
+                    address_of key_length);
+
+                return key && shell_array_set(name, base, key, key_length,
+                                              digits, false);
+        }
+
+        return env_assign_hashed_span(name, length,
+                                      env_name_hash(name, length), digits);
+}
+
 static bool exec_redirect_apply(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -4959,9 +5535,7 @@ static bool exec_redirect_apply(b32 index)
                 b32 redirect_mark = exec_save_count;
                 bool both = want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT;
 
-                if (want->op == OP_HERESTRING)
-                        target = shell_expand_word(want->text);
-                else if (want->op != OP_DLESS)
+                if (want->op != OP_DLESS && want->op != OP_HERESTRING)
                 {
                         shell_words fields;
                         b32 expanded;
@@ -4986,6 +5560,73 @@ static bool exec_redirect_apply(b32 index)
 
                 if (exec_line_aborted())
                         return false;
+
+                b32 fd = want->fd;
+                bool var_alloc = false;
+
+                if (want->var_length)
+                {
+                        bool closing =
+                            (want->op == OP_GREATAND ||
+                             want->op == OP_LESSAND) &&
+                            string_is(target, '-') &&
+                            string_is(target + 1, end);
+
+                        if (closing)
+                        {
+                                bipolar named = exec_redirect_var_fd(
+                                    want->var, want->var_length);
+                                p8 shown[64];
+                                positive shown_length;
+
+                                if (named < 0)
+                                {
+                                        shown_length = want->var_length < 63
+                                                           ? want->var_length
+                                                           : 63;
+                                        memory_copy(shown, want->var,
+                                                    shown_length);
+                                        shown[shown_length] = end;
+                                        string_format(log_error,
+                                                      "%s: ambiguous redirect\n",
+                                                      shown);
+                                        exec_redirect_status = 1;
+                                        return false;
+                                }
+
+                                fd = (b32)named;
+                        }
+                        else
+                                var_alloc = true;
+                }
+
+                /* Dash dups only a single digit 0-9. `>&99` and `>&$n` with
+                   n=10 are a syntax error and end the process, the way lima
+                   0.5.x does. A closed 0-9 is an ordinary runtime failure. */
+                if (!shell_bash_compat &&
+                    (want->op == OP_GREATAND || want->op == OP_LESSAND) &&
+                    !(string_is(target, '-') && string_is(target + 1, end)))
+                {
+                        p8 first = string_get(target);
+
+                        if (!(first >= '0' && first <= '9' &&
+                              !string_get(target + 1)))
+                        {
+                                /* lima dash 0.5.x has already consumed this
+                                   line's newline, so the diagnostic names
+                                   the following line when one exists. */
+                                b32 saved_line = exec_line;
+
+                                if (shell_line_has_more && exec_line)
+                                        exec_line++;
+                                shell_syntax_where();
+                                log_error(str("Syntax error: Bad fd number\n"));
+                                exec_line = saved_line;
+                                exec_redirect_status = 2;
+                                expand_fatal_status(2);
+                                return false;
+                        }
+                }
 
                 /*
                         rbash: the redirections that can make a file or cut
@@ -5023,14 +5664,22 @@ static bool exec_redirect_apply(b32 index)
                         failed. The open lands wherever it lands and the dup3
                         below moves it, which is the order bash uses and the
                         only one under which those names exist.
+
+                        `{name}>file` allocates a new descriptor rather than
+                        replacing one, and `{name}>&-` closes the one stored
+                        in the variable: both persist, so they are not saved.
                 */
-                if (both)
+                if (!want->var_length)
                 {
-                        if (!exec_save_fd(1, node) || !exec_save_fd(2, node))
+                        if (both)
+                        {
+                                if (!exec_save_fd(1, node) ||
+                                    !exec_save_fd(2, node))
+                                        return false;
+                        }
+                        else if (!exec_save_fd(fd, node))
                                 return false;
                 }
-                else if (!exec_save_fd(want->fd, node))
-                        return false;
 
                 if (want->op == OP_DLESS)
                 {
@@ -5041,31 +5690,57 @@ static bool exec_redirect_apply(b32 index)
 
                         if (!want->raw)
                         {
-                                if (!exec_here_expand_isolated(body, length,
-                                                               address_of body,
-                                                               address_of length))
-                                        return false;
+                                if (shell_bash_compat)
+                                {
+                                        if (!exec_here_expand_isolated(
+                                                body, length, address_of body,
+                                                address_of length))
+                                                return false;
+                                }
+                                else
+                                {
+                                        // Dash expands the body here so
+                                        // ${x:=word} sticks. ${x?} must not
+                                        // exit_group: it is that command's
+                                        // status, and the script continues.
+                                        bool kept = expand_redirect_error;
+
+                                        expand_redirect_error = true;
+                                        length = exec_here_expand(
+                                            body, length, address_of body);
+                                        expand_redirect_error = kept;
+
+                                        if (expand_failed)
+                                        {
+                                                exec_redirect_status =
+                                                    shell_status ? shell_status
+                                                                 : 2;
+                                                expand_failed = false;
+                                                return false;
+                                        }
+
+                                        if (token_overflow)
+                                        {
+                                                log_error(str(
+                                                    "Here-document too long\n"));
+                                                exec_redirect_status = 2;
+                                                return false;
+                                        }
+                                }
                         }
 
                         opened = exec_here_pipe(body, length);
                 }
                 else if (want->op == OP_HERESTRING)
                 {
-                        positive length = string_length(target);
-                        p8 address_to body;
+                        string_address body;
+                        positive length;
 
-                        if (length > positive_max - 2)
+                        if (!exec_here_string_expand_isolated(want->text,
+                                                              address_of body,
+                                                              address_of length))
                                 return false;
 
-                        body = shell_store_take(address_of exec_store,
-                                                length + 2);
-
-                        if (!body)
-                                return false;
-
-                        memory_copy(body, target, length);
-                        body[length++] = '\n';
-                        body[length] = end;
                         opened = exec_here_pipe(body, length);
                 }
                 else if (want->op == OP_GREATAND || want->op == OP_LESSAND)
@@ -5074,7 +5749,7 @@ static bool exec_redirect_apply(b32 index)
 
                         if (string_is(target, '-') && string_is(target + 1, end))
                         {
-                                system_close(want->fd);
+                                system_close(fd);
                                 continue;
                         }
 
@@ -5087,10 +5762,15 @@ static bool exec_redirect_apply(b32 index)
                                               target);
                         }
 
-                        if ((b32)source == want->fd)
+                        if (var_alloc)
+                        {
+                                opened = exec_redirect_dup_min((bipolar)source,
+                                                               REDIR_VAR_FLOOR);
+                        }
+                        else if ((b32)source == fd)
                                 continue;
-
-                        opened = system_duplicate(source, want->fd, 0);
+                        else
+                                opened = system_duplicate(source, fd, 0);
                 }
                 else if (want->op == OP_LESS)
                         opened = system_open_at(AT_FDCWD,
@@ -5112,6 +5792,36 @@ static bool exec_redirect_apply(b32 index)
 
                         return exec_redirect_refused(want->op, target,
                                                      opened);
+                }
+
+                if (var_alloc)
+                {
+                        bipolar moved = opened;
+
+                        if (want->op != OP_GREATAND && want->op != OP_LESSAND)
+                        {
+                                moved = exec_redirect_dup_min(opened,
+                                                              REDIR_VAR_FLOOR);
+                                if (moved < 0)
+                                {
+                                        system_close(opened);
+                                        exec_redirect_diagnostic_restore(
+                                            redirect_mark);
+                                        return exec_redirect_refused(want->op,
+                                                                     target,
+                                                                     moved);
+                                }
+
+                                if (moved != opened)
+                                        system_close(opened);
+                        }
+
+                        if (!exec_redirect_var_store(want->var, want->var_length,
+                                                     (b32)moved))
+                                return false;
+
+                        log_flush();
+                        continue;
                 }
 
                 log_flush();
@@ -5144,14 +5854,14 @@ static bool exec_redirect_apply(b32 index)
                 // dup3 onto the descriptor it was handed is an error rather
                 // than the no-op dup2 makes of it, and open answers with
                 // exactly that descriptor when it was the lowest one free.
-                if (opened != want->fd)
+                if (opened != fd)
                 {
-                        if (system_duplicate(opened, want->fd, 0) < 0)
+                        if (system_duplicate(opened, fd, 0) < 0)
                         {
                                 system_close(opened);
                                 exec_redirect_diagnostic_restore(redirect_mark);
                                 return string_report(log_error, false, "Cannot redirect descriptor: %p\n",
-                                              (positive)want->fd);
+                                              (positive)fd);
                         }
 
                         system_close(opened);
@@ -5951,6 +6661,26 @@ static b32 exec_define(b32 index)
         positive2 named = string_hash_33_length(name);
         positive name_length = named.y;
 
+        //      Dash already refused a non-identifier in the grammar. Bash
+        //      --posix reaches here: lima 5.2.32 reports an invalid
+        //      identifier and ends the process, including under command
+        //      eval, so this is not an eval syntax error.
+        if ((shell_posix_on() || !shell_bash_compat) &&
+            !shell_valid_name(name, name_length))
+        {
+                shell_diagnostic_where();
+                if (shell_bash_compat)
+                {
+                        string_format(log_error,
+                                      "`%s': not a valid identifier\n", name);
+                        expand_fatal_status(2);
+                        return (shell_status = 2);
+                }
+                log_error(str("Syntax error: Bad function name\n"));
+                exec_special_error_note();
+                return (shell_status = 2);
+        }
+
         for (slot = 0; slot < exec_function_count; slot++)
         {
                 if (exec_function_matches(slot, name, named.x, named.y))
@@ -6332,6 +7062,7 @@ fn shell_caller(writer write, string_address input)
 
         if (numbered && !string_digits_exact(shell_argv[1], address_of want))
         {
+                shell_diagnostic_where();
                 string_format(log_error, "caller: %s: invalid number\n",
                               shell_argv[1]);
                 string_format(log_error, "caller: usage: caller [expr]\n");
@@ -6339,7 +7070,11 @@ fn shell_caller(writer write, string_address input)
                 return;
         }
 
-        if (want >= exec_frame_count)
+        //      Numbered caller is BASH_LINENO[n], FUNCNAME[n+1] and
+        //      BASH_SOURCE[n+1]. A function called from the top of -c has
+        //      no n+1 slot, so `caller 0` inside it prints nothing.
+        if (want >= exec_frame_count ||
+            (numbered && want + 1 >= exec_frame_count))
         {
                 shell_answer(1);
                 return;
@@ -6350,16 +7085,9 @@ fn shell_caller(writer write, string_address input)
         write(shown, written);
         write(" ", 1);
 
-        //      The function one frame further out than the one asked about,
-        //      which is the shell itself once the frames run out.
         if (numbered)
         {
-                string_address named =
-                    want + 1 < exec_frame_count
-                        ? exec_frames[exec_frame_count - want - 2].name
-                        : (string_address) "main";
-
-                write(named, 0);
+                write(exec_frames[exec_frame_count - want - 2].name, 0);
                 write(" ", 1);
         }
 
@@ -6577,8 +7305,10 @@ static COLD PURE bool exec_trace_quoting(string_address word)
         A byte that cannot be written as itself.
 
         In the C locale that is every control character and every byte with
-        the high bit set. A word holding one is written in the $'...'
-        spelling, which is the only one that can carry it back.
+        the high bit set. Bash 5.2 still prefers ordinary single quotes when
+        a meta is present -- a newline and a tab live in quotes -- so $'...'
+        is only for a word whose unprintable bytes would otherwise stand
+        bare.
 */
 static COLD PURE bool exec_trace_unprintable(string_address word)
 {
@@ -6631,10 +7361,12 @@ static COLD fn exec_trace_ansi(string_address word)
         log_error(str("'"));
 }
 
-/* One word as Bash writes it: bare where it can be, in single quotes where
-   it cannot, in the $'...' spelling where a quote could not carry it, and a
-   bare pair of quotes where the word is empty. A quote inside a single-quoted
-   run closes the run, is written escaped, and opens the next. */
+/* One word as Bash 5.2 writes it: bare where it can be, in single quotes
+   where a meta requires quoting -- a newline and a tab among them -- in
+   the $'...' spelling only when an unprintable byte has no meta that would
+   have taken the other spelling, and a bare pair of quotes where the word
+   is empty. A quote inside a single-quoted run closes the run, is written
+   escaped, and opens the next. */
 static COLD fn exec_trace_word(string_address word)
 {
         string_address run;
@@ -6644,32 +7376,31 @@ static COLD fn exec_trace_word(string_address word)
                 log_error(str("''"));
                 return;
         }
+        if (exec_trace_quoting(word))
+        {
+                log_error(str("'"));
+                for (run = word; string_get(run);)
+                {
+                        string_address stop = run;
+
+                        while (string_get(stop) && string_get(stop) != '\'')
+                                stop++;
+                        if (stop != run)
+                                log_error(run, (positive)(stop - run));
+                        if (!string_get(stop))
+                                break;
+                        log_error(str("'\\''"));
+                        run = stop + 1;
+                }
+                log_error(str("'"));
+                return;
+        }
         if (exec_trace_unprintable(word))
         {
                 exec_trace_ansi(word);
                 return;
         }
-        if (!exec_trace_quoting(word))
-        {
-                log_error(word, 0);
-                return;
-        }
-
-        log_error(str("'"));
-        for (run = word; string_get(run);)
-        {
-                string_address stop = run;
-
-                while (string_get(stop) && string_get(stop) != '\'')
-                        stop++;
-                if (stop != run)
-                        log_error(run, (positive)(stop - run));
-                if (!string_get(stop))
-                        break;
-                log_error(str("'\\''"));
-                run = stop + 1;
-        }
-        log_error(str("'"));
+        log_error(word, 0);
 }
 
 /* NAME= then the value, quoted the way a word is. Bash never wraps the
@@ -6694,40 +7425,84 @@ static COLD fn exec_trace_assignment(string_address word)
 }
 
 static bool exec_ps4_expanding;
+static bool exec_ps4_dash_blocked;
+
+static fn exec_ps4_dash_block(bool on)
+{
+        exec_ps4_dash_blocked = on;
+}
 
 static inline INLINE PURE bool exec_trace_on()
 {
         return (shell_options & SHELL_XTRACE) && !exec_ps4_expanding;
 }
 
+static bool exec_ps4_command_sub(string_address text)
+{
+        while (string_get(text))
+        {
+                p8 value = string_get(text);
+
+                if (value == '\\' && string_get(text + 1))
+                {
+                        text += 2;
+                        continue;
+                }
+
+                if (value == '`')
+                        return true;
+
+                if (value == '$' && string_get(text + 1) == '(' &&
+                    string_get(text + 2) != '(')
+                        return true;
+
+                text++;
+        }
+
+        return false;
+}
+
 static fn exec_trace_ps4()
 {
         string_address prefix;
+        string_address expanded;
 
         prefix = env_get("PS4");
         if (!prefix)
                 prefix = (string_address) "+ ";
 
         /*
-                Bash expands PS4 the way it expands a prompt: parameters
-                and command substitutions first, then the backslash
-                escapes, then the first character of what that produced
-                written once per reader depth. Dash writes the bytes as
-                they stand. Expanding with xtrace still on would trace
-                the expansion itself.
+                Dash and bash both expand parameters, command substitutions
+                and arithmetic in PS4. Expanding with xtrace still on would
+                trace the expansion itself. Bash then applies prompt
+                backslash escapes and writes the first character once per
+                reader depth. Dash writes the expanded bytes as they stand.
+
+                Dash re-parses PS4 as a double-quoted string, so a leftover
+                end-of-file token from a one-line eval argument makes a
+                command substitution in that parse fail. The stored prefix
+                is then written, and the next trace expands again.
         */
+        if (exec_ps4_dash_blocked && exec_ps4_command_sub(prefix))
+        {
+                exec_ps4_dash_blocked = false;
+                shell_syntax_where();
+                log_error(str("Syntax error: end of file unexpected"
+                              " (expecting \")\")\n"));
+                log_error(prefix, 0);
+                return;
+        }
+
+        exec_ps4_expanding = true;
+        expanded = shell_expand_ps4(prefix);
+        exec_ps4_expanding = false;
+        if (expanded)
+                prefix = expanded;
+
         if (shell_bash_compat)
         {
-                string_address expanded;
-                p8 first;
+                p8 first = string_get(prefix);
 
-                exec_ps4_expanding = true;
-                expanded = shell_expand_ps4(prefix);
-                exec_ps4_expanding = false;
-                if (expanded && string_get(expanded))
-                        prefix = expanded;
-
-                first = string_get(prefix);
                 if (first)
                 {
                         positive depth = shell_run_depth ? shell_run_depth : 1;
@@ -6743,7 +7518,7 @@ static fn exec_trace_ps4()
                         if (string_get(prefix + 1))
                                 shell_prompt_written(log_error, prefix + 1);
                         return;
-                    }
+                }
         }
 
         log_error(prefix, 0);
@@ -6839,6 +7614,67 @@ static fn exec_trace_case_header(parse_node address_to node)
                           parse_word_lengths[node->word]);
         log_error((string_address) " in", 3);
         log_error((string_address) "\n", 1);
+}
+
+/*
+        (( )) as Bash writes it: the inside between `(( ' and ` ))',
+        spaces that were in the source kept. The closing pair was taken
+        off for the evaluator, so what is handed here is already the
+        inside.
+*/
+static fn exec_trace_arith(string_address inner)
+{
+        if (!exec_trace_on() || !shell_bash_compat)
+                return;
+
+        exec_trace_ps4();
+        log_error(str("(( "));
+        log_error(inner, 0);
+        log_error(str(" ))\n"));
+}
+
+/*
+        One [[ ]] term as Bash writes it.
+
+        && and || are not printed: each unary or binary term that actually
+        runs is a line of its own, operands already expanded, empty ones a
+        pair of quotes, and everything else as it stands. A `!' that belongs
+        to this term is written; one that inverted a parenthesised group is
+        not, because that invert lives on the group and not on the term.
+*/
+static fn exec_trace_conditional_operand(string_address word)
+{
+        if (!word || !string_get(word))
+                log_error(str("''"));
+        else
+                log_error(word, 0);
+}
+
+static fn exec_trace_conditional_term(bool invert, string_address left,
+                                     string_address op, string_address right)
+{
+        if (!exec_trace_on() || !shell_bash_compat)
+                return;
+
+        exec_trace_ps4();
+        log_error(str("[[ "));
+        if (invert)
+                log_error(str("! "));
+        if (!right)
+        {
+                log_error(op, 0);
+                log_error((string_address) " ", 1);
+                exec_trace_conditional_operand(left);
+        }
+        else
+        {
+                exec_trace_conditional_operand(left);
+                log_error((string_address) " ", 1);
+                log_error(op, 0);
+                log_error((string_address) " ", 1);
+                exec_trace_conditional_operand(right);
+        }
+        log_error(str(" ]]\n"));
 }
 
 /*
@@ -7068,6 +7904,12 @@ static bool exec_assign_value(string_address word, positive name_length,
         string_address name_end = word + name_length;
         string_address mark = name_end + append;
         bool answer;
+
+        if (arith_assign_stored)
+        {
+                arith_assign_stored = false;
+                return true;
+        }
 
         if (string_get(mark) != '=')
                 return false;
@@ -7319,6 +8161,11 @@ static bool exec_prefix_assign(exec_kept_value address_to kept,
 
         if (!promote && (attributes & SHELL_ARRAY_READONLY))
         {
+                /* Dash applies redirections before prefix assignments, so
+                   `r=new true 2>/dev/null` leaves stderr empty. exec_simple
+                   does that first; still say the sentence so a function
+                   body with no redirect writes `x: is read only` the way
+                   lima dash does. Bash diagnoses and keeps going. */
                 shell_readonly_refused(null, null, kept->binding.name,
                                        string_length(kept->binding.name));
                 return exec_assignment_error(assignment_error);
@@ -7523,9 +8370,12 @@ static bool exec_declaration_name(b32 word)
 
 /*
         The assignment operands of a declaration utility use assignment
-        expansion even though they follow the command name. Issue 8 makes
-        command a declaration utility when the name it invokes is one; walk
-        literal command chains and their options to find that boundary.
+        expansion even though they follow the command name. POSIX Issue 8
+        and dash treat command as a declaration utility when the name it
+        invokes is one. Bash 5.2 without posix mode does not: words after
+        command export or command local field-split like ordinary
+        arguments. Walk literal command chains only where that wrapper
+        still applies.
 */
 static bool exec_declaration_compound(string_address word)
 {
@@ -7557,6 +8407,9 @@ static PURE b32 exec_declaration_from(parse_node address_to node)
 
                 if (!(parse_word_flags[at] & PARSE_WORD_LITERAL) ||
                     !word_is(parse_words[at], "command"))
+                        return stop;
+
+                if (shell_bash_compat && !shell_posix_on())
                         return stop;
 
                 at++;
@@ -7679,13 +8532,16 @@ static COLD fn exec_return_bash()
         {
                 //      Bash says it cannot return from here, and quotes the
                 //      name while it does; under posix the refusal is
-                //      fatal, because return is a special builtin.
+                //      fatal, because return is a special builtin -- unless
+                //      the command is tested. Bang inverts `! return 3` to
+                //      zero and the script continues; if and && / || are
+                //      the same question.
                 shell_diagnostic_where();
                 log_error("return: can only `return' from a function or "
                           "sourced script\n", 0);
                 shell_status = 2;
 
-                if (shell_posix_on())
+                if (shell_posix_on() && !exec_tested)
                 {
                         shell_trap_exit();
                         log_flush();
@@ -7760,6 +8616,7 @@ bool exec_control_builtin(string_address name, bool run)
                         }
                         else
                         {
+                                shell_diagnostic_where();
                                 string_format(log_error,
                                               shell_bash_compat
                                                   ? "%s: %s: numeric "
@@ -7767,8 +8624,13 @@ bool exec_control_builtin(string_address name, bool run)
                                                   : "%s: Illegal number: "
                                                     "%s\n",
                                               name, shell_argv[1]);
+                                //      A non-integer is a special-builtin
+                                //      error. Aborting the line here made
+                                //      `command continue bad` fatal, and
+                                //      let eval of `break bad` return so
+                                //      the next -c line still printed end=.
                                 shell_status = 2;
-                                exec_abort_line(shell_status);
+                                exec_special_error_note();
                                 return true;
                         }
                 }
@@ -7803,10 +8665,14 @@ bool exec_control_builtin(string_address name, bool run)
         if (shell_argc > 1 &&
             !exec_control_number(shell_argv[1], true, address_of shell_status))
         {
+                //      Dash return is a special builtin. A non-integer is
+                //      fatal, including a value past INT_MAX. Aborting only
+                //      the line let the next -c line print end=2.
+                shell_diagnostic_where();
                 string_format(log_error, "return: Illegal number: %s\n",
                               shell_argv[1]);
                 shell_status = 2;
-                exec_abort_line(shell_status);
+                exec_special_error_note();
                 return true;
         }
 
@@ -8285,6 +9151,7 @@ static b32 exec_simple(b32 index)
         bool assignments_only;
         bool special = false;
         bool fatal = false;
+        bool redirects_applied = false;
         shell_words arguments;
 
         //      argv grows with the line. A command's words are whatever the
@@ -8301,6 +9168,7 @@ static b32 exec_simple(b32 index)
         // The line this command was written on, which caller and $LINENO
         // answer with for as long as it runs.
         exec_line = node->line;
+        exec_wait_node = index;
         token_used = 0;
         token_overflow = false;
         // With no command name, POSIX makes the command's status that of the
@@ -8439,6 +9307,9 @@ static b32 exec_simple(b32 index)
 
                         count = (b32)arguments.count;
                 }
+                else if (expand_simple_dollar_word(word, address_of arguments,
+                                                    !leading))
+                        count = (b32)arguments.count;
                 else
                         count = (b32)shell_expand_fields(word,
                                                          address_of arguments);
@@ -8460,6 +9331,29 @@ static b32 exec_simple(b32 index)
         }
 
         assignments_only = first == count;
+        /* Dash opens redirections before prefix assignments, so a readonly
+           prefix diagnoses into `2>/dev/null` and a function body with no
+           redirect still writes the sentence. */
+        if (!shell_bash_compat && leading && node->redirect_count &&
+            !exec_line_aborted())
+        {
+                if (!exec_redirect_apply(index))
+                {
+                        exec_redirect_restore(mark);
+                        status = (exec_line_aborted() ? shell_status :
+                                  exec_redirect_status ? exec_redirect_status
+                                                       : 1);
+                        if (!exec_line_aborted())
+                        {
+                                if (first != count)
+                                        special = exec_special_builtin(
+                                            shell_argv[first]);
+                                fatal = special;
+                        }
+                        goto fail;
+                }
+                redirects_applied = true;
+        }
         for (at = 0; at < leading && !exec_line_aborted(); at++)
         {
                 b32 word_index = EXEC_WORD(at);
@@ -8502,10 +9396,17 @@ static b32 exec_simple(b32 index)
                     shell_substitution_generation;
                 positive value_at = parse_word_name_lengths[word_index] + 1 +
                                       ((flags & PARSE_WORD_APPEND) != 0);
-                string_address trial =
-                    (flags & PARSE_WORD_LITERAL) ||
+                bool held_commit = expand_assignment_commit;
+                string_address trial;
+
+                arith_assign_stored = false;
+                expand_assignment_commit =
+                    assignments_only && !(flags & PARSE_WORD_APPEND) &&
+                    !(flags & PARSE_WORD_COMPOUND);
+                trial = (flags & PARSE_WORD_LITERAL) ||
                     (assignments_only && (flags & PARSE_WORD_COMPOUND))
                         ? word : shell_expand_assignment(word, value_at);
+                expand_assignment_commit = held_commit;
 
                 /* Bash's ordinary mode exposes each substitution answer to
                    the next assignment RHS. POSIX freezes the status from
@@ -8517,6 +9418,12 @@ static b32 exec_simple(b32 index)
 
                 if (exec_line_aborted())
                         break;
+                if (arith_assign_stored)
+                {
+                        arith_assign_stored = false;
+                        shell_argv[at] = trial;
+                        continue;
+                }
                 if (!trial ||
                     !exec_keep_value(expanded_kept + expanded_count, trial,
                         parse_word_name_lengths[word_index], assignments_only ? EXEC_KEEP_TARGET : EXEC_KEEP_PREFIX))
@@ -8602,7 +9509,8 @@ static b32 exec_simple(b32 index)
         if (exec_trace_on())
                 exec_trace(count, first);
 
-        if (node->redirect_count && !exec_redirect_apply(index))
+        if (node->redirect_count && !redirects_applied &&
+            !exec_redirect_apply(index))
         {
                 exec_redirect_restore(mark);
                 status = (exec_line_aborted() ? shell_status : exec_redirect_status ? exec_redirect_status : 1);
@@ -8686,6 +9594,11 @@ static b32 exec_simple(b32 index)
                         exec_redirect_restore(mark);
         }
 
+        /* lima bash waitchld's leftover children when a simple command
+           finishes, which is when a coproc that died during `sleep` is
+           forgotten so a later unquoted wait $C_PID sees nothing. */
+        exec_coproc_drop_finished();
+
         shell_store_rewind(address_of exec_store, arena_mark);
 
         if (fatal)
@@ -8700,6 +9613,8 @@ static b32 exec_simple(b32 index)
                 them left the arena behind.
         */
 fail:
+        if (redirects_applied)
+                exec_redirect_restore(mark);
         if (kept && !exec_finish_prefixes(kept, kept_count) && !status)
                 status = shell_status = 2;
         exec_put_back(expanded_kept, expanded_count, true);
@@ -9119,6 +10034,8 @@ static b32 exec_for(b32 index, bool selecting)
         string_address name = parse_words[node->word];
         shell_mark mark = shell_store_mark(address_of exec_store);
         positive base = exec_items_used;
+        positive substitutions =
+            expand_substitutions_ever ? expand_substitutions_count : 0;
         b32 count;
         b32 status = 0;
 
@@ -9211,6 +10128,13 @@ static b32 exec_for(b32 index, bool selecting)
                 status = exec_node(node->right);
                 exec_loop_depth--;
 
+                /* lima bash 5.2 unlinks the process-substitution fifo list
+                   after each execute_command of a for action, so a second
+                   `<( )` path in the word list is gone once the first body
+                   has run. */
+                if (expand_substitutions_ever)
+                        shell_substitutions_close(substitutions);
+
                 if (!exec_loop_again())
                         break;
         }
@@ -9287,6 +10211,8 @@ static b32 exec_arithmetic_command(b32 index)
 
         if (!exec_bracket_strip(whole, address_of length, address_of held))
                 return 1;
+
+        exec_trace_arith(whole + 2);
 
         if (!string_get(whole + 2 + string_span_of_set(whole + 2, " \t\n")))
                 status = 1;
@@ -9443,6 +10369,7 @@ static positive conditional_word_room;
 static positive conditional_word_count;
 static positive conditional_at;
 static bool conditional_bad;
+static bool conditional_runtime;
 static bool conditional_active;
 
 static bool conditional_add(string_address text, positive length)
@@ -9577,7 +10504,6 @@ static bool conditional_integer(positive kind, string_address left,
         {
                 arith_bash_mode = held;
                 arith_nounset = held_nounset;
-                conditional_bad = true;
                 return false;
         }
 
@@ -9586,10 +10512,7 @@ static bool conditional_integer(positive kind, string_address left,
         arith_nounset = held_nounset;
 
         if (arith_bad)
-        {
-                conditional_bad = true;
                 return false;
-        }
 
         return test_ordered(kind, first, second);
 }
@@ -9712,7 +10635,20 @@ static bool conditional_binary_ready()
         return true;
 }
 
-static bool conditional_primary()
+static PURE bool conditional_unary_op(string_address word)
+{
+        return test_is_unary(word) || word_is(word, "-a") ||
+               word_is(word, "-v") || word_is(word, "-o") ||
+               word_is(word, "-R");
+}
+
+static PURE bool conditional_unary_operand(string_address word)
+{
+        return !word_is(word, "&&") && !word_is(word, "||") &&
+               !word_is(word, "(") && !word_is(word, ")");
+}
+
+static bool conditional_primary(bool invert)
 {
         string_address raw;
 
@@ -9739,14 +10675,22 @@ static bool conditional_primary()
 
         raw = conditional_word[conditional_at];
 
-        if ((test_is_unary(raw) || word_is(raw, "-a") ||
-             word_is(raw, "-v") || word_is(raw, "-o")) &&
-            conditional_at + 1 < conditional_word_count)
+        if (conditional_unary_op(raw))
         {
-                string_address operand_raw = conditional_word[conditional_at + 1];
+                string_address operand_raw;
                 string_address operand;
                 bool value = false;
 
+                if (conditional_at + 1 >= conditional_word_count ||
+                    !conditional_unary_operand(
+                        conditional_word[conditional_at + 1]))
+                {
+                        conditional_bad = true;
+                        conditional_at++;
+                        return false;
+                }
+
+                operand_raw = conditional_word[conditional_at + 1];
                 conditional_at += 2;
 
                 if (!conditional_active)
@@ -9757,11 +10701,25 @@ static bool conditional_primary()
                 if (expand_failed)
                         return false;
 
+                exec_trace_conditional_term(invert, operand, raw, null);
+
                 if (word_is(raw, "-a"))
                         return test_unary('e', operand);
 
                 if (word_is(raw, "-v"))
                         return env_get(operand) != null;
+
+                /*
+                        -R names a variable, not a path. After expansion an
+                        unset $name is empty under set +u, and that empty
+                        name is false rather than an error. -v is "set";
+                        this is "this name is a nameref".
+                */
+                if (word_is(raw, "-R"))
+                        return operand && string_get(operand) &&
+                               (shell_variable_attributes(
+                                    operand, string_length(operand)) &
+                                SHELL_ARRAY_NAMEREF) != 0;
 
                 if (word_is(raw, "-o"))
                 {
@@ -9773,7 +10731,42 @@ static bool conditional_primary()
                                shell_option_on(option);
                 }
 
-                value = test_unary(string_get(raw + 1), operand);
+                /*
+                        Bash 5.2 [[ -t WORD ]] reads a file descriptor as
+                        digits. A non-integer is false, not an error, and
+                        not a reason to abort the script.
+                */
+                if (string_is(raw + 1, 't') && !string_get(raw + 2))
+                {
+                        bipolar descriptor;
+                        positive used;
+                        string_address step;
+                        p8 settings[64];
+
+                        if (!operand || !string_get(operand))
+                                return false;
+
+                        step = operand + string_span(operand, string_set_blanks);
+                        descriptor = string_bipolar(step, address_of used);
+                        step += used;
+                        step += string_span(step, string_set_blanks);
+                        if (!used || string_get(step))
+                                return false;
+
+                        return system_control(descriptor, BUILTIN_TCGETS,
+                                              settings) == 0;
+                }
+
+                test_bad = false;
+                {
+                        string_address held = shell_argv[0];
+
+                        shell_argv[0] = (string_address) "[[";
+                        value = test_unary(string_get(raw + 1), operand);
+                        shell_argv[0] = held;
+                }
+                if (test_bad)
+                        conditional_runtime = true;
                 return value;
         }
 
@@ -9806,11 +10799,13 @@ static bool conditional_primary()
                         if (expand_failed)
                                 return false;
 
+                        exec_trace_conditional_term(invert, left, op, right);
+
                         value = conditional_regex_match(left, right,
                                                         address_of valid);
 
                         if (!valid)
-                                conditional_bad = true;
+                                conditional_runtime = true;
 
                         return value;
                 }
@@ -9830,6 +10825,8 @@ static bool conditional_primary()
 
                         if (expand_failed)
                                 return false;
+
+                        exec_trace_conditional_term(invert, left, op, right);
 
                         if (pattern)
                         {
@@ -9858,7 +10855,7 @@ static bool conditional_primary()
                         value = test_compare(kind, left, right);
 
                         if (test_bad)
-                                conditional_bad = true;
+                                conditional_runtime = true;
 
                         return value;
                 }
@@ -9868,18 +10865,25 @@ static bool conditional_primary()
                 return false;
 
         raw = conditional_expand(raw, false);
-        return !expand_failed && string_get(raw) != end;
+        if (expand_failed)
+                return false;
+
+        exec_trace_conditional_term(invert, raw, (string_address) "-n", null);
+        return string_get(raw) != end;
 }
 
 static bool conditional_negation()
 {
-        if (conditional_is("!"))
+        bool invert = false;
+
+        while (conditional_is("!"))
         {
                 conditional_at++;
-                return !conditional_negation();
+                invert = !invert;
         }
 
-        return conditional_primary();
+        bool value = conditional_primary(invert);
+        return invert ? !value : value;
 }
 
 #define CONDITIONAL_LOGICAL_LEVEL(name, lower, spelling, wanted, operation)  \
@@ -9907,6 +10911,45 @@ CONDITIONAL_LOGICAL_LEVEL(conditional_expression, conditional_conjunction,
                           "||", !value, ||)
 #undef CONDITIONAL_LOGICAL_LEVEL
 
+/*
+        A malformed [[ ]] is a parse error in bash: the rest of that
+        physical line does not run, and a non-interactive top-level
+        reader leaves with status 2. Arithmetic and regex failures stay
+        ordinary command statuses so a later echo still runs.
+
+        The diagnostic waits until redirections of this command have been
+        put back. `[[ ... ]] 2>/dev/null` must not swallow a parse error,
+        because bash reports it before that redirect exists.
+*/
+static bool conditional_syntax;
+
+static COLD fn conditional_syntax_abort()
+{
+        shell_status = 2;
+        shell_syntax_generation += 2;
+        exec_abort_line(2);
+        conditional_syntax = true;
+}
+
+static COLD fn conditional_syntax_finish()
+{
+        if (!conditional_syntax)
+                return;
+
+        conditional_syntax = false;
+        shell_syntax_where();
+        log_error(str("syntax error in conditional expression\n"));
+        log_flush();
+
+        if (shell_run_depth == 1 && !shell_source_depth)
+        {
+                if (string_is(shell_option_flags, 'c'))
+                        exec_child_leave(shell_status);
+                if (!shell_is_interactive)
+                        expand_fatal_status(shell_status);
+        }
+}
+
 static b32 exec_conditional(b32 index)
 {
         shell_mark arena = shell_store_mark(address_of exec_store);
@@ -9920,6 +10963,8 @@ static b32 exec_conditional(b32 index)
                 return 2;
 
         conditional_bad = false;
+        conditional_runtime = false;
+        conditional_syntax = false;
         conditional_active = true;
         conditional_at = 0;
         expand_failed = false;
@@ -9927,18 +10972,30 @@ static b32 exec_conditional(b32 index)
 
         if (!conditional_tokenize(whole + 2))
                 conditional_bad = true;
-        else if (conditional_word_count)
+        else if (!conditional_word_count)
+                conditional_bad = true;
+        else
                 value = conditional_expression();
 
-        if (conditional_at != conditional_word_count || expand_failed)
+        if (conditional_at != conditional_word_count)
                 conditional_bad = true;
+        if (expand_failed)
+                conditional_runtime = true;
 
         if (arith_unset)
                 conditional_nounset_fatal();
 
         exec_bracket_restore(whole, length, held);
+
+        if (conditional_bad)
+        {
+                shell_store_rewind(address_of exec_store, arena);
+                conditional_syntax_abort();
+                return 2;
+        }
+
         status = exec_line_aborted() ? shell_status
-                 : arith_unset ? 1 : conditional_bad ? 2 : value ? 0 : 1;
+                 : arith_unset ? 1 : conditional_runtime ? 2 : value ? 0 : 1;
         shell_store_rewind(address_of exec_store, arena);
         return status;
 }
@@ -10047,17 +11104,30 @@ static b32 exec_if(b32 index)
         return 0;
 }
 
-static b32 exec_child_status(bipolar child)
+static b32 exec_wait_status(bipolar child, positive flags,
+                            positive address_to raw)
 {
-        positive state = 0;
+        address_to raw = 0;
 
         if (child < 0)
                 return 1;
 
-        if (system_wait4_retry(child, address_of state, 0, null) < 0)
+        if (system_wait4_retry(child, raw, flags, null) < 0)
                 return 1;
 
-        return wait_status_code(state);
+        if ((address_to raw & 0xff) == 0x7f)
+                return 128 + (b32)((address_to raw >> 8) & 0xff);
+
+        return wait_status_code(address_to raw);
+}
+
+static b32 exec_child_status(bipolar child)
+{
+        positive state = 0;
+        b32 code = exec_wait_status(child, 0, address_of state);
+
+        shell_child_death(child, state, true);
+        return code;
 }
 
 /* Async commands inherit the interactive shell's ignored INT/QUIT state and,
@@ -10158,7 +11228,26 @@ static bipolar exec_spawn_node(b32 index, bool background)
         The parent closes both ends of every pipe it made before it waits: a
         write end still open here is an end of file the reader never sees, and
         the whole shell stops.
+
+        Bash finishes while/for/if/until/case/select in a pipeline with _exit,
+        so an EXIT trap set in that stage does not run. A group, a function
+        and an explicit ( ) still run one, which is why wrapping the while
+        in { } prints what the bare while does not. dash runs the trap in
+        every pipeline child. lastpipe is the parent, so a trap set there
+        belongs to the shell and runs when the shell itself leaves.
 */
+
+static PURE bool exec_pipe_omits_exit(b32 kind)
+{
+        if (!shell_bash_compat)
+                return false;
+
+        return kind == NODE_WHILE || kind == NODE_UNTIL || kind == NODE_FOR ||
+               kind == NODE_SELECT || kind == NODE_IF || kind == NODE_CASE ||
+               kind == NODE_CFOR || kind == NODE_ARITHMETIC ||
+               kind == NODE_CONDITIONAL || kind == NODE_FUNCTION;
+}
+
 /*
         A stage that can be spawned rather than forked, and its pid.
 
@@ -10271,6 +11360,97 @@ static b32 coproc_kept(b32 descriptor)
         return (b32)moved;
 }
 
+#define EXEC_COPROC_LIVE 8
+
+typedef struct
+{
+        p8 name[EXEC_COPROC_NAME + 1];
+        positive name_length;
+        bipolar pid;
+} exec_coproc_slot;
+
+static exec_coproc_slot exec_coprocs[EXEC_COPROC_LIVE];
+static positive exec_coproc_count;
+
+static fn exec_coproc_child()
+{
+        exec_coproc_count = 0;
+}
+
+static fn exec_coproc_unset(exec_coproc_slot address_to slot)
+{
+        p8 pid_name[EXEC_COPROC_NAME + 5];
+
+        env_unset_span(slot->name, slot->name_length);
+        memory_copy(pid_name, slot->name, slot->name_length);
+        memory_copy_end(pid_name + slot->name_length, (string_address) "_PID", 4);
+        pid_name[slot->name_length + 4] = end;
+        env_unset(pid_name);
+}
+
+static fn exec_coproc_reaped(bipolar pid)
+{
+        for (positive at = 0; at < exec_coproc_count; at++)
+                if (exec_coprocs[at].pid == pid)
+                        exec_coproc_unset(exec_coprocs + at);
+}
+
+static fn exec_coproc_drop_finished()
+{
+        positive into = 0;
+
+        if (!exec_coproc_count)
+                return;
+
+        /* Wait only these children. wait4(-1) here would collect a lastpipe
+           stage the pipeline still has to wait for. */
+        for (positive at = 0; at < exec_coproc_count; at++)
+        {
+                positive status = 0;
+                bipolar got = system_call_4(syscall(wait4),
+                                            (positive)exec_coprocs[at].pid,
+                                            (positive)address_of status,
+                                            JOB_NO_HANG | JOB_UNTRACED |
+                                                JOB_CONTINUED,
+                                            0);
+
+                if (got > 0)
+                        job_child_changed(got, status);
+        }
+
+        for (positive at = 0; at < exec_coproc_count; at++)
+        {
+                bipolar pid = exec_coprocs[at].pid;
+                positive found = shell_wait_find_job(pid);
+
+                if (found < shell_wait_count &&
+                    !(shell_wait_table[found].flags & SHELL_WAIT_DONE))
+                {
+                        exec_coprocs[into++] = exec_coprocs[at];
+                        continue;
+                }
+
+                shell_wait_drop(pid);
+        }
+
+        exec_coproc_count = into;
+}
+
+static fn exec_coproc_remember(string_address name, positive name_length,
+                               bipolar pid)
+{
+        exec_coproc_slot address_to slot;
+
+        if (exec_coproc_count >= EXEC_COPROC_LIVE)
+                return;
+
+        slot = exec_coprocs + exec_coproc_count++;
+        memory_copy(slot->name, name, name_length);
+        slot->name[name_length] = end;
+        slot->name_length = name_length;
+        slot->pid = pid;
+}
+
 static b32 exec_coproc(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -10285,6 +11465,14 @@ static b32 exec_coproc(b32 index)
 
         if (name_length > EXEC_COPROC_NAME)
                 return string_report(log_error, 1, "coproc: %s: name too long\n", name);
+
+        if (exec_coproc_count)
+        {
+                shell_diagnostic_where();
+                string_format(log_error,
+                              "warning: execute_coproc: coproc [%b:%s] still exists\n",
+                              exec_coprocs[0].pid, exec_coprocs[0].name);
+        }
 
         log_flush();
 
@@ -10354,7 +11542,43 @@ static b32 exec_coproc(b32 index)
         if (!shell_background_started(address_of child, 1, false, false))
                 log_error(str("No room to retain coprocess\n"));
 
+        exec_coproc_remember(name, name_length, child);
+
         return 0;
+}
+
+/*
+        lastpipe runs a final builtin, function or compound in this shell so
+        `echo | read x` leaves x set. A path, or a name that is only a tool
+        or a PATH lookup, is still a process of its own: lima forks /bin/true
+        even with lastpipe on.
+*/
+static PURE bool exec_pipe_lastpipes(b32 index)
+{
+        parse_node address_to node = parse_nodes + index;
+        string_address name;
+        positive2 named;
+
+        if (node->kind != NODE_SIMPLE)
+                return true;
+
+        if (!node->word_count)
+                return true;
+
+        if (!(parse_word_flags[node->word] & PARSE_WORD_LITERAL) ||
+            (parse_word_flags[node->word] & PARSE_WORD_ASSIGNMENT))
+                return true;
+
+        name = parse_words[node->word];
+        if (string_first_of(name, '/'))
+                return false;
+
+        named = string_hash_33_length(name);
+        if (exec_function_slot(name, named) != positive_max)
+                return true;
+
+        return shell_command_named_hashed(name, named) ||
+               exec_control_builtin(name, false);
 }
 
 static b32 exec_pipe(b32 first, positive count, bool background,
@@ -10431,18 +11655,23 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                            : exec_stage_spawn(child, upstream,
                                               last ? -1 : ends[1]);
 
-                /* A final command which was not an eligible literal external
-                   is exactly the stateful lastpipe case. Run it before waiting
-                   so a producer cannot fill the pipe against an idle reader.
-                   Keep the caller's tested state: ! and conditional lists
-                   suppress -e inside their pipeline, while an untested final
-                   compound command must still stop at its first failing
-                   simple command. Tail exec is suppressed because the shell
-                   has pipeline bookkeeping left to do when the stage returns. */
-                if (made < 0 && last && lastpipe)
+                /* A final builtin, function or compound is the lastpipe
+                   case: it runs here so its state survives. An external is
+                   still a process of its own even when spark could not spawn
+                   it. Running /bin/true in the parent keeps this shell as a
+                   reader of the pipe, so a function that cats and then echoes
+                   writes into a live pipe and answers 4 instead of SIGPIPE. */
+                if (made < 0 && last && lastpipe &&
+                    exec_pipe_lastpipes(child))
                 {
                         bool tail = shell_tail_command;
 
+                        /* Keep the caller's tested state: ! and conditional
+                           lists suppress -e inside their pipeline, while an
+                           untested final compound command must still stop at
+                           its first failing simple command. Tail exec is
+                           suppressed because the shell has pipeline
+                           bookkeeping left to do when the stage returns. */
                         if (upstream >= 0 && upstream != 0)
                         {
                                 if (system_duplicate(upstream, 0, 0) < 0)
@@ -10460,7 +11689,9 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
                         upstream = -1;
                         shell_tail_command = false;
+                        exec_lastpipe_live = true;
                         lastpipe_status = exec_node(child);
+                        exec_lastpipe_live = false;
                         shell_tail_command = tail;
                         lastpipe_ran = true;
                         child = parse_nodes[child].next;
@@ -10488,6 +11719,8 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         exec_child_signals(background,
                                            background && upstream < 0);
                         exec_child_began();
+                        if (exec_pipe_omits_exit(parse_nodes[child].kind))
+                                trap_omit_exit_set();
                         if (parse_nodes[child].kind == NODE_SUBSHELL)
                                 parse_nodes[child].kind = NODE_GROUP;
                         shell_tail_command =
@@ -10550,7 +11783,10 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         }
 
         if (lastpipe)
+        {
+                exec_lastpipe_live = true;
                 exec_redirect_restore(lastpipe_mark);
+        }
 
         if (upstream >= 0)
                 system_close(upstream);
@@ -10569,6 +11805,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
                 memory_free(children,
                             children_room * sizeof(children[0]));
+                exec_lastpipe_live = false;
                 return status;
         }
 
@@ -10594,11 +11831,10 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         for (at = 0; at < started; at++)
         {
                 b32 got;
+                positive raw = 0;
 
                 if (monitor)
                 {
-                        positive raw = 0;
-
                         if (system_wait4_retry(children[at], address_of raw,
                                                JOB_UNTRACED, null) < 0)
                                 got = 1;
@@ -10612,13 +11848,29 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                                 got = wait_status_code(raw);
                 }
                 else
-                        got = exec_child_status(children[at]);
+                        got = exec_wait_status(children[at], 0, address_of raw);
 
                 if (got)
                         rightmost_failure = got;
 
                 if (at + 1 == started)
+                {
+                        b32 stage = first;
+                        positive step = 0;
+
                         status = got;
+
+                        while (stage && step < at)
+                        {
+                                stage = parse_nodes[stage].next;
+                                step++;
+                        }
+
+                        if (stage)
+                                exec_wait_node = stage;
+
+                        shell_child_death(children[at], raw, true);
+                }
 
                 // Every stage's answer, in the order they were written
                 // in. The child ids are not wanted for anything else once
@@ -10656,6 +11908,8 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
                 memory_free(children, children_room * sizeof(children[0]));
 
+                exec_lastpipe_live = false;
+
                 if (slot >= job_count)
                         return 128 + (b32)stopped_by;
 
@@ -10681,6 +11935,8 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         }
 
         memory_free(children, children_room * sizeof(children[0]));
+
+        exec_lastpipe_live = false;
 
         return status;
 }
@@ -11258,9 +12514,12 @@ static b32 exec_node_kind(b32 index)
         {
                 // Before the words are expanded, which is where Bash runs it
                 // and the only place the action can use argv of its own.
-                if (trap_debug_here &&
-                    exec_condition_reaches(SHELL_EXTRA_FUNCTRACE))
+                if (trap_debug_here && !exec_condition_inside &&
+                    exec_debug_reaches())
+                {
+                        exec_bash_command_from(node);
                         exec_trap_condition(TRAP_DEBUG);
+                }
 
                 bool expand_scratch = node->redirect_count != 0;
                 b32 word_at = node->word;
@@ -11343,6 +12602,8 @@ static b32 exec_node_kind(b32 index)
                 return shell_status;
         }
 
+        exec_compound_depth++;
+
         if (node->kind == NODE_ARITHMETIC)
                 status = exec_arithmetic_command(index);
         else if (node->kind == NODE_CONDITIONAL)
@@ -11373,10 +12634,26 @@ static b32 exec_node_kind(b32 index)
         else
                 status = exec_node(node->left);
 
+        exec_compound_depth--;
+
         exec_redirect_restore(mark);
-        exec_expansion_done(expanded, substitutions);
+
+        if (shell_bash_compat && exec_compound_depth == 0)
+                shell_child_death_flush();
+        /* lima bash 5.2 leaves process-substitution write ends open after a
+           brace group. `>(sed > file)` has not seen EOF, so a later cat of
+           that file is still empty; the writer finishes when this shell
+           itself leaves. A simple command still closes them, which is why
+           `echo z > >(cat > written)` settles before sleep. */
+        if (shell_bash_compat && node->kind == NODE_GROUP)
+                shell_store_rewind(address_of expand_store, expanded);
+        else
+                exec_expansion_done(expanded, substitutions);
 
         shell_status = status;
+
+        if (conditional_syntax)
+                conditional_syntax_finish();
 
         if (node->kind == NODE_SUBSHELL || node->kind == NODE_ARITHMETIC ||
             node->kind == NODE_CONDITIONAL)

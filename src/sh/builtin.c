@@ -372,6 +372,10 @@ COLD bool shell_reference_element(
     positive address_to base_length, const_string address_to subscript,
     positive address_to subscript_length);
 static bool exec_source_stop(b32 address_to startup_status);
+static bool exec_source_tested_hold();
+static fn exec_source_tested_restore(bool kept);
+static string_address exec_bash_command_value(positive address_to value_length);
+static fn exec_source_return_trap();
 bool shell_builtin(string_address arguments, positive2 named);
 string_address shell_arguments();
 fn shell_execute_command();
@@ -385,6 +389,7 @@ static bool exec_arithmetic_value(string_address text,
 // exec owns the lifetime of PIPESTATUS; the variable engine materializes its
 // deferred one-element value only when a reader actually names it.
 fn exec_pipe_status_wanted();
+static fn exec_ps4_dash_block(bool on);
 
 static bool shell_pipe_status_wanted(const_string name, positive length)
 {
@@ -562,10 +567,30 @@ typedef struct
 static env_variable address_to shell_vars;
 static positive shell_vars_room;
 static positive shell_var_count;
+/*
+        The last name that was found.
+
+        A tight loop reads and writes the same counter every iteration, so
+        the hash probe and the name compare ran twice for the same slot.
+        Remembering that slot makes the second lookup a generation check
+        and a compare of the name. Structural changes bump the generation;
+        replacing the value in place does not. Separate from
+        env_locale_generation, which only tracks LC_ALL / LC_CTYPE / LANG.
+        One record so the hit check stays on a single line of cache.
+*/
+static struct
+{
+        positive generation;
+        positive hit_generation;
+        positive hit_hash;
+        positive hit_length;
+        positive hit_index;
+} env_lookup;
 // Fast negative answer for the overwhelmingly common shell with no readonly
 // declarations. The names themselves remain in the indexed variable table;
 // this is only a count, not a second registry.
 static positive readonly_count;
+static bool shell_bashpid_cleared;
 
 /*
         The pointer vector above is the form execve and the utilities need,
@@ -591,6 +616,27 @@ static name_index_slot address_to env_index;
 static positive env_index_room;
 static positive env_index_slots;
 static positive env_index_tombstones;
+
+static inline INLINE fn env_index_touch()
+{
+        env_lookup.generation++;
+        if (!env_lookup.generation)
+        {
+                env_lookup.generation = 1;
+                env_lookup.hit_generation = 0;
+        }
+}
+
+static inline INLINE fn env_hit_remember(positive hash, positive length,
+                                         positive index)
+{
+        if (!env_lookup.generation)
+                env_lookup.generation = 1;
+        env_lookup.hit_generation = env_lookup.generation;
+        env_lookup.hit_hash = hash;
+        env_lookup.hit_length = length;
+        env_lookup.hit_index = index;
+}
 
 // Rebuilt lazily for execve and the in-process utilities that spawn children.
 string_address address_to shell_envp;
@@ -731,6 +777,7 @@ static fn name_index_remove(name_index_slot address_to table, positive slots,
 
 static bool env_index_rebuild(positive count)
 {
+        env_index_touch();
         if (!name_index_prepare(address_of env_index,
                                 address_of env_index_room,
                                 address_of env_index_slots,
@@ -746,8 +793,8 @@ static bool env_index_rebuild(positive count)
         return true;
 }
 
-static PURE positive env_find_hashed_span(const_string name, positive length,
-                                     positive hash)
+static COLD positive env_find_hashed_span_probe(const_string name,
+                                                positive length, positive hash)
 {
         if (env_index_slots)
         {
@@ -768,7 +815,10 @@ static PURE positive env_find_hashed_span(const_string name, positive length,
                                 if (index < shell_var_count &&
                                     !memory_compare(shell_vars[index].text,
                                                     (address_any)name, length))
+                                {
+                                        env_hit_remember(hash, length, index);
                                         return index;
+                                }
                         }
 
                         at = (at + 1) & (env_index_slots - 1);
@@ -783,12 +833,44 @@ static PURE positive env_find_hashed_span(const_string name, positive length,
                     shell_vars[index].name_length == length &&
                     !memory_compare(shell_vars[index].text,
                                     (address_any)name, length))
+                {
+                        env_hit_remember(hash, length, index);
                         return index;
+                }
 
         return shell_var_count;
 }
 
-static PURE positive env_find_span(const_string name, positive length)
+static inline INLINE bool env_name_same(string_address held, const_string name,
+                                        positive length)
+{
+        if (length == 1)
+                return held[0] == name[0];
+        for (positive at = 0; at < length; at++)
+                if (held[at] != name[at])
+                        return false;
+        return true;
+}
+
+static positive env_find_hashed_span(const_string name, positive length,
+                                     positive hash)
+{
+        if (env_lookup.hit_generation &&
+            env_lookup.hit_generation == env_lookup.generation &&
+            env_lookup.hit_hash == hash &&
+            env_lookup.hit_length == length)
+        {
+                positive index = env_lookup.hit_index;
+
+                if (index < shell_var_count &&
+                    env_name_same(shell_vars[index].text, name, length))
+                        return index;
+        }
+
+        return env_find_hashed_span_probe(name, length, hash);
+}
+
+static positive env_find_span(const_string name, positive length)
 {
         return env_find_hashed_span(name, length,
                                     env_name_hash(name, length));
@@ -1144,6 +1226,8 @@ static fn env_variable_drop(positive index)
         positive left = shell_var_count - index - 1;
         env_variable dropped = shell_vars[index];
 
+        env_index_touch();
+
         if (dropped.attributes & SHELL_ARRAY_READONLY)
                 readonly_count--;
 
@@ -1210,6 +1294,7 @@ static env_variable address_to env_record_append(string_address text,
         record->attributes = 0;
         record->array = 0;
         shell_var_count++;
+        env_index_touch();
 
         if (!env_index_slots || shell_var_count > env_index_slots / 2)
                 env_index_rebuild(shell_var_count);
@@ -1516,6 +1601,7 @@ bool env_set(const_string name, const_string value);
 bool env_assign(const_string name, const_string value);
 fn env_unset(string_address name);
 static PURE bool env_optlist_name(const_string name, positive length);
+static PURE bool env_bash_readonly_name(const_string name, positive length);
 static COLD bool env_optlist_take(string_address entry);
 static COLD string_address shell_optlist_value(bool shopts,
                                                positive address_to value_length);
@@ -1606,9 +1692,11 @@ fn shell_env_init(string_address address_to process_environment)
 
         shell_var_count = 0;
         readonly_count = 0;
+        shell_bashpid_cleared = false;
         shell_envp_dirty = true;
         env_index_slots = 0;
         env_index_tombstones = 0;
+        env_index_touch();
 
         // The inherited entries and four defaults are the upper bound.  One
         // allocation and clear now serves variable lookup and export state.
@@ -1875,16 +1963,11 @@ static bool env_attribute_target_span(
         return true;
 }
 
-string_address env_get_hashed_span(const_string name, positive length,
-                                   positive hash,
-                                   positive address_to value_length)
+static COLD string_address env_get_hashed_miss(const_string name, positive length,
+                                               positive hash,
+                                               positive address_to value_length)
 {
-        positive index;
-
-        if (name == null)
-                return null;
-
-        index = env_find_hashed_span(name, length, hash);
+        positive index = env_find_hashed_span(name, length, hash);
 
         if (index >= shell_var_count ||
             !env_variable_has_value(shell_vars + index))
@@ -1908,6 +1991,40 @@ string_address env_get_hashed_span(const_string name, positive length,
                 address_to value_length = shell_vars[index].value_length;
 
         return shell_vars[index].text + length + 1;
+}
+
+string_address env_get_hashed_span(const_string name, positive length,
+                                   positive hash,
+                                   positive address_to value_length)
+{
+        if (name == null)
+                return null;
+
+        if (env_lookup.hit_generation &&
+            env_lookup.hit_generation == env_lookup.generation &&
+            env_lookup.hit_hash == hash &&
+            env_lookup.hit_length == length)
+        {
+                positive index = env_lookup.hit_index;
+
+                if (index < shell_var_count)
+                {
+                        env_variable address_to variable = shell_vars + index;
+                        string_address text = variable->text;
+
+                        if (env_name_same(text, name, length) &&
+                            !(variable->attributes & SHELL_ARRAY_NAMEREF) &&
+                            text && text[variable->name_length] == '=')
+                        {
+                                if (value_length)
+                                        address_to value_length =
+                                            variable->value_length;
+                                return text + length + 1;
+                        }
+                }
+        }
+
+        return env_get_hashed_miss(name, length, hash, value_length);
 }
 
 PURE string_address env_get(const_string name)
@@ -2035,9 +2152,9 @@ static COLD string_address env_attribute_value(p8 attributes,
                 return null;
 
         if (attributes & SHELL_ARRAY_UPPER)
-                memory_to_upper_ascii(made, length);
+                expand_case_buffer(made, length, true);
         else
-                memory_to_lower_ascii(made, length);
+                expand_case_buffer(made, length, false);
 
         return made;
 }
@@ -2378,7 +2495,7 @@ static PURE bool env_assignment_readonly_destination(const_string name,
 {
         if (env_restricted_name(name, length))
                 return true;
-        if (env_optlist_name(name, length))
+        if (env_bash_readonly_name(name, length))
                 return true;
         if (!name || (!readonly_count && (!destination ||
             !(destination->attributes & SHELL_ARRAY_READONLY))))
@@ -2405,7 +2522,7 @@ PURE bool env_readonly_hashed_span(const_string name, positive length,
 
         if (env_restricted_name(name, length))
                 return true;
-        if (env_optlist_name(name, length))
+        if (env_bash_readonly_name(name, length))
                 return true;
 
         if (!name || !readonly_count)
@@ -2425,7 +2542,7 @@ PURE bool env_readonly(const_string name)
                 return false;
 
         named = string_hash_33_length(env_reading(name));
-        if (env_restricted_name(name, named.y) || env_optlist_name(name, named.y))
+        if (env_restricted_name(name, named.y) || env_bash_readonly_name(name, named.y))
                 return true;
         if (!readonly_count)
                 return false;
@@ -2752,7 +2869,7 @@ static COLD string_address env_append_value(string_address old, const_string val
         return made;
 }
 
-static COLD bool shell_scalar_assign_destination(const_string name, positive length,
+static bool shell_scalar_assign_destination(const_string name, positive length,
                                       positive hash, const_string value,
                                       bool append, bool bind_reference,
                                       env_variable address_to destination)
@@ -3307,6 +3424,7 @@ static COLD fn shell_dynamic_versinfo()
                                          "release", MOONWATER_MACHTYPE};
 
         shell_array_words("BASH_VERSINFO", 13, parts, array_count(parts));
+        shell_variable_attribute_set("BASH_VERSINFO", 13, SHELL_ARRAY_READONLY, 0);
 }
 
 static COLD fn shell_dynamic_groups()
@@ -3484,9 +3602,14 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
                 }
 
                 if (!memory_compare((address_any)text, "BASHPID", 7))
+                {
+                        if (shell_bashpid_cleared)
+                                return null;
+
                         return shell_dynamic_number(
                             (positive)system_call_1(syscall(getpid), 0),
                             value_length);
+                }
                 break;
 
         case 8:
@@ -3514,6 +3637,10 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
                 break;
 
         case 12:
+                if (shell_bash_compat &&
+                    !memory_compare((address_any)text, "BASH_COMMAND", 12))
+                        return exec_bash_command_value(value_length);
+
                 if (shell_bash_compat &&
                     !memory_compare((address_any)text, "BASH_VERSION", 12))
                         return shell_dynamic_said("5.3.15(1)-release",
@@ -3607,6 +3734,38 @@ COLD bool shell_dynamic_assign(const_string name, positive length,
         }
 
         return false;
+}
+
+/*
+        Bash freezes UID, EUID and PPID at startup as readonly integers, so
+        a subshell still answers the original parent and `readonly -p` lists
+        them. Assignment and unset refuse the names even before a script
+        has mentioned them.
+*/
+static COLD fn shell_publish_readonly_id(const_string name, positive length,
+                                         positive value)
+{
+        p8 written[32];
+
+        written[positive_into_string(written, value)] = end;
+        if (!env_set((string_address)name, written))
+                return;
+        shell_variable_attribute_set(name, length,
+                                     SHELL_ARRAY_READONLY | SHELL_ARRAY_INTEGER,
+                                     0);
+}
+
+COLD fn shell_bash_ids_publish()
+{
+        if (!shell_bash_compat)
+                return;
+
+        shell_publish_readonly_id(
+            "UID", 3, (positive)system_call_1(syscall(getuid), 0));
+        shell_publish_readonly_id(
+            "EUID", 4, (positive)system_call_1(syscall(geteuid), 0));
+        shell_publish_readonly_id(
+            "PPID", 4, (positive)system_call_1(syscall(getppid), 0));
 }
 
 // string_to_positive scans backwards from the end of the string, so it reads
@@ -4120,13 +4279,13 @@ COLD fn shell_cd(writer write, string_address input)
         if (index < shell_argc)
                 name = shell_argv[index++];
 
-        //      Bash counts the operands and refuses a second; dash reads
-        //      the first and pays no attention to what follows it.
+        //      Bash counts the operands and refuses a second with status 1;
+        //      dash reads the first and pays no attention to what follows it.
         if (index < shell_argc && shell_bash_compat)
         {
                 shell_diagnostic_where();
 
-                return shell_answer(string_report(log_error, 2,
+                return shell_answer(string_report(log_error, 1,
                     "cd: too many arguments\n"));
         }
 
@@ -4134,25 +4293,23 @@ COLD fn shell_cd(writer write, string_address input)
         {
                 name = env_get("HOME");
 
-                if (!name || !string_get(name))
+                //      Only an unset HOME is "HOME not set". An empty HOME
+                //      is the current directory, the same stay as `cd ''`.
+                if (!name)
                 {
                         if (shell_bash_compat)
-                                return shell_answer(string_report(log_error, 1, "cd: HOME not set\n"));
+                        {
+                                shell_diagnostic_where();
+                                return shell_answer(string_report(
+                                    log_error, 1, "cd: HOME not set\n"));
+                        }
 
-                        return shell_answer(0);
+                        name = ".";
                 }
         }
-        else if (!string_get(name))
-        {
-                //      An empty name is a null directory to Bash and nothing
-                //      at all to dash, which stays where it is and says so
-                //      with a zero.
-                if (!shell_bash_compat)
-                        return shell_answer(0);
 
-                log_error("cd: empty directory\n", 0);
-                return shell_answer(1);
-        }
+        if (!string_get(name))
+                name = ".";
         else if (word_is(name, "-"))
         {
                 name = env_get("OLDPWD");
@@ -4161,7 +4318,11 @@ COLD fn shell_cd(writer write, string_address input)
                 if (!name)
                 {
                         if (shell_bash_compat)
-                                return shell_answer(string_report(log_error, 1, "cd: OLDPWD not set\n"));
+                        {
+                                shell_diagnostic_where();
+                                return shell_answer(string_report(
+                                    log_error, 1, "cd: OLDPWD not set\n"));
+                        }
 
                         name = shell_directory;
                 }
@@ -5369,22 +5530,31 @@ COLD fn shell_exit(writer write, string_address input)
                                                    address_of exit_code);
 
                 // Reuse return's checked integer parser. Bash accepts signed
-                // machine words; dash rejects negative statuses. Operand
-                // errors go through the special-builtin policy so command
-                // can suppress their fatality without suppressing valid exit.
-                if (!good || (!shell_bash_compat && exit_code < 0))
+                // machine words; dash's parser is a signed 32-bit field, so
+                // a value past INT_MAX is the same Illegal number as a
+                // negative. Dash's command prefix makes a bad operand a
+                // regular failure; bash still leaves, command or not.
+                if (!good || (!shell_bash_compat &&
+                              (exit_code < 0 || exit_code > 0x7fffffff)))
                 {
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       shell_bash_compat
                                           ? "%s: %s: numeric argument required\n"
                                           : "%s: Illegal number: %s\n",
                                       shell_argv[0], shell_argv[first]);
                         exec_special_error_note();
+                        if (shell_bash_compat)
+                        {
+                                expand_fatal_status(2);
+                                return;
+                        }
                         return shell_answer(2);
                 }
 
                 if (shell_bash_compat && shell_argc > first + 1)
                 {
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       "%s: too many arguments\n", shell_argv[0]);
                         expand_fatal_status(1);
@@ -5392,13 +5562,16 @@ COLD fn shell_exit(writer write, string_address input)
                 }
         }
 
-        exit_code = (bipolar)((positive)exit_code & 0xff);
+        /* Dash's EXIT trap reads $? as the unmasked operand; the process
+           status is still the low eight bits. Bash masks before the trap. */
+        if (shell_bash_compat)
+                exit_code = (bipolar)((positive)exit_code & 0xff);
         shell_status = (b32)exit_code;
         shell_trap_exit();
 
         log_flush();
 
-        exit(exit_code);
+        exit((positive)shell_status & 0xff);
 }
 
 COLD fn shell_logout(writer write, string_address input)
@@ -5501,6 +5674,8 @@ static COLD fn env_unset_noted(string_address name, positive length)
                 shell_getopts_index_changed();
                 shell_getopts_parameters_changed();
         }
+        else if (length == 7 && !memory_compare(name, "BASHPID", 7))
+                shell_bashpid_cleared = true;
 }
 
 static fn env_unset_span(string_address name, positive length)
@@ -5525,6 +5700,7 @@ fn env_unset(string_address name)
 static bool env_value_restore(string_address name, positive length,
                               string_address value, p8 attributes, b32 array)
 {
+        env_index_touch();
         if (!value && !attributes)
         {
                 env_unset_span(name, length);
@@ -6225,6 +6401,29 @@ static PURE bool env_optlist_name(const_string name, positive length)
         return false;
 }
 
+/*
+        Names bash holds readonly without a `readonly` command: the two
+        option listings, the frozen identity numbers, and BASH_VERSINFO.
+        BASHPID is integer and dynamic until unset, so it is not here.
+*/
+static PURE bool env_bash_readonly_name(const_string name, positive length)
+{
+        if (env_optlist_name(name, length))
+                return true;
+        if (!shell_bash_compat || !name)
+                return false;
+        if (length == 3 && !memory_compare((address_any)name, "UID", 3))
+                return true;
+        if (length == 4 &&
+            (!memory_compare((address_any)name, "EUID", 4) ||
+             !memory_compare((address_any)name, "PPID", 4)))
+                return true;
+        if (length == 13 &&
+            !memory_compare((address_any)name, "BASH_VERSINFO", 13))
+                return true;
+        return false;
+}
+
 static COLD fn shell_optlist_append(positive address_to used, string_address name)
 {
         positive length = string_length(name);
@@ -6637,7 +6836,9 @@ static PURE string_address shell_where_self()
 static COLD fn shell_diagnostic_where_to(writer write)
 {
         string_address self = shell_where_self();
-        positive line = shell_line_now();
+        positive line = shell_syntax_line_override
+                            ? shell_syntax_line_override
+                            : shell_line_now();
 
         if (shell_bash_compat && shell_is_interactive)
         {
@@ -6683,8 +6884,11 @@ static COLD fn shell_syntax_where()
         }
 
         /* A sourced file counts from one of its own lines. dash eval does
-           too. Bash eval uses $LINENO's offset from the eval command. */
-        if ((!shell_bash_compat && extra) || (shell_syntax_file && !extra))
+           too. Bash eval uses $LINENO's offset from the eval command. EOF
+           syntax may name a different line than the one just consumed. */
+        if (shell_syntax_line_override)
+                line = shell_syntax_line_override;
+        else if ((!shell_bash_compat && extra) || (shell_syntax_file && !extra))
                 line = shell_line_number ? shell_line_number : 1;
         else
                 line = shell_line_now();
@@ -6694,8 +6898,8 @@ static COLD fn shell_syntax_where()
                 if (extra)
                         string_format(log_error, "%s: %s: line %p: ", self,
                                       extra, line);
-                else if (string_is(shell_option_flags, 'c') &&
-                         shell_run_depth == 1 && !shell_syntax_file)
+                else if (string_first_of(shell_option_flags, 'c') &&
+                         shell_run_depth <= 1 && !shell_syntax_file)
                         string_format(log_error, "%s: -c: line %p: ", self,
                                       line);
                 else
@@ -6840,12 +7044,15 @@ COLD fn shell_set(writer write, string_address input)
 
                 // A lone - also ends the options, and POSIX has it turn off
                 // -x and -v on the way; neither reference keeps it as $1.
+                // With nothing after it, bash and dash leave the positional
+                // list alone: `set a b; set -` keeps $#.
                 if (word_is(word, "-"))
                 {
                         shell_option_letter_told('x', false);
                         shell_option_letter_told('v', false);
-                        operands = true;
                         index++;
+                        if (index < shell_argc)
+                                operands = true;
                         break;
                 }
 
@@ -6984,10 +7191,8 @@ fn shell_shift(writer write, string_address input)
                 {
                         if (shell_bash_compat)
                         {
-                                if (!good)
-                                        exec_special_error_note();
                                 shell_diagnostic_where();
-                                return shell_answer(string_report(log_error, good ? 1 : 2, "shift: %s: %s\n",
+                                return shell_answer(string_report(log_error, 1, "shift: %s: %s\n",
                                               shell_argv[first],
                                               good ? "shift count out of range"
                                                    : "numeric argument required"));
@@ -7031,13 +7236,17 @@ fn shell_shift(writer write, string_address input)
 
 static bool shell_unset_variable(const_string name, positive length)
 {
-        if (env_restricted_name(name, length) || env_optlist_name(name, length))
+        if (env_restricted_name(name, length) || env_bash_readonly_name(name, length))
         {
                 shell_unset_readonly_refused((string_address)name, length);
                 exec_special_error_note();
                 shell_answer(shell_bash_compat ? 1 : 2);
                 return false;
         }
+
+        if (shell_bash_compat && length == 7 &&
+            !memory_compare((address_any)name, "BASHPID", 7))
+                shell_bashpid_cleared = true;
 
         b32 detached = exec_unset_prefix(name, length);
         if (detached < 0)
@@ -7249,10 +7458,13 @@ COLD fn shell_unset(writer write, string_address input)
 
                         if (removed < 0)
                         {
+                                //      Bash fails this command and keeps
+                                //      going, including under posix. A
+                                //      special-builtin abort left the
+                                //      redefine unreached and stdout empty.
                                 string_format(log_error,
                                               "unset: %s: cannot unset: readonly function\n",
                                               word);
-                                exec_special_error_note();
                                 shell_answer(1);
                                 return;
                         }
@@ -7380,6 +7592,7 @@ static COLD bool local_hide_saved(string_address name, positive length,
         if (length == 4 && memory_is_4(name, 'P', 'A', 'T', 'H'))
                 hash_forget();
         env_locale_touch(name, length);
+        env_index_touch();
         // An explicit OPTIND initializer controls cursor reset itself. In
         // particular, local OPTIND=2 must retain a pending bundled byte.
         if (!assigning || !local_getopts_scope(name, length))
@@ -7748,6 +7961,11 @@ static bool shell_declare_print_one(writer write, string_address name,
                 shell_declare_quoted(write,
                                      variable->text + length + 1);
         }
+        else if (env_optlist_name(name, length))
+        {
+                write("=", 1);
+                shell_declare_quoted(write, shell_optlist_value(length == 8, null));
+        }
 
         write("\n", 1);
         return true;
@@ -7781,6 +7999,13 @@ static inline INLINE bool shell_inventory_sorted(
                 if (shell_bash_compat)
                         exec_pipe_status_wanted();
                 count = shell_var_count;
+                if (shell_bash_compat)
+                {
+                        if (env_find_span("BASHOPTS", 8) >= shell_var_count)
+                                count++;
+                        if (env_find_span("SHELLOPTS", 9) >= shell_var_count)
+                                count++;
+                }
         }
 
         if (!count)
@@ -7798,6 +8023,7 @@ static inline INLINE bool shell_inventory_sorted(
                         names[count++] = name;
         }
         else
+        {
                 for (at = 0; at < shell_var_count; at++)
                 {
                         positive length = shell_vars[at].name_length;
@@ -7807,6 +8033,14 @@ static inline INLINE bool shell_inventory_sorted(
                                 goto failed;
                         names[count++] = name;
                 }
+                if (shell_bash_compat)
+                {
+                        if (env_find_span("BASHOPTS", 8) >= shell_var_count)
+                                names[count++] = (string_address) "BASHOPTS";
+                        if (env_find_span("SHELLOPTS", 9) >= shell_var_count)
+                                names[count++] = (string_address) "SHELLOPTS";
+                }
+        }
 
         if (!expand_sort_names(names, count))
                 goto failed;
@@ -8692,6 +8926,15 @@ static fn shell_marked_written(writer write, string_address name,
                 else
                         shell_quoted(write, variable->text + length + 1);
         }
+        else if (env_optlist_name(name, length))
+        {
+                write("=", 1);
+                if (shell_bash_compat)
+                        shell_declare_quoted(write,
+                                             shell_optlist_value(length == 8, null));
+                else
+                        shell_quoted(write, shell_optlist_value(length == 8, null));
+        }
 
         write("\n", 1);
 }
@@ -8811,11 +9054,16 @@ static COLD fn shell_marked(writer write, p8 mark)
                 if (!shell_valid_name(word, length))
                 {
                         shell_name_refused(command, word, length);
-                        exec_special_error_note();
+                        //      Dash aborts: export is a special builtin.
+                        //      Bash --posix reports the identifier and
+                        //      continues, in a function and at the top of
+                        //      -c alike; invalid options are the class
+                        //      that still takes the script.
+                        if (!shell_bash_compat)
+                                exec_special_error_note();
 
-                        //      Under posix the refusal takes the script
-                        //      with it, so bash never reaches the next word
-                        //      to complain about that one too.
+                        //      Under posix the next word is not tried, so
+                        //      bash never complains about that one too.
                         if (shell_posix_on())
                                 return shell_answer(1);
 
@@ -9027,6 +9275,14 @@ bool test_unary(p8 op, string_address value)
         if (op == 'G')
                 return facts.group == (p32)system_call_1(syscall(getegid), 0);
 
+        if (op == 'N')
+        {
+                if (facts.modified.seconds != facts.accessed.seconds)
+                        return facts.modified.seconds > facts.accessed.seconds;
+
+                return facts.modified.nanoseconds > facts.accessed.nanoseconds;
+        }
+
         return false;
 }
 
@@ -9046,7 +9302,8 @@ PURE bool test_is_unary(string_address word)
         if ((p8)(letter - 'a') <= 25)
                 return (TEST_UNARY_LOWER & (1u << (letter - 'a'))) != 0;
 
-        return letter == 'G' || letter == 'L' || letter == 'O' || letter == 'S';
+        return letter == 'G' || letter == 'L' || letter == 'N' ||
+               letter == 'O' || letter == 'S';
 }
 
 PURE positive test_is_binary(string_address word)
@@ -10483,6 +10740,7 @@ fn printf_one(writer write, string_address format)
                 {
                         p8 said[3] = {'%', conversion, end};
 
+                        shell_diagnostic_where();
                         string_format(log_error,
                                       "printf: %s: invalid directive\n", said);
                 }
@@ -11253,8 +11511,16 @@ COLD fn shell_read(writer write, string_address input)
         if (hidden)
                 quieted = read_echo_off(descriptor, address_of quiet_held);
 
+        /* -n in a UTF-8 locale is a count of characters, not bytes: two of
+           éΩ界 is éΩ. The locale is read here so an LC_ALL= on the line
+           before is visible; env_locale_touch already bumped the cache.
+           -N stays a byte count. An unfinished sequence at EOF still
+           counts as one, which is what bash stores. */
+        bool utf8_n = limited && !exact && shell_utf8_on();
+        memory_utf8_state read_utf8 = {0};
+        positive read_chars = 0;
         bool escaped = false;
-        while (!(limited && read_length >= limit))
+        while (!(limited && (utf8_n ? read_chars >= limit : read_length >= limit)))
         {
                 p8 value;
 
@@ -11279,9 +11545,21 @@ COLD fn shell_read(writer write, string_address input)
                 if (got != 1)
                 {
                         if (got < 0)
-                                failed = true;
+                        {
+                                /* Dash answers 1 for a closed stdin, the same
+                                   as EOF. A different syscall failure stays 2. */
+                                if (!shell_bash_compat &&
+                                    got == -ERROR_BAD_DESCRIPTOR)
+                                        ended = true;
+                                else
+                                        failed = true;
+                        }
                         else
+                        {
                                 ended = true;
+                                if (utf8_n && read_utf8.left)
+                                        read_chars++;
+                        }
                         break;
                 }
 
@@ -11300,7 +11578,19 @@ COLD fn shell_read(writer write, string_address input)
                 read_literal[read_length] = escaped;
                 read_line[read_length++] = value;
                 escaped = false;
+                if (utf8_n)
+                {
+                        if (!read_utf8.left &&
+                            (value < 0xc2 || value > 0xf4))
+                                read_chars++;
+                        else if (memory_utf8_feed(address_of read_utf8, value))
+                                read_chars++;
+                }
         }
+
+        bool missing = ended &&
+                       (!limited ||
+                        (utf8_n ? read_chars : read_length) < limit);
 
         read_line[read_length] = end;
         read_literal[read_length] = 0;
@@ -11327,7 +11617,7 @@ COLD fn shell_read(writer write, string_address input)
                     || shell_read_refused("REPLY")))
                         return shell_answer((shell_bash_compat && env_readonly("REPLY") ? 1 : 2));
 
-                return shell_answer(read_result(failed, ended, timed_out));
+                return shell_answer(read_result(failed, missing, timed_out));
         }
 
         /*
@@ -11361,9 +11651,7 @@ COLD fn shell_read(writer write, string_address input)
                                         return shell_answer(
                                             (shell_bash_compat && env_readonly(shell_argv[name]) ? 1 : 2));
 
-                return shell_answer(
-                    read_result(failed, ended && read_length < limit,
-                                timed_out));
+                return shell_answer(read_result(failed, missing, timed_out));
         }
 
         {
@@ -11416,7 +11704,7 @@ COLD fn shell_read(writer write, string_address input)
                         names++;
                 }
 
-        shell_answer(read_result(failed, ended, timed_out));
+        shell_answer(read_result(failed, missing, timed_out));
 }
 
 /*
@@ -12429,6 +12717,16 @@ static bool trap_inside;
    deleting the action. A child which replaces EXIT clears the marker below. */
 static bool trap_child_context;
 static bool trap_exit_inherited;
+/* Catch strings stay in the table so a bare `trap` can still list what the
+   parent had, while the handlers themselves are already default. The first
+   trap that changes a condition throws those inherited catches away, so
+   only ignores and what this process has set remain. lima 5.2 does the
+   same in a ( ) and in a pipeline child. */
+static bool trap_inherited_pending;
+/* Bash finishes a pipeline while/for/if with _exit, so an EXIT trap set
+   in that stage must not run. A group, a function, and an explicit ( )
+   still run one. dash runs the trap in every pipeline child. */
+static bool trap_omit_exit;
 
 fn trap_signal_caught(b32 number)
 {
@@ -12496,20 +12794,40 @@ static bipolar trap_pending_number()
         action, so every trapped signal goes back to what it was. An ignored
         one stays ignored, which is what POSIX asks for and what keeps a
         subshell from dying of a signal its parent chose to sit out.
+
+        dash also forgets the catch strings, the same reset lima 0.5.x runs
+        on every fork, so `trap | wc -l` in a pipeline is 0. An ignored trap
+        stays in the table and still lists. Bash keeps every entry: listing
+        through a pipe still names them.
 */
 fn trap_default_all()
 {
         positive at = 0;
+        positive kept = 0;
 
         while (at < trap_count)
         {
                 positive number = trap_table[at].number;
+                string_address action = trap_table[at].action;
+                bool catch = string_get(action);
 
-                if (number && string_get(trap_table[at].action))
+                if (number && catch)
                         shell_default((b32)number);
+
+                if (shell_bash_compat || !catch)
+                {
+                        if (kept != at)
+                                trap_table[kept] = trap_table[at];
+
+                        kept++;
+                }
+                else
+                        memory_free(action, trap_table[at].action_room);
 
                 at++;
         }
+
+        trap_count = kept;
 
         // Signal handlers write these bytes asynchronously; keep the volatile
         // byte stores rather than casting that contract away for a bulk fill.
@@ -12581,6 +12899,13 @@ fn trap_child_began()
 {
         trap_child_context = true;
         trap_exit_inherited = trap_action(0) != null;
+        trap_inherited_pending = true;
+        trap_omit_exit = false;
+}
+
+fn trap_omit_exit_set()
+{
+        trap_omit_exit = true;
 }
 
 static fn trap_write_condition(writer write, positive number,
@@ -12629,6 +12954,32 @@ static COLD fn trap_conditions_noted()
         trap_err_here = trap_action(TRAP_ERR) != null;
         trap_return_here = trap_action(TRAP_RETURN) != null;
         trap_debug_here = trap_action(TRAP_DEBUG) != null;
+}
+
+static fn trap_drop_inherited_catches()
+{
+        positive at = 0;
+        positive kept = 0;
+
+        while (at < trap_count)
+        {
+                if (!string_get(trap_table[at].action))
+                {
+                        if (kept != at)
+                                trap_table[kept] = trap_table[at];
+
+                        kept++;
+                }
+                else
+                        memory_free(trap_table[at].action,
+                                    trap_table[at].action_room);
+
+                at++;
+        }
+
+        trap_count = kept;
+        trap_exit_inherited = trap_action(0) != null;
+        trap_conditions_noted();
 }
 
 /*
@@ -12981,6 +13332,12 @@ COLD fn shell_trap(writer write, string_address input)
         if (word_is(action, "-"))
                 action = null;
 
+        if (trap_inherited_pending)
+        {
+                trap_drop_inherited_catches();
+                trap_inherited_pending = false;
+        }
+
         while (index < shell_argc)
         {
                 bipolar number = trap_number(shell_argv[index]);
@@ -13327,7 +13684,14 @@ COLD fn shell_unalias(writer write, string_address input)
         The words are joined back into a line and the line is run. This has to
         reach the code that runs lines, which sits above this file and is only
         there when a shell was built around it.
+
+        Bash -v reprints each physical line of that joined text as if the
+        reader had seen it: lima 5.2 writes the inner `echo evaluated` after
+        `eval 'echo evaluated'`. dash does not -- an eval is not a file, and
+        a -c command stays quiet through from_string -- so the walker below
+        is asked to echo only under bash.
 */
+static bool shell_verbose_eval_lines;
 COLD fn shell_eval(writer write, string_address input)
 {
         p8 address_to eval_storage = null;
@@ -13419,7 +13783,23 @@ COLD fn shell_eval(writer write, string_address input)
 
                 // Every line of it, not the first: eval "$(cmd)" is the
                 // idiom, and what cmd printed has as many lines as it likes.
-                run_lines(eval_storage);
+                //
+                // Dash expands PS4 by re-parsing it, and a one-line eval
+                // argument leaves an end-of-file token that makes a command
+                // substitution in that parse fail once. A newline-terminated
+                // argument does not.
+                if (!shell_bash_compat &&
+                    !string_first_of(eval_storage, '\n'))
+                        exec_ps4_dash_block(true);
+
+                {
+                        bool held = shell_verbose_eval_lines;
+
+                        shell_verbose_eval_lines = shell_bash_compat;
+                        run_lines(eval_storage);
+                        shell_verbose_eval_lines = held;
+                }
+                exec_ps4_dash_block(false);
                 shell_input_end();
                 exec_input_finish();
 
@@ -13431,12 +13811,19 @@ COLD fn shell_eval(writer write, string_address input)
 
         memory_free(eval_storage, eval_room);
 
-        if (shell_syntax_generation != syntax)
         {
-                positive kind = shell_syntax_generation - syntax;
+                b32 failed = (b32)(shell_syntax_generation - syntax);
+
                 shell_syntax_generation = syntax;
-                if (!shell_bash_compat ||
-                    (!shell_command_reader_depth && kind != 1))
+                //      Dash eval of a syntax error is process-fatal. Bash
+                //      --posix treats eval as a special builtin, matching
+                //      `.`: an unexpected token or an unfinished select
+                //      ends posix -c. An unfinished quoted word is the
+                //      generation +1 `.` already exempts, and `command eval`
+                //      is not special. export of a bad name is not a parse
+                //      error and still continues.
+                if (failed && (!shell_bash_compat ||
+                               (!shell_command_reader_depth && failed != 1)))
                         exec_special_error_note();
         }
 
@@ -14321,7 +14708,12 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
         log_flush();
 
         /* Spark starts the immutable multicall image without copying this
-           resident shell. A stock kernel takes the direct-function fork. */
+           resident shell. A stock kernel forks, and the child execs the
+           PATH file lima would have run: cat is /usr/bin/cat there. A
+           function that cats and then echoes into /bin/true is killed by
+           SIGPIPE because that exec is still in flight when true has closed
+           the pipe. Calling the utility in the fork, or execing this same
+           already-mapped image, finishes too soon and answers 4. */
         child = shell_spawn_tool(shell_argv, -1, false);
 
         if (child < 0)
@@ -14329,19 +14721,28 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
 
         if (child == 0)
         {
+                p8 address_to found = null;
+                positive found_room = 0;
+                string_address address_to environment;
+
                 /*
                         Its own signals back.
 
                         The shell ignores interrupt and quit so control-C
                         cancels the command rather than the shell, and a fork
                         inherits that -- which the spawn path undoes before it
-                        execs and this one has to undo for itself, because a
-                        builtin never execs. Without it a grep over a large
-                        tree could not be stopped.
+                        execs and this one has to undo for itself. Without it
+                        a grep over a large tree could not be stopped.
                 */
                 shell_default(SIGNAL_INTERRUPT);
                 shell_default(SIGNAL_QUIT);
                 trap_default_all();
+
+                environment = shell_environment();
+                if (environment &&
+                    shell_find_in_path_alloc(shell_argv[0], address_of found,
+                                             address_of found_room) == 1)
+                        system_execute(found, shell_argv, environment);
 
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 exit(shell_tool_call_in(which, true));
@@ -14412,7 +14813,7 @@ fn shell_trap_exit()
         if (!trap_child_context)
                 history_leaving();
 
-        if (trap_exit_inherited)
+        if (trap_exit_inherited || trap_omit_exit)
         {
                 if (action)
                         memory_free(action, action_room);
@@ -14468,6 +14869,11 @@ static bool shell_path_wanted(string_address value, positive name_length,
 }
 
 static positive shell_source_depth;
+// `.` / source, and not the main script: DEBUG without functrace stays
+// out of a file the script pulled in, the same way it stays out of a
+// function. RETURN after that file is a separate question, asked once
+// the builtin has finished.
+static positive shell_dot_depth;
 
 static bipolar shell_source_direct(string_address name)
 {
@@ -14569,6 +14975,9 @@ static bipolar shell_source_read(bipolar handle,
         A sourced file is read from somewhere, so both shells echo it and
         it is declared here, beside the reader that runs one, rather than
         beside the process reader in the entry file that is included last.
+
+        An eval body is bash's only: lima 5.2 reprints it, dash does not,
+        and the walker that runs those lines is told so beside eval.
 */
 static bool shell_verbose_from_string;
 
@@ -14591,9 +15000,11 @@ static b32 shell_source_execute(p8 address_to text, positive filled,
         lex_frame frame;
         positive at = 0;
         positive syntax = shell_syntax_generation;
+        bool kept_tested;
 
         lex_nest_enter(address_of frame);
         shell_source_depth++;
+        kept_tested = exec_source_tested_hold();
         while (at < filled)
         {
                 p8 address_to newline = (p8 address_to)memory_first_of(
@@ -14611,6 +15022,8 @@ static b32 shell_source_execute(p8 address_to text, positive filled,
                         shell_verbose_line(text + at);
                         shell_verbose_from_string = held;
                 }
+                if (!newline)
+                        lex_physical_newline(false);
                 run_line(text + at);
                 if (shell_syntax_generation != syntax)
                         break;
@@ -14622,6 +15035,7 @@ static b32 shell_source_execute(p8 address_to text, positive filled,
         shell_source_depth--;
         exec_input_finish();
         lex_nest_leave(address_of frame);
+        exec_source_tested_restore(kept_tested);
 
         b32 failed = (b32)(shell_syntax_generation - syntax);
         shell_syntax_generation = syntax;
@@ -14758,7 +15172,10 @@ COLD fn shell_dot(writer write, string_address input)
                    direct invocation. That distinction is essential here:
                    `command . missing` must report failure and continue. */
                 exec_special_error_note();
-                return shell_answer(shell_bash_compat ? 1 : 2);
+                shell_answer(shell_bash_compat ? 1 : 2);
+                if (shell_bash_compat)
+                        exec_source_return_trap();
+                return;
         }
 
         filled = (positive)got;
@@ -14827,7 +15244,9 @@ COLD fn shell_dot(writer write, string_address input)
                 else
                         shell_syntax_command = named;
 
+                shell_dot_depth++;
                 syntax = shell_source_execute(source_text, filled, false);
+                shell_dot_depth--;
 
                 shell_syntax_file = saved_file;
                 shell_syntax_command = saved_command;
@@ -14860,13 +15279,17 @@ COLD fn shell_dot(writer write, string_address input)
 
         // The status of the last line it ran, which is already there.
         shell_answer(shell_status);
+        if (shell_bash_compat)
+                exec_source_return_trap();
 }
 
 /* A background job remains known after the kernel has reaped it. POSIX lets a
    later wait recover that status, then requires the successful wait to forget
-   it. A pipeline has several waitable children but one public identity: the
-   PID of its last command. Keeping one flat row per child avoids a second
-   allocation and lets the WNOHANG reaper record any stage directly. */
+   it. Bash without posix, and dash, keep the status so a later wait of the
+   same pid answers again. A pipeline has several waitable children but one
+   public identity: the PID of its last command. Keeping one flat row per child
+   avoids a second allocation and lets the WNOHANG reaper record any stage
+   directly. */
 typedef struct
 {
         bipolar job;
@@ -14883,6 +15306,7 @@ static positive shell_wait_count;
 #define SHELL_WAIT_LAST 2
 #define SHELL_WAIT_PIPEFAIL 4
 #define SHELL_WAIT_INVERT 8
+#define SHELL_WAIT_TOLD 16
 
 static PURE positive shell_wait_find_job(bipolar job)
 {
@@ -14989,17 +15413,35 @@ static bipolar shell_wait_call(bipolar pid, positive address_to status)
         return got;
 }
 
-static b32 shell_wait_one(bipolar job, bool address_to interrupted)
+static COLD fn shell_wait_not_child(bipolar job)
+{
+        if (!shell_bash_compat)
+                return;
+
+        shell_diagnostic_where();
+        string_format(log_error,
+                      "wait: pid %b is not a child of this shell\n", job);
+}
+
+/* One job, waited. forget is what POSIX requires of a successful wait, and
+   what wait with no operands does: the row is dropped. Bash without posix,
+   and dash, leave it, so wait "$p" twice still answers. */
+static b32 shell_wait_one(bipolar job, bool address_to interrupted, bool forget,
+                          bool foreground)
 {
         positive first = shell_wait_find_job(job);
         b32 status = 0;
         b32 rightmost_failure = 0;
         positive job_flags;
+        shell_wait_entry address_to last_entry = null;
 
         address_to interrupted = false;
 
         if (first >= shell_wait_count)
+        {
+                shell_wait_not_child(job);
                 return 127;
+        }
 
         job_flags = shell_wait_table[first].flags;
 
@@ -15031,6 +15473,7 @@ static b32 shell_wait_one(bipolar job, bool address_to interrupted)
                         if (got < 0)
                         {
                                 shell_wait_drop(job);
+                                shell_wait_not_child(job);
                                 return 127;
                         }
 
@@ -15042,7 +15485,17 @@ static b32 shell_wait_one(bipolar job, bool address_to interrupted)
                 if (code)
                         rightmost_failure = code;
                 if (entry->flags & SHELL_WAIT_LAST)
+                {
                         status = code;
+                        last_entry = entry;
+                }
+        }
+
+        if (last_entry && !(last_entry->flags & SHELL_WAIT_TOLD))
+        {
+                last_entry->flags |= SHELL_WAIT_TOLD;
+                shell_child_death(last_entry->pid, last_entry->status,
+                                  foreground);
         }
 
         if ((job_flags & SHELL_WAIT_PIPEFAIL) && rightmost_failure)
@@ -15050,7 +15503,8 @@ static b32 shell_wait_one(bipolar job, bool address_to interrupted)
         if (job_flags & SHELL_WAIT_INVERT)
                 status = status ? 0 : 1;
 
-        shell_wait_drop(job);
+        if (forget)
+                shell_wait_drop(job);
         return status;
 }
 
@@ -15068,7 +15522,8 @@ COLD fn shell_wait(writer write, string_address input)
                         bool interrupted;
 
                         answer = shell_wait_one(shell_wait_table[0].job,
-                                                address_of interrupted);
+                                                address_of interrupted, true,
+                                                false);
                         if (interrupted)
                                 return shell_answer(answer);
                 }
@@ -15083,11 +15538,15 @@ COLD fn shell_wait(writer write, string_address input)
 
                 if (!string_digits_checked_exact(shell_argv[at], 10, address_of pid) ||
                     pid > (positive)b32_max)
+                {
+                        shell_diagnostic_where();
                         return shell_answer(string_report(log_error, 2, "wait: Illegal number: %s\n",
                                       shell_argv[at]));
+                }
 
                 answer = shell_wait_one((bipolar)pid,
-                                        address_of interrupted);
+                                        address_of interrupted,
+                                        shell_posix_on(), false);
 
                 if (interrupted)
                         break;
@@ -15594,17 +16053,20 @@ fn shell_hash(writer write, string_address input)
                 positive at = 0;
 
                 //      Bash writes one sentence when the table is empty, and
-                //      a script counting `hash 2>&1` counts it. That sentence
-                //      is a listing, not a side-effect of -r: `hash -r` is
-                //      silent, `hash -l` on an empty table is silent, and so
-                //      is `set -o posix`. Dash writes nothing, which is the
-                //      listing this shell keeps under a POSIX name.
+                //      a script counting `hash 2>/dev/null` still sees it
+                //      because the listing is on the answer channel. `hash
+                //      -r` is silent, `hash -l` on an empty table is silent,
+                //      and so is `set -o posix`. Dash writes nothing, which
+                //      is the listing this shell keeps under a POSIX name.
                 if (!hash_count)
                 {
                         if (shell_bash_compat && !shell_posix_on() &&
                             !as_commands && !reset)
-                                return shell_answer(string_report(
-                                    log_error, 0, "hash: hash table empty\n"));
+                        {
+                                string_format(write,
+                                              "hash: hash table empty\n");
+                                return shell_answer(0);
+                        }
                         return shell_answer(0);
                 }
 
@@ -16202,7 +16664,12 @@ COLD fn shell_type(writer write, string_address input)
         bool no_functions = false;
         p8 which;
 
-        while (shell_option_letter(address_of walk, address_of which))
+        //      Dash's type has no option letters: -t, -p, -P, -a and -f
+        //      are names to look up, so `type -t cd` reports a missing -t
+        //      and then the builtin, and answers 127. Bash keeps the
+        //      letters, including under --posix.
+        while (!shell_dash_compat &&
+               shell_option_letter(address_of walk, address_of which))
         {
                 //      -t on one side and -p and -P on the other ask for
                 //      two different single answers, and the last of them
@@ -16322,6 +16789,13 @@ fn shell_command_builtin(writer write, string_address input)
         if (!shell_builtin_disabled(shell_argv[0]) &&
             exec_control_builtin(shell_argv[0], true))
                 return;
+
+        /* Dash's command makes the next word a regular builtin and gives
+           it a temporary variable stack that is discarded when it ends.
+           local only writes into that stack, so command local is a
+           successful no-op, including outside a function. */
+        if (!shell_bash_compat && word_is(shell_argv[0], "local"))
+                return shell_answer(0);
 
         {
                 bool tail = shell_tail_command;

@@ -117,6 +117,25 @@ PURE positive shell_line_now();
 fn parse_nest_enter();
 fn parse_nest_leave();
 
+/* Whether the physical line being fed ended with a newline. POSIX
+   continuation is backslash-newline; a backslash that meets EOF with nothing
+   after it is a byte of the word. Bash synthesizes that newline for a script
+   or stdin, which the reader asks for by leaving this true. A -c string,
+   a sourced file, eval, and dash do not. */
+static bool lex_line_newline = true;
+static bool lex_scan_newline = true;
+
+fn lex_physical_newline(bool newline)
+{
+        lex_line_newline = newline;
+}
+
+fn lex_take_physical_newline()
+{
+        lex_scan_newline = lex_line_newline;
+        lex_line_newline = true;
+}
+
 static fn lex_nest_enter(lex_frame address_to frame)
 {
         address_to frame = lex_context;
@@ -175,6 +194,7 @@ static positive expand_substitution_lineno;
 */
 static string_address shell_syntax_command;
 static string_address shell_syntax_file;
+static positive shell_syntax_line_override;
 
 /*
         Bash $LINENO inside eval is the eval command's line plus the offset
@@ -371,8 +391,12 @@ static string_address parse_here_skip_bodies(string_address line,
                                               string_address newline);
 
 /* The expander enforces this same ceiling when it later evaluates the nested
-   words.  The earlier syntax walk must not be the unbounded recursive path. */
-#define EXPAND_DEPTH 64
+   words.  The earlier syntax walk must not be the unbounded recursive path.
+   Nested command substitutions a hundred and fifty deep work on lima 5.2.32;
+   sixty-four made the walk return unclosed and the line read as unexpected
+   EOF. Two hundred and fifty-six is enough for that family and still a bound
+   on C-stack recursion. */
+#define EXPAND_DEPTH 256
 
 // The three bytes that separate words and lines. Asked in five places, which
 // used to be five spellings of the same three comparisons.
@@ -896,17 +920,28 @@ static string_address lex_nesting_at(string_address at, positive nesting,
                         continue;
                 }
 
-                if (commands && c == '<' && lex_dless_candidate(line, step))
+                /* A ) that sits in a here-document body does not close
+                   $( ) on bash or on lima dash 0.5.x. Remember << until
+                   the newline that begins the body, then skip those
+                   lines. A ) still on the operator line closes, which is
+                   how dash reads $(cat <<EOF) before any body arrives. */
+                if (commands && c == '<' &&
+                    lex_dless_candidate(line, step))
                         maybe_here = true;
 
                 // A backtick pair has the same byte at both ends, so it
                 // opens on the first one and closes on the next.
+                // `${...}` ends at the first unquoted `}`: nested
+                // substitutions are walked above, and a bare `{` is not
+                // another expansion. The opening brace still counts
+                // (depth is 0 only on that first byte). Parentheses in
+                // `$( )` / `$(( ))` keep nesting.
                 if (open == close)
                 {
                         if (c == open)
                                 depth = depth ? 0 : 1;
                 }
-                else if (c == open)
+                else if (c == open && !(open == '{' && depth))
                         depth++;
                 else if (c == close)
                         depth--;
@@ -950,6 +985,19 @@ lex_nesting(string_address at)
 // grammar when eval/dot returns to its caller. The parser still joins both
 // kinds with a newline; only its EOF boundary needs this distinction.
 #define LEX_OPEN_WORD 3
+
+static p8 lex_unmatched;
+
+static COLD b32 lex_open_match(b32 kind, p8 match)
+{
+        lex_unmatched = match;
+        return kind;
+}
+
+static PURE p8 lex_unmatched_now()
+{
+        return lex_unmatched;
+}
 
 /*
         Whether this physical line is already complete: nothing left open
@@ -1001,8 +1049,10 @@ b32 lex_unfinished(string_address line)
         // same rule lex_line uses -- echo a#b is one word and not half of one.
         bool fresh = true;
         bool comments = lex_comments_on();
+        bool newline = lex_scan_newline;
 
         lex_prepare();
+        lex_unmatched = 0;
 
         while (string_get(step))
         {
@@ -1015,7 +1065,7 @@ b32 lex_unfinished(string_address line)
                         string_address stop = lex_conditional_end(step);
 
                         if (!stop)
-                                return LEX_OPEN;
+                                return lex_open_match(LEX_OPEN, ']');
 
                         step = stop;
                         fresh = false;
@@ -1037,7 +1087,7 @@ b32 lex_unfinished(string_address line)
                                 string_address stop = lex_nesting(step + 1);
 
                                 if (stop == step + 1)
-                                        return LEX_OPEN;
+                                        return lex_open_match(LEX_OPEN, ')');
 
                                 step = stop;
                                 fresh = false;
@@ -1065,7 +1115,7 @@ b32 lex_unfinished(string_address line)
                 if (c == '\\')
                 {
                         if (!string_get(step + 1))
-                                return LEX_CONTINUES;
+                                return newline ? LEX_CONTINUES : LEX_COMPLETE;
 
                         step += 2;
                         continue;
@@ -1076,7 +1126,7 @@ b32 lex_unfinished(string_address line)
                         step = lex_dollar_quote_end(step + 2);
 
                         if (!string_get(step))
-                                return LEX_OPEN_WORD;
+                                return lex_open_match(LEX_OPEN_WORD, '\'');
 
                         step++;
                         continue;
@@ -1096,7 +1146,9 @@ b32 lex_unfinished(string_address line)
                                 return LEX_CONTINUES;
 
                         if (!string_get(step))
-                                return command_open ? LEX_OPEN : LEX_OPEN_WORD;
+                                return lex_open_match(command_open ? LEX_OPEN
+                                                                   : LEX_OPEN_WORD,
+                                                      c);
 
                         step++;
                         continue;
@@ -1108,9 +1160,14 @@ b32 lex_unfinished(string_address line)
                         string_address stop = lex_nesting(inner);
 
                         if (stop == inner)
-                                return string_is(inner, '(') &&
-                                               string_not(inner + 1, '(')
-                                           ? LEX_OPEN : LEX_OPEN_WORD;
+                                return lex_open_match(
+                                    string_is(inner, '(') &&
+                                            string_not(inner + 1, '(')
+                                        ? LEX_OPEN
+                                        : LEX_OPEN_WORD,
+                                    string_is(inner, '{')
+                                        ? '}'
+                                        : string_is(inner, '`') ? '`' : ')');
 
                         step = stop;
                         continue;
@@ -1136,7 +1193,8 @@ b32 lex_unfinished(string_address line)
         This is the only question that makes a=(x y z) one word rather than a
         name followed by a subshell, and it is asked at one byte -- directly
         after the equals -- so that a command's own parentheses, a function
-        definition and a case pattern are all untouched by it.
+        definition and a case pattern are all untouched by it. Dash has no
+        arrays, so the same bytes stay a name and a parenthesis.
 */
 static PURE bool lex_assignment_head(string_address text, positive length)
 {
@@ -1306,8 +1364,12 @@ static KEEP b32 lex_word(string_address address_to at)
                 }
 
                 /* a=(...) stays one word so the parenthesis is not a
-                   subshell. Unquoted ( inside the body is diagnosed later. */
-                if (c == '(' && step > start && step[-1] == '=' &&
+                   subshell. Unquoted ( inside the body is diagnosed later.
+                   Dash has no arrays: name=() is name= and then (, which
+                   lima dash 0.5.x reports as "(" unexpected. Bash --posix
+                   still reads the compound form. */
+                if (shell_bash_compat && c == '(' && step > start &&
+                    step[-1] == '=' &&
                     lex_assignment_head(start, (positive)(step - start - 1)))
                 {
                         string_address stop = lex_nesting(step);

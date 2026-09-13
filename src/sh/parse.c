@@ -130,6 +130,10 @@ typedef struct
         b32 fd;
         string_address text;
         positive text_length;
+        // `{name}` or `{name[index]}` as the descriptor, which bash looks up
+        // when the redirect is applied. Empty when the descriptor is a number.
+        string_address var;
+        positive var_length;
         // A here-document carries its body in place of a file name. Which of
         // the two arenas the body sits in depends on whether the command it
         // belongs to outlived the line that wrote it.
@@ -240,6 +244,7 @@ typedef struct
         // because the logical line has not begun there.
         b32 continued;
         b32 overflow;
+        positive line;
 } here_document;
 
 static here_document address_to here_documents;
@@ -262,10 +267,47 @@ static positive here_names_room;
 static p8 address_to parse_pending;
 static positive parse_pending_room;
 static positive parse_pending_used;
+static positive parse_pending_line;
 
-// A terminal backslash removed itself and only asked for the next physical
-// line. At EOF an empty next line completes that command; an open quote or
-// substitution remains unfinished and is a syntax error instead.
+#define PARSE_WANT_ROOM 16
+static string_address parse_want[PARSE_WANT_ROOM];
+static positive parse_want_used;
+
+static fn parse_want_push(string_address word)
+{
+        if (parse_want_used < PARSE_WANT_ROOM)
+                parse_want[parse_want_used++] = word;
+}
+
+static fn parse_want_pop()
+{
+        if (parse_want_used)
+                parse_want_used--;
+}
+
+static PURE string_address parse_want_now()
+{
+        return parse_want_used ? parse_want[parse_want_used - 1] : null;
+}
+
+static PURE positive parse_pending_start_line()
+{
+        return parse_pending_line ? parse_pending_line : 1;
+}
+
+/* Bash 5.2 keeps at most sixteen here-documents waiting for a body. lima
+   reports `maximum here-document count exceeded` and leaves 2. Dash has no
+   such cap. A document whose body has already been read is not pending, so
+   forty cats on forty lines still run. */
+#define PARSE_HERE_PENDING_MAX 16
+static bool parse_here_capped;
+
+fn lex_take_physical_newline();
+
+// A terminal backslash-newline removed itself and only asked for the next
+// physical line. At EOF an empty next line completes that command. A
+// backslash that met EOF with no newline never asked: it stayed in the word.
+// An open quote or substitution remains unfinished and is a syntax error.
 bool parse_eof_can_complete()
 {
         return parse_pending_used && !lex_unfinished(parse_pending);
@@ -274,6 +316,8 @@ bool parse_eof_can_complete()
 fn parse_reset()
 {
         parse_pending_used = 0;
+        parse_pending_line = 0;
+        parse_want_used = 0;
         parse_token_count = parse_token_base;
         shell_store_rewind(address_of parse_store, parse_text_base);
         here_wanted = 0;
@@ -281,6 +325,12 @@ fn parse_reset()
         here_taken = 0;
         here_used = 0;
         here_names_used = 0;
+        parse_here_capped = false;
+}
+
+bool parse_here_limit_exceeded()
+{
+        return parse_here_capped;
 }
 
 /*
@@ -407,9 +457,11 @@ enum
         PARSE_KEYWORD_FOR,
         PARSE_KEYWORD_CASE,
         //      Everything from IF to OPEN begins a command and everything
-        //      from THEN to CLOSE ends a list, and two range tests below say
+        //      from THEN to IN ends a list, and two range tests below say
         //      which is which. A new word that begins a command belongs
-        //      here, in front of OPEN, and nowhere else.
+        //      here, in front of OPEN, and nowhere else. `in` is with the
+        //      closers because it cannot start a command; bang is after
+        //      them because a pipeline may begin with it.
         PARSE_KEYWORD_SELECT,
         PARSE_KEYWORD_TIME,
         PARSE_KEYWORD_COPROC,
@@ -424,6 +476,7 @@ enum
         PARSE_KEYWORD_CLOSE,
         PARSE_KEYWORD_IN,
         PARSE_KEYWORD_BANG,
+        PARSE_KEYWORD_DEND,
 };
 
 /*
@@ -458,6 +511,9 @@ static PURE HOT b32 parse_keyword(b32 ahead)
                 case byte_word_2('f', 'i'): return PARSE_KEYWORD_FI;
                 case byte_word_2('d', 'o'): return PARSE_KEYWORD_DO;
                 case byte_word_2('i', 'n'): return PARSE_KEYWORD_IN;
+                case byte_word_2(']', ']'):
+                        return shell_bash_compat ? PARSE_KEYWORD_DEND
+                                                 : PARSE_KEYWORD_NONE;
                 default: return PARSE_KEYWORD_NONE;
                 }
         case 3:
@@ -507,6 +563,19 @@ static bool parse_here_register(string_address word, bool strip)
         positive reserve = string_length(word) + 1;
         here_document address_to document;
 
+        if (shell_bash_compat &&
+            here_wanted - here_filled >= PARSE_HERE_PENDING_MAX)
+        {
+                if (!parse_here_capped)
+                {
+                        shell_syntax_where();
+                        log_error(str("maximum here-document count exceeded\n"));
+                        parse_here_capped = true;
+                }
+
+                return false;
+        }
+
         if (!shell_array_room(here_documents, here_document_room, (positive)here_wanted + 1) ||
             !shell_array_room(here_names, here_names_room, here_names_used + reserve))
                 return false;
@@ -515,6 +584,7 @@ static bool parse_here_register(string_address word, bool strip)
         memory_fill(document, 0, sizeof(*document));
         document->delimiter = start;
         document->strip = strip;
+        document->line = shell_line_number ? shell_line_number : 1;
 
         while (string_get(step))
         {
@@ -561,6 +631,26 @@ PURE string_address parse_here_open()
                 return null;
 
         return here_names + here_documents[here_filled].delimiter;
+}
+
+static PURE positive parse_here_start_line()
+{
+        if (here_filled >= here_wanted)
+                return 1;
+
+        return here_documents[here_filled].line
+                   ? here_documents[here_filled].line
+                   : 1;
+}
+
+/* A body line, even an empty one, is what moves bash's EOF warning off the
+   opener. A trailing newline that only finished the << line is not a body. */
+static PURE bool parse_here_got_body()
+{
+        if (here_filled >= here_wanted)
+                return false;
+
+        return here_documents[here_filled].length != 0;
 }
 
 static bool parse_here_take_span(string_address line, positive length,
@@ -687,6 +777,9 @@ fn parse_here_close()
 static bool parse_hold(string_address line, b32 unfinished)
 {
         positive length = string_length(line);
+
+        if (!parse_pending_used)
+                parse_pending_line = shell_line_number ? shell_line_number : 1;
 
         if (line != parse_pending)
         {
@@ -872,6 +965,7 @@ bool parse_feed(string_address line)
         // The unfinished walk and the token walk read the same bytes. Skip
         // the first when a span of lex_closed already proves nothing on the
         // line can still be open.
+        lex_take_physical_newline();
         unfinished = lex_line_closed(line) ? LEX_COMPLETE : lex_unfinished(line);
 
         if (unfinished)
@@ -953,9 +1047,14 @@ static p8 address_to parse_here_scan_line(
         command substitution.  A nested lexer/parser frame then runs the exact
         normal token-to-delimiter path above; body lines use the same quoted,
         <<- and backslash-newline decisions as parse_here_line without retaining
-        a speculative body copy.  The returned address is the source byte after
-        the final delimiter line, or the terminating null when input ended in a
-        body.  Null itself means allocation/token failure.
+        a speculative body copy.  Bash also ends a document at the delimiter
+        followed immediately by `)`, and leaves that `)` for the substitution
+        closer.  lima dash 0.5.x does not: `EOF)` is a body line, so an
+        unquoted multi-word `<<-EOF EOF` whose closer is `EOF EOF` never
+        matches delimiter `EOF` and the `)` stays inside the document.
+        The returned address is the source byte after the final delimiter
+        line, or the terminating null when input ended in a body.  Null
+        itself means allocation/token failure.
 */
 static string_address parse_here_skip_bodies(string_address line,
                                               string_address newline)
@@ -1009,7 +1108,69 @@ static string_address parse_here_skip_bodies(string_address line,
 
         while (parse_here_open())
         {
-                string_address line_end = string_first_of_or_end(at, '\n');
+                string_address line_end;
+                string_address line;
+                here_document address_to document;
+                string_address delimiter;
+                positive length;
+                positive delimiter_length;
+
+                if (!string_get(at))
+                        break;
+
+                line_end = string_first_of_or_end(at, '\n');
+                length = (positive)(line_end - at);
+                document = here_documents + here_filled;
+                line = at;
+
+                if (document->strip)
+                {
+                        positive tabs = memory_span_byte(line, '\t', length);
+
+                        line += tabs;
+                        length -= tabs;
+                }
+
+                delimiter = here_names + document->delimiter;
+                delimiter_length = string_length(delimiter);
+
+                /*
+                        A here-document inside $( ) ends at a line that is
+                        exactly the delimiter. Bash also ends it at the
+                        delimiter followed immediately by the substitution's
+                        closer, so `EOF)` is not a body line: the document
+                        ends and the ) is left for lex_nesting, which is how
+                        lima bash 5.2 reads
+
+                            $(cat <<EOF
+                            body
+                            EOF)
+
+                        lima dash 0.5.x keeps `EOF)` as body text. An
+                        unquoted `<<-EOF EOF` is therefore delimiter EOF
+                        and a cat operand, and the closer `EOF EOF` does
+                        not end the document.
+                */
+                if (!document->continued && delimiter_length &&
+                    length >= delimiter_length &&
+                    !memory_compare(line, delimiter, delimiter_length))
+                {
+                        if (length == delimiter_length)
+                        {
+                                parse_here_close();
+                                at = string_get(line_end) ? line_end + 1
+                                                          : line_end;
+                                continue;
+                        }
+
+                        if (shell_bash_compat &&
+                            string_is(line + delimiter_length, ')'))
+                        {
+                                parse_here_close();
+                                at = line + delimiter_length;
+                                break;
+                        }
+                }
 
                 if (!parse_here_take_span(at, (positive)(line_end - at),
                                           false))
@@ -1195,7 +1356,7 @@ static PURE bool parse_at_list_end()
         keyword = parse_keyword(0);
 
         return keyword > PARSE_KEYWORD_OPEN &&
-               keyword <= PARSE_KEYWORD_CLOSE;
+               keyword <= PARSE_KEYWORD_IN;
 }
 
 /*
@@ -1219,6 +1380,50 @@ static CONST bool parse_redirect_operator(b32 op)
                (op >= OP_ANDGREAT && op <= OP_HERESTRING);
 }
 
+/* `{name}` or `{name[index]}` as a redirect descriptor. Dash has no such
+   form, so a word that looks like one stays an operand under a dash name. */
+static PURE bool parse_redirect_brace(string_address text, positive length)
+{
+        positive base;
+        const_string subscript;
+        positive subscript_length;
+
+        if (!shell_bash_compat || length < 3 || text[0] != '{' ||
+            text[length - 1] != '}')
+                return false;
+
+        text++;
+        length -= 2;
+
+        if (shell_valid_name(text, length))
+                return true;
+
+        return env_reference_element_span(text, length, address_of base,
+                                          address_of subscript,
+                                          address_of subscript_length) &&
+               subscript_length;
+}
+
+/* A numbered redirect prefix. Dash 0.5.x only takes a single digit 0-9:
+   `10>file` and `255>file` are that number as a word plus a stdout
+   redirect, so `exec 255>x` is `exec 255` with stdout on x. Bash,
+   including --posix, takes any fd. */
+static PURE bool parse_redirect_fd_number(string_address text, positive length,
+                                          positive address_to descriptor)
+{
+        positive parsed;
+
+        if (!length || !string_digits_checked_exact(text, 10, address_of parsed) ||
+            parsed > 0x7fffffff)
+                return false;
+
+        if (!shell_bash_compat && length != 1)
+                return false;
+
+        address_to descriptor = parsed;
+        return true;
+}
+
 /* Return the number of descriptor tokens before a redirect operator, or -1.
    Alias scans and the grammar must agree on this exact two-token prefix. */
 static PURE b32 parse_redirect_prefix(b32 at)
@@ -1238,13 +1443,19 @@ static PURE b32 parse_redirect_prefix(b32 at)
 
         // &> always means descriptors one and two. In "echo 2&>file", the 2
         // is therefore an argument, unlike the descriptor prefix in 2>file.
-        // Classify the spelling here; parse_take_redirect validates its
-        // range before any redirection is opened, including overflowing runs.
-        return token->kind == PT_WORD &&
-               string_digits_exact(token->text, null) &&
-               next->kind == PT_OP && next->joined &&
-               next->op != OP_ANDGREAT && next->op != OP_ANDDGREAT &&
-               parse_redirect_operator(next->op) ? 1 : -1;
+        if (token->kind != PT_WORD || next->kind != PT_OP || !next->joined ||
+            next->op == OP_ANDGREAT || next->op == OP_ANDDGREAT ||
+            !parse_redirect_operator(next->op))
+                return -1;
+
+        // Classify digits before checking their range in parse_take_redirect,
+        // so overflowing bash prefixes fail before opening a redirection.
+        // Dash recognizes only a single descriptor digit.
+        if (string_digits_exact(token->text, null) &&
+            (shell_bash_compat || token->length == 1))
+                return 1;
+
+        return parse_redirect_brace(token->text, token->length) ? 1 : -1;
 }
 
 /* The token after a redirect: past its descriptor prefix, the operator, and
@@ -1541,37 +1752,57 @@ static fn parse_alias_command()
 static bool parse_take_redirect(b32 index)
 {
         string_address delimiter;
+        string_address brace_name = null;
+        positive brace_length = 0;
         b32 descriptor = -1;
         b32 op;
         b32 slot;
 
         if (parse_look(0)->kind == PT_WORD)
         {
+                parse_token address_to prefix = parse_look(0);
                 positive parsed;
 
-                if (!string_digits_checked_exact(parse_look(0)->text, 10,
-                                         address_of parsed) ||
-                    parsed > 0x7fffffff)
+                if (parse_redirect_brace(prefix->text, prefix->length))
+                {
+                        brace_name = prefix->text + 1;
+                        brace_length = prefix->length - 2;
+                        parse_position++;
+                }
+                else if (!parse_redirect_fd_number(prefix->text, prefix->length,
+                                                   address_of parsed))
+
                 {
                         parse_state = PARSE_SYNTAX;
                         return false;
                 }
-
-                descriptor = (b32)parsed;
-                parse_position++;
+                else
+                {
+                        descriptor = (b32)parsed;
+                        parse_position++;
+                }
         }
 
         op = parse_look(0)->op;
         parse_position++;
 
-        if (descriptor < 0)
+        if (descriptor < 0 && !brace_length)
                 descriptor = (op == OP_LESS || op == OP_DLESS ||
                               op == OP_HERESTRING ||
                               op == OP_LESSAND || op == OP_LESSGREAT)
                                  ? 0
                                  : 1;
 
-        if (parse_look(0)->kind != PT_WORD)
+        /*
+                <<< requires a word. The digits in 2>/dev/null look like one
+                because the lexer does not know this operator is still waiting,
+                but they begin the next redirect, and bash then reports them
+                as unexpected. An empty expansion ($empty, "") is a word; a
+                missing token is not.
+        */
+        if (parse_look(0)->kind != PT_WORD ||
+            (op == OP_HERESTRING &&
+             parse_redirect_prefix(parse_position) >= 0))
         {
                 parse_fail();
                 return false;
@@ -1609,6 +1840,8 @@ static bool parse_take_redirect(b32 index)
         slot = parse_redirect_used++;
         parse_redirects[slot].op = op;
         parse_redirects[slot].fd = descriptor;
+        parse_redirects[slot].var = brace_name;
+        parse_redirects[slot].var_length = brace_length;
         parse_redirects[slot].kept = false;
         parse_redirects[slot].raw = false;
         parse_redirects[slot].body = 0;
@@ -1728,11 +1961,14 @@ static b32 parse_if_tail()
         if (parse_state)
                 return 0;
 
+        parse_want_push("then");
         parse_nodes[index].left = parse_list_required();
 
         if (parse_state || !parse_expect_word("then"))
                 return 0;
+        parse_want_pop();
 
+        parse_want_push("fi");
         parse_nodes[index].right = parse_list_required();
 
         if (parse_state)
@@ -1742,6 +1978,8 @@ static b32 parse_if_tail()
         {
                 parse_position++;
                 parse_nodes[index].extra = parse_if_tail();
+                if (!parse_state)
+                        parse_want_pop();
 
                 return parse_state ? 0 : index;
         }
@@ -1757,18 +1995,26 @@ static b32 parse_if_tail()
 
         if (!parse_expect_word("fi"))
                 return 0;
+        parse_want_pop();
 
         return index;
 }
 
 static b32 parse_do_body(b32 index)
 {
+        parse_want_push("do");
         if (parse_state || !parse_expect_word("do"))
                 return 0;
+        parse_want_pop();
 
+        parse_want_push("done");
         parse_nodes[index].right = parse_list_required();
 
-        return parse_state || !parse_expect_word("done") ? 0 : index;
+        if (parse_state || !parse_expect_word("done"))
+                return 0;
+        parse_want_pop();
+
+        return index;
 }
 
 static b32 parse_loop(b32 kind)
@@ -1889,10 +2135,12 @@ static b32 parse_case()
 
         parse_skip_newlines();
 
+        parse_want_push("esac");
         while (!parse_word_is(0, "esac"))
         {
                 b32 item;
 
+                parse_want_push(")");
                 if (parse_look(0)->kind == PT_END)
                 {
                         parse_state = PARSE_INCOMPLETE;
@@ -1930,6 +2178,7 @@ static b32 parse_case()
 
                 if (!parse_expect_operator(OP_RPAREN))
                         return 0;
+                parse_want_pop();
 
                 parse_skip_newlines();
 
@@ -1968,6 +2217,7 @@ static b32 parse_case()
         }
 
         parse_position++;
+        parse_want_pop();
         parse_nodes[index].left = head;
 
         return index;
@@ -1982,6 +2232,7 @@ static b32 parse_enclosed(b32 kind)
 
         parse_position++;
 
+        parse_want_push(kind == NODE_SUBSHELL ? ")" : "}");
         parse_nodes[index].left = parse_list_required();
 
         if (parse_state)
@@ -1994,6 +2245,7 @@ static b32 parse_enclosed(b32 kind)
         }
         else if (!parse_expect_word("}"))
                 return 0;
+        parse_want_pop();
 
         return index;
 }
@@ -2014,6 +2266,52 @@ static PURE bool parse_at_compound(b32 ahead)
                 parse_look(ahead)->op == OP_LPAREN);
 }
 
+/*
+        Whether this word is an assignment, not a name that happens to
+        contain an equals.
+
+        `f=g()` is `f=g` followed by `()`, a syntax error near `(`. Treating
+        the whole spelling as a function name installed `f=g`. Bash also
+        reads `+=` that way; dash has no `+=`, so `f+=g()` is still a bad
+        function name there.
+*/
+static PURE bool parse_word_is_assignment(b32 ahead)
+{
+        parse_token address_to token = parse_look(ahead);
+        string_address text;
+        positive length;
+        positive equal;
+        positive name_length;
+        positive at;
+
+        if (token->kind != PT_WORD || !token->length)
+                return false;
+
+        text = token->text;
+        length = token->length;
+        for (equal = 0; equal < length && text[equal] != '='; equal++)
+                ;
+
+        if (equal >= length)
+                return false;
+
+        name_length = equal;
+        if (shell_bash_compat && name_length && text[name_length - 1] == '+')
+                name_length--;
+
+        if (!name_length || (text[0] >= '0' && text[0] <= '9'))
+                return false;
+
+        at = string_span_max(text, name_length, string_set_name);
+        if (!at)
+                return false;
+        if (at == name_length)
+                return true;
+
+        return text[at] == '[' && text[name_length - 1] == ']' &&
+               name_length - at > 2;
+}
+
 static b32 parse_function(bool keyword)
 {
         b32 index = parse_node_new(NODE_FUNCTION);
@@ -2029,6 +2327,17 @@ static b32 parse_function(bool keyword)
         }
         parse_attach_word(index, parse_look(0)->text,
                           parse_look(0)->length);
+        //      Bash without posix lets a function be named a/b. Dash
+        //      refuses that name in the grammar, so eval of it is a
+        //      special-builtin syntax failure. Bash --posix parses the
+        //      definition and the executor refuses the identifier, which
+        //      ends the process even under command eval.
+        if (!shell_bash_compat &&
+            !shell_valid_name(parse_look(0)->text, parse_look(0)->length))
+        {
+                parse_fail();
+                return 0;
+        }
         parse_position++;
         if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_LPAREN &&
             parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_RPAREN)
@@ -2109,7 +2418,8 @@ static b32 parse_command()
 
         if (parse_look(0)->kind == PT_WORD && keyword == PARSE_KEYWORD_NONE &&
             parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_LPAREN &&
-            parse_look(2)->kind == PT_OP && parse_look(2)->op == OP_RPAREN)
+            parse_look(2)->kind == PT_OP && parse_look(2)->op == OP_RPAREN &&
+            !parse_word_is_assignment(0))
                 return parse_function(false);
 
         if (keyword == PARSE_KEYWORD_IF)
@@ -2133,10 +2443,24 @@ static b32 parse_command()
                 index = parse_enclosed(NODE_GROUP);
         else if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_LPAREN)
                 index = parse_enclosed(NODE_SUBSHELL);
-        else
+        else if (keyword == PARSE_KEYWORD_NONE ||
+                 keyword == PARSE_KEYWORD_TIME)
         {
+                //      `time` after `|` is an ordinary name: lima runs the
+                //      utility, because a bang is the only reserved word the
+                //      pipeline production itself consumes. At the start of
+                //      a pipeline parse_pipeline has already taken `time`.
                 compound = false;
                 index = parse_simple();
+        }
+        else
+        {
+                //      then/do/in/fi, a bang after `|`, and bash `]]` are
+                //      reserved here. lima reports a syntax error, not
+                //      command-not-found. Bang at the start of a pipeline is
+                //      consumed above this.
+                parse_fail();
+                return 0;
         }
 
 command_done:
@@ -2171,6 +2495,8 @@ static bool parse_merge_streams(b32 index)
         slot = parse_redirect_used++;
         parse_redirects[slot].op = OP_GREATAND;
         parse_redirects[slot].fd = 2;
+        parse_redirects[slot].var = null;
+        parse_redirects[slot].var_length = 0;
         parse_redirects[slot].kept = false;
         parse_redirects[slot].raw = false;
         parse_redirects[slot].body = 0;
@@ -2514,6 +2840,8 @@ b32 parse_program()
                 return 0;
         }
 
+        parse_want_used = 0;
+
         if (!parse_node_top)
         {
                 parse_node_top = PARSE_NODES;
@@ -2621,6 +2949,9 @@ static bool parse_keep_measure(b32 index, parse_kept_body address_to body)
                 parse_redirect address_to redirect = parse_redirects + node->redirect + i;
                 if (redirect->text_length >= PARSE_KEPT_TEXT ||
                     !parse_keep_amount(body, 3, redirect->text_length + 1) ||
+                    (redirect->var_length &&
+                     (redirect->var_length >= PARSE_KEPT_TEXT ||
+                      !parse_keep_amount(body, 3, redirect->var_length + 1))) ||
                     (redirect->body_length && (redirect->body_length >= PARSE_KEPT_TEXT ||
                      !parse_keep_amount(body, 3, redirect->body_length + 1))))
                         return false;
@@ -2699,6 +3030,9 @@ static b32 parse_keep_tree(b32 index, b32 address_to cursor)
                 parse_redirect address_to target = parse_redirects + cursor[2]++;
                 *target = *source;
                 target->text = parse_keep_text(cursor, source->text, source->text_length);
+                if (source->var_length)
+                        target->var = parse_keep_text(cursor, source->var,
+                                                      source->var_length);
                 if (source->body_length)
                 {
                         target->body = cursor[3];

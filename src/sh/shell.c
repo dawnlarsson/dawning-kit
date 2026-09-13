@@ -170,6 +170,10 @@ b32 shell_is_interactive;
    retain Moonwater's existing dash-compatible defaults. */
 bool shell_bash_compat;
 bool shell_dash_compat;
+/* Set by the reader when more source remains after this physical line,
+   ignoring trailing newlines. Dash's runtime "Bad fd number" names that
+   next line rather than the command's own. */
+bool shell_line_has_more;
 
 /*
         rbash: a shell started as rbash, or with -r / --restricted, or
@@ -664,6 +668,7 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
 COLD bool shell_dynamic_assign(const_string name, positive length,
                                const_string value);
 COLD bool shell_dynamic_wanted(const_string name, positive length);
+COLD fn shell_bash_ids_publish();
 
 //      How many subshells deep this process is, which is what $BASH_SUBSHELL
 //      is and the only thing a fork has to remember to say it.
@@ -716,6 +721,7 @@ fn exec_function_import_environment(string_address address_to environment);
 #include "process_tools.c"
 #include "monitor.c"
 #include "net.c"
+fn shell_child_death(bipolar child, positive raw, bool foreground);
 #include "expand.c"
 #include "../canvas/window.c"
 #include "term.c"
@@ -1185,6 +1191,7 @@ fn shell_execute_command()
         {
                 positive status = 0;
                 system_wait4_retry(child, address_of status, 0, null);
+                shell_child_death(child, status, true);
                 shell_status = wait_status_code(status);
 
                 /*
@@ -1355,6 +1362,22 @@ static fn run_line_inner(string_address line)
                 parse_here_line(line);
         else if (!parse_feed(line))
         {
+                if (parse_here_limit_exceeded())
+                {
+                        shell_status = 2;
+                        parse_reset();
+                        shell_more = false;
+                        shell_syntax_generation += 2;
+                        if (shell_run_depth == 1 && !shell_source_depth)
+                        {
+                                if (string_is(shell_option_flags, 'c'))
+                                        exec_child_leave(shell_status);
+                                if (!shell_is_interactive)
+                                        expand_fatal_status(shell_status);
+                        }
+                        return;
+                }
+
                 log_error(str("Command line too long\n"));
                 parse_reset();
                 shell_more = false;
@@ -1379,6 +1402,22 @@ static fn run_line_inner(string_address line)
 
         if (parse_state)
         {
+                if (parse_here_limit_exceeded())
+                {
+                        shell_status = 2;
+                        parse_reset();
+                        shell_more = false;
+                        shell_syntax_generation += 2;
+                        if (shell_run_depth == 1 && !shell_source_depth)
+                        {
+                                if (string_is(shell_option_flags, 'c'))
+                                        exec_child_leave(shell_status);
+                                if (!shell_is_interactive)
+                                        expand_fatal_status(shell_status);
+                        }
+                        return;
+                }
+
                 parse_token address_to tok = parse_look(0);
                 bool compound = parse_state == PARSE_COMPOUND_SYNTAX &&
                                 shell_bash_compat;
@@ -1532,6 +1571,10 @@ fn run_line(string_address line)
         The text is copied before it is cut up, because it may not be there
         by the time the second line runs: a trap action is the trap table's
         own copy and the first line is allowed to be "trap - USR1".
+
+        Bash eval asks for a verbose reprint of each physical line here.
+        jobs -x and a trap action use the same walker and are not that
+        input, so the echo is only the flag eval sets.
 */
 fn run_lines(string_address text)
 {
@@ -1544,6 +1587,9 @@ fn run_lines(string_address text)
 
         if (!string_first_of(text, '\n'))
         {
+                if (shell_verbose_eval_lines && string_get(text))
+                        shell_verbose_line(text);
+                lex_physical_newline(false);
                 run_line(text);
                 return;
         }
@@ -1570,10 +1616,25 @@ fn run_lines(string_address text)
                         address_to stop = end;
                         stop++;
                 }
+                else
+                        lex_physical_newline(false);
+
+                {
+                        string_address rest = stop;
+
+                        shell_line_has_more = false;
+                        while (string_get(rest) == '\n')
+                                rest++;
+                        if (string_get(rest))
+                                shell_line_has_more = true;
+                }
 
                 // An empty line is a line: it is a body line of a
                 // here-document, and it ends a command a backslash held open.
+                if (shell_verbose_eval_lines)
+                        shell_verbose_line(at);
                 run_line(at);
+                shell_line_has_more = false;
                 if (shell_syntax_generation != syntax)
                         break;
                 at = stop;
@@ -1599,19 +1660,30 @@ fn shell_input_end()
         /*
                 A here-document the input ended inside of.
 
-                dash takes the end of the input as the delimiter, says so on
-                stderr, and runs the command. Refusing the line here threw
-                away a script whose last line was the body -- which is what
-                a generated one looks like when the generator forgot the
-                delimiter, and what "cat <<EOF" typed into eval looks like
-                every time.
+                Both dash and bash take the end of the input as the delimiter
+                and run the command. Bash says so on stderr; lima dash 0.5.x
+                prints nothing. Refusing the line here threw away a script
+                whose last line was the body -- which is what a generated one
+                looks like when the generator forgot the delimiter, and what
+                "cat <<EOF" typed into eval looks like every time.
         */
         if (parse_here_open())
         {
-                string_format(log_error,
-                              "Warning: here-document ended by end of input"
-                              " (wanted %s)\n",
-                              parse_here_open());
+                if (shell_bash_compat)
+                {
+                        positive start = parse_here_start_line();
+                        positive now = shell_line_number ? shell_line_number
+                                                         : 1;
+
+                        shell_syntax_line_override =
+                            parse_here_got_body() ? now : start;
+                        shell_diagnostic_where();
+                        shell_syntax_line_override = 0;
+                        string_format(log_error,
+                                      "warning: here-document at line %p "
+                                      "delimited by end-of-file (wanted `%s')\n",
+                                      start, parse_here_open());
+                }
 
                 while (parse_here_open())
                         parse_here_close();
@@ -1630,14 +1702,66 @@ fn shell_input_end()
                         return;
         }
 
-        shell_syntax_where();
-        log_error(str("Syntax error: unexpected end of file\n"));
-        bool word_eof = parse_pending_used &&
-                        lex_unfinished(parse_pending) == LEX_OPEN_WORD;
-        parse_reset();
-        shell_more = false;
-        shell_status = 2;
-        shell_syntax_generation += word_eof ? 1 : 2;
+        {
+                bool pending = parse_pending_used != 0;
+                b32 unfinished = pending ? lex_unfinished(parse_pending)
+                                         : LEX_COMPLETE;
+                p8 unmatched = pending ? lex_unmatched_now() : 0;
+                p8 match[2];
+                string_address want = parse_want_now();
+                positive now = shell_line_number ? shell_line_number : 1;
+                bool word_eof = pending && unfinished == LEX_OPEN_WORD;
+
+                if (shell_bash_compat)
+                {
+                        if (pending &&
+                            (unfinished == LEX_OPEN_WORD || unmatched == '\'' ||
+                             unmatched == '"' || unmatched == '`' ||
+                             unmatched == '}'))
+                                shell_syntax_line_override =
+                                    parse_pending_start_line();
+                        else
+                                shell_syntax_line_override = now + 1;
+                }
+
+                shell_syntax_where();
+                match[0] = unmatched;
+                match[1] = end;
+
+                if (shell_bash_compat)
+                {
+                        if (unmatched)
+                                string_format(log_error,
+                                              "unexpected EOF while looking "
+                                              "for matching `%s'\n",
+                                              match);
+                        else
+                                log_error(str(
+                                    "syntax error: unexpected end of file\n"));
+                }
+                else if (unmatched == '\'' || unmatched == '"')
+                        log_error(str(
+                            "Syntax error: Unterminated quoted string\n"));
+                else if (unmatched == '`')
+                        log_error(str(
+                            "Syntax error: EOF in backquote substitution\n"));
+                else if (unmatched == '}')
+                        log_error(str("Syntax error: Missing '}'\n"));
+                else if (unmatched || want)
+                        string_format(log_error,
+                                      "Syntax error: end of file unexpected "
+                                      "(expecting \"%s\")\n",
+                                      unmatched ? match : want);
+                else
+                        log_error(str(
+                            "Syntax error: unexpected end of file\n"));
+
+                shell_syntax_line_override = 0;
+                parse_reset();
+                shell_more = false;
+                shell_status = 2;
+                shell_syntax_generation += word_eof ? 1 : 2;
+        }
 }
 
 // A prompt is for somebody watching. Asking the terminal about itself is the
