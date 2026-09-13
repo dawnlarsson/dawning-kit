@@ -320,6 +320,25 @@ hash_xxh64 hash_xxh64_begin hash_xxh64_add hash_xxh64_finish
 memory_copy_match memory_get64
 ''', 'XXH64, LZ match copies, and unaligned little-endian 64-bit loads')
 
+cover('direct_benchmark', 'test/checks.c#BENCH_compression_floor', '''
+hash_crc32 hash_crc64 huffman_encode_back lzma_range_encode
+''', 'bounded native CRC, backwards Huffman and range-tree timing, with scalar '
+      'CRC/range references; copy traffic is a proxy, not an entropy floor')
+cover('benchmark_context', 'test/checks.c#BENCH_compression_floor', 'lzma_range_shift',
+      'carry flushing inside the measured range-tree work; not isolated')
+cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'lzma_range_decode',
+      'scalar-model differential and guarded input; end-to-end xz timing is '
+      'available, but there is no isolated decode timing row',
+      anchors={'lzma_range_decode': 'floor_range'})
+cover('correctness_only', 'test/checks.c#CHECK_compression_floor', 'deflate_decode_span',
+      'all length/distance combinations with guard pages; end-to-end gzip '
+      'timing is available, but there is no isolated token-loop timing row',
+      anchors={'deflate_decode_span': 'floor_deflate'})
+
+cover('correctness_only', 'test/hardware_floor.c', 'sha256_compress',
+      'one 64-byte compression; timed in the hardware-floor harness, not the '
+      'test/run bench catalogue')
+
 cover('correctness_only', 'test/checks.c#CHECK_zstd', '''
 zstd_bits_open zstd_bits_reload zstd_bits_get
 ''', 'backward bitstream open, reload, and get against marked and empty streams')

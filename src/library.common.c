@@ -44,6 +44,9 @@ static inline bool string_digits_checked(string_address address_to text,
                                          positive base,
                                          positive address_to value)
 {
+        if (base < 2 || base > 36)
+                return false;
+
         string_address at = address_to text;
         positive got = 0;
         bool any = false;
@@ -70,6 +73,21 @@ static inline bool string_digits_checked(string_address address_to text,
 
         address_to text = at;
         address_to value = got;
+        return true;
+}
+
+/* A whole numeric word with the checked scanner's range contract. Keep
+   string_digits_exact's wrapping spelling test for callers that want it. */
+static inline bool string_digits_checked_exact(string_address text,
+                                                positive base,
+                                                positive address_to value)
+{
+        positive got;
+        if (!text || !string_digits_checked(address_of text, base, address_of got) ||
+            string_get(text))
+                return false;
+        if (value)
+                address_to value = got;
         return true;
 }
 
@@ -335,6 +353,77 @@ static inline INLINE CONST bipolar bipolar_from_magnitude(positive magnitude,
 #define system_make_directory_at(directory, path, mode)                     \
         system_call_3(syscall(mkdirat), (positive)(bipolar)(directory),      \
                       (positive)(path), (positive)(mode))
+
+#if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
+/* Return an owned parent descriptor and a bounded final component. Each
+   intermediate directory is opened relative to the descriptor already held,
+   so renaming or replacing a pathname cannot redirect the next operation.
+   Absolute paths start at /; relative paths start at directory. Dot-dot and
+   empty final components are refused. Raw errors survive descriptor cleanup. */
+static COLD bipolar system_open_parent_nofollow(
+    bipolar directory, string_address path, bool create, positive mode,
+    p8 address_to leaf, positive room)
+{
+        if (!path || !string_get(path) || !leaf || !room)
+                return -22;
+
+        positive flags = FILE_READ | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+        bipolar held = system_open_at(directory, path[0] == '/' ? "/" : ".", flags);
+        if (held < 0)
+                return held;
+
+        while (true)
+        {
+                while (string_is(path, '/'))
+                        path++;
+                positive length = 0;
+                while (string_get(path + length) && !string_is(path + length, '/'))
+                {
+                        if (length + 1 >= room)
+                        {
+                                system_close(held);
+                                return -36;
+                        }
+                        length++;
+                }
+                if (!length ||
+                    (length == 2 && path[0] == '.' && path[1] == '.'))
+                {
+                        system_close(held);
+                        return -22;
+                }
+                bool dot = length == 1 && path[0] == '.';
+                if (!string_get(path + length))
+                {
+                        if (dot)
+                        {
+                                system_close(held);
+                                return -22;
+                        }
+                        memory_copy_apart(leaf, path, length);
+                        leaf[length] = end;
+                        return held;
+                }
+                if (!dot)
+                {
+                        memory_copy_apart(leaf, path, length);
+                        leaf[length] = end;
+                        bipolar next = system_open_at(held, leaf, flags);
+                        if (next == -2 && create)
+                        {
+                                bipolar made = system_make_directory_at(held, leaf, mode);
+                                next = made < 0 && made != -17
+                                           ? made : system_open_at(held, leaf, flags);
+                        }
+                        system_close(held);
+                        if (next < 0)
+                                return next;
+                        held = next;
+                }
+                path += length + 1;
+        }
+}
+#endif
 
 #define system_rename_at(from_directory, from, to_directory, to, flags)      \
         system_call_5(syscall(renameat2),                                    \

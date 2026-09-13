@@ -14,9 +14,16 @@ The runtime has two profiles:
   no supervisor fork.
 - `--isolated` adds PID, UTS and IPC views, pivots into the complete
   distribution root, mounts its kernel interfaces, and supervises its first
-  process. Package managers pick this themselves: `pacman`, `apt-get` and
-  `apk` own the guest `/etc` and `/var`, so an exposed `pacman` is isolated
-  even without the flag.
+  process. Package managers pick this themselves: `pacman`, `apt-get`,
+  `apk`, `dnf` and `nix` own the guest `/etc` and `/var`, so an exposed
+  `pacman` is isolated even without the flag.
+
+Both profiles keep the caller's user identity and capabilities. The isolated
+profile also shares the host network and has no syscall filter. Run only
+trusted packages: neither profile contains hostile code, and setup executes
+distribution tools as root. Keep `/bowls` and the installed launchers under
+the administrator's control. Bootstrap downloads use HTTPS; setup does not
+verify a detached distribution signature.
 
 With no program, both profiles execute Moonwater's `/shell`. The runtime opens
 it before changing mounts and executes that descriptor afterward, so neither a
@@ -41,20 +48,39 @@ bowl setup arch
 pacman -Syu
 ```
 
-That is the whole first boot. Setup becomes root if it has to, points `/bowl`
-at this binary so `#!/bowl` shebangs resolve, lands the official x86_64
-bootstrap at `/bowls/arch`, writes a resolv.conf that is not a stub resolver,
+That is the whole first boot. Every named setup shares that pipeline: become
+root if it has to, point `/bowl` at this binary so `#!/bowl` shebangs
+resolve, download if the marker is missing, land (extract by compression
+magic, flatten a prefix directory when the marker sits under one child),
+write a resolv.conf that is not a stub resolver, apply the manager conf that
+tree actually contains, and install the manager at `/bin`. Distros differ by
+URL, size floor, marker, decoder, and a small prime step (Arch keyring).
+There is no archive argument and nothing to copy by hand.
+
+```sh
+bowl setup alpine    # minirootfs .tar.gz, native gzip + tar
+bowl setup debian    # rootfs.tar.gz, native gzip + tar
+bowl setup fedora    # refuses: OCI layers, not a rootfs tarball
+bowl setup nix       # refuses: a /nix store, not a distro root
+```
+
+`bowl setup arch` lands the official x86_64 bootstrap at `/bowls/arch`,
 enables one mirror, turns off pacman's alpm download sandbox (Moonwater has
-no landlock), initialises the keyring inside isolated, and installs `pacman`
-and `pacman-key` at `/bin` so they win on the default `PATH`. The next
-command is ordinary: `pacman -Syu`, then `pacman -S jq`, then
-`bowl expose /bowls/arch /usr/bin/jq` if that binary should be a fast
-Moonwater command.
+no landlock), initialises the keyring inside isolated, and puts `pacman` and
+`pacman-key` on `PATH`. The next command is ordinary: `pacman -Syu`, then
+`pacman -S jq`, then `bowl expose /bowls/arch /usr/bin/jq` if that binary
+should be a fast Moonwater command.
 
-Setup downloads the bootstrap itself. There is no archive argument and
-nothing to copy by hand.
+Alpine is the minirootfs tarball (`/sbin/apk`, no prefix). Debian is
+debuerreotype's official `rootfs.tar.gz` (`/usr/bin/apt-get`, no prefix).
+Both land the same way as Arch: download, `tar` reads the gzip magic,
+flatten-by-marker. Guest apt/apk still use their own libraries
+inside isolated. Fedora's published image is an OCI archive (index,
+manifest, then a layer tar), so flatten-by-marker cannot find `/usr/bin/dnf`.
+Nix's binary tarball flattens to `bin/nix` plus `store/`, but those binaries
+want `/nix/store`, not `/store` at a bowl root.
 
-Debian and Alpine setups are not built in yet.
+glibc bowls can share Arch's loader later. Alpine stays musl.
 
 `bowl expose` creates a tiny executable launcher such as `/bowls/bin/jq`, a
 directory on Moonwater's default `PATH`. Keeping roots and launchers under
@@ -68,20 +94,21 @@ or `sed` in a script is still the native applet.
 ## Native tools the managers still need
 
 Moonwater already has the shell, coreutils, sed, awk, grep, find, mount,
-unshare, chroot, `ip`, `host`, plaintext `fetch`, `wget` (HTTPS), uncompressed
-`tar`, and `zstd -d`. Pacman, apt and apk inside `--isolated` bring their own
+unshare, chroot, `ip`, `host`, plaintext `fetch`, `wget` (HTTPS), `tar`
+with in-process gzip/xz/zstd, and the gzip/xz/zstd applets. Pacman, apt and apk inside `--isolated` bring their own
 linked downloaders and archive libraries. The host-side gaps that every distro
 bootstrap still shells out to are not Bowl mounts:
 
-- gzip / xz — Debian is `.tar.xz`, Alpine is `.tar.gz`
 - `ar` — `.deb` members; debootstrap will not run without it
+- an OCI unwrap — Fedora's container image is layers, not a rootfs tarball
+- a `/nix` store bind — Nix is not a distro root
 
 Do not implement pacman, apt or apk here. Do not overlay guest `/bin` to
 paper over a missing applet.
 
 The next slices should preserve these rules:
 
-- gzip, xz, ar, then Debian and Alpine setups;
+- ar, then remaining Debian debootstrap pieces;
 - share Arch's glibc with other glibc bowls; keep Alpine on musl;
 - discover package-owned executables so exposure can be selected after install;
 - persist prepared mount views and reduce fast entry to setns plus exec;

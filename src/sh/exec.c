@@ -2575,8 +2575,8 @@ fn job_wait(writer write, string_address input)
                 }
                 else
                 {
-                        if (!string_digits_exact(word, address_of pid) ||
-                            pid > (positive)bipolar_max)
+                        if (!string_digits_checked_exact(word, 10, address_of pid) ||
+                            pid > (positive)b32_max)
                         {
                                 //      Bash names it as a job spec it could
                                 //      not read and answers one; dash calls
@@ -5078,7 +5078,7 @@ static bool exec_redirect_apply(b32 index)
                                 continue;
                         }
 
-                        if (!string_digits_exact(target, address_of source) ||
+                        if (!string_digits_checked_exact(target, 10, address_of source) ||
                             source >= 0x7fffffff ||
                             exec_saved_fd_is((b32)source))
                         {

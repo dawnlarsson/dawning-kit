@@ -12938,7 +12938,7 @@ COLD fn shell_trap(writer write, string_address input)
                 positive digits;
                 bipolar only =
                     shell_posix_on()
-                        ? (string_digits_exact(shell_argv[index],
+                        ? (string_digits_checked_exact(shell_argv[index], 10,
                                                address_of digits)
                                ? (bipolar)digits : -1)
                         : trap_number(shell_argv[index]);
@@ -15081,8 +15081,8 @@ COLD fn shell_wait(writer write, string_address input)
                 positive pid;
                 bool interrupted;
 
-                if (!string_digits_exact(shell_argv[at], address_of pid) ||
-                    pid > (positive)bipolar_max)
+                if (!string_digits_checked_exact(shell_argv[at], 10, address_of pid) ||
+                    pid > (positive)b32_max)
                         return shell_answer(string_report(log_error, 2, "wait: Illegal number: %s\n",
                                       shell_argv[at]));
 

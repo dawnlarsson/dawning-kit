@@ -61,7 +61,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl tar zstd reuse_shell audit regex slurp wait writer native probe stack checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl tar zstd gzip xz compression_floor compression reuse_shell audit regex slurp wait writer native probe stack checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
 
 describe()
 {
@@ -80,7 +80,11 @@ describe()
         fixed) echo "exact decimal records, rounding and bounded batches on three machines" ;;
         bowl) echo "Bowl root and launcher parsing without mounts or process launches" ;;
         tar) echo "tar header checksum, octal fields and safe path stripping" ;;
-        zstd) echo "RFC 8878 decode of empty, raw, RLE and checksum frames" ;;
+        zstd) echo "RFC 8878 encode/decode, literal codebooks, frames and checksums" ;;
+        gzip) echo "RFC 1952 members around RFC 1951 deflate, encode and decode" ;;
+        xz) echo "xz stream and LZMA2 encode and decode" ;;
+        compression_floor) echo "codec assembly kernels, boundary states and guard pages on three machines" ;;
+        compression) echo "gzip/xz/zstd and compressed tar against the system tools, byte for byte" ;;
         audit) echo "the verified builtin repairs, as pure-state regressions" ;;
         regex) echo "fixed-graph searches against their VM fallback, with captures and resource limits on three machines" ;;
         reuse_shell) echo "shared utility formatting, bounded sinks and skip edge policies" ;;
@@ -2708,6 +2712,15 @@ lane_net() { freestanding_checks_lane net net; }
 lane_bowl() { freestanding_checks_lane bowl bowl; }
 lane_tar() { freestanding_checks_lane tar tar; }
 lane_zstd() { freestanding_checks_lane zstd zstd; }
+lane_gzip() { freestanding_checks_lane gzip gzip; }
+lane_xz() { freestanding_checks_lane xz xz; }
+lane_compression_floor() { freestanding_checks_lane compression_floor compression_floor; }
+lane_compression()
+{
+        need_shell || return 1
+        python3 test/differential.py --harness compression --binary "ours=$shell_binary"
+}
+
 lane_reuse_shell() { freestanding_checks_lane reuse_shell reuse_shell; }
 
 #       Pure-state regressions for the verified enable, formatter and signal
@@ -8257,7 +8270,7 @@ printf '  %-12s %s of %s\n' canvas "$pass" "$((pass + fail))"
 #       absolute number that is not. A Linux host target runs directly.
 #
 
-benchmarks="floor baseline numbers bases hex escape codec fixed table padded input-bases fields human human-nearest hash-33 span-byte fill-u32 fill-u64 paths reverse writer-field writer-text text-hot prefix-known translate ascii-case ascii-case-fold line-break bounded-fold ascii-convert ascii-search grep-search grep-count last-of words clock scan-literal random allocator reserve storage-read compare-max string-copy stream-get stream-write format-bounds startup shell tools awk find boot-time engines"
+benchmarks="floor baseline numbers bases hex escape codec fixed table padded input-bases fields human human-nearest hash-33 span-byte fill-u32 fill-u64 paths reverse writer-field writer-text text-hot prefix-known translate ascii-case ascii-case-fold line-break bounded-fold ascii-convert ascii-search grep-search grep-count last-of words clock scan-literal random allocator reserve storage-read compare-max string-copy stream-get stream-write format-bounds startup shell tools awk find boot-time engines compression compression-floor"
 
 #       One benchmark's section and one line about it. A name with no section
 #       is one of the drivers below, which time a whole binary against the
@@ -8366,6 +8379,9 @@ bench_about()
         find)    bench_line="find's walker floor, apart from matching and metadata" ;;
         boot-time) bench_line="how long the stack takes to reach a shell, from the guest clock" ;;
         engines) bench_line="two builds of the multicall binary against each other" ;;
+        compression-floor) bench_section=BENCH_compression_floor
+                           bench_line="codec kernels, scalar references and the copy traffic proxy" ;;
+        compression) bench_line="byte-checked gzip/xz/zstd speed and ratio on identical corpora" ;;
         *)       bench_line= ;;
         esac
 }
@@ -9477,6 +9493,13 @@ bench_one()
         find)      bench_find "$@" ;;
         boot-time) bench_boot_time "$@" ;;
         engines)   bench_engines "$@" ;;
+        compression)
+                if [ "$#" -eq 0 ]; then
+                        need_shell || return 1
+                        set -- --binary "ours=$shell_binary"
+                fi
+                python3 test/differential.py --harness compression --bench "$@"
+                ;;
         *)         bench_c "$bench_this" "$@" ;;
         esac
 }

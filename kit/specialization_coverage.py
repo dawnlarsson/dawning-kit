@@ -350,7 +350,7 @@ memory_to_lower_ascii memory_to_upper_ascii memory_reverse memory_frob
 ''', 'fixed short bodies were measured; native x86-64 is level or slower, and '
      'every production caller carries a runtime size')
 cover('folds_already', 'size', '''
-hash_xxh64 hash_xxh64_add zstd_bits_open zstd_huffman_stream zstd_huffman_4x
+hash_xxh64 hash_xxh64_add hash_crc32 hash_crc64 zstd_bits_open zstd_huffman_stream zstd_huffman_4x
 ''', 'production spans are compressed-block or hash lengths; short and long '
      'paths already live in the floor')
 
@@ -568,6 +568,19 @@ cover('folds_already', 'seed', 'hash_xxh64_begin',
       'the seed is a caller value; the mixer does not shrink when it is 0')
 
 
+cover('worth_it', 'mode', 'lzma_range_encode lzma_range_decode',
+      'Expected: fixed ordinary eight-bit literals can remove generic mode '
+      'dispatch and unroll the tree; requires native crossover measurements '
+      'before adding a separate body',
+      expansion={'lzma_range_encode': 'lzma_range_encode_known',
+                 'lzma_range_decode': 'lzma_range_decode_known'})
+cover('folds_already', 'n', 'huffman_encode_back',
+      'literal stream lengths are runtime block slices; empty input already '
+      'takes the exact terminal-byte path')
+cover('nothing_to_fold', None, 'lzma_range_shift deflate_decode_span',
+      'a pointer to evolving range or token-loop state; values live in memory '
+      'and are not known at the call site')
+
 # ----------------------------------------------------------------------
 #       nothing_to_fold
 # ----------------------------------------------------------------------
@@ -575,7 +588,7 @@ cover('nothing_to_fold', None, '''
 _start moonwater_cpu_detect program_initial_identity get_cpu_time term_size working_directory_get
 working_directory_set program_argument_count program_argument_list program_arguments_own
 program_environment_list log_failed log_failure_reset log_flush sleep buffered_flush
-string_hash_33_length hash_xxh64_finish memory_get64 zstd_bits_reload zstd_sequences_run
+string_hash_33_length hash_xxh64_finish sha256_compress memory_get64 zstd_bits_reload zstd_sequences_run
 ''', 'no argument, or an argument that is a pointer into memory the caller '
      'owns; nothing the compiler could know shortens the body')
 cover('nothing_to_fold', None, '''

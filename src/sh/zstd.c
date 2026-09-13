@@ -1,12 +1,14 @@
 /*
-        zstd -- RFC 8878 decoder, no encoder.
+        zstd -- RFC 8878 decode and encode.
 
-        Content checksum is hash_xxh64. Match copies are memory_copy_match.
-        Backward bitstreams are zstd_bits_open / reload / get; unaligned
-        little-endian words are memory_get64. The window is an anonymous
-        map, not BSS: Arch bootstrap is --long (128 MiB). Dictionaries
-        are refused. Concatenated frames and skippable frames are accepted
-        the way zstd -d accepts them.
+        Decode is the existing frame walker: content checksum is hash_xxh64,
+        match copies are memory_copy_match, backward bitstreams are
+        zstd_bits_open. Encode uses a two-candidate 16-bit hash, 128 KiB
+        history, lazy matching, repeat offsets and predefined sequence FSE.
+        Literals use four Huffman streams with direct or FSE-coded weights;
+        raw literals/blocks win when entropy coding would grow. Match lengths
+        are memory_common_prefix. Dictionaries are refused. Concatenated
+        frames and skippable frames are accepted the way zstd -d accepts them.
 */
 
 #define ZSTD_MAGIC 0xFD2FB528u
@@ -18,6 +20,7 @@
 #define ZSTD_OUT 131072
 #define ZSTD_FSE_MAX 512
 #define ZSTD_HUF_MAX 2048
+#define ZSTD_SEQ_MAX (ZSTD_BLOCK_MAX / 4)
 
 static const bipolar zstd_ll_default[36] = {
         4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
@@ -124,6 +127,17 @@ static positive zstd_out_used;
 static bipolar zstd_out_fd;
 static p8 zstd_out_buf[ZSTD_OUT];
 static positive zstd_out_fill;
+static bool zstd_pull;
+static bool zstd_paused;
+static bool zstd_live;
+static bool zstd_finished;
+static p8 address_to zstd_rest;
+static positive zstd_rest_n;
+static bool zstd_frame_open;
+static bool zstd_block_last;
+static bool zstd_need_trailer;
+static bool zstd_checksum_on;
+static p64 zstd_frame_begin;
 static bool zstd_hold_emit;
 static bool zstd_hashing;
 static zstd_xxh zstd_hash;
@@ -981,35 +995,53 @@ static bool zstd_emit(p8 address_to p, positive n)
         if (!n)
                 return true;
 
-        zstd_decoded += n;
-        if (zstd_hashing)
-                zstd_xxh_add(address_of zstd_hash, p, n);
-
         if (zstd_out_mem)
         {
                 if (zstd_out_used + n > zstd_out_cap)
                         return zstd_fail("zstd output larger than the destination");
+                if (zstd_hashing)
+                        zstd_xxh_add(address_of zstd_hash, p, n);
+                zstd_decoded += n;
                 memory_copy(zstd_out_mem + zstd_out_used, p, n);
                 zstd_out_used += n;
                 return true;
         }
 
-        if (zstd_out_fd < 0)
+        if (zstd_out_fd < 0 && !zstd_pull)
+        {
+                if (zstd_hashing)
+                        zstd_xxh_add(address_of zstd_hash, p, n);
+                zstd_decoded += n;
                 return true;
+        }
 
         while (n)
         {
                 positive room = ZSTD_OUT - zstd_out_fill;
-                positive chunk = n < room ? n : room;
+                positive chunk;
 
+                if (zstd_pull && !room)
+                {
+                        zstd_rest = p;
+                        zstd_rest_n = n;
+                        zstd_paused = true;
+                        return true;
+                }
+
+                chunk = n < room ? n : room;
+                if (zstd_hashing)
+                        zstd_xxh_add(address_of zstd_hash, p, chunk);
+                zstd_decoded += chunk;
                 memory_copy(zstd_out_buf + zstd_out_fill, p, chunk);
                 zstd_out_fill += chunk;
                 p += chunk;
                 n -= chunk;
-                if (zstd_out_fill == ZSTD_OUT && !zstd_flush())
+                if (!zstd_pull && zstd_out_fill == ZSTD_OUT && !zstd_flush())
                         return false;
         }
 
+        zstd_rest = null;
+        zstd_rest_n = 0;
         return true;
 }
 
@@ -1428,6 +1460,11 @@ static bool zstd_frame(void)
         positive window = 0;
         p64 frame_start;
 
+        if (zstd_need_trailer)
+                goto zstd_frame_trailer;
+        if (zstd_frame_open)
+                goto zstd_frame_blocks;
+
         if (!zstd_in_take(scratch, 4))
                 return false;
         if (zstd_get32(scratch) != ZSTD_MAGIC)
@@ -1550,6 +1587,14 @@ static bool zstd_frame(void)
         else
                 zstd_hashing = false;
 
+        zstd_frame_open = true;
+        zstd_checksum_on = checksum;
+        zstd_frame_begin = frame_start;
+
+zstd_frame_blocks:
+        checksum = zstd_checksum_on;
+        frame_start = zstd_frame_begin;
+
         for (;;)
         {
                 p8 header[3];
@@ -1582,6 +1627,12 @@ static bool zstd_frame(void)
                                         return false;
                                 zstd_in_skip(chunk);
                                 size -= chunk;
+                                if (zstd_paused)
+                                {
+                                        zstd_block_last = last;
+                                        zstd_need_trailer = last;
+                                        return true;
+                                }
                         }
                 }
                 else if (type == 1)
@@ -1594,6 +1645,11 @@ static bool zstd_frame(void)
                                 return false;
                         if (!zstd_put_fill(value[0], size))
                                 return false;
+                        if (zstd_paused)
+                        {
+                                zstd_block_last = last;
+                                return true;
+                        }
                 }
                 else
                 {
@@ -1624,6 +1680,12 @@ static bool zstd_frame(void)
                                         return false;
                                 if (!zstd_emit(zstd_window + at, zstd_pos - at))
                                         return false;
+                                if (zstd_paused)
+                                {
+                                        zstd_block_last = last;
+                                        zstd_need_trailer = last;
+                                        return true;
+                                }
                         }
                 }
 
@@ -1631,6 +1693,9 @@ static bool zstd_frame(void)
                         break;
         }
 
+zstd_frame_trailer:
+        checksum = zstd_checksum_on;
+        frame_start = zstd_frame_begin;
         if (zstd_have_fcs && zstd_decoded - frame_start != zstd_fcs)
                 return zstd_fail("zstd frame content size mismatch");
 
@@ -1648,6 +1713,8 @@ static bool zstd_frame(void)
         }
 
         zstd_hashing = false;
+        zstd_frame_open = false;
+        zstd_need_trailer = false;
         return true;
 }
 
@@ -1665,18 +1732,35 @@ static bool zstd_skippable(p32 magic)
 
 static bool zstd_stream(void)
 {
-        bool any = false;
+        bool any = zstd_live && zstd_decoded > 0;
 
-        zstd_decoded = 0;
-        zstd_out_used = 0;
-        zstd_out_fill = 0;
-        zstd_hold_emit = false;
-        zstd_why = null;
+        if (!zstd_live)
+        {
+                zstd_decoded = 0;
+                zstd_out_used = 0;
+                if (!zstd_pull)
+                        zstd_out_fill = 0;
+                zstd_hold_emit = false;
+                zstd_why = null;
+                zstd_live = true;
+        }
 
         for (;;)
         {
                 p8 peek[4];
                 p32 magic;
+
+                if (zstd_paused)
+                        return true;
+                if (zstd_frame_open || zstd_need_trailer)
+                {
+                        if (!zstd_frame())
+                                return false;
+                        if (zstd_paused)
+                                return true;
+                        any = true;
+                        continue;
+                }
 
                 if (!zstd_src.have)
                 {
@@ -1684,14 +1768,20 @@ static bool zstd_stream(void)
                         if (!zstd_in_need(1))
                         {
                                 if (zstd_src.eof && !zstd_src.have)
+                                {
+                                        zstd_why = null;
                                         break;
+                                }
                                 return false;
                         }
                 }
                 if (!zstd_in_need(4))
                 {
                         if (zstd_src.eof && !zstd_src.have)
+                        {
+                                zstd_why = null;
                                 break;
+                        }
                         return false;
                 }
                 memory_copy(peek, zstd_in_at(), 4);
@@ -1741,12 +1831,1049 @@ static bipolar zstd_inflate(p8 address_to src, positive src_len,
         zstd_out_mem = dst;
         zstd_out_cap = dst_cap;
         zstd_out_fd = -1;
+        zstd_pull = false;
+        zstd_live = false;
+        zstd_frame_open = false;
+        zstd_paused = false;
+        zstd_need_trailer = false;
         ok = zstd_stream();
         if (ok)
                 ok = zstd_flush();
         zstd_window_close();
         zstd_out_mem = null;
         return ok ? (bipolar)zstd_out_used : -1;
+}
+
+static bool zstd_decode_begin(bipolar in)
+{
+        zstd_src_fd(in);
+        zstd_out_mem = null;
+        zstd_out_fd = -1;
+        zstd_out_fill = 0;
+        zstd_pull = true;
+        zstd_paused = false;
+        zstd_live = false;
+        zstd_finished = false;
+        zstd_frame_open = false;
+        zstd_need_trailer = false;
+        zstd_rest = null;
+        zstd_rest_n = 0;
+        zstd_why = null;
+        return true;
+}
+
+static bool zstd_decode_begin_prefix(bipolar in, p8 address_to prefix, positive n)
+{
+        zstd_decode_begin(in);
+        if (n > ZSTD_IN)
+                return zstd_fail("zstd prefix");
+        memory_copy(zstd_src.buf, prefix, n);
+        zstd_src.have = n;
+        zstd_src.at = 0;
+        return true;
+}
+
+static bipolar zstd_decode_read(p8 address_to dst, positive n)
+{
+        positive copied = 0;
+
+        while (copied < n)
+        {
+                positive take;
+
+                if (zstd_out_fill)
+                {
+                        take = zstd_out_fill > n - copied ? n - copied
+                                                          : zstd_out_fill;
+                        memory_copy(dst + copied, zstd_out_buf, take);
+                        if (take < zstd_out_fill)
+                                memory_copy_apart(zstd_out_buf,
+                                                  zstd_out_buf + take,
+                                                  zstd_out_fill - take);
+                        zstd_out_fill -= take;
+                        copied += take;
+                        continue;
+                }
+                if (zstd_rest_n)
+                {
+                        zstd_paused = false;
+                        if (!zstd_emit(zstd_rest, zstd_rest_n))
+                                return -1;
+                        continue;
+                }
+                if (zstd_finished)
+                        break;
+                zstd_paused = false;
+                if (!zstd_stream())
+                {
+                        if (zstd_src.eof && !zstd_src.have)
+                        {
+                                zstd_finished = true;
+                                zstd_why = null;
+                                break;
+                        }
+                        return -1;
+                }
+                if (!zstd_out_fill && !zstd_paused && !zstd_rest_n &&
+                    zstd_src.eof && !zstd_src.have)
+                {
+                        zstd_finished = true;
+                        break;
+                }
+        }
+        return (bipolar)copied;
+}
+
+static bool zstd_decode_end(void)
+{
+        zstd_pull = false;
+        zstd_finished = true;
+        zstd_window_close();
+        return zstd_why == null;
+}
+
+#include "compression_huffman.c"
+
+static zstd_xxh zstd_enc_hash;
+static p8 zstd_enc_storage[2 * ZSTD_BLOCK_MAX];
+#define zstd_enc_block (zstd_enc_storage + ZSTD_BLOCK_MAX)
+static positive zstd_enc_abs;
+static p32 zstd_enc_rep[3];
+static positive zstd_enc_fill;
+static bool zstd_enc_open;
+static p8 zstd_cli_level;
+
+typedef struct
+{
+        p16 state[64];
+        p32 delta_nb[53];
+        bipolar delta_find[53];
+        p8 log;
+} zstd_ctable;
+
+typedef struct
+{
+        p32 lit;
+        p32 match;
+        p32 off;
+} zstd_enc_seq;
+
+typedef struct
+{
+        p64 acc;
+        p8 bits;
+        p8 address_to buf;
+        positive cap;
+        positive n;
+        bool full;
+} zstd_bout;
+
+static zstd_ctable zstd_ct_ll;
+static zstd_ctable zstd_ct_of;
+static zstd_ctable zstd_ct_ml;
+static bool zstd_ct_ready;
+static zstd_enc_seq zstd_seqs[ZSTD_SEQ_MAX];
+static p8 zstd_enc_lits[ZSTD_BLOCK_MAX];
+static p8 zstd_enc_bits[ZSTD_BLOCK_MAX + 64];
+/* Both candidates share one naturally aligned load and one cache line. */
+static p64 zstd_enc_head[65536];
+
+static __attribute__((always_inline)) inline fn zstd_bout_add(zstd_bout address_to b, p64 v, p8 nbits)
+{
+        if (!nbits)
+                return;
+        if (nbits >= 64 || b->n + 16 >= b->cap)
+        {
+                b->full = true;
+                return;
+        }
+        b->acc |= (v & (((p64)1 << nbits) - 1)) << b->bits;
+        b->bits += nbits;
+        if (b->bits >= 32)
+        {
+                b->buf[b->n] = (p8)b->acc;
+                b->buf[b->n + 1] = (p8)(b->acc >> 8);
+                b->buf[b->n + 2] = (p8)(b->acc >> 16);
+                b->buf[b->n + 3] = (p8)(b->acc >> 24);
+                b->n += 4;
+                b->acc >>= 32;
+                b->bits -= 32;
+        }
+}
+
+static bool zstd_bout_close(zstd_bout address_to b)
+{
+        zstd_bout_add(b, 1, 1);
+        while (b->bits >= 8)
+        {
+                b->buf[b->n++] = (p8)b->acc;
+                b->acc >>= 8;
+                b->bits -= 8;
+        }
+        if (b->bits)
+        {
+                b->buf[b->n++] = (p8)b->acc;
+                b->acc = 0;
+                b->bits = 0;
+        }
+        return !b->full && b->n && b->buf[b->n - 1];
+}
+
+static bool zstd_ctable_build(zstd_ctable address_to ct,
+                              const bipolar address_to norm, positive max_sym,
+                              p8 log)
+{
+        positive size = (positive)1 << log;
+        positive high = size - 1;
+        positive step = (size >> 1) + (size >> 3) + 3;
+        positive mask = size - 1;
+        positive pos = 0;
+        p16 cumul[64];
+        p8 symbol[64];
+        positive s;
+        positive u;
+        positive total;
+
+        if (log > 6 || size > 64 || max_sym > 52)
+                return false;
+        memory_fill(symbol, 0, size);
+        cumul[0] = 0;
+        for (s = 0; s <= max_sym; s++)
+        {
+                if (norm[s] == -1)
+                {
+                        symbol[high] = (p8)s;
+                        high--;
+                        cumul[s + 1] = cumul[s] + 1;
+                }
+                else
+                        cumul[s + 1] =
+                            cumul[s] + (norm[s] < 0 ? 0 : (p16)norm[s]);
+        }
+        for (s = 0; s <= max_sym; s++)
+        {
+                bipolar n = norm[s];
+                bipolar i;
+
+                if (n <= 0)
+                        continue;
+                for (i = 0; i < n; i++)
+                {
+                        while (pos > high)
+                                pos = (pos + step) & mask;
+                        symbol[pos] = (p8)s;
+                        pos = (pos + step) & mask;
+                }
+        }
+        if (pos)
+                return false;
+        for (u = 0; u < size; u++)
+        {
+                p8 sym = symbol[u];
+
+                ct->state[cumul[sym]++] = (p16)(size + u);
+        }
+        total = 0;
+        memory_fill(ct->delta_nb, 0, sizeof(ct->delta_nb));
+        memory_fill(ct->delta_find, 0, sizeof(ct->delta_find));
+        for (s = 0; s <= max_sym; s++)
+        {
+                bipolar n = norm[s];
+
+                if (!n)
+                        continue;
+                if (n == -1 || n == 1)
+                {
+                        ct->delta_nb[s] = ((p32)log << 16) - ((p32)1 << log);
+                        ct->delta_find[s] = (bipolar)total - 1;
+                        total++;
+                }
+                else
+                {
+                        p8 max_bits = (p8)(log - zstd_highbit32((p32)n - 1));
+                        p32 min_state = (p32)n << max_bits;
+
+                        ct->delta_nb[s] = ((p32)max_bits << 16) - min_state;
+                        ct->delta_find[s] = (bipolar)total - (bipolar)n;
+                        total += (positive)n;
+                }
+        }
+        ct->log = log;
+        return true;
+}
+
+static fn zstd_ct_init(void)
+{
+        if (zstd_ct_ready)
+                return;
+        if (zstd_ctable_build(address_of zstd_ct_ll, zstd_ll_default, 35, 6) &&
+            zstd_ctable_build(address_of zstd_ct_of, zstd_of_default, 28, 5) &&
+            zstd_ctable_build(address_of zstd_ct_ml, zstd_ml_default, 52, 6))
+                zstd_ct_ready = true;
+}
+
+static const p8 zstd_ll_codes[64] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 20, 20, 21, 21, 21, 21,
+        22, 22, 22, 22, 22, 22, 22, 22, 23, 23, 23, 23, 23, 23, 23, 23,
+        24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
+};
+static const p8 zstd_ml_codes[131] = {
+        0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+        13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+        29, 30, 31, 32, 32, 33, 33, 34, 34, 35, 35, 36, 36, 36, 36, 37,
+        37, 37, 37, 38, 38, 38, 38, 38, 38, 38, 38, 39, 39, 39, 39, 39,
+        39, 39, 39, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40,
+        40, 40, 40, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41, 41,
+        41, 41, 41, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42,
+        42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42,
+        42, 42, 42,
+};
+
+static p8 zstd_seq_code(const p32 address_to base, p8 max, p32 value)
+{
+        (void)max;
+        if (base == zstd_ll_base)
+                return value < 64 ? zstd_ll_codes[value]
+                                  : 19 + zstd_highbit32(value);
+        return value < 131 ? zstd_ml_codes[value]
+                           : 36 + zstd_highbit32(value - 3);
+}
+
+static p8 zstd_off_code(positive offset)
+{
+        return zstd_highbit32((p32)offset);
+}
+
+typedef struct
+{
+        p32 value;
+        zstd_ctable address_to ct;
+} zstd_cstate;
+
+static bool zstd_cstate_init2(zstd_cstate address_to st, zstd_ctable address_to ct,
+                              p8 symbol)
+{
+        p32 nb;
+        bipolar idx;
+
+        st->ct = ct;
+        nb = (ct->delta_nb[symbol] + (1u << 15)) >> 16;
+        st->value = (nb << 16) - ct->delta_nb[symbol];
+        idx = (bipolar)(st->value >> nb) + ct->delta_find[symbol];
+        if (idx < 0 || idx >= (bipolar)((positive)1 << ct->log))
+                return false;
+        st->value = ct->state[idx];
+        return true;
+}
+
+static __attribute__((always_inline)) inline fn zstd_cstate_encode(zstd_bout address_to b, zstd_cstate address_to st,
+                             p8 symbol)
+{
+        p32 nb = (st->value + st->ct->delta_nb[symbol]) >> 16;
+        bipolar idx = (bipolar)(st->value >> nb) + st->ct->delta_find[symbol];
+
+        zstd_bout_add(b, st->value, (p8)nb);
+        if (idx < 0 || idx >= (bipolar)((positive)1 << st->ct->log))
+        {
+                b->full = true;
+                return;
+        }
+        st->value = st->ct->state[idx];
+}
+
+static fn zstd_cstate_flush(zstd_bout address_to b, zstd_cstate address_to st)
+{
+        zstd_bout_add(b, st->value, st->ct->log);
+}
+
+/* RFC 8878 literals: a complete codebook, FSE-compressed weights when
+   the alphabet exceeds the direct nibble form, and four backward streams.
+   Sequence and weight FSE share the bounded state-table builder. */
+static p8 zstd_packed_lits[ZSTD_BLOCK_MAX * 2 + 512];
+
+static fn zstd_bout_pad(zstd_bout address_to b)
+{
+        while (b->bits >= 8)
+        {
+                b->buf[b->n++] = (p8)b->acc;
+                b->acc >>= 8;
+                b->bits -= 8;
+        }
+        if (b->bits)
+                b->buf[b->n++] = (p8)b->acc;
+        b->bits = 0;
+        b->acc = 0;
+}
+
+static positive zstd_write_norm(p8 address_to dst, const bipolar address_to norm,
+                                 positive max_sym)
+{
+        zstd_bout b = {0};
+        positive remaining = 65;
+        positive threshold = 64;
+        positive sym = 0;
+        p8 bits = 7;
+        bool zero = false;
+
+        b.buf = dst;
+        b.cap = 256;
+        zstd_bout_add(address_of b, 1, 4); /* table log 6 */
+        while (remaining > 1 && sym <= max_sym)
+        {
+                if (zero)
+                {
+                        positive run = 0;
+                        while (sym <= max_sym && !norm[sym])
+                                sym++, run++;
+                        while (run >= 3)
+                                zstd_bout_add(address_of b, 3, 2), run -= 3;
+                        zstd_bout_add(address_of b, run, 2);
+                }
+                if (sym > max_sym)
+                        return 0;
+                positive maximum = 2 * threshold - 1 - remaining;
+                positive count = norm[sym] + 1;
+                positive value = count;
+                if (count >= threshold)
+                        value += maximum;
+                zstd_bout_add(address_of b, value,
+                              count < maximum ? bits - 1 : bits);
+                remaining -= norm[sym];
+                zero = !norm[sym++];
+                while (remaining < threshold)
+                        threshold >>= 1, bits--;
+        }
+        zstd_bout_pad(address_of b);
+        return remaining == 1 && !b.full ? b.n : 0;
+}
+
+static positive zstd_pack_weights(p8 address_to dst, p8 address_to weight,
+                                   positive n)
+{
+        p32 freq[12] = {0};
+        bipolar norm[12] = {0};
+        zstd_ctable ct;
+        zstd_cstate state[2];
+        zstd_bout b = {0};
+        positive at;
+        positive total = 0;
+        positive biggest = 0;
+        positive max_sym = 0;
+        positive head;
+
+        if (n < 2)
+                return 0;
+        for (at = 0; at < n; at++)
+                freq[weight[at]]++;
+        for (at = 0; at < 12; at++)
+        {
+                if (freq[at] > freq[biggest])
+                        biggest = at;
+                if (freq[at])
+                {
+                        norm[at] = (freq[at] * 64) / n;
+                        if (!norm[at])
+                                norm[at] = 1;
+                        total += norm[at];
+                        max_sym = at;
+                }
+        }
+        /* A one-symbol, zero-bit FSE machine has no finite end marker. */
+        if (freq[biggest] == n)
+        {
+                positive other = biggest ? 0 : 1;
+                norm[other] = 1;
+                total++;
+                if (other > max_sym)
+                        max_sym = other;
+        }
+        while (total > 64)
+        {
+                positive most = biggest;
+                for (at = 0; at <= max_sym; at++)
+                        if (norm[at] > norm[most])
+                                most = at;
+                if (norm[most] <= 1)
+                        return 0;
+                norm[most]--;
+                total--;
+        }
+        norm[biggest] += 64 - total;
+        head = zstd_write_norm(dst + 1, norm, max_sym);
+        if (!head || !zstd_ctable_build(address_of ct, norm, max_sym, 6))
+                return 0;
+        b.buf = dst + 1 + head;
+        b.cap = 256 - head;
+        if (!zstd_cstate_init2(address_of state[(n - 1) & 1], address_of ct,
+                                weight[n - 1]) ||
+            !zstd_cstate_init2(address_of state[(n - 2) & 1], address_of ct,
+                                weight[n - 2]))
+                return 0;
+        at = n - 2;
+        while (at)
+        {
+                at--;
+                zstd_cstate_encode(address_of b, address_of state[at & 1],
+                                    weight[at]);
+        }
+        zstd_cstate_flush(address_of b, address_of state[1]);
+        zstd_cstate_flush(address_of b, address_of state[0]);
+        if (!zstd_bout_close(address_of b) || head + b.n >= 128)
+                return 0;
+        dst[0] = (p8)(head + b.n);
+        return 1 + head + b.n;
+}
+
+static positive zstd_pack_literals(p8 address_to src, positive n,
+                                    p8 address_to header, positive address_to hn)
+{
+        p32 freq[256] = {0};
+        p32 work[256];
+        p8 length[256];
+        p8 weight[256];
+        p32 table[256];
+        positive max_sym = 0;
+        positive symbols = 0;
+        positive max_bits = 0;
+        positive bit_cost = 0;
+        positive at;
+        positive head;
+        positive size;
+        positive start = 0;
+        positive segment = (n + 3) / 4;
+        positive position = 0;
+        p64 field;
+        positive header_n;
+
+        if (n < 64)
+                return 0;
+        for (at = 0; at < n; at++)
+                freq[src[at]]++;
+        for (at = 0; at < 256; at++)
+                if (freq[at])
+                        symbols++, max_sym = at;
+        if (symbols < 2)
+                return 0;
+        memory_copy_apart(work, freq, sizeof(freq));
+        for (;;)
+        {
+                positive kraft = 0;
+                max_bits = 0;
+                compression_build_lengths(work, 256, length, 11);
+                for (at = 0; at < 256; at++)
+                        if (length[at])
+                        {
+                                kraft += (positive)1 << (11 - length[at]);
+                                if (length[at] > max_bits)
+                                        max_bits = length[at];
+                        }
+                if (kraft == 2048)
+                        break;
+                /* Flatten only when an unconstrained tree exceeds 11 bits.
+                   Every used symbol stays present, and the rebuilt tree is
+                   complete; truncating depths alone oversubscribes it. */
+                for (at = 0; at < 256; at++)
+                        if (work[at])
+                                work[at] = (work[at] + 1) >> 1;
+        }
+        for (at = 0; at <= max_sym; at++)
+        {
+                weight[at] = length[at] ? max_bits + 1 - length[at] : 0;
+                bit_cost += freq[at] * length[at];
+        }
+        if ((bit_cost + 7) / 8 + 12 >= n)
+                return 0;
+        for (positive w = 1; w <= max_bits; w++)
+                for (at = 0; at <= max_sym; at++)
+                        if (weight[at] == w)
+                        {
+                                table[at] = (p32)((length[at] << 16) |
+                                                (start >> (w - 1)));
+                                start += (positive)1 << (w - 1);
+                        }
+        if (max_sym <= 128)
+        {
+                zstd_packed_lits[0] = (p8)(127 + max_sym);
+                for (at = 0; at < max_sym; at += 2)
+                        zstd_packed_lits[1 + at / 2] = (p8)(weight[at] << 4) |
+                                (at + 1 < max_sym ? weight[at + 1] : 0);
+                head = 1 + (max_sym + 1) / 2;
+        }
+        else
+        {
+                head = zstd_pack_weights(zstd_packed_lits, weight, max_sym);
+                if (!head)
+                        return 0;
+        }
+        size = head + 6;
+        for (at = 0; at < 4; at++)
+        {
+                positive take = at == 3 ? n - position : segment;
+                positive packed = huffman_encode_back(zstd_packed_lits + size,
+                                                       src + position, take, table);
+                if (at < 3)
+                {
+                        zstd_packed_lits[head + 2 * at] = (p8)packed;
+                        zstd_packed_lits[head + 2 * at + 1] = (p8)(packed >> 8);
+                }
+                size += packed;
+                position += take;
+        }
+        if (n < 1024 && size < 1024)
+        {
+                field = 6 | (n << 4) | (size << 14);
+                header_n = 3;
+        }
+        else if (n < 16384 && size < 16384)
+        {
+                field = 10 | (n << 4) | ((p64)size << 18);
+                header_n = 4;
+        }
+        else
+        {
+                field = 14 | (n << 4) | ((p64)size << 22);
+                header_n = 5;
+        }
+        if (size + header_n >= n + (n < 32 ? 1 : n < 4096 ? 2 : 3))
+                return 0;
+        for (at = 0; at < header_n; at++)
+                header[at] = (p8)(field >> (at * 8));
+        address_to hn = header_n;
+        return size;
+}
+
+static bool zstd_enc_out(p8 address_to p, positive n)
+{
+        if (!n)
+                return true;
+        if (zstd_out_mem)
+        {
+                if (zstd_out_used + n > zstd_out_cap)
+                        return zstd_fail("zstd output is too small");
+                memory_copy(zstd_out_mem + zstd_out_used, p, n);
+                zstd_out_used += n;
+                return true;
+        }
+        if (system_write_all((positive)zstd_out_fd, p, n) != n)
+                return zstd_fail("zstd write failed");
+        return true;
+}
+
+static bool zstd_emit_raw_block(p8 address_to src, positive n, bool last)
+{
+        p32 pack = (last ? 1u : 0) | (0 << 1) | (n << 3);
+        p8 header[3];
+
+        header[0] = (p8)pack;
+        header[1] = (p8)(pack >> 8);
+        header[2] = (p8)(pack >> 16);
+        if (!zstd_enc_out(header, 3))
+                return false;
+        return zstd_enc_out(src, n);
+}
+
+static p16 zstd_enc_hash4(p8 address_to p)
+{
+        p32 h = (p32)p[0] | ((p32)p[1] << 8) | ((p32)p[2] << 16) |
+                ((p32)p[3] << 24);
+
+        h *= 0x1e35a7bdu;
+        return (p16)(h >> 16);
+}
+
+static bool zstd_emit_comp_block(p8 address_to src, positive n, bool last)
+{
+        zstd_bout bits;
+        zstd_cstate ll_st;
+        zstd_cstate of_st;
+        zstd_cstate ml_st;
+        positive lit_n = 0;
+        positive lit_at = 0;
+        positive nseq = 0;
+        positive pos = 0;
+        positive used;
+        p32 pack;
+        p8 header[3];
+        p8 lit_hdr[5];
+        p8 address_to lit_data = zstd_enc_lits;
+        positive lit_size;
+        p8 seq_hdr[4];
+        positive seq_hdr_n;
+        positive at;
+        p32 rep[3] = {zstd_enc_rep[0], zstd_enc_rep[1], zstd_enc_rep[2]};
+
+        zstd_ct_init();
+        if (!zstd_ct_ready)
+                return zstd_emit_raw_block(src, n, last);
+        memory_fill(address_of bits, 0, sizeof(bits));
+        bits.buf = zstd_enc_bits;
+        bits.cap = sizeof(zstd_enc_bits);
+        while (pos + 4 <= n && nseq < ZSTD_SEQ_MAX)
+        {
+                p16 h = zstd_enc_hash4(src + pos);
+                p64 candidates = zstd_enc_head[h];
+                positive match = 0;
+                positive dist = 0;
+
+                zstd_enc_head[h] = (candidates << 32) | (p32)(zstd_enc_abs + pos + 1);
+#pragma GCC unroll 2
+                for (positive c = 0; c < 2; c++)
+                {
+                        positive old = (p32)(candidates >> (c * 32));
+                        if (!old)
+                                continue;
+                        positive d = zstd_enc_abs + pos + 1 - old;
+                        if (!d || d > ZSTD_BLOCK_MAX || old > zstd_enc_abs + pos)
+                                continue;
+                        p8 address_to there = src + pos - d;
+                        if (src[pos] != there[0] ||
+                            (match && src[pos + match] != there[match]) ||
+                            memory_compare(src + pos, there, 4))
+                                continue;
+                        positive k = 4 + memory_common_prefix(src + pos + 4,
+                                                               there + 4, n - pos - 4);
+                        if (k > match)
+                        {
+                                match = k;
+                                dist = d;
+                                if (k == n - pos)
+                                        break;
+                        }
+                }
+                /* One-step lazy parsing catches a much longer match after
+                   a literal without inserting the lookahead position twice. */
+                if (match && match < 16 && pos + 5 <= n)
+                {
+                        positive old = (p32)zstd_enc_head[zstd_enc_hash4(src + pos + 1)];
+                        positive d = zstd_enc_abs + pos + 2 - old;
+                        if (old && d && d <= ZSTD_BLOCK_MAX &&
+                            old <= zstd_enc_abs + pos + 1 &&
+                            !memory_compare(src + pos + 1, src + pos + 1 - d, 4))
+                        {
+                                positive k = 4 + memory_common_prefix(src + pos + 5,
+                                                        src + pos + 5 - d, n - pos - 5);
+                                if (k > match + 1)
+                                        match = 0;
+                        }
+                }
+                if (match)
+                {
+                        positive run = pos - lit_at;
+                        positive k;
+
+                        if (lit_n + run > n)
+                                return zstd_emit_raw_block(src, n, last);
+                        memory_copy(zstd_enc_lits + lit_n, src + lit_at, run);
+                        lit_n += run;
+                        zstd_seqs[nseq].lit = run;
+                        zstd_seqs[nseq].match = match;
+                        /* RFC repeat offsets depend on whether LL is zero.
+                           Keep the speculative history local until this block
+                           has won against raw output. */
+                        positive value = dist + 3;
+                        positive which = 3;
+                        if (run && dist == rep[0])
+                                value = 1, which = 0;
+                        else if (dist == rep[1])
+                                value = run ? 2 : 1, which = 1;
+                        else if (dist == rep[2])
+                                value = run ? 3 : 2, which = 2;
+                        else if (!run && rep[0] > 1 && dist == rep[0] - 1)
+                                value = 3;
+                        if (which)
+                        {
+                                if (which != 1)
+                                        rep[2] = rep[1];
+                                rep[1] = rep[0];
+                                rep[0] = (p32)dist;
+                        }
+                        zstd_seqs[nseq].off = value;
+                        nseq++;
+                        for (k = 1; k < match; k++)
+                                if (pos + k + 4 <= n)
+                                {
+                                        p16 hh = zstd_enc_hash4(src + pos + k);
+
+                                        zstd_enc_head[hh] = (zstd_enc_head[hh] << 32) |
+                                            (p32)(zstd_enc_abs + pos + k + 1);
+                                }
+                        pos += match;
+                        lit_at = pos;
+                }
+                else
+                {
+                        /* Long literal runs make dense hash probes expensive
+                           without producing sequences. Resume dense probing
+                           immediately after a match. */
+                        positive step = 1 + ((pos - lit_at) >> 8);
+                        if (step > 16) step = 16;
+                        pos += step < n - pos ? step : n - pos;
+                }
+        }
+        {
+                positive run = n - lit_at;
+
+                memory_copy(zstd_enc_lits + lit_n, src + lit_at, run);
+                lit_n += run;
+        }
+        if (lit_n < 32)
+        {
+                lit_hdr[0] = (p8)(lit_n << 3);
+                used = 1;
+        }
+        else if (lit_n < 4096)
+        {
+                p16 v = (p16)((lit_n << 4) | 4);
+
+                lit_hdr[0] = (p8)v;
+                lit_hdr[1] = (p8)(v >> 8);
+                used = 2;
+        }
+        else
+        {
+                p32 v = (lit_n << 4) | 12;
+
+                lit_hdr[0] = (p8)v;
+                lit_hdr[1] = (p8)(v >> 8);
+                lit_hdr[2] = (p8)(v >> 16);
+                used = 3;
+        }
+        lit_size = zstd_pack_literals(zstd_enc_lits, lit_n, lit_hdr,
+                                        address_of used);
+        if (lit_size)
+                lit_data = zstd_packed_lits;
+        else
+                lit_size = lit_n;
+        if (nseq < 128)
+        {
+                seq_hdr[0] = (p8)nseq;
+                seq_hdr_n = 1;
+        }
+        else if (nseq >= 0x7f00)
+        {
+                seq_hdr[0] = 255;
+                seq_hdr[1] = (p8)(nseq - 0x7f00);
+                seq_hdr[2] = (p8)((nseq - 0x7f00) >> 8);
+                seq_hdr_n = 3;
+        }
+        else
+        {
+                seq_hdr[0] = (p8)(128 + (nseq >> 8));
+                seq_hdr[1] = (p8)nseq;
+                seq_hdr_n = 2;
+        }
+        if (nseq)
+                seq_hdr[seq_hdr_n++] = 0;
+        if (nseq)
+        {
+                zstd_enc_seq last_seq = zstd_seqs[nseq - 1];
+                p8 llc = zstd_seq_code(zstd_ll_base, 35, last_seq.lit);
+                p8 mlc = zstd_seq_code(zstd_ml_base, 52, last_seq.match);
+                p8 ofc = zstd_off_code(last_seq.off);
+                p32 ll_x = last_seq.lit - zstd_ll_base[llc];
+                p32 ml_x = last_seq.match - zstd_ml_base[mlc];
+                p32 of_x = last_seq.off - ((positive)1 << ofc);
+
+                if (!zstd_cstate_init2(address_of ll_st, address_of zstd_ct_ll,
+                                       llc) ||
+                    !zstd_cstate_init2(address_of of_st, address_of zstd_ct_of,
+                                       ofc) ||
+                    !zstd_cstate_init2(address_of ml_st, address_of zstd_ct_ml,
+                                       mlc))
+                        return zstd_emit_raw_block(src, n, last);
+                zstd_bout_add(address_of bits, ll_x, zstd_ll_extra[llc]);
+                zstd_bout_add(address_of bits, ml_x, zstd_ml_extra[mlc]);
+                zstd_bout_add(address_of bits, of_x, ofc);
+                at = nseq - 1;
+                while (at)
+                {
+                        zstd_enc_seq seq;
+
+                        at--;
+                        seq = zstd_seqs[at];
+                        llc = zstd_seq_code(zstd_ll_base, 35, seq.lit);
+                        mlc = zstd_seq_code(zstd_ml_base, 52, seq.match);
+                        ofc = zstd_off_code(seq.off);
+                        ll_x = seq.lit - zstd_ll_base[llc];
+                        ml_x = seq.match - zstd_ml_base[mlc];
+                        of_x = seq.off - ((positive)1 << ofc);
+                        zstd_cstate_encode(address_of bits, address_of of_st,
+                                           ofc);
+                        zstd_cstate_encode(address_of bits, address_of ml_st,
+                                           mlc);
+                        zstd_cstate_encode(address_of bits, address_of ll_st,
+                                           llc);
+                        zstd_bout_add(address_of bits, ll_x, zstd_ll_extra[llc]);
+                        zstd_bout_add(address_of bits, ml_x, zstd_ml_extra[mlc]);
+                        zstd_bout_add(address_of bits, of_x, ofc);
+                }
+        }
+        if (nseq)
+        {
+                zstd_cstate_flush(address_of bits, address_of ml_st);
+                zstd_cstate_flush(address_of bits, address_of of_st);
+                zstd_cstate_flush(address_of bits, address_of ll_st);
+                if (!zstd_bout_close(address_of bits))
+                        return zstd_emit_raw_block(src, n, last);
+        }
+        {
+                positive csize = used + lit_size + seq_hdr_n + bits.n;
+
+                if (csize >= n)
+                        return zstd_emit_raw_block(src, n, last);
+                pack = (last ? 1u : 0) | (2u << 1) | ((p32)csize << 3);
+                header[0] = (p8)pack;
+                header[1] = (p8)(pack >> 8);
+                header[2] = (p8)(pack >> 16);
+                if (!zstd_enc_out(header, 3) || !zstd_enc_out(lit_hdr, used) ||
+                    !zstd_enc_out(lit_data, lit_size) ||
+                    !zstd_enc_out(seq_hdr, seq_hdr_n) ||
+                    !zstd_enc_out(bits.buf, bits.n))
+                        return false;
+        }
+        memory_copy_apart(zstd_enc_rep, rep, sizeof(rep));
+        return true;
+}
+
+static bool zstd_emit_block(p8 address_to src, positive n, bool last)
+{
+        bool ok = n >= 12 ? zstd_emit_comp_block(src, n, last)
+                          : zstd_emit_raw_block(src, n, last);
+        if (ok)
+        {
+                zstd_enc_abs += n;
+                if (n == ZSTD_BLOCK_MAX)
+                        memory_copy_apart(zstd_enc_storage, src, n);
+                if (zstd_enc_abs >= 0x80000000u)
+                {
+                        positive shift = zstd_enc_abs - ZSTD_BLOCK_MAX;
+                        for (positive i = 0; i < 65536; i++)
+                        {
+                                p32 first = (p32)zstd_enc_head[i], second = (p32)(zstd_enc_head[i] >> 32);
+                                first = first > shift ? first - shift : 0;
+                                second = second > shift ? second - shift : 0;
+                                zstd_enc_head[i] = ((p64)second << 32) | first;
+                        }
+                        zstd_enc_abs -= shift;
+                }
+        }
+        return ok;
+}
+
+static bool zstd_encode_begin(bipolar out, p8 level)
+{
+        p8 head[6];
+
+        (void)level;
+        zstd_out_fd = out;
+        zstd_out_mem = null;
+        zstd_enc_fill = 0;
+        zstd_enc_abs = 0;
+        zstd_enc_rep[0] = 1;
+        zstd_enc_rep[1] = 4;
+        zstd_enc_rep[2] = 8;
+        memory_fill(zstd_enc_head, 0, sizeof(zstd_enc_head));
+        zstd_enc_open = true;
+        zstd_why = null;
+        zstd_xxh_start(address_of zstd_enc_hash, 0);
+        head[0] = 0x28;
+        head[1] = 0xb5;
+        head[2] = 0x2f;
+        head[3] = 0xfd;
+        head[4] = 0x04;
+        head[5] = 0x38;
+        if (out >= 0)
+        {
+                if (system_write_all((positive)out, head, 6) != 6)
+                        return zstd_fail("zstd write failed");
+        }
+        return true;
+}
+
+static bool zstd_encode_write(p8 address_to src, positive n)
+{
+        zstd_xxh_add(address_of zstd_enc_hash, src, n);
+        while (n)
+        {
+                positive room = ZSTD_BLOCK_MAX - zstd_enc_fill;
+                positive take = n < room ? n : room;
+
+                memory_copy(zstd_enc_block + zstd_enc_fill, src, take);
+                zstd_enc_fill += take;
+                src += take;
+                n -= take;
+                if (zstd_enc_fill == ZSTD_BLOCK_MAX)
+                {
+                        if (!zstd_emit_block(zstd_enc_block, zstd_enc_fill,
+                                             false))
+                                return false;
+                        zstd_enc_fill = 0;
+                }
+        }
+        return true;
+}
+
+static bool zstd_encode_end(void)
+{
+        p32 sum;
+        p8 tail[4];
+
+        if (!zstd_emit_block(zstd_enc_block, zstd_enc_fill, true))
+                return false;
+        zstd_enc_fill = 0;
+        sum = (p32)zstd_xxh_end(address_of zstd_enc_hash);
+        tail[0] = (p8)sum;
+        tail[1] = (p8)(sum >> 8);
+        tail[2] = (p8)(sum >> 16);
+        tail[3] = (p8)(sum >> 24);
+        if (zstd_out_mem)
+        {
+                if (zstd_out_used + 4 > zstd_out_cap)
+                        return zstd_fail("zstd output is too small");
+                memory_copy(zstd_out_mem + zstd_out_used, tail, 4);
+                zstd_out_used += 4;
+                return true;
+        }
+        if (zstd_out_fd >= 0 &&
+            system_write_all((positive)zstd_out_fd, tail, 4) != 4)
+                return zstd_fail("zstd write failed");
+        zstd_enc_open = false;
+        return true;
+}
+
+static bipolar zstd_deflate_mem(p8 address_to src, positive src_len,
+                                p8 address_to dst, positive dst_cap, p8 level)
+{
+        (void)level;
+        zstd_out_mem = dst;
+        zstd_out_cap = dst_cap;
+        zstd_out_used = 0;
+        zstd_out_fd = -1;
+        zstd_enc_fill = 0;
+        zstd_enc_abs = 0;
+        zstd_enc_rep[0] = 1;
+        zstd_enc_rep[1] = 4;
+        zstd_enc_rep[2] = 8;
+        memory_fill(zstd_enc_head, 0, sizeof(zstd_enc_head));
+        zstd_enc_open = true;
+        zstd_why = null;
+        zstd_xxh_start(address_of zstd_enc_hash, 0);
+        if (6 > dst_cap)
+                return -1;
+        dst[0] = 0x28;
+        dst[1] = 0xb5;
+        dst[2] = 0x2f;
+        dst[3] = 0xfd;
+        dst[4] = 0x04;
+        dst[5] = 0x38;
+        zstd_out_used = 6;
+        if (!zstd_encode_write(src, src_len))
+                return -1;
+        if (!zstd_encode_end())
+                return -1;
+        zstd_out_mem = null;
+        return (bipolar)zstd_out_used;
 }
 
 #ifndef ZSTD_CORE_ONLY
@@ -1794,6 +2921,52 @@ static bool zstd_suffix_out(string_address in, p8 address_to into, positive room
         return false;
 }
 
+static bool zstd_suffix_add(string_address in, p8 address_to into, positive room)
+{
+        positive n = string_length(in);
+
+        if (n + 5 >= room)
+                return false;
+        memory_copy(into, in, n);
+        memory_copy(into + n, ".zst", 5);
+        return true;
+}
+
+static b32 zstd_encode_fd(bipolar in, bipolar out)
+{
+        p8 buf[ZSTD_OUT];
+        bipolar got;
+
+        if (!zstd_encode_begin(out, zstd_cli_level))
+        {
+                zstd_refuse(zstd_why ? zstd_why : (string_address) "encode failed");
+                return 1;
+        }
+        for (;;)
+        {
+                got = system_read_retry((positive)in, buf, sizeof(buf));
+                if (got < 0)
+                {
+                        zstd_refuse("read failed");
+                        return 1;
+                }
+                if (!got)
+                        break;
+                if (!zstd_encode_write(buf, (positive)got))
+                {
+                        zstd_refuse(zstd_why ? zstd_why
+                                             : (string_address) "encode failed");
+                        return 1;
+                }
+        }
+        if (!zstd_encode_end())
+        {
+                zstd_refuse(zstd_why ? zstd_why : (string_address) "encode failed");
+                return 1;
+        }
+        return 0;
+}
+
 static b32 zstd_one(bipolar in, bipolar out)
 {
         bool ok;
@@ -1801,6 +2974,11 @@ static b32 zstd_one(bipolar in, bipolar out)
         zstd_src_fd(in);
         zstd_out_mem = null;
         zstd_out_fd = out;
+        zstd_pull = false;
+        zstd_live = false;
+        zstd_frame_open = false;
+        zstd_paused = false;
+        zstd_need_trailer = false;
         ok = zstd_stream();
         if (ok)
                 ok = zstd_flush();
@@ -1826,6 +3004,7 @@ static b32 file_zstd(void)
         bool test = false;
         bool remove_src = false;
         bool quiet = false;
+        p8 level = 3;
         string_address out_path = null;
         p8 out_name[4096];
 
@@ -1845,6 +3024,11 @@ static b32 file_zstd(void)
                         break;
                 if (word[1] == '-')
                 {
+                        if (string_equals(word, "--compress"))
+                        {
+                                decompress = false;
+                                continue;
+                        }
                         if (string_equals(word, "--decompress") ||
                             string_equals(word, "--uncompress"))
                         {
@@ -1883,7 +3067,7 @@ static b32 file_zstd(void)
                         if (string_equals(word, "--help"))
                         {
                                 string_format(log,
-                                              "Usage: zstd -d [-cfkqt] [-o FILE] [--rm] [FILE...]\n");
+                                              "Usage: zstd [-cdfkqz123456789] [-o FILE] [--rm] [FILE...]\n");
                                 log_flush();
                                 return 0;
                         }
@@ -1909,8 +3093,12 @@ static b32 file_zstd(void)
                         {
                                 if (*letters == 'd')
                                         decompress = true;
+                                else if (*letters == 'z')
+                                        decompress = false;
                                 else if (*letters == 'c')
                                         stdout_out = true;
+                                else if (*letters >= '1' && *letters <= '9')
+                                        level = (p8)(*letters - '0');
                                 else if (*letters == 'f')
                                         force = true;
                                 else if (*letters == 'k')
@@ -1931,7 +3119,7 @@ static b32 file_zstd(void)
                                 else if (*letters == 'h')
                                 {
                                         string_format(log,
-                                                      "Usage: zstd -d [-cfkqt] [-o FILE] [--rm] [FILE...]\n");
+                                                      "Usage: zstd [-cdfkqz123456789] [-o FILE] [--rm] [FILE...]\n");
                                         log_flush();
                                         return 0;
                                 }
@@ -1966,17 +3154,14 @@ static b32 file_zstd(void)
                 }
         }
 
-        if (!decompress)
-        {
-                zstd_refuse("this applet decompresses only");
-                return 1;
-        }
-
+        zstd_cli_level = level;
         if (at >= count)
         {
                 bipolar out = test ? -1 : 1;
 
-                return zstd_one(0, out);
+                if (decompress)
+                        return zstd_one(0, out);
+                return zstd_encode_fd(0, out);
         }
 
         for (; at < count && !zstd_status; at++)
@@ -2026,7 +3211,11 @@ static b32 file_zstd(void)
                                 }
                                 close_out = true;
                         }
-                        else if (!zstd_suffix_out(path, out_name, sizeof(out_name)))
+                        else if (decompress
+                                         ? !zstd_suffix_out(path, out_name,
+                                                            sizeof(out_name))
+                                         : !zstd_suffix_add(path, out_name,
+                                                            sizeof(out_name)))
                         {
                                 zstd_refuse("cannot guess output name; use -c or -o");
                                 system_close(in);
@@ -2053,7 +3242,10 @@ static b32 file_zstd(void)
                         }
                 }
 
-                zstd_one(in, out);
+                if (decompress)
+                        zstd_one(in, out);
+                else
+                        zstd_encode_fd(in, out);
                 if (close_in)
                         system_close(in);
                 if (close_out)

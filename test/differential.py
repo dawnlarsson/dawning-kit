@@ -21207,7 +21207,258 @@ def harness_image_nodes(argv):
     return 1 if failures else 0
 
 
+def harness_compression(argv):
+    """Byte-checked codec/tar interoperability and reproducible CPU benchmarks."""
+    import argparse
+    import hashlib
+    import json
+    import platform
+    import random
+    import shlex
+    import shutil
+    import statistics
+    import subprocess
+    import tempfile
+    import time
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--binary', action='append', required=True, metavar='LABEL=PATH')
+    parser.add_argument('--runner', default='', help='qemu command; correctness only')
+    parser.add_argument('--bench', action='store_true')
+    parser.add_argument('--corpus-dir', type=Path)
+    parser.add_argument('--runs', type=int, default=5)
+    parser.add_argument('--cpu', type=int)
+    parser.add_argument('--output', type=Path)
+    opts = parser.parse_args(argv)
+    if opts.runner and opts.bench:
+        parser.error('emulator wall time is not a hardware performance result')
+    if opts.runs < 1:
+        parser.error('--runs must be positive')
+    if opts.cpu is not None:
+        os.sched_setaffinity(0, {opts.cpu})
+    runner = shlex.split(opts.runner)
+    cases = [('gzip', '6', '.gz'), ('xz', '1', '.xz'), ('zstd', '3', '.zst')]
+    refs = {name: shutil.which(name) for name in ('gzip', 'xz', 'zstd', 'tar')}
+    if not all(refs.values()):
+        print('compression NOT RUN: gzip, xz, zstd and tar reference tools are required')
+        return 2
+    binaries = []
+    for specification in opts.binary:
+        label, sep, binary = specification.partition('=')
+        if (not sep or not label or label == 'reference' or
+                label in dict(binaries) or not Path(binary).is_file()):
+            parser.error('--binary requires LABEL=existing-file')
+        binaries.append((label, str(Path(binary).resolve())))
+    report = {'machine': platform.platform(), 'cpu': opts.cpu, 'runner': runner,
+              'runs': opts.runs, 'corpora': {}, 'measurements': [], 'checks': 0,
+              'failures': [], 'binaries': {k: hashlib.sha256(Path(v).read_bytes()).hexdigest()
+                                        for k, v in binaries}}
+
+    def command(exe, codec, decode=False, level='6', reference=False):
+        args = [exe, '-dc' if decode else '-c']
+        if not decode:
+            args.append('-' + level)
+            if reference and codec in ('xz', 'zstd'):
+                args.append('-T1')
+        return args
+
+    def call(cmd, data=None):
+        return subprocess.run(cmd, input=data, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, timeout=120)
+
+    def check(label, okay, detail=''):
+        report['checks'] += 1
+        if not okay:
+            report['failures'].append(label + (': ' + detail[:180] if detail else ''))
+            print('FAIL', report['failures'][-1], flush=True)
+
+    rng = random.Random(0x512C0DEC)
+    with tempfile.TemporaryDirectory(prefix='compression-') as temporary:
+        root = Path(temporary)
+        farms = {}
+        for i, (label, binary) in enumerate(binaries):
+            farm = root / ('bin-' + str(i)); farm.mkdir()
+            for codec in refs:
+                (farm / codec).symlink_to(binary)
+            farms[label] = farm
+
+        if opts.bench:
+            if opts.corpus_dir:
+                corpus = {p.stem: p for p in sorted(opts.corpus_dir.glob('*.bin'))}
+                # Ignore benchmark products whose original corpus name is embedded.
+                corpus = {k: v for k, v in corpus.items() if k in ('src', 'elf', 'rnd', 'rep')}
+                if not corpus:
+                    parser.error('--corpus-dir needs src.bin/elf.bin/rnd.bin/rep.bin')
+            else:
+                corpus = {}
+                source = b''.join(p.read_bytes() for p in sorted((HARNESS_ROOT / 'src').rglob('*.c')))
+                for name, data in [('src', (source * (16777216 // len(source) + 1))[:16777216]),
+                                   ('rnd', rng.randbytes(8 * 1048576)),
+                                   ('rep', b'a' * (16 * 1048576))]:
+                    path = root / (name + '.bin'); path.write_bytes(data); corpus[name] = path
+            for name, path in corpus.items():
+                data = path.read_bytes()
+                report['corpora'][name] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+                for codec, level, ext in cases:
+                    reference = call(command(refs[codec], codec, level=level, reference=True), data)
+                    check(name + '/' + codec + '/reference encode', reference.returncode == 0)
+                    reference_path = root / ('reference-' + name + ext)
+                    reference_path.write_bytes(reference.stdout)
+                    for label, _ in [*binaries, ('reference', None)]:
+                        exe = refs[codec] if label == 'reference' else str(farms[label] / codec)
+                        encode = command(exe, codec, level=level, reference=label == 'reference') + [str(path)]
+                        encoded = call(encode)
+                        oracle = call(command(refs[codec], codec, True), encoded.stdout)
+                        check(label + '/' + codec + '/' + name + '/encode bytes',
+                              encoded.returncode == oracle.returncode == 0 and oracle.stdout == data,
+                              encoded.stderr.decode(errors='replace') + oracle.stderr.decode(errors='replace'))
+                        decode = command(exe, codec, True) + [str(reference_path)]
+                        decoded = call(decode)
+                        check(label + '/' + codec + '/' + name + '/decode bytes',
+                              decoded.returncode == 0 and decoded.stdout == data,
+                              decoded.stderr.decode(errors='replace'))
+                        for operation, cmd in [('encode', encode), ('decode', decode)]:
+                            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                            timings = []
+                            for _ in range(opts.runs):
+                                began = time.perf_counter_ns()
+                                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                                timings.append((time.perf_counter_ns() - began) / 1e9)
+                            median = statistics.median(timings)
+                            row = dict(binary=label, codec=codec, corpus=name, operation=operation,
+                                       seconds=timings, median_seconds=median,
+                                       MiB_per_second=len(data) / 1048576 / median,
+                                       compressed_bytes=len(encoded.stdout))
+                            report['measurements'].append(row)
+                            print('%-10s %-4s %-6s %-6s %8.1f MiB/s %9d bytes' %
+                                  (label, codec, name, operation, row['MiB_per_second'], len(encoded.stdout)), flush=True)
+        else:
+            data_sets = [('empty', b''), ('byte', b'x'), ('alphabet', bytes(range(256)) * 3)]
+            for size in (7, 8, 9, 257, 258, 259, 16383, 16384, 16385,
+                         32767, 32768, 32769, 65535, 65536, 65537, 131071, 131072, 131073):
+                raw = rng.randbytes(size)
+                data_sets.append(('random-' + str(size), raw))
+            for period in (1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 255, 32767, 32768, 65536):
+                raw = rng.randbytes(period)
+                data_sets.append(('period-' + str(period), (raw * (270000 // period + 1))[:270000]))
+            data_sets.append(('full-alphabet-skew', bytes(rng.randrange(256) if rng.randrange(8) == 0
+                                                       else rng.randrange(8) for _ in range(270000))))
+            data_sets.append(('raw-compressed-raw', rng.randbytes(65536) + b'abcde' * 15000 + rng.randbytes(65536)))
+            for label, _ in binaries:
+                for codec, level, ext in cases:
+                    for name, data in data_sets:
+                        ours = runner + command(str(farms[label] / codec), codec, level=level)
+                        encode = call(ours, data)
+                        oracle = call(command(refs[codec], codec, True), encode.stdout)
+                        check(label + '/' + codec + '/' + name + '/encode',
+                              encode.returncode == oracle.returncode == 0 and oracle.stdout == data,
+                              encode.stderr.decode(errors='replace') + oracle.stderr.decode(errors='replace'))
+                        decode = runner + command(str(farms[label] / codec), codec, True)
+                        own_back = call(decode, encode.stdout)
+                        check(label + '/' + codec + '/' + name + '/self',
+                              own_back.returncode == 0 and own_back.stdout == data,
+                              own_back.stderr.decode(errors='replace'))
+                        reference = call(command(refs[codec], codec, level=level, reference=True), data)
+                        back = call(decode, reference.stdout)
+                        check(label + '/' + codec + '/' + name + '/reference',
+                              reference.returncode == back.returncode == 0 and back.stdout == data,
+                              back.stderr.decode(errors='replace'))
+                        broken = call(decode, reference.stdout[:-1])
+                        check(label + '/' + codec + '/' + name + '/truncated trailer', broken.returncode != 0)
+                    a, b = data_sets[-2][1], data_sets[-1][1]
+                    pa = call(command(refs[codec], codec, level=level, reference=True), a).stdout
+                    pb = call(command(refs[codec], codec, level=level, reference=True), b).stdout
+                    joined = call(decode, pa + pb)
+                    check(label + '/' + codec + '/concatenation', joined.returncode == 0 and joined.stdout == a + b)
+                    # Different search budgets and reset paths must remain interoperable.
+                    for other_level in ('1', '6', '9'):
+                        if other_level == level:
+                            continue
+                        data = data_sets[-1][1] + data_sets[-2][1]
+                        encoded = call(runner + command(str(farms[label] / codec), codec,
+                                                       level=other_level), data)
+                        decoded = call(command(refs[codec], codec, True), encoded.stdout)
+                        check(label + '/' + codec + '/level-' + other_level,
+                              encoded.returncode == decoded.returncode == 0 and decoded.stdout == data,
+                              encoded.stderr.decode(errors='replace') + decoded.stderr.decode(errors='replace'))
+                print(label + ': codec matrix checked', flush=True)
+
+        # Exercise the pull/write adapters and compressed EOF through tar in both directions.
+        tree = root / 'input'; (tree / 'tree' / 'sub').mkdir(parents=True)
+        (tree / 'tree' / 'empty').write_bytes(b'')
+        (tree / 'tree' / 'sub' / 'name with spaces').write_bytes(rng.randbytes(140001))
+        (tree / 'tree' / 'repeat').write_bytes(b'abcde\n' * 70000)
+        expected = {str(p.relative_to(tree / 'tree')): p.read_bytes() for p in (tree / 'tree').rglob('*') if p.is_file()}
+        for label, _ in binaries:
+            for suffix, flag in [('tar', []), ('tgz', ['-z']), ('txz', ['-J']), ('tzst', ['--zstd'])]:
+                for direction in ('encode', 'decode'):
+                    archive = root / (label + '-' + direction + '.' + suffix)
+                    destination = root / (label + '-' + direction + '-' + suffix); destination.mkdir()
+                    our_tar = runner + [str(farms[label] / 'tar')]
+                    encoder = our_tar if direction == 'encode' else [refs['tar']]
+                    decoder = [refs['tar']] if direction == 'encode' else our_tar
+                    made = call(encoder + flag + ['-cf', str(archive), '-C', str(tree), 'tree'])
+                    unpacked = call(decoder + flag + ['-xf', str(archive), '-C', str(destination)])
+                    found = {str(p.relative_to(destination / 'tree')): p.read_bytes()
+                             for p in (destination / 'tree').rglob('*') if p.is_file()}
+                    check(label + '/tar/' + suffix + '/' + direction,
+                          made.returncode == unpacked.returncode == 0 and found == expected,
+                          made.stderr.decode(errors='replace') + unpacked.stderr.decode(errors='replace'))
+        if opts.bench:
+            # Include filesystem work and the streaming adapters in tar timings.
+            # All decoders consume the same reference archive for each mode.
+            tar_source = root / 'tar-source'; tar_source.mkdir()
+            data = corpus.get('src', next(iter(corpus.values()))).read_bytes()
+            for index, at in enumerate(range(0, len(data), 262144)):
+                (tar_source / ('part-%04d' % index)).write_bytes(data[at:at + 262144])
+            expected = {p.name: p.read_bytes() for p in tar_source.iterdir()}
+            for suffix, flag in [('tar', []), ('tgz', ['-z']), ('txz', ['-J']), ('tzst', ['--zstd'])]:
+                reference_path = root / ('tar-reference.' + suffix)
+                subprocess.run([refs['tar'], *flag, '-cf', str(reference_path), '-C', str(tar_source), '.'], check=True)
+                for label, _ in [*binaries, ('reference', None)]:
+                    exe = refs['tar'] if label == 'reference' else str(farms[label] / 'tar')
+                    archive = root / ('tar-bench-' + label + '.' + suffix)
+                    destination = root / ('tar-bench-' + label + '-' + suffix); destination.mkdir()
+                    encode = [exe, *flag, '-cf', str(archive), '-C', str(tar_source), '.']
+                    made = call(encode)
+                    unpacked = call([refs['tar'], *flag, '-xf', str(archive), '-C', str(destination)])
+                    check(label + '/tar-bench/' + suffix + '/encode',
+                          made.returncode == unpacked.returncode == 0 and
+                          {p.name: p.read_bytes() for p in destination.iterdir()} == expected)
+                    for p in destination.iterdir():
+                        p.unlink()
+                    decode = [exe, *flag, '-xf', str(reference_path), '-C', str(destination)]
+                    unpacked = call(decode)
+                    check(label + '/tar-bench/' + suffix + '/decode', unpacked.returncode == 0 and
+                          {p.name: p.read_bytes() for p in destination.iterdir()} == expected)
+                    compressed_bytes = archive.stat().st_size
+                    for operation, cmd in [('encode', encode), ('decode', decode)]:
+                        timings = []
+                        for trial in range(opts.runs + 1):
+                            began = time.perf_counter_ns()
+                            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                            if trial:
+                                timings.append((time.perf_counter_ns() - began) / 1e9)
+                        median = statistics.median(timings)
+                        row = dict(binary=label, codec=suffix, corpus='tar-src', operation=operation,
+                                   seconds=timings, median_seconds=median,
+                                   MiB_per_second=len(data) / 1048576 / median, compressed_bytes=compressed_bytes)
+                        report['measurements'].append(row)
+                        print('%-10s %-4s tar-src %-6s %8.1f MiB/s %9d bytes' %
+                              (label, suffix, operation, row['MiB_per_second'], compressed_bytes), flush=True)
+        print('compression: %d checks, %d failures' % (report['checks'], len(report['failures'])), flush=True)
+    if opts.output:
+        opts.output.parent.mkdir(parents=True, exist_ok=True)
+        opts.output.write_text(json.dumps(report, indent=2) + '\n')
+    if os.environ.get('TEST_TALLY') and not opts.bench:
+        with open(os.environ['TEST_TALLY'], 'a') as tally:
+            tally.write('compression %d %d\n' % (report['checks'] - len(report['failures']), report['checks']))
+    return int(bool(report['failures']))
+
+
 HARNESS_CHECKS = {
+    "compression": harness_compression,
     "engines": harness_engines_main,
     "core_state": harness_core_state,
     "spark_entry": harness_spark_entry,

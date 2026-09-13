@@ -689,7 +689,8 @@ CONST RETURNS_NONNULL string_address file_reason(bipolar code);
 /* Claim an exclusive temporary name beside a destination, so the eventual
    rename cannot cross a filesystem.  Editors and in-place text filters need
    the same retry machine; only their marker, nonce and creation mode differ. */
-static COLD bipolar file_temporary_open(string_address path, p8 address_to into,
+static COLD bipolar file_temporary_open_at(bipolar directory,
+                                        string_address path, p8 address_to into,
                                         positive room, string_address marker,
                                         positive marker_length, positive value,
                                         positive attempts, positive mode)
@@ -721,7 +722,8 @@ static COLD bipolar file_temporary_open(string_address path, p8 address_to into,
                 memory_copy_end(into + prefix + marker_length, number, length);
 
                 bipolar handle = system_open_at_mode(
-                    AT_FDCWD, into, FILE_WRITE | FILE_CREATE | FILE_EXCLUSIVE,
+                    directory, into,
+                    FILE_WRITE | FILE_CREATE | FILE_EXCLUSIVE | O_CLOEXEC,
                     mode);
 
                 if (handle >= 0 || handle != -ERROR_EXISTS)
@@ -729,6 +731,15 @@ static COLD bipolar file_temporary_open(string_address path, p8 address_to into,
         }
 
         return -ERROR_EXISTS;
+}
+
+static COLD bipolar file_temporary_open(string_address path, p8 address_to into,
+                                        positive room, string_address marker,
+                                        positive marker_length, positive value,
+                                        positive attempts, positive mode)
+{
+        return file_temporary_open_at(AT_FDCWD, path, into, room, marker,
+                                       marker_length, value, attempts, mode);
 }
 
 bipolar file_link_text(string_address path, p8 address_to into, positive limit)
@@ -1071,24 +1082,35 @@ static bool file_account_next(p8 address_to text, positive address_to at,
         return true;
 }
 
+static bool file_account_value(file_account_record address_to record,
+                                positive address_to value)
+{
+        string_address after = record->value;
+        positive got;
+        if (!record->has_value ||
+            !string_digits_checked(address_of after, 10, address_of got) ||
+            (positive)(after - record->value) != record->value_length ||
+            got >= p32_max)
+                return false;
+        address_to value = got;
+        return true;
+}
+
 bool file_account_name(p8 address_to text, positive wanted, positive field,
                        p8 address_to into, positive limit)
 {
+        if (!limit)
+                return false;
+
         positive at = 0;
         file_account_record record;
 
         while (file_account_next(text, address_of at, field,
                                  address_of record))
         {
-                if (!record.has_value)
-                        continue;
-
-                positive taken;
-                positive value = string_digits_max(record.value,
-                                                   record.value_length,
-                                                   address_of taken);
-
-                if (taken != record.value_length || !taken || value != wanted)
+                positive value;
+                if (!file_account_value(address_of record, address_of value) ||
+                    value != wanted)
                         continue;
 
                 positive found = record.name_length;
@@ -1119,15 +1141,8 @@ bipolar file_account_id(p8 address_to text, string_address name, positive field)
                 if (memory_compare(record.name, name, wanted))
                         continue;
 
-                if (!record.has_value)
-                        return -1;
-
-                positive taken;
-                positive value = string_digits_max(record.value,
-                                                   record.value_length,
-                                                   address_of taken);
-
-                if (taken != record.value_length)
+                positive value;
+                if (!file_account_value(address_of record, address_of value))
                         return -1;
 
                 return (bipolar)value;
@@ -1171,6 +1186,21 @@ static bool file_account_cached_name(positive which, positive id,
         file_account_id(file_account_text(FILE_ACCOUNT_USER), (name), 2)
 #define file_group_id(name)                                                  \
         file_account_id(file_account_text(FILE_ACCOUNT_GROUP), (name), 2)
+
+/* Ownership syscalls narrow IDs to 32 bits; UINT32_MAX means unchanged.
+   Reject numeric operands outside that range before they can name root or
+   silently suppress an ownership change. Names keep the shared lookup. */
+static bipolar file_identity_of(string_address text, bool group)
+{
+        positive number;
+        if (string_digits_exact(text, null))
+                return string_digits_checked_exact(text, 10, address_of number) &&
+                               number < p32_max
+                           ? (bipolar)number : -1;
+
+        bipolar found = group ? file_group_id(text) : file_user_id(text);
+        return found >= 0 && (positive)found < p32_max ? found : -1;
+}
 
 // A user or group the way every listing says one: the name when there is
 // one and a name was wanted, the number otherwise.  Answers whether a name
@@ -7000,15 +7030,7 @@ static bool file_signed_decimal(string_address text, bipolar address_to value)
 static bool file_unsigned_decimal(string_address text,
                                    positive address_to number)
 {
-        string_address at = text;
-        positive value;
-
-        if (!string_digits_checked(address_of at, 10, address_of value) ||
-            string_get(at))
-                return false;
-
-        address_to number = value;
-        return true;
+        return string_digits_checked_exact(text, 10, number);
 }
 
 
@@ -7984,10 +8006,7 @@ static b32 find_parse_primary()
         case 'u':
         {
                 bool group = node->kind == 'g';
-                positive number;
-                bipolar who = string_digits_exact(value, address_of number)
-                                  ? (bipolar)number
-                                  : (group ? file_group_id(value) : file_user_id(value));
+                bipolar who = file_identity_of(value, group);
                 if (who < 0)
                 {
                         string_format(log_error, "find: '%s' is not the name of a known %s\n",
@@ -11123,6 +11142,11 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
 
         name[length] = end;
 
+        if (string_get(who + length) && !string_is(who + length, ':') &&
+            !string_is(who + length, '.'))
+                return string_report(log_error, false, "%s: invalid spec: '%s'\n",
+                                     chown_program, who);
+
         string_address rest = null;
 
         if (string_is(who + length, ':') || string_is(who + length, '.'))
@@ -11138,11 +11162,7 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
 
         if (length > 0)
         {
-                positive number;
-
-                address_to user = string_digits_exact(name, address_of number)
-                                      ? (bipolar)number
-                                      : file_user_id(name);
+                address_to user = file_identity_of(name, false);
 
                 if (address_to user < 0)
                         return string_report(log_error, false, "%s: invalid user: '%s'\n",
@@ -11151,11 +11171,7 @@ static bool chown_spec_read(string_address who, bipolar address_to user,
 
         if (rest && string_get(rest))
         {
-                positive number;
-
-                address_to group = string_digits_exact(rest, address_of number)
-                                       ? (bipolar)number
-                                       : file_group_id(rest);
+                address_to group = file_identity_of(rest, true);
 
                 if (address_to group < 0)
                         return string_report(log_error, false, "%s: invalid group: '%s'\n",
@@ -11277,14 +11293,9 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
         if (groups_only)
         {
-                positive number;
-
                 // An empty group is no group: nothing changes, and the
                 // reference chgrp answers 0 to it.
-                chown_group = !string_get(who)              ? -1
-                              : string_digits_exact(who, address_of number)
-                                  ? (bipolar)number
-                                  : file_group_id(who);
+                chown_group = !string_get(who) ? -1 : file_identity_of(who, true);
 
                 if (chown_group < 0 && string_get(who))
                 {
@@ -11297,62 +11308,8 @@ static b32 file_chown_common(string_address program, bool groups_only)
                 return chown_status;
         }
 
-        p8 user[FILE_NAME_MAX];
-        positive length = 0;
-
-        while (string_get(who + length) && !string_is(who + length, ':') &&
-               !string_is(who + length, '.') && length + 1 < FILE_NAME_MAX)
-        {
-                user[length] = string_get(who + length);
-                length++;
-        }
-
-        user[length] = end;
-
-        string_address group = null;
-
-        if (string_is(who + length, ':') || string_is(who + length, '.'))
-                group = who + length + 1;
-
-        // "user:" names a group by the user's own login group, which needs a
-        // password database this one has not got; the reference refuses a
-        // spec it cannot complete rather than changing only the user. A
-        // lone colon names neither half and asks for nothing.
-        if (group && !string_get(group) && length)
-        {
-                string_format(log_error, "%s: invalid spec: '%s'\n", program, who);
+        if (!chown_spec_read(who, address_of chown_user, address_of chown_group))
                 return 1;
-        }
-
-        if (length > 0)
-        {
-                positive number;
-
-                chown_user = string_digits_exact(user, address_of number)
-                                 ? (bipolar)number
-                                 : file_user_id(user);
-
-                if (chown_user < 0)
-                {
-                        string_format(log_error, "%s: invalid user: '%s'\n", program, who);
-                        return 1;
-                }
-        }
-
-        if (group && string_get(group))
-        {
-                positive number;
-
-                chown_group = string_digits_exact(group, address_of number)
-                                  ? (bipolar)number
-                                  : file_group_id(group);
-
-                if (chown_group < 0)
-                {
-                        string_format(log_error, "%s: invalid group: '%s'\n", program, who);
-                        return 1;
-                }
-        }
 
         chown_paths(first, count);
 
@@ -19085,13 +19042,7 @@ static const file_long install_longs[] = {
 static bool install_identity(string_address text, bool group,
                              bipolar address_to identity)
 {
-        positive number;
-        bipolar found;
-
-        if (string_digits_exact(text, address_of number) && number <= p32_max)
-                found = (bipolar)number;
-        else
-                found = group ? file_group_id(text) : file_user_id(text);
+        bipolar found = file_identity_of(text, group);
 
         if (found < 0)
                 return string_report(log_error, false, "install: invalid %s '%s'\n",
@@ -23303,7 +23254,7 @@ static bipolar kill_number(string_address word)
         p8 name[16];
         positive number;
 
-        if (string_digits_exact(word, address_of number))
+        if (string_digits_checked_exact(word, 10, address_of number))
                 return (bipolar)number;
 
         if (string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
@@ -23445,8 +23396,8 @@ static bipolar kill_real_time_of(string_address word)
                         return KILL_LEAST_REAL;
 
                 if (rest[0] != '+' ||
-                    !string_digits_exact(rest + 1, address_of offset) ||
-                    KILL_LEAST_REAL + offset > KILL_MOST)
+                    !string_digits_checked_exact(rest + 1, 10, address_of offset) ||
+                    offset > KILL_MOST - KILL_LEAST_REAL)
                         return -1;
 
                 return (bipolar)(KILL_LEAST_REAL + offset);
@@ -23460,7 +23411,7 @@ static bipolar kill_real_time_of(string_address word)
                         return KILL_MOST;
 
                 if (rest[0] != '-' ||
-                    !string_digits_exact(rest + 1, address_of offset) ||
+                    !string_digits_checked_exact(rest + 1, 10, address_of offset) ||
                     offset > KILL_MOST - KILL_LEAST_REAL)
                         return -1;
 
@@ -23476,7 +23427,7 @@ static bipolar kill_signal_of(string_address word)
 {
         positive number;
 
-        if (string_digits_exact(word, address_of number))
+        if (string_digits_checked_exact(word, 10, address_of number))
                 return number <= KILL_MOST ? (bipolar)number : -1;
 
         //      Bash reads SIG in front of a name and dash does not, so
@@ -23496,8 +23447,8 @@ static bipolar kill_signal_of(string_address word)
                 return kill_real_time_of(word);
 
         if (string_is(word, 'R') && string_is(word + 1, 'T') &&
-            string_digits_exact(word + 2, address_of number) &&
-            KILL_LEAST_REAL + number <= KILL_MOST)
+            string_digits_checked_exact(word + 2, 10, address_of number) &&
+            number <= KILL_MOST - KILL_LEAST_REAL)
                 return (bipolar)(KILL_LEAST_REAL + number);
 
         return -1;
@@ -23517,7 +23468,7 @@ static b32 kill_list(positive count, positive index)
         string_address word = program_argument((b32)index);
         positive number;
 
-        if (string_digits_exact(word, address_of number))
+        if (string_digits_checked_exact(word, 10, address_of number))
         {
                 // A status carries the signal that ended a process in its low
                 // seven bits, which is what a caller of -l usually has.
@@ -23804,7 +23755,7 @@ static b32 file_kill()
                                 p8 named[16];
                                 positive listed;
 
-                                if (string_digits_exact(value, address_of listed) &&
+                                if (string_digits_checked_exact(value, 10, address_of listed) &&
                                     kill_number_named(listed, named))
                                 {
                                         file_line(named);
@@ -23843,7 +23794,7 @@ static b32 file_kill()
                         {
                                 positive queue;
 
-                                if (!string_digits_exact(value, address_of queue))
+                                if (!string_digits_checked_exact(value, 10, address_of queue))
                                 {
                                         string_format(log_error,
                                                       "kill: invalid sigval argument: %s\n", value);
@@ -23880,7 +23831,7 @@ static b32 file_kill()
                         if (!value)
                                 index++;
 
-                        if (!string_digits_exact(written, address_of milliseconds))
+                        if (!string_digits_checked_exact(written, 10, address_of milliseconds))
                         {
                                 string_format(log_error, "kill: invalid timeout argument: %s\n",
                                               written);
@@ -23950,12 +23901,12 @@ static b32 file_kill()
         while (index < count)
         {
                 string_address word = program_argument((b32)index++);
-                positive used;
-                bipolar who = string_bipolar(word, address_of used);
+                bipolar who;
 
                 // A word that is not a number names a process, and this one
                 // has no process table to look the name up in.
-                if (!used || string_get(word + used))
+                if (!file_signed_decimal(word, address_of who) ||
+                    who < b32_min || who > b32_max)
                 {
                         string_format(log_error, "kill: cannot find process \"%s\"\n", word);
                         answer = 1;

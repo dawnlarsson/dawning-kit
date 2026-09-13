@@ -13,13 +13,13 @@
                       root; Moonwater /bin stays; no supervisor fork.
 
           isolated    pivot into the complete distribution root with private
-                      PID, UTS and IPC views; use this for apt, pacman, apk
-                      while they fill a tree.
+                      PID, UTS and IPC views; use this for apt, pacman, apk,
+                      dnf and nix while they fill a tree.
 
-        `bowl setup arch` is the new-install command: it becomes root,
-        installs /bowl, lands the bootstrap, and puts pacman on PATH.
-        Typing pacman afterwards is isolated by the program name, not by
-        a flag the person has to remember.
+        `bowl setup <name>` is the new-install command: it becomes root,
+        installs /bowl, lands that distribution, and puts its manager on
+        PATH. Typing pacman afterwards is isolated by the program name, not
+        by a flag the person has to remember.
 
         Neither is instruction emulation or a syscall proxy. Once setup is
         complete, the program is an ordinary native process on this kernel.
@@ -209,7 +209,15 @@ static bool bowl_needs_isolated(string_address program)
                string_equals(name, "apt") ||
                string_equals(name, "apt-get") ||
                string_equals(name, "dpkg") ||
-               string_equals(name, "apk");
+               string_equals(name, "apk") ||
+               string_equals(name, "dnf") ||
+               string_equals(name, "dnf5") ||
+               string_equals(name, "rpm") ||
+               string_equals(name, "yum") ||
+               string_equals(name, "nix") ||
+               string_equals(name, "nix-env") ||
+               string_equals(name, "nix-build") ||
+               string_equals(name, "nix-shell");
 }
 
 static b32 bowl_expose_program(string_address root, string_address program,
@@ -293,8 +301,8 @@ static b32 bowl_expose_program(string_address root, string_address program,
                 return bowl_refuse("could not write launcher\n");
         }
 
+        failed = system_call_2(syscall(fchmod), (positive)handle, 0755);
         system_close(handle);
-        failed = system_change_mode_at(AT_FDCWD, launcher, 0755);
 
         if (failed < 0)
         {
@@ -857,8 +865,13 @@ static b32 bowl_main()
                 isolated = bowl_needs_isolated(program);
 
         /* An older tree was landed before these lines existed. */
-        if (isolated && bowl_has(root, "/etc/pacman.conf"))
-                bowl_write_pacman(root);
+        if (isolated)
+        {
+                b32 failed = bowl_configure(root);
+
+                if (failed)
+                        return failed;
+        }
 
         return bowl_launch(root, program, command_arguments, isolated);
 }

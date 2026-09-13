@@ -573,7 +573,7 @@ static bipolar logger_connect_kind(logger_control address_to control,
 
                 positive port = transport == LOGGER_TRANSPORT_STREAM ? 601 : 514;
                 if (control->port &&
-                    (!string_digits_exact(control->port, address_of port) ||
+                    (!string_digits_checked_exact(control->port, 10, address_of port) ||
                      !port || port > 65535))
                 {
                         //      A port that is neither a number nor a service
@@ -1095,7 +1095,7 @@ static bool logger_option_seen(p8 letter, string_address value)
                 if (!value)
                         logger_seen_process =
                             (positive)system_call(syscall(getpid));
-                else if (!string_digits_exact(value, address_of logger_seen_process) ||
+                else if (!string_digits_checked_exact(value, 10, address_of logger_seen_process) ||
                          !logger_seen_process || logger_seen_process > p32_max)
                 {
                         positive parsed;
@@ -2314,7 +2314,7 @@ static bool login_wall_group(string_address word, p32 address_to group)
 
         positive value;
         p8 known[FILE_NAME_MAX];
-        if (!string_digits_exact(word, address_of value) || value > p32_max ||
+        if (!string_digits_checked_exact(word, 10, address_of value) || value > p32_max ||
             !file_group_name(value, known, sizeof(known)))
                 return false;
         address_to group = (p32)value;

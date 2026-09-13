@@ -8,12 +8,77 @@
         memory specializers and the source-generating compatibility macros
         below. That keeps actual C bodies out of the assembly library without
         making literal-size copies pay the general routine's dispatch cost.
+
+        Workload targeting is compile-time, set before this file is included.
+        The outlined assembly in library.c is always the symbol; these knobs
+        only choose whether a call site expands in the caller or pays the
+        call. ELF --gc-sections / Mach-O dead_strip drop unreferenced
+        outlined bodies. They do not drop rungs inside a body, so a TU that
+        never copies more than sixteen bytes still wants LIBRARY_SIZE_MAX 16
+        or the specializer compiles the wide rungs into that TU anyway.
+
+            LIBRARY_INLINE          0 outlined only
+                                    1 (default) known sizes expand in place
+                                    2 also overlap-copy unknown sizes up to
+                                      LIBRARY_RUNNING_MAX in the caller
+            LIBRARY_SIZE_MAX        largest literal expanded (default: the
+                                    architecture's KNOWN_SIZE_MAX)
+            LIBRARY_SIZE_FLOOR      smallest literal expanded (default 0)
+            LIBRARY_RUNNING_MAX     unknown-size inline cutoff (default 16,
+                                    or 64 when LIBRARY_INLINE is 2)
+
+        Per-family overrides, each defaulting to LIBRARY_INLINE:
+        LIBRARY_INLINE_COPY, LIBRARY_INLINE_FILL, LIBRARY_INLINE_COMPARE,
+        LIBRARY_INLINE_SCAN, LIBRARY_INLINE_STRING, LIBRARY_INLINE_BYTE,
+        LIBRARY_INLINE_BITS. A grep-like TU that never copies and always
+        scans sets INLINE_COPY 0 and INLINE_SCAN 1.
 */
 #ifndef STANDARD_MODERN_C_COMPILER_MEMORY
 #define STANDARD_MODERN_C_COMPILER_MEMORY
 
 #include "library.c"
 #include "library.common.c"
+
+#ifndef LIBRARY_INLINE
+#define LIBRARY_INLINE 1
+#endif
+#ifndef LIBRARY_INLINE_COPY
+#define LIBRARY_INLINE_COPY LIBRARY_INLINE
+#endif
+#ifndef LIBRARY_INLINE_FILL
+#define LIBRARY_INLINE_FILL LIBRARY_INLINE
+#endif
+#ifndef LIBRARY_INLINE_COMPARE
+#define LIBRARY_INLINE_COMPARE LIBRARY_INLINE
+#endif
+#ifndef LIBRARY_INLINE_SCAN
+#define LIBRARY_INLINE_SCAN LIBRARY_INLINE
+#endif
+#ifndef LIBRARY_INLINE_STRING
+#define LIBRARY_INLINE_STRING LIBRARY_INLINE
+#endif
+#ifndef LIBRARY_INLINE_BYTE
+#define LIBRARY_INLINE_BYTE LIBRARY_INLINE
+#endif
+#ifndef LIBRARY_INLINE_BITS
+#define LIBRARY_INLINE_BITS LIBRARY_INLINE
+#endif
+#ifndef LIBRARY_SIZE_FLOOR
+#define LIBRARY_SIZE_FLOOR 0
+#endif
+#ifndef LIBRARY_RUNNING_MAX
+#if LIBRARY_INLINE >= 2 || LIBRARY_INLINE_COPY >= 2 || LIBRARY_INLINE_FILL >= 2
+#define LIBRARY_RUNNING_MAX 64
+#else
+#define LIBRARY_RUNNING_MAX 16
+#endif
+#endif
+
+#define LIBRARY_SIZE_OK(size, cap)                                            \
+        (__builtin_constant_p(size) && (positive)(size) <= (positive)(cap)     \
+         && (positive)(size) >= (positive)LIBRARY_SIZE_FLOOR)
+#define LIBRARY_EXPAND(family, size, cap)                                     \
+        (LIBRARY_INLINE_##family && LIBRARY_SIZE_OK((size), (cap)))
 
 /*
         Legacy source-generating conveniences remain opt-in compiler policy.
@@ -151,6 +216,20 @@
 #endif
 #endif
 
+#ifdef LIBRARY_SIZE_MAX
+#undef KNOWN_SIZE_MAX
+#define KNOWN_SIZE_MAX LIBRARY_SIZE_MAX
+#else
+#define LIBRARY_SIZE_MAX KNOWN_SIZE_MAX
+#endif
+
+#if ARM64 && !defined(KERNEL_MODE) && defined(__OPTIMIZE__) \
+    && KNOWN_SIZE_MAX >= 16
+#define KNOWN_NEON 1
+#else
+#define KNOWN_NEON 0
+#endif
+
 #if KNOWN_WIDE
 /*
         Thirty two bytes from the front, thirty two from the back, and as many
@@ -204,15 +283,18 @@
 static inline INLINE address_any copy_known(address_any destination,
                                             address_any source, positive size)
 {
-#if KNOWN_WIDE
+#if KNOWN_WIDE && KNOWN_SIZE_MAX > 32
         if (size > 32 && cpu_has_avx2) {
-                if (size <= 64)
+                if (size <= 64) {
                         KNOWN_WIDE_ASM("   vmovdqu (%[from]), %%ymm0\n"
                                        "   vmovdqu %c[back](%[from]), %%ymm1\n"
                                        "   vmovdqu %%ymm0, (%[to])\n"
                                        "   vmovdqu %%ymm1, %c[back](%[to])\n",
                                        size, size - 32, "xmm0", "xmm1");
-                else if (size <= 96)
+                        return destination;
+                }
+#if KNOWN_SIZE_MAX > 64
+                if (size <= 96) {
                         KNOWN_WIDE_ASM("   vmovdqu (%[from]), %%ymm0\n"
                                        "   vmovdqu 32(%[from]), %%ymm1\n"
                                        "   vmovdqu %c[back](%[from]), %%ymm2\n"
@@ -220,18 +302,111 @@ static inline INLINE address_any copy_known(address_any destination,
                                        "   vmovdqu %%ymm1, 32(%[to])\n"
                                        "   vmovdqu %%ymm2, %c[back](%[to])\n",
                                        size, size - 32, "xmm0", "xmm1", "xmm2");
-                else
-                        KNOWN_WIDE_ASM("   vmovdqu (%[from]), %%ymm0\n"
-                                       "   vmovdqu 32(%[from]), %%ymm1\n"
-                                       "   vmovdqu 64(%[from]), %%ymm2\n"
-                                       "   vmovdqu %c[back](%[from]), %%ymm3\n"
-                                       "   vmovdqu %%ymm0, (%[to])\n"
-                                       "   vmovdqu %%ymm1, 32(%[to])\n"
-                                       "   vmovdqu %%ymm2, 64(%[to])\n"
-                                       "   vmovdqu %%ymm3, %c[back](%[to])\n",
-                                       size, size - 32,
-                                       "xmm0", "xmm1", "xmm2", "xmm3");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 96
+                KNOWN_WIDE_ASM("   vmovdqu (%[from]), %%ymm0\n"
+                               "   vmovdqu 32(%[from]), %%ymm1\n"
+                               "   vmovdqu 64(%[from]), %%ymm2\n"
+                               "   vmovdqu %c[back](%[from]), %%ymm3\n"
+                               "   vmovdqu %%ymm0, (%[to])\n"
+                               "   vmovdqu %%ymm1, 32(%[to])\n"
+                               "   vmovdqu %%ymm2, 64(%[to])\n"
+                               "   vmovdqu %%ymm3, %c[back](%[to])\n",
+                               size, size - 32,
+                               "xmm0", "xmm1", "xmm2", "xmm3");
                 return destination;
+#endif
+        }
+#endif
+#if KNOWN_NEON
+        /*
+                Overlapping 16-byte windows, all loads before any store, so a
+                known memmove is the same body as a known memcpy. ldr Qt with
+                a register offset is the tail: ldp only takes a signed
+                immediate multiple of sixteen, and size-32 is neither for
+                most of this range.
+        */
+        if (size >= 16) {
+#if KNOWN_SIZE_MAX >= 16
+                if (size <= 16) {
+                        __asm__("ldr q0, [%[from]]\n   str q0, [%[to]]\n"
+                                : "=m"(*(p8(address_to)[size])(destination))
+                                : [from] "r"(source), [to] "r"(destination),
+                                  "m"(*(const p8(address_to)[size])(source))
+                                : "v0");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 16
+                if (size <= 32) {
+                        __asm__("ldr q0, [%[from]]\n"
+                                "ldr q1, [%[from], %[back]]\n"
+                                "str q0, [%[to]]\n"
+                                "str q1, [%[to], %[back]]\n"
+                                : "=m"(*(p8(address_to)[size])(destination))
+                                : [from] "r"(source), [to] "r"(destination),
+                                  [back] "r"(size - 16),
+                                  "m"(*(const p8(address_to)[size])(source))
+                                : "v0", "v1");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 32
+                if (size <= 64) {
+                        __asm__("ldr q0, [%[from]]\n"
+                                "ldr q1, [%[from], #16]\n"
+                                "ldr q2, [%[from], %[lo]]\n"
+                                "ldr q3, [%[from], %[hi]]\n"
+                                "str q0, [%[to]]\n"
+                                "str q1, [%[to], #16]\n"
+                                "str q2, [%[to], %[lo]]\n"
+                                "str q3, [%[to], %[hi]]\n"
+                                : "=m"(*(p8(address_to)[size])(destination))
+                                : [from] "r"(source), [to] "r"(destination),
+                                  [lo] "r"(size - 32), [hi] "r"(size - 16),
+                                  "m"(*(const p8(address_to)[size])(source))
+                                : "v0", "v1", "v2", "v3");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 64
+                if (size <= 96) {
+                        __asm__("ldp q0, q1, [%[from]]\n"
+                                "ldp q2, q3, [%[from], #32]\n"
+                                "ldr q4, [%[from], %[lo]]\n"
+                                "ldr q5, [%[from], %[hi]]\n"
+                                "stp q0, q1, [%[to]]\n"
+                                "stp q2, q3, [%[to], #32]\n"
+                                "str q4, [%[to], %[lo]]\n"
+                                "str q5, [%[to], %[hi]]\n"
+                                : "=m"(*(p8(address_to)[size])(destination))
+                                : [from] "r"(source), [to] "r"(destination),
+                                  [lo] "r"(size - 32), [hi] "r"(size - 16),
+                                  "m"(*(const p8(address_to)[size])(source))
+                                : "v0", "v1", "v2", "v3", "v4", "v5");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 96
+                __asm__("ldp q0, q1, [%[from]]\n"
+                        "ldp q2, q3, [%[from], #32]\n"
+                        "ldp q4, q5, [%[from], #64]\n"
+                        "ldr q6, [%[from], %[lo]]\n"
+                        "ldr q7, [%[from], %[hi]]\n"
+                        "stp q0, q1, [%[to]]\n"
+                        "stp q2, q3, [%[to], #32]\n"
+                        "stp q4, q5, [%[to], #64]\n"
+                        "str q6, [%[to], %[lo]]\n"
+                        "str q7, [%[to], %[hi]]\n"
+                        : "=m"(*(p8(address_to)[size])(destination))
+                        : [from] "r"(source), [to] "r"(destination),
+                          [lo] "r"(size - 32), [hi] "r"(size - 16),
+                          "m"(*(const p8(address_to)[size])(source))
+                        : "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7");
+                return destination;
+#endif
         }
 #endif
         //      Overlap safe: the compiler's memmove expansion loads every
@@ -246,6 +421,10 @@ static inline INLINE address_any copy_apart_known(address_any destination,
 {
 #if KNOWN_WIDE
         if (size > 32 && cpu_has_avx2)
+                return copy_known(destination, source, size);
+#endif
+#if KNOWN_NEON
+        if (size >= 16)
                 return copy_known(destination, source, size);
 #endif
         __builtin_memcpy(destination, source, size);
@@ -269,7 +448,12 @@ static inline INLINE address_any copy_apart_known(address_any destination,
         So the size is tested here rather than there. Under sixteen bytes the
         run is two loads and two stores in overlapping windows, which needs no
         branch per width and reads no byte twice that it has not already
-        proved equal. Sixteen and over is the routine's, unchanged.
+        proved equal. Sixteen and over is the outlined routine unless
+        LIBRARY_RUNNING_MAX is raised (LIBRARY_INLINE 2 defaults it to 64),
+        in which case 16..RUNNING_MAX-1 is the same overlapping-window
+        shape at 16 and 32 bytes. copy_running_small is only correct below
+        sixteen: an 8-byte head and tail leave the middle of a 16-byte
+        span uncopied.
 
         Both loads happen before either store, so this is correct for
         overlapping spans as well: memory_copy and memory_copy_apart share the
@@ -314,13 +498,138 @@ static inline INLINE address_any copy_running_small(address_any destination,
         return destination;
 }
 
+#if LIBRARY_INLINE_COPY && LIBRARY_RUNNING_MAX > 16
+static inline INLINE address_any copy_running_windows(address_any destination,
+                                                      address_any source,
+                                                      positive size)
+{
+#if ARM64 && !defined(KERNEL_MODE)
+        if (size >= 32) {
+#if LIBRARY_RUNNING_MAX > 64
+                if (size >= 64) {
+                        __asm__("ldp q0, q1, [%[from]]\n"
+                                "ldp q2, q3, [%[from], #32]\n"
+                                "ldr q4, [%[from], %[lo]]\n"
+                                "ldr q5, [%[from], %[hi]]\n"
+                                "stp q0, q1, [%[to]]\n"
+                                "stp q2, q3, [%[to], #32]\n"
+                                "str q4, [%[to], %[lo]]\n"
+                                "str q5, [%[to], %[hi]]\n"
+                                : "=m"(*(p8(address_to)[])destination)
+                                : [from] "r"(source), [to] "r"(destination),
+                                  [lo] "r"(size - 32), [hi] "r"(size - 16),
+                                  "m"(*(const p8(address_to)[])source)
+                                : "v0", "v1", "v2", "v3", "v4", "v5");
+                        return destination;
+                }
+#endif
+                __asm__("ldr q0, [%[from]]\n"
+                        "ldr q1, [%[from], #16]\n"
+                        "ldr q2, [%[from], %[lo]]\n"
+                        "ldr q3, [%[from], %[hi]]\n"
+                        "str q0, [%[to]]\n"
+                        "str q1, [%[to], #16]\n"
+                        "str q2, [%[to], %[lo]]\n"
+                        "str q3, [%[to], %[hi]]\n"
+                        : "=m"(*(p8(address_to)[])destination)
+                        : [from] "r"(source), [to] "r"(destination),
+                          [lo] "r"(size - 32), [hi] "r"(size - 16),
+                          "m"(*(const p8(address_to)[])source)
+                        : "v0", "v1", "v2", "v3");
+                return destination;
+        }
+        __asm__("ldr q0, [%[from]]\n"
+                "ldr q1, [%[from], %[back]]\n"
+                "str q0, [%[to]]\n"
+                "str q1, [%[to], %[back]]\n"
+                : "=m"(*(p8(address_to)[])destination)
+                : [from] "r"(source), [to] "r"(destination),
+                  [back] "r"(size - 16),
+                  "m"(*(const p8(address_to)[])source)
+                : "v0", "v1");
+        return destination;
+#else
+        p8 address_to to = (p8 address_to)destination;
+        p8 address_to from = (p8 address_to)source;
+        p64 a, b, c, d, e, f, g, h;
+
+        if (size >= 32) {
+#if LIBRARY_RUNNING_MAX > 64
+                if (size >= 64) {
+                        p64 i, j, k, l;
+
+                        a = memory_load_unaligned(p64, from);
+                        b = memory_load_unaligned(p64, from + 8);
+                        c = memory_load_unaligned(p64, from + 16);
+                        d = memory_load_unaligned(p64, from + 24);
+                        i = memory_load_unaligned(p64, from + 32);
+                        j = memory_load_unaligned(p64, from + 40);
+                        k = memory_load_unaligned(p64, from + 48);
+                        l = memory_load_unaligned(p64, from + 56);
+                        e = memory_load_unaligned(p64, from + size - 32);
+                        f = memory_load_unaligned(p64, from + size - 24);
+                        g = memory_load_unaligned(p64, from + size - 16);
+                        h = memory_load_unaligned(p64, from + size - 8);
+                        __builtin_memcpy(to, address_of a, 8);
+                        __builtin_memcpy(to + 8, address_of b, 8);
+                        __builtin_memcpy(to + 16, address_of c, 8);
+                        __builtin_memcpy(to + 24, address_of d, 8);
+                        __builtin_memcpy(to + 32, address_of i, 8);
+                        __builtin_memcpy(to + 40, address_of j, 8);
+                        __builtin_memcpy(to + 48, address_of k, 8);
+                        __builtin_memcpy(to + 56, address_of l, 8);
+                        __builtin_memcpy(to + size - 32, address_of e, 8);
+                        __builtin_memcpy(to + size - 24, address_of f, 8);
+                        __builtin_memcpy(to + size - 16, address_of g, 8);
+                        __builtin_memcpy(to + size - 8, address_of h, 8);
+                        return destination;
+                }
+#endif
+                a = memory_load_unaligned(p64, from);
+                b = memory_load_unaligned(p64, from + 8);
+                c = memory_load_unaligned(p64, from + 16);
+                d = memory_load_unaligned(p64, from + 24);
+                e = memory_load_unaligned(p64, from + size - 32);
+                f = memory_load_unaligned(p64, from + size - 24);
+                g = memory_load_unaligned(p64, from + size - 16);
+                h = memory_load_unaligned(p64, from + size - 8);
+                __builtin_memcpy(to, address_of a, 8);
+                __builtin_memcpy(to + 8, address_of b, 8);
+                __builtin_memcpy(to + 16, address_of c, 8);
+                __builtin_memcpy(to + 24, address_of d, 8);
+                __builtin_memcpy(to + size - 32, address_of e, 8);
+                __builtin_memcpy(to + size - 24, address_of f, 8);
+                __builtin_memcpy(to + size - 16, address_of g, 8);
+                __builtin_memcpy(to + size - 8, address_of h, 8);
+                return destination;
+        }
+        a = memory_load_unaligned(p64, from);
+        b = memory_load_unaligned(p64, from + 8);
+        c = memory_load_unaligned(p64, from + size - 16);
+        d = memory_load_unaligned(p64, from + size - 8);
+        __builtin_memcpy(to, address_of a, 8);
+        __builtin_memcpy(to + 8, address_of b, 8);
+        __builtin_memcpy(to + size - 16, address_of c, 8);
+        __builtin_memcpy(to + size - 8, address_of d, 8);
+        return destination;
+#endif
+}
+#endif
+
 static inline INLINE address_any copy_running(address_any destination,
                                               address_any source, positive size)
 {
-        if (size >= 16)
+#if !LIBRARY_INLINE_COPY
+        return memory_copy(destination, source, size);
+#else
+        if (size >= LIBRARY_RUNNING_MAX)
                 return memory_copy(destination, source, size);
-
+#if LIBRARY_RUNNING_MAX > 16
+        if (size >= 16)
+                return copy_running_windows(destination, source, size);
+#endif
         return copy_running_small(destination, source, size);
+#endif
 }
 
 /*
@@ -338,7 +647,7 @@ static inline INLINE address_any copy_running(address_any destination,
         gets. This is the fast placement of it, and the two are checked
         against each other by the ULP lane, which runs whichever is wired.
 */
-#if X64 && !defined(KERNEL_MODE)
+#if X64 && !defined(KERNEL_MODE) && LIBRARY_INLINE
 #define DECIMAL_SHORT_PLACED 1
 
 static inline INLINE bool decimal_short_placed(string_address input,
@@ -410,10 +719,17 @@ static inline INLINE address_any copy_apart_running(address_any destination,
                                                     address_any source,
                                                     positive size)
 {
-        if (size >= 16)
+#if !LIBRARY_INLINE_COPY
+        return memory_copy_apart(destination, source, size);
+#else
+        if (size >= LIBRARY_RUNNING_MAX)
                 return memory_copy_apart(destination, source, size);
-
+#if LIBRARY_RUNNING_MAX > 16
+        if (size >= 16)
+                return copy_running_windows(destination, source, size);
+#endif
         return copy_running_small(destination, source, size);
+#endif
 }
 
 /*
@@ -421,14 +737,102 @@ static inline INLINE address_any copy_apart_running(address_any destination,
         record, blanking a field: the width is a variable and it is small, and
         the broadcast is one multiply rather than a call.
 */
+#if LIBRARY_INLINE_FILL && LIBRARY_RUNNING_MAX > 16
+static inline INLINE address_any fill_running_windows(address_any destination,
+                                                      b8 value, positive size)
+{
+        p8 address_to to = (p8 address_to)destination;
+
+#if ARM64 && !defined(KERNEL_MODE)
+        if (size >= 32) {
+#if LIBRARY_RUNNING_MAX > 64
+                if (size >= 64) {
+                        __asm__("dup v0.16b, %w[val]\n"
+                                "stp q0, q0, [%[to]]\n"
+                                "stp q0, q0, [%[to], #32]\n"
+                                "str q0, [%[to], %[lo]]\n"
+                                "str q0, [%[to], %[hi]]\n"
+                                : "=m"(*(p8(address_to)[])destination)
+                                : [to] "r"(destination), [val] "r"(value),
+                                  [lo] "r"(size - 32), [hi] "r"(size - 16)
+                                : "v0");
+                        return destination;
+                }
+#endif
+                __asm__("dup v0.16b, %w[val]\n"
+                        "str q0, [%[to]]\n"
+                        "str q0, [%[to], #16]\n"
+                        "str q0, [%[to], %[lo]]\n"
+                        "str q0, [%[to], %[hi]]\n"
+                        : "=m"(*(p8(address_to)[])destination)
+                        : [to] "r"(destination), [val] "r"(value),
+                          [lo] "r"(size - 32), [hi] "r"(size - 16)
+                        : "v0");
+                return destination;
+        }
+        __asm__("dup v0.16b, %w[val]\n"
+                "str q0, [%[to]]\n"
+                "str q0, [%[to], %[back]]\n"
+                : "=m"(*(p8(address_to)[])destination)
+                : [to] "r"(destination), [val] "r"(value),
+                  [back] "r"(size - 16)
+                : "v0");
+        return destination;
+#else
+        p64 wide = (p64)(p8)value * (p64)0x0101010101010101ull;
+
+        if (size >= 32) {
+#if LIBRARY_RUNNING_MAX > 64
+                if (size >= 64) {
+                        __builtin_memcpy(to, address_of wide, 8);
+                        __builtin_memcpy(to + 8, address_of wide, 8);
+                        __builtin_memcpy(to + 16, address_of wide, 8);
+                        __builtin_memcpy(to + 24, address_of wide, 8);
+                        __builtin_memcpy(to + 32, address_of wide, 8);
+                        __builtin_memcpy(to + 40, address_of wide, 8);
+                        __builtin_memcpy(to + 48, address_of wide, 8);
+                        __builtin_memcpy(to + 56, address_of wide, 8);
+                        __builtin_memcpy(to + size - 32, address_of wide, 8);
+                        __builtin_memcpy(to + size - 24, address_of wide, 8);
+                        __builtin_memcpy(to + size - 16, address_of wide, 8);
+                        __builtin_memcpy(to + size - 8, address_of wide, 8);
+                        return destination;
+                }
+#endif
+                __builtin_memcpy(to, address_of wide, 8);
+                __builtin_memcpy(to + 8, address_of wide, 8);
+                __builtin_memcpy(to + 16, address_of wide, 8);
+                __builtin_memcpy(to + 24, address_of wide, 8);
+                __builtin_memcpy(to + size - 32, address_of wide, 8);
+                __builtin_memcpy(to + size - 24, address_of wide, 8);
+                __builtin_memcpy(to + size - 16, address_of wide, 8);
+                __builtin_memcpy(to + size - 8, address_of wide, 8);
+                return destination;
+        }
+        __builtin_memcpy(to, address_of wide, 8);
+        __builtin_memcpy(to + 8, address_of wide, 8);
+        __builtin_memcpy(to + size - 16, address_of wide, 8);
+        __builtin_memcpy(to + size - 8, address_of wide, 8);
+        return destination;
+#endif
+}
+#endif
+
 static inline INLINE address_any fill_running(address_any destination,
                                               b8 value, positive size)
 {
+#if !LIBRARY_INLINE_FILL
+        return memory_fill(destination, value, size);
+#else
         p8 address_to to = (p8 address_to)destination;
         p64 wide;
 
-        if (size >= 16)
+        if (size >= LIBRARY_RUNNING_MAX)
                 return memory_fill(destination, value, size);
+#if LIBRARY_RUNNING_MAX > 16
+        if (size >= 16)
+                return fill_running_windows(destination, value, size);
+#endif
 
         wide = (p64)(p8)value * (p64)0x0101010101010101ull;
 
@@ -457,6 +861,7 @@ static inline INLINE address_any fill_running(address_any destination,
         }
 
         return destination;
+#endif
 }
 
 //      bzero is the fill with the byte already chosen; the same small run.
@@ -472,24 +877,150 @@ static inline INLINE fn zero_running(address_any destination, positive size)
 static inline INLINE address_any fill_known(address_any destination,
                                             b8 value, positive size, bool zero)
 {
-#if KNOWN_WIDE
+#if KNOWN_WIDE && KNOWN_SIZE_MAX > 32
         if (size > 32 && cpu_has_avx2) {
-                if (size <= 64)
+                if (size <= 64) {
                         KNOWN_FILL_ASM("   vmovdqu %%ymm0, (%[to])\n"
                                        "   vmovdqu %%ymm0, %c[back](%[to])\n",
                                        size, size - 32, "xmm0");
-                else if (size <= 96)
-                        KNOWN_FILL_ASM("   vmovdqu %%ymm0, (%[to])\n"
-                                       "   vmovdqu %%ymm0, 32(%[to])\n"
-                                       "   vmovdqu %%ymm0, %c[back](%[to])\n",
-                                       size, size - 32, "xmm0");
-                else
+                        return destination;
+                }
+#if KNOWN_SIZE_MAX > 64
+                if (size <= 96) {
                         KNOWN_FILL_ASM("   vmovdqu %%ymm0, (%[to])\n"
                                        "   vmovdqu %%ymm0, 32(%[to])\n"
-                                       "   vmovdqu %%ymm0, 64(%[to])\n"
                                        "   vmovdqu %%ymm0, %c[back](%[to])\n",
                                        size, size - 32, "xmm0");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 96
+                KNOWN_FILL_ASM("   vmovdqu %%ymm0, (%[to])\n"
+                               "   vmovdqu %%ymm0, 32(%[to])\n"
+                               "   vmovdqu %%ymm0, 64(%[to])\n"
+                               "   vmovdqu %%ymm0, %c[back](%[to])\n",
+                               size, size - 32, "xmm0");
                 return destination;
+#endif
+        }
+#endif
+#if KNOWN_NEON
+        if (size >= 16) {
+#if KNOWN_SIZE_MAX >= 16
+                if (size <= 16) {
+                        if (zero)
+                                __asm__("movi v0.16b, #0\n   str q0, [%[to]]\n"
+                                        : "=m"(*(p8(address_to)[size])(destination))
+                                        : [to] "r"(destination)
+                                        : "v0");
+                        else
+                                __asm__("dup v0.16b, %w[val]\n   str q0, [%[to]]\n"
+                                        : "=m"(*(p8(address_to)[size])(destination))
+                                        : [to] "r"(destination), [val] "r"(value)
+                                        : "v0");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 16
+                if (size <= 32) {
+                        if (zero)
+                                __asm__("movi v0.16b, #0\n   str q0, [%[to]]\n"
+                                        "str q0, [%[to], %[back]]\n"
+                                        : "=m"(*(p8(address_to)[size])(destination))
+                                        : [to] "r"(destination),
+                                          [back] "r"(size - 16)
+                                        : "v0");
+                        else
+                                __asm__("dup v0.16b, %w[val]\n   str q0, [%[to]]\n"
+                                        "str q0, [%[to], %[back]]\n"
+                                        : "=m"(*(p8(address_to)[size])(destination))
+                                        : [to] "r"(destination), [val] "r"(value),
+                                          [back] "r"(size - 16)
+                                        : "v0");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 32
+                if (size <= 64) {
+                        if (zero)
+                                __asm__("movi v0.16b, #0\n"
+                                        "str q0, [%[to]]\n"
+                                        "str q0, [%[to], #16]\n"
+                                        "str q0, [%[to], %[lo]]\n"
+                                        "str q0, [%[to], %[hi]]\n"
+                                        : "=m"(*(p8(address_to)[size])(destination))
+                                        : [to] "r"(destination),
+                                          [lo] "r"(size - 32),
+                                          [hi] "r"(size - 16)
+                                        : "v0");
+                        else
+                                __asm__("dup v0.16b, %w[val]\n"
+                                        "str q0, [%[to]]\n"
+                                        "str q0, [%[to], #16]\n"
+                                        "str q0, [%[to], %[lo]]\n"
+                                        "str q0, [%[to], %[hi]]\n"
+                                        : "=m"(*(p8(address_to)[size])(destination))
+                                        : [to] "r"(destination), [val] "r"(value),
+                                          [lo] "r"(size - 32),
+                                          [hi] "r"(size - 16)
+                                        : "v0");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 64
+                if (size <= 96) {
+                        if (zero)
+                                __asm__("movi v0.16b, #0\n"
+                                        "stp q0, q0, [%[to]]\n"
+                                        "stp q0, q0, [%[to], #32]\n"
+                                        "str q0, [%[to], %[lo]]\n"
+                                        "str q0, [%[to], %[hi]]\n"
+                                        : "=m"(*(p8(address_to)[size])(destination))
+                                        : [to] "r"(destination),
+                                          [lo] "r"(size - 32),
+                                          [hi] "r"(size - 16)
+                                        : "v0");
+                        else
+                                __asm__("dup v0.16b, %w[val]\n"
+                                        "stp q0, q0, [%[to]]\n"
+                                        "stp q0, q0, [%[to], #32]\n"
+                                        "str q0, [%[to], %[lo]]\n"
+                                        "str q0, [%[to], %[hi]]\n"
+                                        : "=m"(*(p8(address_to)[size])(destination))
+                                        : [to] "r"(destination), [val] "r"(value),
+                                          [lo] "r"(size - 32),
+                                          [hi] "r"(size - 16)
+                                        : "v0");
+                        return destination;
+                }
+#endif
+#if KNOWN_SIZE_MAX > 96
+                if (zero)
+                        __asm__("movi v0.16b, #0\n"
+                                "stp q0, q0, [%[to]]\n"
+                                "stp q0, q0, [%[to], #32]\n"
+                                "stp q0, q0, [%[to], #64]\n"
+                                "str q0, [%[to], %[lo]]\n"
+                                "str q0, [%[to], %[hi]]\n"
+                                : "=m"(*(p8(address_to)[size])(destination))
+                                : [to] "r"(destination),
+                                  [lo] "r"(size - 32),
+                                  [hi] "r"(size - 16)
+                                : "v0");
+                else
+                        __asm__("dup v0.16b, %w[val]\n"
+                                "stp q0, q0, [%[to]]\n"
+                                "stp q0, q0, [%[to], #32]\n"
+                                "stp q0, q0, [%[to], #64]\n"
+                                "str q0, [%[to], %[lo]]\n"
+                                "str q0, [%[to], %[hi]]\n"
+                                : "=m"(*(p8(address_to)[size])(destination))
+                                : [to] "r"(destination), [val] "r"(value),
+                                  [lo] "r"(size - 32),
+                                  [hi] "r"(size - 16)
+                                : "v0");
+                return destination;
+#endif
         }
 #endif
         __builtin_memset(destination, value, size);
@@ -749,6 +1280,10 @@ static inline INLINE string_address first_of_set_known(string_address source,
         page after it back to the kernel instead.
 */
 #define KNOWN_NEEDLE_MAX 1
+#if KNOWN_NEEDLE_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_NEEDLE_MAX
+#define KNOWN_NEEDLE_MAX LIBRARY_SIZE_MAX
+#endif
 
 #define SEARCH_KNOWN(name, find)                                             \
 static inline INLINE address_any name(address_any block, positive size,     \
@@ -890,6 +1425,18 @@ SEARCH_KNOWN(search_case_known, memory_first_of_ascii_case)
 #define KNOWN_BOUND_MAX 31
 #define KNOWN_PAIR_MAX 48
 #define KNOWN_APPEND_MAX 16
+#endif
+#if KNOWN_BOUND_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_BOUND_MAX
+#define KNOWN_BOUND_MAX LIBRARY_SIZE_MAX
+#endif
+#if KNOWN_PAIR_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_PAIR_MAX
+#define KNOWN_PAIR_MAX LIBRARY_SIZE_MAX
+#endif
+#if KNOWN_APPEND_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_APPEND_MAX
+#define KNOWN_APPEND_MAX LIBRARY_SIZE_MAX
 #endif
 
 #if X64 || ARM64
@@ -1243,6 +1790,14 @@ static inline INLINE string_address append_max_known(string_address destination,
 #define KNOWN_COMPARE_MAX 16
 #define KNOWN_SCAN_MAX 12
 #endif
+#if KNOWN_COMPARE_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_COMPARE_MAX
+#define KNOWN_COMPARE_MAX LIBRARY_SIZE_MAX
+#endif
+#if KNOWN_SCAN_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_SCAN_MAX
+#define KNOWN_SCAN_MAX LIBRARY_SIZE_MAX
+#endif
 
 /*
         Common-prefix expansion turns over first on the RV64 floor: it is
@@ -1252,6 +1807,10 @@ static inline INLINE string_address append_max_known(string_address destination,
         cutoff rather than architecture policy hidden in a call site.
 */
 #define KNOWN_PREFIX_MAX 20
+#if KNOWN_PREFIX_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_PREFIX_MAX
+#define KNOWN_PREFIX_MAX LIBRARY_SIZE_MAX
+#endif
 
 /*
         These read only inside the caller's bound. Every load lies within
@@ -1524,6 +2083,14 @@ static inline INLINE b32 compare_known(const address_any first,
 #define KNOWN_FOLDED_MAX 0
 #else
 #define KNOWN_FOLDED_MAX 8
+#endif
+#if KNOWN_ASCII_CASE_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_ASCII_CASE_MAX
+#define KNOWN_ASCII_CASE_MAX LIBRARY_SIZE_MAX
+#endif
+#if KNOWN_FOLDED_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_FOLDED_MAX
+#define KNOWN_FOLDED_MAX LIBRARY_SIZE_MAX
 #endif
 
 static inline INLINE p8 known_ascii_upper(p8 value)
@@ -2329,6 +2896,10 @@ static inline INLINE b32 known_first_set(b32 value)
         middle.
 */
 #define KNOWN_UNTIL_MAX 16
+#if KNOWN_UNTIL_MAX > LIBRARY_SIZE_MAX
+#undef KNOWN_UNTIL_MAX
+#define KNOWN_UNTIL_MAX LIBRARY_SIZE_MAX
+#endif
 
 //      bzero: the byte is chosen already, so only the size has to be folded.
 static inline INLINE fn zero_known(address_any destination, positive size)
@@ -2436,12 +3007,12 @@ static inline INLINE address_any copy_until_known(address_any destination,
         followed by an open bracket and would expand.
 */
 #define memory_copy(destination, source, size)                                \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
+        (LIBRARY_EXPAND(COPY, (size), KNOWN_SIZE_MAX)                         \
                  ? copy_known((destination), (source), (size))                \
                  : copy_running((destination), (source), (size)))
 
 #define memory_copy_apart(destination, source, size)                           \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
+        (LIBRARY_EXPAND(COPY, (size), KNOWN_SIZE_MAX)                         \
                  ? copy_apart_known((destination), (source), (size))           \
                  : copy_apart_running((destination), (source), (size)))
 
@@ -2457,7 +3028,7 @@ static inline INLINE address_any copy_until_known(address_any destination,
         followed by an open bracket and would expand.
 */
 #define string_span_of_set(source, accept)                                    \
-        (!set_known(accept)                                                   \
+        (!LIBRARY_INLINE_STRING || !set_known(accept)                         \
                  ? string_span_of_set((source), (accept))                     \
          : set_known_length(accept) == 0                                      \
                  ? ((void)(source), (positive)0)                              \
@@ -2465,7 +3036,7 @@ static inline INLINE address_any copy_until_known(address_any destination,
                                set_known_table(accept, set_known_holds)))
 
 #define string_span_without_set(source, reject)                               \
-        (!set_known(reject)                                                   \
+        (!LIBRARY_INLINE_STRING || !set_known(reject)                         \
                  ? string_span_without_set((source), (reject))                \
          : set_known_length(reject) == 0                                      \
                  ? string_length(source)                                      \
@@ -2475,7 +3046,7 @@ static inline INLINE address_any copy_until_known(address_any destination,
                                set_known_table(reject, set_known_stops)))
 
 #define string_first_of_set(source, accept)                                   \
-        (!set_known(accept)                                                   \
+        (!LIBRARY_INLINE_STRING || !set_known(accept)                         \
                  ? string_first_of_set((source), (accept))                    \
          : set_known_length(accept) == 0                                      \
                  ? ((void)(source), (string_address)null)                     \
@@ -2486,14 +3057,12 @@ static inline INLINE address_any copy_until_known(address_any destination,
 
 //      needle-length
 #define memory_search(block, size, needle, needle_size)                       \
-        (__builtin_constant_p(needle_size) &&                                 \
-                         (positive)(needle_size) <= KNOWN_NEEDLE_MAX          \
+        (LIBRARY_EXPAND(SCAN, (needle_size), KNOWN_NEEDLE_MAX)                \
                  ? search_known((block), (size), (needle), (needle_size))     \
                  : memory_search((block), (size), (needle), (needle_size)))
 
 #define memory_search_ascii_case(block, size, needle, needle_size)            \
-        (__builtin_constant_p(needle_size) &&                                 \
-                         (positive)(needle_size) <= KNOWN_NEEDLE_MAX          \
+        (LIBRARY_EXPAND(SCAN, (needle_size), KNOWN_NEEDLE_MAX)                \
                  ? search_case_known((block), (size), (needle), (needle_size)) \
                  : memory_search_ascii_case((block), (size), (needle),        \
                                             (needle_size)))
@@ -2501,27 +3070,27 @@ static inline INLINE address_any copy_until_known(address_any destination,
 //      bounded-string
 
 #define string_length_max(source, bound)                                      \
-        (__builtin_constant_p(bound) && (positive)(bound) <= KNOWN_BOUND_MAX  \
+        (LIBRARY_EXPAND(STRING, (bound), KNOWN_BOUND_MAX)                     \
                  ? length_max_known((source), (bound))                        \
                  : string_length_max((source), (bound)))
 
 #define string_compare_max(source, input, bound)                              \
-        (__builtin_constant_p(bound) && (positive)(bound) <= KNOWN_BOUND_MAX  \
+        (LIBRARY_EXPAND(STRING, (bound), KNOWN_BOUND_MAX)                     \
                  ? compare_max_known((source), (input), (bound))              \
                  : string_compare_max((source), (input), (bound)))
 
 #define string_copy_max_end(into, source, bound)                              \
-        (__builtin_constant_p(bound) && (positive)(bound) <= KNOWN_PAIR_MAX   \
+        (LIBRARY_EXPAND(STRING, (bound), KNOWN_PAIR_MAX)                      \
                  ? copy_max_end_known((into), (source), (bound))              \
                  : string_copy_max_end((into), (source), (bound)))
 
 #define string_copy_max_endptr(destination, source, bound)                    \
-        (__builtin_constant_p(bound) && (positive)(bound) <= KNOWN_PAIR_MAX   \
+        (LIBRARY_EXPAND(STRING, (bound), KNOWN_PAIR_MAX)                      \
                  ? copy_max_endptr_known((destination), (source), (bound))    \
                  : string_copy_max_endptr((destination), (source), (bound)))
 
 #define string_append_max(destination, source, bound)                         \
-        (__builtin_constant_p(bound) && (positive)(bound) <= KNOWN_APPEND_MAX \
+        (LIBRARY_EXPAND(STRING, (bound), KNOWN_APPEND_MAX)                    \
                  ? append_max_known((destination), (source), (bound))         \
                  : string_append_max((destination), (source), (bound)))
 
@@ -2530,34 +3099,32 @@ static inline INLINE address_any copy_until_known(address_any destination,
 //      compare-and-find
 
 #define memory_compare(first, second, size)                                   \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_COMPARE_MAX  \
+        (LIBRARY_EXPAND(COMPARE, (size), KNOWN_COMPARE_MAX)                   \
                  ? compare_known((first), (second), (size))                   \
                  : memory_compare((first), (second), (size)))
 
 #define memory_common_prefix(first, second, size)                             \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_PREFIX_MAX   \
+        (LIBRARY_EXPAND(COMPARE, (size), KNOWN_PREFIX_MAX)                    \
                  ? common_prefix_known((first), (second), (size))             \
                  : memory_common_prefix((first), (second), (size)))
 
 #define memory_compare_ascii_case(first, second, size)                        \
-        (__builtin_constant_p(size) &&                                        \
-                         (positive)(size) <= KNOWN_ASCII_CASE_MAX             \
+        (LIBRARY_EXPAND(COMPARE, (size), KNOWN_ASCII_CASE_MAX)                \
                  ? compare_ascii_case_known((first), (second), (size))        \
                  : memory_compare_ascii_case((first), (second), (size)))
 
 #define string_compare_folded_max(first, second, bound)                       \
-        (__builtin_constant_p(bound) &&                                      \
-                         (positive)(bound) <= KNOWN_FOLDED_MAX               \
+        (LIBRARY_EXPAND(STRING, (bound), KNOWN_FOLDED_MAX)                    \
                  ? compare_folded_max_known((first), (second), (bound))      \
                  : string_compare_folded_max((first), (second), (bound)))
 
 #define memory_first_of(block, value, size)                                   \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SCAN_MAX     \
+        (LIBRARY_EXPAND(SCAN, (size), KNOWN_SCAN_MAX)                         \
                  ? first_of_known((block), (value), (size))                   \
                  : memory_first_of((block), (value), (size)))
 
 #define memory_last_of(block, value, size)                                    \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SCAN_MAX     \
+        (LIBRARY_EXPAND(SCAN, (size), KNOWN_SCAN_MAX)                         \
                  ? last_of_known((block), (value), (size))                    \
                  : memory_last_of((block), (value), (size)))
 
@@ -2586,13 +3153,13 @@ static inline INLINE address_any copy_until_known(address_any destination,
         (((base) >= 2 && (base) <= 10) || (base) == 16)
 
 #define string_to_number(input, stopped, base)                                \
-        (__builtin_constant_p(base) && KNOWN_BASE_PARSES(base)                \
+        (LIBRARY_INLINE && __builtin_constant_p(base) && KNOWN_BASE_PARSES(base) \
                  ? (bipolar)number_known((input), (stopped),                  \
                                          (positive)(base), 1, null)           \
                  : string_to_number((input), (stopped), (base)))
 
 #define string_to_number_unsigned(input, stopped, base)                       \
-        (__builtin_constant_p(base) && KNOWN_BASE_PARSES(base)                \
+        (LIBRARY_INLINE && __builtin_constant_p(base) && KNOWN_BASE_PARSES(base) \
                  ? number_known((input), (stopped), (positive)(base), 0, null)\
                  : string_to_number_unsigned((input), (stopped), (base)))
 
@@ -2602,21 +3169,21 @@ static inline INLINE address_any copy_until_known(address_any destination,
 //      is still the single assembly scan; its checked entry only saves the
 //      status pointer around that call.
 #define string_to_number_checked(input, stopped, base, out_of_range)          \
-        (__builtin_constant_p(base) && KNOWN_BASE_PARSES(base)                \
+        (LIBRARY_INLINE && __builtin_constant_p(base) && KNOWN_BASE_PARSES(base) \
                  ? (bipolar)number_known((input), (stopped),                  \
                                          (positive)(base), 1, (out_of_range)) \
                  : string_to_number_checked((input), (stopped), (base),       \
                                             (out_of_range)))
 
 #define string_to_number_unsigned_checked(input, stopped, base, out_of_range)\
-        (__builtin_constant_p(base) && KNOWN_BASE_PARSES(base)                \
+        (LIBRARY_INLINE && __builtin_constant_p(base) && KNOWN_BASE_PARSES(base) \
                  ? number_known((input), (stopped), (positive)(base), 0,      \
                                 (out_of_range))                               \
                  : string_to_number_unsigned_checked(                        \
                            (input), (stopped), (base), (out_of_range)))
 
 #define positive_into_base(into, value, base, upper)                          \
-        (__builtin_constant_p(base) && (positive)(base) - 2 <= 34             \
+        (LIBRARY_INLINE && __builtin_constant_p(base) && (positive)(base) - 2 <= 34 \
                  ? into_base_known((into), (value), (positive)(base),         \
                                    (upper))                                   \
                  : positive_into_base((into), (value), (base), (upper)))
@@ -2651,6 +3218,7 @@ static inline INLINE address_any copy_until_known(address_any destination,
 #define KNOWN_SINGLE(name, known, value)                                      \
         (__builtin_constant_p(value) ? known(value) : name(value))
 
+#if LIBRARY_INLINE_BYTE
 #define byte_is_digit(value)       known_is_digit(value)
 #define byte_is_upper(value)       known_is_upper(value)
 #define byte_is_lower(value)       known_is_lower(value)
@@ -2661,57 +3229,84 @@ static inline INLINE address_any copy_until_known(address_any destination,
 #define byte_is_printable(value)   known_is_printable(value)
 #define byte_is_graphic(value)     known_is_graphic(value)
 #define byte_is_control(value)     known_is_control(value)
-#define byte_is_punctuation(value) KNOWN_SINGLE(byte_is_punctuation, known_is_punctuation, (value))
 #define byte_is_blank(value)       known_is_blank(value)
 #define byte_is_ascii(value)       known_is_ascii(value)
 #define byte_to_ascii(value)       known_to_ascii(value)
 #define byte_to_upper(value)       known_to_upper(value)
 #define byte_to_lower(value)       known_to_lower(value)
+#else
+#define byte_is_digit(value)       KNOWN_SINGLE(byte_is_digit, known_is_digit, (value))
+#define byte_is_upper(value)       KNOWN_SINGLE(byte_is_upper, known_is_upper, (value))
+#define byte_is_lower(value)       KNOWN_SINGLE(byte_is_lower, known_is_lower, (value))
+#define byte_is_alpha(value)       KNOWN_SINGLE(byte_is_alpha, known_is_alpha, (value))
+#define byte_is_alnum(value)       KNOWN_SINGLE(byte_is_alnum, known_is_alnum, (value))
+#define byte_is_space(value)       KNOWN_SINGLE(byte_is_space, known_is_space, (value))
+#define byte_is_hexadecimal(value) KNOWN_SINGLE(byte_is_hexadecimal, known_is_hexadecimal, (value))
+#define byte_is_printable(value)   KNOWN_SINGLE(byte_is_printable, known_is_printable, (value))
+#define byte_is_graphic(value)     KNOWN_SINGLE(byte_is_graphic, known_is_graphic, (value))
+#define byte_is_control(value)     KNOWN_SINGLE(byte_is_control, known_is_control, (value))
+#define byte_is_blank(value)       KNOWN_SINGLE(byte_is_blank, known_is_blank, (value))
+#define byte_is_ascii(value)       KNOWN_SINGLE(byte_is_ascii, known_is_ascii, (value))
+#define byte_to_ascii(value)       KNOWN_SINGLE(byte_to_ascii, known_to_ascii, (value))
+#define byte_to_upper(value)       KNOWN_SINGLE(byte_to_upper, known_to_upper, (value))
+#define byte_to_lower(value)       KNOWN_SINGLE(byte_to_lower, known_to_lower, (value))
+#endif
+#define byte_is_punctuation(value) KNOWN_SINGLE(byte_is_punctuation, known_is_punctuation, (value))
+#if LIBRARY_INLINE_BITS
 #define bits_counted(value)        KNOWN_SINGLE(bits_counted, known_counted, (value))
 #define bits_trailing_zeros(value) KNOWN_SINGLE(bits_trailing_zeros, known_trailing_zeros, (value))
 #define bits_leading_zeros(value)  KNOWN_SINGLE(bits_leading_zeros, known_leading_zeros, (value))
 #define bits_first_set(value)      KNOWN_SINGLE(bits_first_set, known_first_set, (value))
 #define bits_first_set_wide(value) KNOWN_SINGLE(bits_first_set_wide, known_first_set_wide, (value))
+#else
+#define bits_counted(value)        bits_counted(value)
+#define bits_trailing_zeros(value) bits_trailing_zeros(value)
+#define bits_leading_zeros(value)  bits_leading_zeros(value)
+#define bits_first_set(value)      bits_first_set(value)
+#define bits_first_set_wide(value) bits_first_set_wide(value)
+#endif
 
 //      fill-and-until
 
 #define memory_fill(destination, value, size)                                 \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
+        (LIBRARY_EXPAND(FILL, (size), KNOWN_SIZE_MAX)                         \
                  ? fill_known((destination), (value), (size),                \
                               __builtin_constant_p(value) && (b8)(value) == 0)\
                  : fill_running((destination), (b8)(value), (size)))
 
 #define memory_zero(destination, size)                                        \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
+        (LIBRARY_EXPAND(FILL, (size), KNOWN_SIZE_MAX)                         \
                  ? zero_known((destination), (size))                          \
                  : zero_running((destination), (size)))
 
 #define memory_copy_until(destination, source, value, size)                   \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_UNTIL_MAX    \
+        (LIBRARY_EXPAND(COPY, (size), KNOWN_UNTIL_MAX)                        \
                  ? copy_until_known((destination), (source), (value), (size)) \
                  : memory_copy_until((destination), (source), (value), (size)))
 
 #if KNOWN_SCAN_WORDS
 #define memory_count(block, size, value)                                      \
-        (__builtin_constant_p(size) && (positive)(size) <= 63                \
+        (LIBRARY_EXPAND(SCAN, (size), 63)                                     \
                  ? count_known((block), (positive)(size), (p8)(value))       \
                  : memory_count((block), (size), (value)))
 #endif
 
 #define memory_translate(block, size, table)                                  \
-        (__builtin_constant_p(size) && (positive)(size) <= 8                 \
+        (LIBRARY_EXPAND(SCAN, (size), 8)                                      \
                  ? translate_known((block), (positive)(size), (table))       \
                  : memory_translate((block), (size), (table)))
 
 #define memory_copy_apart_end(destination, source, size)                      \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX    \
+        (LIBRARY_EXPAND(COPY, (size), KNOWN_SIZE_MAX)                         \
                  ? copy_apart_count_end_known((destination), (source),       \
                                                (positive)(size))             \
                  : memory_copy_apart_end((destination), (source), (size)))
 
 #define string_copy_end(destination, source)                                  \
-        (__builtin_constant_p(__builtin_strlen((const char address_to)(source))) \
+        (LIBRARY_INLINE_STRING                                                \
+         && __builtin_constant_p(__builtin_strlen((const char address_to)(source))) \
          && __builtin_strlen((const char address_to)(source)) < KNOWN_SIZE_MAX \
+         && __builtin_strlen((const char address_to)(source)) >= LIBRARY_SIZE_FLOOR \
                  ? copy_end_known((destination), (source),                    \
                                   __builtin_strlen((const char address_to)(source))) \
                  : string_copy_end((destination), (source)))

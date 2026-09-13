@@ -976,7 +976,7 @@ static bipolar process_coresched_call(positive operation, positive process,
 static bool process_coresched_pid(string_address text,
                                   positive address_to process)
 {
-        return string_digits_exact(text, process) && address_to process &&
+        return string_digits_checked_exact(text, 10, process) && address_to process &&
                address_to process <= b32_max;
 }
 

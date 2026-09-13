@@ -13072,9 +13072,8 @@ static bool ul_ipc_key_number(string_address text, positive address_to into)
                 return false;
         if (string_is(at, '-') || string_is(at, '+'))
         {
-                positive used = 0;
-                bipolar value = string_bipolar(at, address_of used);
-                if (!used || string_get(at + used) || value < b32_min ||
+                bipolar value;
+                if (!file_signed_decimal(at, address_of value) || value < b32_min ||
                     value > b32_max)
                         return false;
                 address_to into = (positive)(p32)(b32)value;

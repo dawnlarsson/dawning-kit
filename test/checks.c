@@ -40037,13 +40037,368 @@ static fn bits(void)
               zstd_bits_open(address_of b, eight, sizeof(eight)) == 0);
 }
 
+static fn roundtrip(void)
+{
+        p8 src[4096];
+        p8 packed[8192];
+        p8 back[4096];
+        bipolar n;
+        bipolar m;
+        positive at;
+
+        n = zstd_deflate_mem((p8 address_to) "", 0, packed, sizeof(packed), 3);
+        check("encode empty", n > 0);
+        m = zstd_inflate(packed, (positive)n, back, sizeof(back));
+        check("decode empty encode", m == 0);
+
+        n = zstd_deflate_mem((p8 address_to) "hello\n", 6, packed, sizeof(packed),
+                             3);
+        check("encode hello", n > 0);
+        m = zstd_inflate(packed, (positive)n, back, sizeof(back));
+        check("hello roundtrip",
+              m == 6 && !memory_compare(back, "hello\n", 6));
+
+        for (at = 0; at < sizeof(src); at++)
+                src[at] = (p8)(at * 3 + 7);
+        n = zstd_deflate_mem(src, sizeof(src), packed, sizeof(packed), 3);
+        check("encode 4k", n > 0 && n < (bipolar)sizeof(packed));
+        m = zstd_inflate(packed, (positive)n, back, sizeof(back));
+        check("4k roundtrip",
+              m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
+
+        memory_fill(src, 'a', sizeof(src));
+        n = zstd_deflate_mem(src, sizeof(src), packed, sizeof(packed), 3);
+        check("encode repeated", n > 0 && n < 128);
+        m = zstd_inflate(packed, (positive)n, back, sizeof(back));
+        check("repeated roundtrip",
+              m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
+}
+
+static fn literal_codebooks(void)
+{
+        static p8 src[131072];
+        static p8 packed[262656];
+        static p8 back[131072];
+        const positive sizes[] = {64, 65, 127, 129, 511, 513, 4095, 4096,
+                                   16383, 16384, 65535, 131072};
+        const positive alphabets[] = {31, 127, 128, 129, 255};
+        for (positive a = 0; a < array_count(alphabets); a++)
+                for (positive k = 0; k < array_count(sizes); k++)
+                {
+                        positive n = sizes[k];
+                        p32 random = 0x97346112u;
+                        for (positive i = 0; i < n; i++)
+                        {
+                                random ^= random << 13;
+                                random ^= random >> 17;
+                                random ^= random << 5;
+                                src[i] = (random & 7) ? (random >> 8) % 8
+                                                     : (random >> 16) % (alphabets[a] + 1);
+                        }
+                        src[n - 1] = (p8)alphabets[a];
+                        positive hn = 0;
+                        positive cn = zstd_pack_literals(src, n, packed, address_of hn);
+                        if (!cn)
+                        {
+                                /* A short alphabet header may cost more than
+                                   the payload; larger cases must compress. */
+                                check("literal tree worth encoding", n < 513);
+                                continue;
+                        }
+                        memory_copy_apart(packed + hn, zstd_packed_lits, cn);
+                        positive used = 0, got = 0;
+                        zstd_block_limit = ZSTD_BLOCK_MAX;
+                        check("four streams and complete direct/FSE tree",
+                              zstd_literals(packed, hn + cn, address_of used,
+                                             back, address_of got) && got == n &&
+                              used == hn + cn && !memory_compare(src, back, n));
+                }
+}
+
 b32 main(void)
 {
+        literal_codebooks();
         frames();
         bits();
+        roundtrip();
         return test_report(null);
 }
 #endif /* CHECK_zstd */
+
+#ifdef CHECK_gzip
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#define GZIP_CORE_ONLY
+#include "../src/sh/gzip.c"
+#undef GZIP_CORE_ONLY
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+static p8 gzip_empty_py[] = {
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff,
+        0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static p8 gzip_hello_py[] = {
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff,
+        0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0xe7, 0x02, 0x00, 0x20, 0x30,
+        0x3a, 0x36, 0x06, 0x00, 0x00, 0x00};
+
+static bool gzip_out_is(p8 address_to src, positive src_len, string_address want)
+{
+        p8 into[64];
+        bipolar n = gzip_inflate_mem(src, src_len, into, sizeof(into));
+        positive want_len = string_length(want);
+
+        return n == (bipolar)want_len &&
+               !memory_compare(into, want, want_len);
+}
+
+static fn members(void)
+{
+        p8 into[64];
+        bipolar n;
+
+        n = gzip_inflate_mem(gzip_empty_py, sizeof(gzip_empty_py), into,
+                             sizeof(into));
+        check("python empty gzip", n == 0);
+
+        check("python hello gzip",
+              gzip_out_is(gzip_hello_py, sizeof(gzip_hello_py), "hello\n"));
+
+        n = gzip_inflate_mem(null, 0, into, sizeof(into));
+        check("empty input fails", n < 0);
+
+        check("ieee crc32 123456789",
+              (hash_crc32(0xffffffffu, "123456789", 9) ^ 0xffffffffu) ==
+                  0xcbf43926u);
+        check("ieee crc32 empty",
+              hash_crc32(0xffffffffu, null, 0) == 0xffffffffu);
+        check("ecma crc64 123456789",
+              (hash_crc64(0xffffffffffffffffull, "123456789", 9) ^
+               0xffffffffffffffffull) == 0x995dc9bbdf1939faull);
+}
+
+static fn roundtrip(void)
+{
+        p8 src[4096];
+        p8 packed[8192];
+        p8 back[4096];
+        bipolar n;
+        bipolar m;
+        positive at;
+
+        n = gzip_deflate_mem((p8 address_to) "", 0, packed, sizeof(packed), 6);
+        check("encode empty", n > 0);
+        m = gzip_inflate_mem(packed, (positive)n, back, sizeof(back));
+        check("decode empty encode", m == 0);
+
+        n = gzip_deflate_mem((p8 address_to) "hello\n", 6, packed,
+                             sizeof(packed), 1);
+        check("encode hello level 1", n > 0);
+        check("hello level 1 roundtrip",
+              gzip_out_is(packed, (positive)n, "hello\n"));
+
+        n = gzip_deflate_mem((p8 address_to) "hello\n", 6, packed,
+                             sizeof(packed), 9);
+        check("encode hello level 9", n > 0);
+        check("hello level 9 roundtrip",
+              gzip_out_is(packed, (positive)n, "hello\n"));
+
+        for (at = 0; at < sizeof(src); at++)
+                src[at] = (p8)(at * 3 + 7);
+        n = gzip_deflate_mem(src, sizeof(src), packed, sizeof(packed), 6);
+        check("encode 4k", n > 0 && n < (bipolar)sizeof(packed));
+        m = gzip_inflate_mem(packed, (positive)n, back, sizeof(back));
+        check("4k roundtrip",
+              m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
+
+        memory_fill(src, 'a', sizeof(src));
+        n = gzip_deflate_mem(src, sizeof(src), packed, sizeof(packed), 6);
+        check("encode repeated", n > 0 && n < 64);
+        m = gzip_inflate_mem(packed, (positive)n, back, sizeof(back));
+        check("repeated roundtrip",
+              m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
+}
+
+static fn large_roundtrip(void)
+{
+        static p8 src[65536];
+        static p8 packed[8192];
+        static p8 back[65536];
+        bipolar n;
+        bipolar m;
+
+        memory_fill(src, 'a', sizeof(src));
+        n = gzip_deflate_mem(src, sizeof(src), packed, sizeof(packed), 9);
+        check("encode 64k repeated", n > 0 && n < (bipolar)sizeof(packed));
+        m = gzip_inflate_mem(packed, (positive)n, back, sizeof(back));
+        check("64k repeated roundtrip",
+              m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
+}
+
+b32 main(void)
+{
+        members();
+        roundtrip();
+        large_roundtrip();
+        return test_report(null);
+}
+#endif /* CHECK_gzip */
+
+#ifdef CHECK_xz
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#define XZ_CORE_ONLY
+#include "../src/sh/xz.c"
+#undef XZ_CORE_ONLY
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+static p8 xz_empty_py[] = {
+        0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x04, 0xe6, 0xd6, 0xb4,
+        0x46, 0x00, 0x00, 0x00, 0x00, 0x1c, 0xdf, 0x44, 0x21, 0x1f, 0xb6,
+        0xf3, 0x7d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x59, 0x5a};
+static p8 xz_hello_py[] = {
+        0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x04, 0xe6, 0xd6, 0xb4,
+        0x46, 0x02, 0x00, 0x21, 0x01, 0x0c, 0x00, 0x00, 0x00, 0x8f, 0x98,
+        0x41, 0x9c, 0x01, 0x00, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x0a,
+        0x00, 0x00, 0x00, 0xa5, 0x60, 0x97, 0xf1, 0x94, 0xf6, 0xfd, 0xe0,
+        0x00, 0x01, 0x1e, 0x06, 0xc1, 0x2f, 0xa4, 0x1d, 0x1f, 0xb6, 0xf3,
+        0x7d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x59, 0x5a};
+
+static bool xz_out_is(p8 address_to src, positive src_len, string_address want)
+{
+        p8 into[64];
+        bipolar n = xz_inflate_mem(src, src_len, into, sizeof(into));
+        positive want_len = string_length(want);
+
+        return n == (bipolar)want_len &&
+               !memory_compare(into, want, want_len);
+}
+
+static fn members(void)
+{
+        p8 into[64];
+        bipolar n;
+
+        n = xz_inflate_mem(xz_empty_py, sizeof(xz_empty_py), into, sizeof(into));
+        check("python empty xz", n == 0);
+
+        check("python hello xz",
+              xz_out_is(xz_hello_py, sizeof(xz_hello_py), "hello\n"));
+
+        n = xz_inflate_mem(null, 0, into, sizeof(into));
+        check("empty input fails", n < 0);
+}
+
+static fn roundtrip(void)
+{
+        p8 src[256];
+        p8 packed[1024];
+        p8 back[256];
+        bipolar n;
+        bipolar m;
+        positive at;
+
+        n = xz_deflate_mem((p8 address_to) "", 0, packed, sizeof(packed), 6);
+        check("encode empty", n > 0);
+        m = xz_inflate_mem(packed, (positive)n, back, sizeof(back));
+        check("decode empty encode", m == 0);
+
+        n = xz_deflate_mem((p8 address_to) "hello\n", 6, packed, sizeof(packed),
+                           1);
+        check("encode hello", n > 0);
+        check("hello roundtrip",
+              xz_out_is(packed, (positive)n, "hello\n"));
+
+        for (at = 0; at < sizeof(src); at++)
+                src[at] = (p8)(at * 3 + 7);
+        n = xz_deflate_mem(src, sizeof(src), packed, sizeof(packed), 6);
+        check("encode 256", n > 0);
+        m = xz_inflate_mem(packed, (positive)n, back, sizeof(back));
+        check("256 roundtrip",
+              m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
+
+        {
+                p8 many[4096];
+                p8 packed2[8192];
+                p8 back2[4096];
+
+                memory_fill(many, 'a', sizeof(many));
+                n = xz_deflate_mem(many, sizeof(many), packed2, sizeof(packed2),
+                                   6);
+                check("encode repeated", n > 0 && n < 256);
+                m = xz_inflate_mem(packed2, (positive)n, back2, sizeof(back2));
+                check("repeated roundtrip",
+                      m == (bipolar)sizeof(many) &&
+                          !memory_compare(back2, many, sizeof(many)));
+        }
+}
+
+static fn large_roundtrip(void)
+{
+        static p8 src[65536];
+        static p8 packed[8192];
+        static p8 back[65536];
+        bipolar n;
+        bipolar m;
+
+        memory_fill(src, 'a', sizeof(src));
+        n = xz_deflate_mem(src, sizeof(src), packed, sizeof(packed), 6);
+        check("encode 64k repeated", n > 0 && n < (bipolar)sizeof(packed));
+        m = xz_inflate_mem(packed, (positive)n, back, sizeof(back));
+        check("64k repeated roundtrip",
+              m == (bipolar)sizeof(src) && !memory_compare(back, src, sizeof(src)));
+}
+
+static fn streamed(void)
+{
+        static p8 src[65536 + 1024];
+        static p8 packed[8192];
+        static p8 back[65536 + 1024];
+        positive at;
+        bool wrote = true;
+        bipolar m;
+
+        memory_fill(src, 'a', sizeof(src));
+        xz_in_fd = -1;
+        xz_enc_mem = null;
+        xz_feed = null;
+        xz_out_fd = -1;
+        xz_out_mem = packed;
+        xz_out_cap = sizeof(packed);
+        xz_out_used = 0;
+        check("stream begin", xz_encode_setup(6));
+        for (at = 0; at < sizeof(src); at += 512)
+        {
+                positive n = sizeof(src) - at;
+
+                if (n > 512)
+                        n = 512;
+                if (!xz_encode_write(src + at, n))
+                        wrote = false;
+        }
+        check("stream writes", wrote);
+        check("stream end", xz_encode_end());
+        check("stream size",
+              xz_out_used > 0 && xz_out_used < sizeof(packed));
+        m = xz_inflate_mem(packed, xz_out_used, back, sizeof(back));
+        check("stream roundtrip",
+              m == (bipolar)sizeof(src) &&
+                  !memory_compare(back, src, sizeof(src)));
+        xz_out_mem = null;
+}
+
+b32 main(void)
+{
+        members();
+        roundtrip();
+        large_roundtrip();
+        streamed();
+        return test_report(null);
+}
+#endif /* CHECK_xz */
 
 #ifdef CHECK_reuse_shell
 #include "../src/compiler_memory.c"
@@ -45694,7 +46049,7 @@ static p8 one[1 << 22] __attribute__((aligned(64)));
 static p8 two[1 << 22] __attribute__((aligned(64)));
 static p8 out[1 << 22] __attribute__((aligned(64)));
 
-static positive sizes[] = {64, 4096, 65536, 1048576};
+static positive sizes[] = {8, 16, 32, 64, 256, 4096, 65536, 1048576};
 
 /*
         The floor, in assembly, for the same reason the routines are.
@@ -46035,8 +46390,62 @@ b32 main(void)
                 PAIRED_ROW("string_copy", n, rounds,
                            sink += floor_copy(out, one, n),
                            string_copy(out, one));
+                PAIRED_ROW("string_copy_max", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           string_copy_max(out, one, n));
+                PAIRED_ROW("string_length_max", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += string_length_max(one, n));
+                PAIRED_ROW("string_compare_max", n, rounds,
+                           sink += floor_two(one, two, n),
+                           sink += (positive)string_compare_max(one, two, n));
+                PAIRED_ROW("memory_common_prefix", n, rounds,
+                           sink += floor_two(one, two, n),
+                           sink += memory_common_prefix(one, two, n));
+                PAIRED_ROW("memory_last_of", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)memory_last_of(one, 0, n));
+                PAIRED_ROW("memory_sum_bytes", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += memory_sum_bytes(one, n));
+                PAIRED_ROW("memory_hash_33", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += memory_hash_33(one, n));
+                PAIRED_ROW("hash_xxh64", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)hash_xxh64(one, n, 0));
+                memory_copy_apart(out, one, n);
+                PAIRED_ROW("memory_reverse", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           memory_reverse(out, n));
+                memory_copy_apart(out, one, n);
+                PAIRED_ROW("memory_frob", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           memory_frob(out, n));
+                memory_copy_apart(out, one, n);
+                PAIRED_ROW("memory_to_lower_ascii", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           memory_to_lower_ascii(out, n));
+                PAIRED_ROW("memory_exchange_apart", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           memory_exchange_apart(out, one, n));
+                PAIRED_ROW("memory_span_byte", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += memory_span_byte(one, 1, n));
+                one[n] = 0;
+                two[0] = 'z';
+                two[1] = 0;
+                PAIRED_ROW("string_search", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)string_search(one, two));
+                PAIRED_ROW("memory_search", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)memory_search(one, n, two, 1));
+                one[n] = (p8)(n % 251 + 1);
                 one[n - 1] = (p8)((n - 1) % 251 + 1);
                 two[n - 1] = one[n - 1];
+                two[0] = one[0];
+                two[1] = one[1];
 
                 string_format(log, "\n");
         }
@@ -54642,4 +55051,373 @@ b32 main()
         return 0;
 }
 #endif /* BENCH_one */
+#if defined(CHECK_compression_floor) || defined(BENCH_compression_floor)
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#define GZIP_CORE_ONLY
+#include "../src/sh/gzip.c"
+#undef GZIP_CORE_ONLY
+#define XZ_CORE_ONLY
+#include "../src/sh/xz.c"
+#undef XZ_CORE_ONLY
+#define SHARED_counted
+#include "checks.c"
+#undef SHARED_counted
+
+static p64 floor_crc(p64 crc, p8 address_to data, positive n, p64 polynomial)
+{
+        for (positive i = 0; i < n; i++)
+        {
+                crc ^= data[i];
+                for (positive j = 0; j < 8; j++)
+                        crc = (crc >> 1) ^ ((0 - (crc & 1)) & polynomial);
+        }
+        return crc;
+}
+
+static p8 address_to floor_pages(positive pages)
+{
+        p8 address_to p = memory(pages * 4096);
+        if (system_failed(p) || !p)
+                return null;
+        if (system_call_3(syscall(mprotect), (positive)p, 4096, 0) != 0 ||
+            system_call_3(syscall(mprotect), (positive)(p + (pages - 1) * 4096),
+                          4096, 0) != 0)
+        {
+                memory_free(p, pages * 4096);
+                return null;
+        }
+        return p;
+}
+
+static fn floor_checksums(void)
+{
+        p8 address_to p = floor_pages(3);
+        check("CRC protected mappings", p != null);
+        if (!p) return;
+        for (positive i = 0; i < 4096; i++) p[4096 + i] = (p8)(i * 37 + i / 11);
+        const positive sizes[] = {0,1,2,3,4,5,6,7,8,9,15,16,17,31,32,33,63,64,
+                                  65,127,128,129,255,256,257,1023,1024,4095,4096};
+        for (positive k = 0; k < array_count(sizes); k++)
+                for (positive edge = 0; edge < 2; edge++)
+                        for (positive seed = 0; seed < 3; seed++)
+                        {
+                                positive n = sizes[k];
+                                p8 address_to src = p + (edge ? 8192 - n : 4096);
+                                p64 initial = seed == 0 ? 0 : seed == 1 ? ~(p64)0
+                                                                       : 0x9b37216c8123abfeull;
+                                p32 c32 = hash_crc32((p32)initial, src, n);
+                                p64 c64 = hash_crc64(initial, src, n);
+                                check("IEEE reflected CRC, seed/span/alignment",
+                                      c32 == (p32)floor_crc((p32)initial, src, n, 0xedb88320u));
+                                check("ECMA reflected CRC, seed/span/alignment",
+                                      c64 == floor_crc(initial, src, n, 0xc96c5795d7870f42ull));
+                                positive split = n / 2;
+                                check("CRC continuation agrees across slices",
+                                      c32 == hash_crc32(hash_crc32((p32)initial, src, split),
+                                                        src + split, n - split) &&
+                                      c64 == hash_crc64(hash_crc64(initial, src, split),
+                                                        src + split, n - split));
+                        }
+        memory_free(p, 3 * 4096);
+}
+
+static fn floor_shift_reference(xz_range_state address_to s)
+{
+        p32 low = (p32)s->low;
+        p8 carry = (p8)(s->low >> 32);
+        if (low < 0xff000000u || carry)
+        {
+                p8 byte = (p8)s->cache;
+                for (positive i = 0; i < s->pending; i++)
+                {
+                        if (s->next < s->limit) *s->next++ = (p8)(byte + carry);
+                        else s->full = 1;
+                        byte = 255;
+                }
+                s->cache = low >> 24;
+                s->pending = 0;
+        }
+        s->pending++;
+        s->low = (p32)(low << 8);
+}
+
+static fn floor_bit_reference(xz_range_state address_to s, p16 address_to prob, positive bit)
+{
+        p32 bound = (s->range >> 11) * *prob;
+        if (bit)
+        {
+                s->low += bound;
+                s->range -= bound;
+                *prob -= *prob >> 5;
+        }
+        else
+        {
+                s->range = bound;
+                *prob += (2048 - *prob) >> 5;
+        }
+        while (s->range < 0x1000000)
+        {
+                floor_shift_reference(s);
+                s->range <<= 8;
+        }
+}
+
+static fn floor_tree_reference(xz_range_state address_to s, p16 address_to probs,
+                               positive value, positive mode)
+{
+        positive count = mode & 255;
+        positive symbol = count ? 1 : 0;
+        positive result = 0;
+        bool matched = (mode & 512) != 0;
+        positive match = (mode >> 16) & 255;
+        if (!count) count = 1;
+        for (positive i = 0; i < count; i++)
+        {
+                positive bit = (value >> ((mode & 256) ? i : count - 1 - i)) & 1;
+                positive index = symbol;
+                if (mode & 256)
+                        index = ((positive)1 << i) | result;
+                else if (matched)
+                {
+                        positive predicted = (match >> (count - 1 - i)) & 1;
+                        index += (1 + predicted) << 8;
+                        matched = predicted == bit;
+                }
+                floor_bit_reference(s, probs + index, bit);
+                symbol = (symbol << 1) | bit;
+                result |= bit << i;
+        }
+}
+
+static fn floor_range(void)
+{
+        static p8 actual[8192], expected[8192];
+        static p16 ap[4096], ep[4096];
+        p64 lows[] = {0,0xfeffffffu,0xff000000u,0xffffffffu,0x100000000ull,0x1ffffffffull};
+        for (positive l = 0; l < array_count(lows); l++)
+                for (positive pending = 1; pending <= 33; pending += 8)
+                        for (positive cap = 0; cap <= 40; cap++)
+                        {
+                                memory_fill(actual, 0x5a, sizeof(actual));
+                                memory_fill(expected, 0x5a, sizeof(expected));
+                                xz_range_state a = {0x12345678u, 42, lows[l], pending, actual, actual + cap, 0};
+                                xz_range_state e = a; e.next = expected; e.limit = expected + cap;
+                                lzma_range_shift(address_of a);
+                                floor_shift_reference(address_of e);
+                                check("range carry, deferred bytes, exact capacity",
+                                      a.range == e.range && a.cache == e.cache && a.low == e.low &&
+                                      a.pending == e.pending && a.full == e.full &&
+                                      a.next - actual == e.next - expected &&
+                                      !memory_compare(actual, expected, sizeof(actual)));
+                        }
+        positive modes[512], values[512];
+        p32 random = 0x79131415u;
+        for (positive i = 0; i < 4096; i++) ap[i] = ep[i] = 1024;
+        memory_fill(actual, 0, sizeof(actual)); memory_fill(expected, 0, sizeof(expected));
+        xz_range_state a = {0xffffffffu,0,0,1,actual,actual + sizeof(actual),0};
+        xz_range_state e = a; e.next = expected; e.limit = expected + sizeof(expected);
+        for (positive i = 0; i < 512; i++)
+        {
+                random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+                positive count = i % 12;
+                modes[i] = i % 3 == 0 ? 8 | 512 | ((positive)(random & 255) << 16)
+                            : i % 3 == 1 && count ? count | 256 : count;
+                values[i] = (random >> 8) & (((positive)1 << (count ? count : 1)) - 1);
+                if ((modes[i] & 255) == 8) values[i] &= 255;
+                lzma_range_encode(address_of a, ap, values[i], modes[i]);
+                floor_tree_reference(address_of e, ep, values[i], modes[i]);
+                check("range trees retain exactly the scalar probability state",
+                      a.range == e.range && a.low == e.low && a.cache == e.cache &&
+                      a.pending == e.pending && a.full == e.full &&
+                      a.next - actual == e.next - expected &&
+                      !memory_compare(actual, expected, sizeof(actual)) &&
+                      !memory_compare(ap, ep, sizeof(ap)));
+        }
+        for (positive i = 0; i < 5; i++) lzma_range_shift(address_of a);
+        xz_range_input decoded = {0xffffffffu,0,actual + 5,a.next};
+        for (positive i = 1; i < 5; i++) decoded.code = (decoded.code << 8) | actual[i];
+        for (positive i = 0; i < 4096; i++) ep[i] = 1024;
+        for (positive i = 0; i < 512; i++)
+                check("range literal/reverse/tree decode", lzma_range_decode(address_of decoded, ep, modes[i]) == (bipolar)values[i]);
+        check("range encode/decode models agree", !memory_compare(ap, ep, sizeof(ap)));
+        p8 address_to guard = floor_pages(3);
+        check("range decode guarded input", guard != null);
+        if (guard)
+        {
+                xz_range_input short_input = {1,0,guard + 8192,guard + 8192};
+                p16 prob = 1024;
+                check("range exhaustion touches no protected input or probability",
+                      lzma_range_decode(address_of short_input, address_of prob, 0) < 0 && prob == 1024);
+                memory_free(guard, 3 * 4096);
+        }
+}
+
+static fn floor_huffman(void)
+{
+        p8 address_to input = floor_pages(3);
+        p8 address_to output = floor_pages(3);
+        p32 table[256];
+        check("Huffman guarded mappings", input && output);
+        if (!input || !output) return;
+        for (positive i = 0; i < 256; i++) table[i] = (8u << 16) | i;
+        for (positive n = 0; n <= 1024; n++)
+        {
+                p8 address_to src = input + 8192 - n;
+                p8 address_to dst = output + 8192 - n - 1;
+                for (positive i = 0; i < n; i++) src[i] = (p8)(i * 17 + n);
+                dst[-1] = 0x5a;
+                positive got = huffman_encode_back(dst, src, n, table);
+                bool okay = got == n + 1 && dst[n] == 1 && dst[-1] == 0x5a;
+                for (positive i = 0; i < n; i++) okay &= dst[i] == src[n - 1 - i];
+                check("backward stream exact byte/word ends and alignments", okay);
+        }
+        memory_free(input, 3 * 4096); memory_free(output, 3 * 4096);
+}
+
+static fn floor_deflate(void)
+{
+        p8 address_to input = floor_pages(3);
+        p8 address_to output = floor_pages(11);
+        static p16 lit[512], dist[64];
+        check("deflate guarded mappings", input && output);
+        if (!input || !output) return;
+        memory_fill(input + 4096, 0, 4096);
+        for (positive i = 4096; i < 10 * 4096; i++) output[i] = (p8)(i * 13 + i / 29);
+        for (positive l = 0; l < 29; l++)
+                for (positive d = 0; d < 30; d++)
+                        for (positive residue = 0; residue < 8; residue++)
+                        {
+                                for (positive i = 0; i < 512; i++) lit[i] = (i & 1) ? 0 : (1 << 9) | (257 + l);
+                                for (positive i = 0; i < 64; i++) dist[i] = (i & 1) ? 0 : (1 << 9) | d;
+                                p8 address_to dst = output + 10 * 4096 - 258 - residue;
+                                p8 want[258];
+                                positive distance = gzip_dist_base[d], length = gzip_len_base[l];
+                                for (positive i = 0; i < length; i++)
+                                        want[i] = i < distance ? *(dst + i - distance) : want[i - distance];
+                                gzip_decode_job job = {0,0,input + 8192 - 8,input + 8192,
+                                        dst,dst + 258,distance,lit,dist,gzip_length_info,gzip_distance_info};
+                                deflate_decode_span(address_of job);
+                                check("deflate length/distance/alignment, exact input page end",
+                                      job.out == dst + length && !memory_compare(dst,want,length) &&
+                                      job.next <= job.limit && job.count < 64);
+                                job = (gzip_decode_job){0,0,input + 8192 - 8,input + 8192,
+                                        dst,dst + 258,distance - 1,lit,dist,gzip_length_info,gzip_distance_info};
+                                deflate_decode_span(address_of job);
+                                check("deflate invalid distance leaves token and output untouched",
+                                      job.out == dst && job.count == 56 && job.bits == 0);
+                        }
+        for (positive n = 0; n < 8; n++)
+        {
+                p8 address_to dst = output + 10 * 4096 - 258;
+                gzip_decode_job job = {0,0,input + 8192 - n,input + 8192,
+                        dst,dst + 258,0,lit,dist,gzip_length_info,gzip_distance_info};
+                deflate_decode_span(address_of job);
+                check("deflate short lookahead never crosses input guard", job.out == dst && job.next == input + 8192 - n);
+        }
+        memory_free(input,3*4096);memory_free(output,11*4096);
+}
+
+#ifdef CHECK_compression_floor
+b32 main(void)
+{
+        floor_checksums();
+        floor_range();
+        floor_huffman();
+        floor_deflate();
+        return test_report(null);
+}
+#endif
+#ifdef BENCH_compression_floor
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define COMPRESSION_BENCH_SIZE (256 * 1024)
+#define COMPRESSION_BENCH_ROUNDS 64
+static p8 compression_input[COMPRESSION_BENCH_SIZE] __attribute__((aligned(64)));
+static p8 compression_output[2 * COMPRESSION_BENCH_SIZE] __attribute__((aligned(64)));
+static p32 compression_codes[256];
+static p16 compression_probs[768];
+static volatile positive compression_sink;
+static p32 (*volatile compression_crc32_call)(p32,address_any,positive) = hash_crc32;
+static p64 (*volatile compression_crc64_call)(p64,address_any,positive) = hash_crc64;
+static address_any (*volatile compression_copy_call)(address_any,address_any,positive) = memory_copy_apart;
+static positive (*volatile compression_huffman_call)(address_any,address_any,positive,address_any) = huffman_encode_back;
+
+static __attribute__((noinline)) p32 compression_crc_scalar(p32 crc, p8 address_to p, positive n)
+{
+        for (positive i = 0; i < n; i++) crc = hash_crc32_tab[(crc ^ p[i]) & 255] ^ (crc >> 8);
+        return crc;
+}
+static p32 (*volatile compression_scalar_call)(p32,p8 address_to,positive) = compression_crc_scalar;
+
+static fn compression_copy_work(void)
+{
+        for (positive i = 0; i < COMPRESSION_BENCH_ROUNDS; i++)
+                compression_sink ^= (positive)compression_copy_call(compression_output,compression_input,COMPRESSION_BENCH_SIZE);
+}
+static fn compression_crc_scalar_work(void)
+{
+        for (positive i = 0; i < COMPRESSION_BENCH_ROUNDS; i++)
+                compression_sink ^= compression_scalar_call((p32)i,compression_input,COMPRESSION_BENCH_SIZE);
+}
+static fn compression_crc32_work(void)
+{
+        for (positive i = 0; i < COMPRESSION_BENCH_ROUNDS; i++)
+                compression_sink ^= compression_crc32_call((p32)i,compression_input,COMPRESSION_BENCH_SIZE);
+}
+static fn compression_crc64_work(void)
+{
+        for (positive i = 0; i < COMPRESSION_BENCH_ROUNDS; i++)
+                compression_sink ^= compression_crc64_call(i,compression_input,COMPRESSION_BENCH_SIZE);
+}
+static fn compression_huffman_work(void)
+{
+        for (positive i = 0; i < COMPRESSION_BENCH_ROUNDS; i++)
+                compression_sink ^= compression_huffman_call(compression_output,compression_input,COMPRESSION_BENCH_SIZE,compression_codes);
+}
+static fn compression_range_work(bool assembly)
+{
+        for (positive trial = 0; trial < 32; trial++)
+        {
+                for (positive i = 0; i < 768; i++) compression_probs[i] = 1024;
+                xz_range_state state = {0xffffffffu,0,0,1,compression_output,
+                                        compression_output + sizeof(compression_output),0};
+                for (positive i = 0; i < 4096; i++)
+                {
+                        if (assembly)
+                                lzma_range_encode(address_of state,compression_probs,compression_input[i],8);
+                        else
+                                floor_tree_reference(address_of state,compression_probs,compression_input[i],8);
+                }
+                for (positive i = 0; i < 5; i++) lzma_range_shift(address_of state);
+                compression_sink ^= state.next - compression_output;
+        }
+}
+static fn compression_range_asm_work(void) { compression_range_work(true); }
+static fn compression_range_c_work(void) { compression_range_work(false); }
+
+b32 main(void)
+{
+        p32 random = 0x7433291u;
+        for (positive i = 0; i < sizeof(compression_input); i++)
+        {
+                random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+                compression_input[i] = (p8)random;
+        }
+        for (positive i = 0; i < 256; i++) compression_codes[i] = (8 << 16) | i;
+        string_format(log,"  The copy row is a traffic proxy, not an entropy-coding lower bound.\n");
+        bench_report("copy traffic proxy",compression_copy_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
+        bench_report("CRC32 dependent byte reference",compression_crc_scalar_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
+        bench_report("CRC32 slicing-by-eight",compression_crc32_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
+        bench_report("CRC64 slicing-by-eight",compression_crc64_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
+        bench_report("backward Huffman kernel",compression_huffman_work,7,COMPRESSION_BENCH_SIZE*COMPRESSION_BENCH_ROUNDS,"byte");
+        bench_report("scalar range trees",compression_range_c_work,7,32*4096,"byte");
+        bench_report("assembly range trees",compression_range_asm_work,7,32*4096,"byte");
+        return 0;
+}
+#endif /* BENCH_compression_floor */
+#endif /* CHECK_compression_floor */
+
 #endif
