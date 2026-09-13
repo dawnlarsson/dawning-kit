@@ -15402,12 +15402,34 @@ static fn shell_background_reaped(bipolar pid, positive status)
         }
 }
 
+static fn job_child_changed(bipolar pid, positive status);
+
 static bipolar shell_wait_call(bipolar pid, positive address_to status)
 {
         bipolar got;
 
+        /* One wait4 either way. Asking for a specific pid leaves a sibling
+           zombie unmarked, so wait-all would later collect a Terminated job
+           and drop the line lima keeps for `jobs`. Anyone else who dies is
+           the same news job_reap already files, just heard while we sit. */
         trap_wait_restarting(false);
-        got = system_call_4(syscall(wait4), pid, (positive)status, 0, 0);
+        while (true)
+        {
+                got = system_call_4(syscall(wait4), (positive)-1,
+                                    (positive)status, 0, 0);
+                if (got == -4)
+                {
+                        if (trap_waiting())
+                                break;
+
+                        continue;
+                }
+
+                if (got <= 0 || got == pid)
+                        break;
+
+                job_child_changed(got, address_to status);
+        }
         trap_wait_restarting(true);
 
         return got;

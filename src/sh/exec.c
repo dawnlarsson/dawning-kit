@@ -607,15 +607,28 @@ static fn job_monitor_stop()
 
 /* Dash will not turn the monitor on without a controlling terminal.
    /dev/tty is that question: stdin being a pipe is not enough, and
-   neither is stderr. lima 0.5.x says so and leaves `m` off, status 0. */
+   neither is stderr. lima 0.5.x says so and leaves `m` off, status 0.
+   The answer is a property of this process, so it is remembered: a
+   script that `set -m`s twice must not open /dev/tty twice. */
+static b32 job_tty_known;
+
 static bool job_tty_reachable()
 {
-        bipolar handle = system_open_at(AT_FDCWD, "/dev/tty", FILE_READ_WRITE);
+        bipolar handle;
+
+        if (job_tty_known)
+                return job_tty_known > 0;
+
+        handle = system_open_at(AT_FDCWD, "/dev/tty", FILE_READ_WRITE);
 
         if (handle < 0)
+        {
+                job_tty_known = -1;
                 return false;
+        }
 
         system_close(handle);
+        job_tty_known = 1;
         return true;
 }
 
@@ -1549,8 +1562,22 @@ static fn job_status_text(job_entry address_to entry, bool detailed,
         positive_into_string(into + 5, code);
 }
 
+static bool job_died_signaled(job_entry address_to entry)
+{
+        return entry->state == JOB_FINISHED && (entry->status & 0x7f) &&
+               (entry->status & 0xff) != 0x7f;
+}
+
 static string_address job_mark_of(job_entry address_to entry)
 {
+        /* Dash without a monitor uses `+` on every row once anything in
+           the table has finished, and `-` only while every job is still
+           running. Newest-first listing is the other half of that shape. */
+        if (shell_dash_columns() && !shell_option_on(SHELL_OPTION_MONITOR))
+                for (positive at = 0; at < job_count; at++)
+                        if (job_table[at].state != JOB_RUNNING)
+                                return (string_address) "+";
+
         if (entry->number == job_current)
                 return (string_address) "+";
 
@@ -1602,9 +1629,11 @@ static fn job_line(writer write, job_entry address_to entry, bool detailed)
 
         /* Without job control dash still numbers background children, but
            the listing is the status column only: lima 0.5.x writes no
-           command text until `set -m` has actually taken a terminal. */
+           command text until `set -m` has actually taken a terminal.
+           A pipeline still shows the bar between empty stages. */
         if (shell_dash_columns() && !shell_option_on(SHELL_OPTION_MONITOR))
-                text = (string_address) "";
+                text = string_search(text, " | ") ? (string_address) " | "
+                                                  : (string_address) "";
 
         if (shell_dash_columns())
         {
@@ -2026,10 +2055,20 @@ fn shell_jobs(writer write, string_address input)
                 return shell_answer(answer);
         }
 
-        for (positive at = 0; at < job_count;)
+        /* Dash lists newest first. Walking that way also lets a drop keep
+           the unvisited older rows in place, so there is no second table. */
+        bool newest = shell_dash_columns();
+        positive at = newest ? job_count : 0;
+
+        while (newest ? at : at < job_count)
         {
-                job_entry address_to entry = job_table + at;
+                job_entry address_to entry;
                 bool show = true;
+
+                if (newest)
+                        at--;
+
+                entry = job_table + at;
 
                 if (running_only && entry->state != JOB_RUNNING)
                         show = false;
@@ -2053,10 +2092,11 @@ fn shell_jobs(writer write, string_address input)
                 {
                         shell_wait_drop(entry->last);
                         job_drop_at(at);
-                        continue;
+                        if (!newest)
+                                continue;
                 }
-
-                at++;
+                else if (!newest)
+                        at++;
         }
 
         shell_answer(0);
@@ -2778,7 +2818,17 @@ static fn job_prune()
 {
         for (positive at = 0; at < job_count;)
                 if (!job_rows(job_table[at].last))
-                        job_drop_at(at);
+                {
+                        /* Dash wait forgets the wait-table row and still
+                           owes `jobs` a Done line, so an unreported finish
+                           without children is news, not a hole. */
+                        if (!shell_bash_compat &&
+                            job_table[at].state == JOB_FINISHED &&
+                            !job_table[at].reported)
+                                at++;
+                        else
+                                job_drop_at(at);
+                }
                 else
                         at++;
 }
@@ -2792,7 +2842,7 @@ static fn job_prune()
         not a wait for anybody in particular but for whoever ends first.
 */
 static b32 job_wait_job(positive found, string_address into,
-                        bool address_to interrupted, bool forget)
+                        bool address_to interrupted, bool forget, bool drop)
 {
         bipolar last = job_table[found].last;
         b32 answer;
@@ -2804,7 +2854,18 @@ static b32 job_wait_job(positive found, string_address into,
         found = job_find(last, true);
 
         if (found < job_count)
-                job_drop_at(found);
+        {
+                if (drop)
+                        job_drop_at(found);
+                else if (job_table[found].state != JOB_FINISHED)
+                {
+                        job_table[found].state = JOB_FINISHED;
+                        job_table[found].reported = false;
+                        job_table[found].status =
+                            answer > 128 ? (positive)(answer - 128)
+                                         : (positive)answer << 8;
+                }
+        }
 
         return answer;
 }
@@ -2829,7 +2890,7 @@ static b32 job_wait_next(bool force, string_address into)
                         if (job_table[at].state == JOB_FINISHED)
                                 return job_wait_job(at, into,
                                                     address_of interrupted,
-                                                    true);
+                                                    true, true);
 
                 if (!force)
                         for (positive at = 0; at < job_count; at++)
@@ -2950,23 +3011,101 @@ fn job_wait(writer write, string_address input)
 
         if (first >= shell_argc)
         {
+                bool waited_running = false;
+
+                /* Running jobs first. A sibling that dies while we sit is
+                   filed by wait4(-1) into the same table; collecting it here
+                   would drop the Terminated line lima keeps for `jobs`. */
                 while (true)
                 {
                         positive at;
 
                         for (at = 0; at < job_count; at++)
-                                if (job_table[at].state != JOB_STOPPED ||
-                                    force)
+                                if (job_table[at].state == JOB_RUNNING ||
+                                    (force &&
+                                     job_table[at].state == JOB_STOPPED))
                                         break;
 
                         if (at >= job_count)
                                 break;
 
+                        waited_running = true;
                         answer = job_wait_job(at, into,
-                                              address_of interrupted, true);
+                                              address_of interrupted, true,
+                                              shell_bash_compat);
 
                         if (interrupted)
                                 return shell_answer(answer);
+                }
+
+                if (!waited_running)
+                {
+                        /* Nothing was running: kill-pipeline's only job may
+                           already be a zombie, and wait still forgets it. */
+                        while (true)
+                        {
+                                positive at;
+
+                                for (at = 0; at < job_count; at++)
+                                        if (job_table[at].state !=
+                                                JOB_STOPPED ||
+                                            force)
+                                                break;
+
+                                if (at >= job_count)
+                                        break;
+
+                                answer = job_wait_job(at, into,
+                                                      address_of interrupted,
+                                                      true, true);
+
+                                if (interrupted)
+                                        return shell_answer(answer);
+                        }
+                }
+                else if (shell_bash_compat)
+                {
+                        positive keep = 0;
+
+                        for (positive at = 0; at < job_count;)
+                        {
+                                job_entry address_to entry = job_table + at;
+
+                                if (entry->state == JOB_FINISHED &&
+                                    !job_died_signaled(entry))
+                                {
+                                        shell_wait_drop(entry->last);
+                                        job_drop_at(at);
+                                        continue;
+                                }
+
+                                at++;
+                        }
+
+                        for (positive at = 0; at < job_count; at++)
+                                if (job_died_signaled(job_table + at) &&
+                                    job_table[at].number > keep)
+                                        keep = job_table[at].number;
+
+                        for (positive at = 0; at < job_count;)
+                        {
+                                job_entry address_to entry = job_table + at;
+
+                                if (job_died_signaled(entry) &&
+                                    entry->number != keep)
+                                {
+                                        shell_wait_drop(entry->last);
+                                        job_drop_at(at);
+                                        continue;
+                                }
+
+                                at++;
+                        }
+
+                        /* lima writes `[2]   Terminated` with a blank mark
+                           after wait collected the running jobs around it. */
+                        job_current = 0;
+                        job_previous = 0;
                 }
 
                 /* A retained child that never became a job -- one started
@@ -3063,7 +3202,7 @@ fn job_wait(writer write, string_address input)
                 }
 
                 answer = job_wait_job(found, into, address_of interrupted,
-                                      shell_posix_on());
+                                      shell_posix_on(), true);
 
                 if (interrupted)
                         break;
@@ -11719,6 +11858,15 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         exec_child_signals(background,
                                            background && upstream < 0);
                         exec_child_began();
+                        /* A pipeline stage is a child, and dash's jobs
+                           listing is this shell's table, not the parent's.
+                           Fork already copied the rows; drop them here
+                           rather than walking them on every command. Bash
+                           keeps the copy, which is why `jobs | wc` still
+                           counts. Command substitution is not a pipeline
+                           and still keeps the table: `$(jobs -p)`. */
+                        if (!shell_bash_compat)
+                                job_forget();
                         if (exec_pipe_omits_exit(parse_nodes[child].kind))
                                 trap_omit_exit_set();
                         if (parse_nodes[child].kind == NODE_SUBSHELL)
